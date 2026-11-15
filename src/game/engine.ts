@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   AgeLevel,
+  EconomyMode,
+  BuildingDefinition,
   BuildingEntity,
   BuildingType,
   CivilizationId,
@@ -70,6 +72,7 @@ import {
   MatchWinnerSummary,
   resolveMatchOutcome,
   selectClusterFocusTarget,
+  selectEconomyRebalancePlan,
   selectOptimalCombatTarget,
 } from './rules';
 import {
@@ -158,6 +161,7 @@ export class RtsEngine {
   // Map Preset & Terrain Obstacles
   public mapPreset: MapPresetId = 'river_valley';
   public resourceRichness: ResourceRichness = 'standard';
+  public economyMode: EconomyMode = 'classic';
   public mapLayout: MapLayoutResult | null = null;
   private environmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
@@ -288,6 +292,7 @@ export class RtsEngine {
 
   constructor(container: HTMLElement) {
     this.container = container;
+    this.restoreSavedMods();
     this.initThree();
     this.setupWorld();
     this.bindEvents();
@@ -617,6 +622,115 @@ export class RtsEngine {
     return getCivilizationConfig(this.getParticipant(factionId)?.civilization).id;
   }
 
+  private modScope(mod: GameMod): CivilizationId | 'shared' {
+    if (mod.civilizationId) return mod.civilizationId;
+    const legacyScope = mod.id.startsWith('mod_') ? mod.id.slice(4) : '';
+    return legacyScope === 'medieval' || legacyScope === 'anime' || legacyScope === 'fantasy'
+      ? legacyScope
+      : 'shared';
+  }
+
+  private modAppliesToFaction(mod: GameMod, faction: FactionId): boolean {
+    if (!mod.enabled) return false;
+    const scope = this.modScope(mod);
+    return scope === 'shared' || scope === this.getCivilizationForFaction(faction);
+  }
+
+  public getCustomTechDefinitions(faction: FactionId): TechDefinition[] {
+    return this.activeMods
+      .filter((mod) => this.modAppliesToFaction(mod, faction))
+      .flatMap((mod) => mod.techDefinitions || []);
+  }
+
+  public findTechDefinition(techId: string, faction: FactionId): TechDefinition | undefined {
+    return findTechDef(techId, this.getCustomTechDefinitions(faction));
+  }
+
+  public getAvailableTechsForBuilding(faction: FactionId, buildingType: BuildingType): TechDefinition[] {
+    const civ = this.getCivilizationForFaction(faction);
+    return getAvailableTechsForBuilding(
+      buildingType,
+      civ,
+      this.getResearchedTechs(faction),
+      (this.ageByFaction[faction] || 1) as AgeLevel,
+      this.getCustomTechDefinitions(faction)
+    );
+  }
+
+  public getAllTechsForBuilding(faction: FactionId, buildingType: BuildingType): TechDefinition[] {
+    return getAllTechsForBuilding(
+      buildingType,
+      this.getCivilizationForFaction(faction),
+      this.getCustomTechDefinitions(faction)
+    );
+  }
+
+  public getBuildingDefinition(type: BuildingType, faction?: FactionId): BuildingDefinition {
+    const base = DEFAULT_BUILDINGS[type];
+    if (!base) throw new Error(`Unknown building type: ${String(type)}`);
+    let resolved: BuildingDefinition = {
+      ...base,
+      cost: { ...base.cost },
+      trainableUnits: [...base.trainableUnits],
+    };
+
+    for (const mod of this.activeMods) {
+      if (!mod.enabled) continue;
+      if (faction && !this.modAppliesToFaction(mod, faction)) continue;
+      if (!faction && this.modScope(mod) !== 'shared') continue;
+      const override = mod.buildingOverrides?.[type];
+      if (!override) continue;
+      resolved = {
+        ...resolved,
+        ...override,
+        id: type,
+        cost: { ...resolved.cost, ...(override.cost || {}) },
+        trainableUnits: override.trainableUnits
+          ? [...override.trainableUnits]
+          : [...resolved.trainableUnits],
+      };
+    }
+    return resolved;
+  }
+
+  public saveModsToLocalStorage(): boolean {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return false;
+      window.localStorage.setItem('age-of-clash-mods-v1', JSON.stringify(this.activeMods));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private restoreSavedMods(): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const raw = window.localStorage.getItem('age-of-clash-mods-v1');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const valid = parsed.filter(
+        (mod) =>
+          mod &&
+          typeof mod.id === 'string' &&
+          typeof mod.name === 'string' &&
+          Array.isArray(mod.unitDefinitions) &&
+          mod.balanceMultipliers &&
+          Array.isArray(mod.aiRules)
+      );
+      if (valid.length !== parsed.length) return;
+      this.activeMods = valid.map((mod) => ({
+        ...mod,
+        civilizationId: mod.civilizationId || this.modScope(mod),
+        buildingOverrides: mod.buildingOverrides || {},
+        techDefinitions: Array.isArray(mod.techDefinitions) ? mod.techDefinitions : [],
+      }));
+    } catch {
+      // Ignore invalid browser storage and keep the built-in packs.
+    }
+  }
+
   public getResearchedTechs(factionId: FactionId): string[] {
     return this.researchedTechsByFaction[factionId] || [];
   }
@@ -694,10 +808,12 @@ export class RtsEngine {
   public setupWorld(
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
-    resourceRichness?: ResourceRichness
+    resourceRichness?: ResourceRichness,
+    economyMode?: EconomyMode
   ) {
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
+    if (economyMode) this.economyMode = economyMode;
 
     if (customParticipants && customParticipants.length >= 2) {
       this.participants = customParticipants.map((p) => ({ ...p }));
@@ -804,7 +920,10 @@ export class RtsEngine {
     this.participants.forEach((p) => {
       const civId = getCivilizationConfig(p.civilization).id;
       p.civilization = civId;
-      this.resourcesByFaction[p.id] = { food: 250, wood: 200, gold: 120, stone: 60 };
+      this.resourcesByFaction[p.id] =
+        this.economyMode === 'economic_sandbox'
+          ? { food: 650, wood: 500, gold: 350, stone: 250 }
+          : { food: 250, wood: 200, gold: 120, stone: 60 };
       this.ageByFaction[p.id] = 1;
       this.landmarksByFaction[p.id] = [];
       this.researchedTechsByFaction[p.id] = [];
@@ -3142,7 +3261,8 @@ export class RtsEngine {
         unit.carryingResource = { type: node.resourceType, amount: 0 };
       }
 
-      const gatherRate = unit.unitDef.stats.gatherSpeed || 2;
+      const modeGatherMultiplier = this.economyMode === 'economic_sandbox' ? 1.25 : 1;
+      const gatherRate = (unit.unitDef.stats.gatherSpeed || 2) * modeGatherMultiplier;
       const prevAmount = node.amount;
       const deltaGather = Math.min(node.amount, gatherRate * dt);
       unit.carryingResource.amount += deltaGather;
