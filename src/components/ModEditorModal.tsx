@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
 import { AiRule, BuildingDefinition, BuildingType, GameMod, TechDefinition, UnitDefinition, UnitCategory } from '../types/game';
-import { INITIAL_MODS } from '../game/mods';
+import { DEFAULT_BUILDINGS, INITIAL_MODS } from '../game/mods';
 
 interface ModEditorModalProps {
   engine: RtsEngine;
@@ -721,6 +721,284 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* CUSTOM CONTENT: MOD SCOPE, TECH TREE AND BUILDING OVERRIDES */}
+          {activeTab === 'content' && (
+            <div className="space-y-5">
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-emerald-300">跨界模組內容設定</h3>
+                    <p className="text-[11px] text-slate-400">設定模組所屬陣營；選擇「共享」即可讓所有陣營使用其中的角色與科技。</p>
+                  </div>
+                  <span className="text-[10px] px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    {currentMod.unitDefinitions.length} 角色 · {(currentMod.techDefinitions || []).length} 科技
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">模組名稱</label>
+                    <input
+                      value={currentMod.name}
+                      onChange={(e) => updateSelectedMod((mod) => { mod.name = e.target.value; })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">適用陣營</label>
+                    <select
+                      value={currentMod.civilizationId || 'shared'}
+                      onChange={(e) => updateSelectedMod((mod) => {
+                        mod.civilizationId = e.target.value as GameMod['civilizationId'];
+                        (mod.techDefinitions || []).forEach((tech) => {
+                          tech.civId = mod.civilizationId || 'shared';
+                        });
+                      })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-white"
+                    >
+                      <option value="shared">共享跨界內容（所有陣營）</option>
+                      <option value="medieval">聖殿鐵衛帝國</option>
+                      <option value="anime">蒼嵐忍道聯盟</option>
+                      <option value="fantasy">秘銀森靈聖域</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs text-slate-300 mb-1">模組說明</label>
+                    <textarea
+                      rows={2}
+                      value={currentMod.description}
+                      onChange={(e) => updateSelectedMod((mod) => { mod.description = e.target.value; })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-white resize-y"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">陣營專屬科技</h3>
+                    <p className="text-[11px] text-slate-400">科技會出現在指定建築的研發清單，效果支援採集、生命、攻擊、防禦、速度及技能冷卻。</p>
+                  </div>
+                  <button
+                    onClick={handleAddCustomTech}
+                    className="shrink-0 flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-lg text-xs font-bold"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> 新增科技
+                  </button>
+                </div>
+
+                {(currentMod.techDefinitions || []).length === 0 && (
+                  <div className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-xs text-slate-400">
+                    這個模組尚未建立自訂科技。新增後可設定研發建築、時代、成本及效果。
+                  </div>
+                )}
+
+                {(currentMod.techDefinitions || []).map((tech) => (
+                  <div key={tech.id} className="rounded-xl border border-slate-700 bg-slate-800/70 p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          value={tech.name}
+                          onChange={(e) => patchCustomTech(tech.id, { name: e.target.value })}
+                          aria-label="科技名稱"
+                          className="bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white"
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            value={tech.icon}
+                            onChange={(e) => patchCustomTech(tech.id, { icon: e.target.value })}
+                            aria-label="科技圖示"
+                            className="w-14 bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white"
+                          />
+                          <select
+                            value={tech.buildingType}
+                            onChange={(e) => patchCustomTech(tech.id, { buildingType: e.target.value as BuildingType })}
+                            aria-label="研發建築"
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+                          >
+                            <option value="town_center">城鎮中心</option>
+                            <option value="barracks">兵營</option>
+                            <option value="archery_range">射箭場</option>
+                            <option value="armory_forge">鍛造工坊</option>
+                            <option value="spirit_shrine">靈脈神社</option>
+                            <option value="mana_well">魔力之泉</option>
+                            <option value="castle">城堡</option>
+                          </select>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => updateSelectedMod((mod) => {
+                          mod.techDefinitions = (mod.techDefinitions || []).filter((item) => item.id !== tech.id);
+                        })}
+                        className="text-red-400 hover:text-red-300 p-1"
+                        title="刪除科技"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={tech.description}
+                      onChange={(e) => patchCustomTech(tech.id, { description: e.target.value })}
+                      placeholder="科技描述"
+                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        value={tech.effectLabel}
+                        onChange={(e) => patchCustomTech(tech.id, { effectLabel: e.target.value })}
+                        placeholder="效果摘要，例如採集速度 +20%"
+                        className="bg-slate-950 border border-slate-700 rounded p-2 text-xs text-emerald-300"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[10px] text-slate-400">研發秒數
+                          <input
+                            type="number" min="1" step="1" value={tech.researchTime}
+                            onChange={(e) => patchCustomTech(tech.id, { researchTime: Math.max(1, Number(e.target.value) || 1) })}
+                            className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+                          />
+                        </label>
+                        <label className="text-[10px] text-slate-400">需求時代
+                          <select
+                            value={tech.requiredAge || 1}
+                            onChange={(e) => patchCustomTech(tech.id, { requiredAge: Number(e.target.value) as 1 | 2 | 3 | 4 })}
+                            className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+                          >
+                            {[1, 2, 3, 4].map((age) => <option key={age} value={age}>時代 {age}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['food', 'wood', 'gold', 'stone'] as const).map((resource) => (
+                        <label key={resource} className="text-[10px] text-slate-400">
+                          {resource === 'food' ? '糧食' : resource === 'wood' ? '木材' : resource === 'gold' ? '黃金' : '石料'}
+                          <input
+                            type="number" min="0" value={tech.cost[resource]}
+                            onChange={(e) => patchCustomTechCost(tech.id, resource, Math.max(0, Number(e.target.value) || 0))}
+                            className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-xs text-white"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-amber-300 mb-2">科技效果（數值為加成或倍率）</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {([
+                          ['gatherMultiplier', '採集倍率', 1],
+                          ['hpMultiplier', '生命倍率', 1],
+                          ['speedMultiplier', '移動倍率', 1],
+                          ['cooldownMultiplier', '技能冷卻倍率', 1],
+                          ['attackBonus', '攻擊加成', 0],
+                          ['defenseBonus', '防禦加成', 0],
+                          ['rangeBonus', '射程加成', 0],
+                        ] as const).map(([key, label, fallback]) => (
+                          <label key={key} className="text-[10px] text-slate-400">
+                            {label}
+                            <input
+                              type="number" min="0" step="0.05"
+                              value={tech.effect[key] ?? fallback}
+                              onChange={(e) => patchCustomTechEffect(tech.id, key, Math.max(0, Number(e.target.value) || 0))}
+                              className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-xs text-white"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <section className="space-y-3 border-t border-slate-800 pt-4">
+                <div>
+                  <h3 className="text-sm font-bold text-white">建築屬性覆寫</h3>
+                  <p className="text-[11px] text-slate-400">目前以既有 3D 建築模型為模板，可為本模組獨立調整成本、生命、建造時間、人口及可訓練兵種。</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={selectedBuildingType}
+                    onChange={(e) => setSelectedBuildingType(e.target.value as BuildingType)}
+                    className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-white"
+                  >
+                    {([
+                      ['town_center', '城鎮中心'],
+                      ['barracks', '兵營'],
+                      ['archery_range', '射箭場'],
+                      ['farm', '農田'],
+                      ['lumber_camp', '伐木場'],
+                      ['mining_camp', '採礦場'],
+                      ['tower', '箭塔'],
+                      ['castle', '城堡'],
+                      ['armory_forge', '鍛造工坊'],
+                      ['spirit_shrine', '靈脈神社'],
+                      ['mana_well', '魔力之泉'],
+                    ] as [BuildingType, string][]).map(([type, label]) => <option key={type} value={type}>{label}</option>)}
+                  </select>
+                  <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-400">
+                    {currentMod.buildingOverrides?.[selectedBuildingType] ? '此建築已有自訂覆寫' : '目前使用遊戲預設值'}
+                  </div>
+                </div>
+                {(() => {
+                  const base = DEFAULT_BUILDINGS[selectedBuildingType];
+                  const override = currentMod.buildingOverrides?.[selectedBuildingType] || {};
+                  const effectiveName = override.name || base.name;
+                  const effectiveHp = override.maxHp ?? base.maxHp;
+                  const effectiveTime = override.buildTime ?? base.buildTime;
+                  const effectiveSize = override.size ?? base.size;
+                  const effectivePop = override.populationProvided ?? base.populationProvided ?? 0;
+                  const effectiveCost = { ...base.cost, ...(override.cost || {}) };
+                  return (
+                    <div className="rounded-xl border border-slate-700 bg-slate-800/70 p-3 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="text-[10px] text-slate-400">建築顯示名稱
+                          <input value={effectiveName} onChange={(e) => patchBuildingOverride({ name: e.target.value })} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" />
+                        </label>
+                        <label className="text-[10px] text-slate-400">最大生命值
+                          <input type="number" min="1" value={effectiveHp} onChange={(e) => patchBuildingOverride({ maxHp: Math.max(1, Number(e.target.value) || 1) })} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" />
+                        </label>
+                        <label className="text-[10px] text-slate-400">建造秒數
+                          <input type="number" min="1" value={effectiveTime} onChange={(e) => patchBuildingOverride({ buildTime: Math.max(1, Number(e.target.value) || 1) })} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" />
+                        </label>
+                        <label className="text-[10px] text-slate-400">人口供應
+                          <input type="number" min="0" value={effectivePop} onChange={(e) => patchBuildingOverride({ populationProvided: Math.max(0, Number(e.target.value) || 0) })} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" />
+                        </label>
+                        <label className="text-[10px] text-slate-400">建築碰撞尺寸
+                          <input type="number" min="0.5" step="0.5" value={effectiveSize} onChange={(e) => patchBuildingOverride({ size: Math.max(0.5, Number(e.target.value) || 0.5) })} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white" />
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        {(['food', 'wood', 'gold', 'stone'] as const).map((resource) => (
+                          <label key={resource} className="text-[10px] text-slate-400">
+                            {resource === 'food' ? '糧食' : resource === 'wood' ? '木材' : resource === 'gold' ? '黃金' : '石料'}
+                            <input type="number" min="0" value={effectiveCost[resource]} onChange={(e) => patchBuildingCost(resource, Math.max(0, Number(e.target.value) || 0))} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-xs text-white" />
+                          </label>
+                        ))}
+                      </div>
+                      <label className="block text-[10px] text-slate-400">可訓練兵種 ID（以逗號分隔；留空則沿用陣營預設）
+                        <input
+                          value={override.trainableUnits ? override.trainableUnits.join(', ') : ''}
+                          placeholder={base.trainableUnits.join(', ')}
+                          onChange={(e) => patchBuildingOverride({ trainableUnits: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })}
+                          className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-white"
+                        />
+                      </label>
+                      <button
+                        onClick={() => updateSelectedMod((mod) => {
+                          const next = { ...(mod.buildingOverrides || {}) };
+                          delete next[selectedBuildingType];
+                          mod.buildingOverrides = next;
+                        })}
+                        className="text-[11px] text-slate-400 hover:text-white underline"
+                      >
+                        清除此建築覆寫
+                      </button>
+                    </div>
+                  );
+                })()}
+              </section>
             </div>
           )}
 
