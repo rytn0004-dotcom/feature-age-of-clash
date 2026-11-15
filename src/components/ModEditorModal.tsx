@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
-import { AiRule, GameMod, UnitDefinition } from '../types/game';
+import { AiRule, BuildingType, GameMod, TechDefinition, UnitDefinition, UnitCategory } from '../types/game';
 import { INITIAL_MODS } from '../game/mods';
 
 interface ModEditorModalProps {
@@ -27,12 +27,13 @@ interface ModEditorModalProps {
 }
 
 export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose, onApply }) => {
-  const [activeTab, setActiveTab] = useState<'switchboard' | 'units' | 'ai' | 'json'>('switchboard');
+  const [activeTab, setActiveTab] = useState<'switchboard' | 'units' | 'content' | 'ai' | 'json'>('switchboard');
   const [mods, setMods] = useState<GameMod[]>(() => JSON.parse(JSON.stringify(engine.activeMods)));
   const [selectedModIndex, setSelectedModIndex] = useState(0);
 
   // New unit form state
   const [editingUnit, setEditingUnit] = useState<UnitDefinition | null>(null);
+  const [selectedBuildingType, setSelectedBuildingType] = useState<BuildingType>('town_center');
 
   // JSON import/export state
   const [jsonText, setJsonText] = useState('');
@@ -43,9 +44,67 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
   // Save changes to engine
   const handleSaveAndApply = () => {
     engine.activeMods = JSON.parse(JSON.stringify(mods));
+    engine.saveModsToLocalStorage();
     onApply();
     onClose();
   };
+
+  const updateSelectedMod = (mutate: (mod: GameMod) => void) => {
+    const updated: GameMod[] = JSON.parse(JSON.stringify(mods));
+    const target = updated[selectedModIndex];
+    if (!target) return;
+    mutate(target);
+    setMods(updated);
+  };
+
+  const handleAddModPack = () => {
+    const newPack: GameMod = {
+      id: `custom_pack_${Date.now()}`,
+      name: '我的跨界模組包',
+      author: 'Player',
+      description: '自訂角色、英雄、兵種、建築覆寫與專屬科技。',
+      version: '1.0.0',
+      enabled: true,
+      civilizationId: 'shared',
+      unitDefinitions: [],
+      buildingOverrides: {},
+      techDefinitions: [],
+      balanceMultipliers: {
+        gatherRate: 1,
+        unitHp: 1,
+        unitDamage: 1,
+        buildSpeed: 1,
+        moveSpeed: 1,
+      },
+      aiRules: [],
+    };
+    setMods([...mods, newPack]);
+    setSelectedModIndex(mods.length);
+    setActiveTab('content');
+  };
+
+  const handleAddCustomTech = () => {
+    updateSelectedMod((mod) => {
+      const civId = mod.civilizationId || 'shared';
+      const tech: TechDefinition = {
+        id: `custom_tech_${Date.now()}`,
+        civId,
+        buildingType: 'town_center',
+        name: '新自訂科技',
+        icon: '✨',
+        description: '自訂陣營專屬科技。',
+        effectLabel: '村民採集速度 +20%',
+        cost: { food: 100, wood: 50, gold: 50, stone: 0 },
+        researchTime: 15,
+        requiredAge: 2,
+        targetCategories: ['worker'],
+        effect: { gatherMultiplier: 1.2 },
+      };
+      mod.techDefinitions = [...(mod.techDefinitions || []), tech];
+    });
+  };
+
+  const handleAddModPack = handleAddModPack;
 
   // Toggle mod enabled
   const toggleModEnabled = (index: number) => {
