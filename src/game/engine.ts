@@ -1029,11 +1029,11 @@ export class RtsEngine {
       const tc = this.addBuilding('town_center', p.id, sp.x, sp.z, true);
       tc.rallyPoint = { x: sp.x + inX * 6, z: sp.z + inZ * 6 };
 
-      const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, DEFAULT_BUILDINGS.barracks.size);
+      const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, this.getBuildingDefinition('barracks', p.id).size);
       const barracks = this.addBuilding('barracks', p.id, barracksSpot.x, barracksSpot.z, true);
       barracks.rallyPoint = { x: barracksSpot.x + inX * 6.5, z: barracksSpot.z + inZ * 6.5 };
 
-      const farmSpot = findValidStarterSpot(sp.x - tanX * 8.5, sp.z - tanZ * 8.5, DEFAULT_BUILDINGS.farm.size);
+      const farmSpot = findValidStarterSpot(sp.x - tanX * 8.5, sp.z - tanZ * 8.5, this.getBuildingDefinition('farm', p.id).size);
       const farmBldg = this.addBuilding('farm', p.id, farmSpot.x, farmSpot.z, true);
       this.addResourceNode(`food_${farmBldg.id}`, 'food', farmSpot.x, farmSpot.z, 2500, true, 'farm');
 
@@ -4850,20 +4850,32 @@ export class RtsEngine {
         assignWorkerToType(w, bestType);
       }
 
-      // Gently rebalance 1 surplus gatherer per tick if AI is starving for food/wood
-      if (aiRes.food < 75 && activeCounts.food < desiredAlloc.food) {
-        const surplusType = (['stone', 'gold', 'wood'] as ResourceType[]).find(
-          (t) => activeCounts[t] > desiredAlloc[t] + 1
-        );
-        if (surplusType) {
-          const reassignable = aiActiveWorkers.find((w) => {
-            if (w.state !== 'gathering' || !w.targetResourceNodeId) return false;
-            const n = this.resourceNodes.find((rn) => rn.id === w.targetResourceNodeId);
-            return n?.resourceType === surplusType;
-          });
-          if (reassignable) {
-            activeCounts[surplusType]--;
-            assignWorkerToType(reassignable, 'food');
+      // Rebalance one worker per AI cycle across all four resources. This avoids
+      // stockpiling one resource while another is blocking construction or research.
+      const availableResourceTypes = (['food', 'wood', 'gold', 'stone'] as ResourceType[]).filter((type) =>
+        this.resourceNodes.some((node) => node.amount > 0 && node.resourceType === type)
+      );
+      const rebalancePlan = selectEconomyRebalancePlan(
+        activeCounts,
+        desiredAlloc,
+        availableResourceTypes,
+        2
+      );
+      if (rebalancePlan) {
+        const reassignable = aiActiveWorkers.find((worker) => {
+          if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
+          const node = this.resourceNodes.find((resource) => resource.id === worker.targetResourceNodeId);
+          return node?.resourceType === rebalancePlan.from;
+        });
+        if (reassignable) {
+          activeCounts[rebalancePlan.from]--;
+          reassignable.targetResourceNodeId = undefined;
+          reassignable.waypoints = undefined;
+          if (reassignable.carryingResource && reassignable.carryingResource.amount >= 1) {
+            reassignable.state = 'returning_resource';
+            reassignable.currentActionText = '🏃 送回已採集資源';
+          } else {
+            assignWorkerToType(reassignable, rebalancePlan.to);
           }
         }
       }
