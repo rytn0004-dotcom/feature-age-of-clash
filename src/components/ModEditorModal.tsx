@@ -89,7 +89,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
   // AI Rule Management
   const handleToggleRule = (ruleId: string) => {
     const updated = [...mods];
-    const rules = updated[0].aiRules;
+    const rules = updated[selectedModIndex].aiRules;
     const rule = rules.find((r) => r.id === ruleId);
     if (rule) rule.enabled = !rule.enabled;
     setMods(updated);
@@ -104,13 +104,13 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
       conditions: [{ field: 'food', operator: '>=', value: 80 }],
       action: { type: 'train_unit', targetId: 'swordsman', priority: 55 },
     };
-    updated[0].aiRules.push(newRule);
+    updated[selectedModIndex].aiRules.push(newRule);
     setMods(updated);
   };
 
   const handleDeleteAiRule = (ruleId: string) => {
     const updated = [...mods];
-    updated[0].aiRules = updated[0].aiRules.filter((r) => r.id !== ruleId);
+    updated[selectedModIndex].aiRules = updated[selectedModIndex].aiRules.filter((r) => r.id !== ruleId);
     setMods(updated);
   };
 
@@ -617,7 +617,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
 
               {/* Rules List */}
               <div className="space-y-3">
-                {mods[0].aiRules.map((rule) => (
+                {currentMod.aiRules.map((rule) => (
                   <div
                     key={rule.id}
                     data-ai-rule={rule.id}
@@ -636,7 +636,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                           value={rule.name}
                           onChange={(e) => {
                             const updated = [...mods];
-                            const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                            const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                             if (r) r.name = e.target.value;
                             setMods(updated);
                           }}
@@ -653,7 +653,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             value={rule.action.priority}
                             onChange={(e) => {
                               const updated = [...mods];
-                              const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                              const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                               if (r) r.action.priority = Number(e.target.value) || 1;
                               setMods(updated);
                             }}
@@ -681,7 +681,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             value={cond.field}
                             onChange={(e) => {
                               const updated = [...mods];
-                              const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                              const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                               if (r) r.conditions[cIdx].field = e.target.value as any;
                               setMods(updated);
                             }}
@@ -704,7 +704,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             value={cond.operator}
                             onChange={(e) => {
                               const updated = [...mods];
-                              const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                              const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                               if (r) r.conditions[cIdx].operator = e.target.value as any;
                               setMods(updated);
                             }}
@@ -719,7 +719,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             value={cond.value}
                             onChange={(e) => {
                               const updated = [...mods];
-                              const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                              const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                               if (r) r.conditions[cIdx].value = Number(e.target.value) || 0;
                               setMods(updated);
                             }}
@@ -735,7 +735,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                         value={rule.action.type}
                         onChange={(e) => {
                           const updated = [...mods];
-                          const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                          const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                           if (r) r.action.type = e.target.value as any;
                           setMods(updated);
                         }}
@@ -762,7 +762,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                           placeholder="目標 ID"
                           onChange={(e) => {
                             const updated = [...mods];
-                            const r = updated[0].aiRules.find((item) => item.id === rule.id);
+                            const r = updated[selectedModIndex].aiRules.find((item) => item.id === rule.id);
                             if (r) r.action.targetId = e.target.value;
                             setMods(updated);
                           }}
