@@ -7,7 +7,7 @@ import { ModEditorModal } from './components/ModEditorModal';
 import { PauseModal } from './components/PauseModal';
 import { GameOverModal } from './components/GameOverModal';
 import { sound } from './game/audio';
-import { MapPresetId, MatchParticipant, ResourceRichness } from './types/game';
+import { EconomyMode, MapPresetId, MatchParticipant, ResourceRichness } from './types/game';
 import { createDefaultParticipants } from './game/rules';
 
 export default function App() {
@@ -16,6 +16,7 @@ export default function App() {
   const [participants, setParticipants] = useState<MatchParticipant[]>(() => createDefaultParticipants());
   const [mapPreset, setMapPreset] = useState<MapPresetId>('river_valley');
   const [resourceRichness, setResourceRichness] = useState<ResourceRichness>('standard');
+  const [economyMode, setEconomyMode] = useState<EconomyMode>('classic');
   const [isModEditorOpen, setIsModEditorOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [gameSpeed, setGameSpeed] = useState(1.0);
@@ -67,7 +68,7 @@ export default function App() {
       const distinctTeams = new Set(list.map((p) => p.team));
       if (distinctTeams.size < 2) return;
 
-      engine.setupWorld(list, mapPreset, resourceRichness);
+      engine.setupWorld(list, mapPreset, resourceRichness, economyMode);
       engine.gameState = 'playing';
       engine.gameOverResult = null;
       setGameState('playing');
@@ -75,27 +76,37 @@ export default function App() {
       sound.playSelect();
       forceUpdate();
     },
-    [engine, participants, mapPreset, resourceRichness, forceUpdate]
+    [engine, participants, mapPreset, resourceRichness, economyMode, forceUpdate]
   );
 
   const handleMapPresetChange = useCallback(
     (nextPreset: MapPresetId) => {
       setMapPreset(nextPreset);
       if (engine && gameState === 'title') {
-        engine.setupWorld(participants, nextPreset, resourceRichness);
+        engine.setupWorld(participants, nextPreset, resourceRichness, economyMode);
       }
     },
-    [engine, gameState, participants, resourceRichness]
+    [engine, gameState, participants, resourceRichness, economyMode]
   );
 
   const handleResourceRichnessChange = useCallback(
     (nextRichness: ResourceRichness) => {
       setResourceRichness(nextRichness);
       if (engine && gameState === 'title') {
-        engine.setupWorld(participants, mapPreset, nextRichness);
+        engine.setupWorld(participants, mapPreset, nextRichness, economyMode);
       }
     },
-    [engine, gameState, participants, mapPreset]
+    [engine, gameState, participants, mapPreset, economyMode]
+  );
+
+  const handleEconomyModeChange = useCallback(
+    (nextMode: EconomyMode) => {
+      setEconomyMode(nextMode);
+      if (engine && gameState === 'title') {
+        engine.setupWorld(participants, mapPreset, resourceRichness, nextMode);
+      }
+    },
+    [engine, gameState, participants, mapPreset, resourceRichness]
   );
 
   // Global Key Handlers for Title Screen (Enter/Space to start)
@@ -159,7 +170,7 @@ export default function App() {
 
   const handleRestart = () => {
     if (!engine) return;
-    engine.setupWorld(participants, mapPreset, resourceRichness);
+    engine.setupWorld(participants, mapPreset, resourceRichness, economyMode);
     engine.gameState = 'playing';
     engine.gameOverResult = null;
     setGameState('playing');
@@ -191,6 +202,8 @@ export default function App() {
           onMapPresetChange={handleMapPresetChange}
           resourceRichness={resourceRichness}
           onResourceRichnessChange={handleResourceRichnessChange}
+          economyMode={economyMode}
+          onEconomyModeChange={handleEconomyModeChange}
           onStart={handleStartGame}
           onOpenMods={() => setIsModEditorOpen(true)}
           isMuted={isMuted}
