@@ -44,6 +44,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
   // Save changes to engine
   const handleSaveAndApply = () => {
     engine.activeMods = JSON.parse(JSON.stringify(mods));
+    engine.refreshModContent();
     engine.saveModsToLocalStorage();
     onApply();
     onClose();
