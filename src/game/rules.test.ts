@@ -12,7 +12,7 @@ import {
   findClosestResourceNode,
   findClosestEnemy,
 } from './rules';
-import { AiRule, ResourceNode, EntityCommon } from '../types/game';
+import { AiRule, ResourceNode, EntityCommon, TechDefinition, UnitStats } from '../types/game';
 
 test('economy: canAfford accurately checks resource amounts', () => {
   const current = { food: 100, wood: 50, gold: 20, stone: 0 };
@@ -1006,4 +1006,55 @@ test('siege-and-garrison: anti-building armor blocks early soldiers while siege 
 
 
 
+
+
+test('mods: faction-specific custom technologies are listed and apply to units', async () => {
+  const {
+    getAvailableTechsForBuilding,
+    getAllTechsForBuilding,
+    findTechDef,
+    applyCivilizationAndTechStats,
+  } = await import('./civilizations');
+
+  const customTech: TechDefinition = {
+    id: 'custom_test_gathering',
+    civId: 'anime',
+    buildingType: 'barracks',
+    name: '靈脈物流術',
+    icon: '✨',
+    description: '改善村民採集效率。',
+    effectLabel: '採集速度 +20%',
+    cost: { food: 100, wood: 50, gold: 25, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['worker'],
+    effect: { gatherMultiplier: 1.2 },
+  };
+
+  assert.equal(
+    getAvailableTechsForBuilding('barracks', 'anime', [], 2, [customTech]).some((tech) => tech.id === customTech.id),
+    false
+  );
+  assert.equal(
+    getAvailableTechsForBuilding('barracks', 'anime', [], 3, [customTech]).some((tech) => tech.id === customTech.id),
+    true
+  );
+  assert.equal(getAllTechsForBuilding('barracks', 'anime', [customTech]).some((tech) => tech.id === customTech.id), true);
+  assert.equal(findTechDef(customTech.id, [customTech])?.name, customTech.name);
+
+  const baseStats: UnitStats = {
+    maxHp: 50,
+    attack: 4,
+    defense: 1,
+    range: 1,
+    speed: 3,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 0, stone: 0 },
+    trainTime: 10,
+    gatherSpeed: 2,
+    carryCapacity: 10,
+  };
+  const boosted = applyCivilizationAndTechStats(baseStats, 'worker', 'anime', [customTech.id], [customTech]);
+  assert.ok(boosted.gatherSpeed >= 2.63, `Expected custom technology to increase gather speed, got ${boosted.gatherSpeed}`);
+});
 
