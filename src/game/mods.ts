@@ -914,7 +914,10 @@ export const INITIAL_MODS: GameMod[] = [
     description: '世紀帝國四正宗風味！重裝劍士、英國長弓手、皇家騎兵與攻城巨投。',
     version: '1.2.0',
     enabled: true,
+    civilizationId: 'medieval',
     unitDefinitions: MEDIEVAL_UNITS,
+    buildingOverrides: {},
+    techDefinitions: [],
     balanceMultipliers: {
       gatherRate: 1.0,
       unitHp: 1.0,
@@ -931,7 +934,10 @@ export const INITIAL_MODS: GameMod[] = [
     description: '打破次元壁！木葉忍者、氣彈賽亞人與死神斬魄劍豪大亂鬥！',
     version: '1.0.0',
     enabled: true,
+    civilizationId: 'anime',
     unitDefinitions: ANIME_UNITS,
+    buildingOverrides: {},
+    techDefinitions: [],
     balanceMultipliers: {
       gatherRate: 1.2,
       unitHp: 1.1,
@@ -948,7 +954,10 @@ export const INITIAL_MODS: GameMod[] = [
     description: '聖光騎士、烈焰大法師、守護古樹與狡黠地精工程兵！',
     version: '1.0.0',
     enabled: true,
+    civilizationId: 'fantasy',
     unitDefinitions: FANTASY_UNITS,
+    buildingOverrides: {},
+    techDefinitions: [],
     balanceMultipliers: {
       gatherRate: 1.0,
       unitHp: 1.3,

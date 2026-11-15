@@ -1,6 +1,6 @@
 import React from 'react';
 import { Play, Volume2, VolumeX, Sliders, Plus, Trash2, User, Bot, Shield, Map as MapIcon, Gem, Sparkles } from 'lucide-react';
-import { CivilizationId, MapPresetId, MatchParticipant, ResourceRichness } from '../types/game';
+import { CivilizationId, EconomyMode, MapPresetId, MatchParticipant, ResourceRichness } from '../types/game';
 import { DEFAULT_PARTICIPANT_PALETTE } from '../game/rules';
 import { MAP_PRESETS } from '../game/mapGenerator';
 import { CIVILIZATION_LIST, getCivilizationConfig } from '../game/civilizations';
@@ -13,6 +13,8 @@ interface TitleScreenProps {
   onMapPresetChange: (preset: MapPresetId) => void;
   resourceRichness: ResourceRichness;
   onResourceRichnessChange: (richness: ResourceRichness) => void;
+  economyMode: EconomyMode;
+  onEconomyModeChange: (mode: EconomyMode) => void;
   onStart: (participants: MatchParticipant[]) => void;
   onOpenMods: () => void;
   isMuted: boolean;
@@ -26,6 +28,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onMapPresetChange,
   resourceRichness,
   onResourceRichnessChange,
+  economyMode,
+  onEconomyModeChange,
   onStart,
   onOpenMods,
   isMuted,
@@ -257,6 +261,35 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   }`}
                 >
                   豐富資源
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between flex-wrap gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+              <div>
+                <div className="text-xs font-bold text-emerald-300">經濟規則</div>
+                <div className="text-[10px] text-slate-400">經典平衡或加速測試經濟發展</div>
+              </div>
+              <div className="flex items-center gap-1 rounded-lg bg-slate-900 p-0.5 border border-slate-800">
+                <button
+                  type="button"
+                  data-economy-mode="classic"
+                  onClick={() => onEconomyModeChange('classic')}
+                  className={`px-3 py-1.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                    economyMode === 'classic' ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  經典經濟
+                </button>
+                <button
+                  type="button"
+                  data-economy-mode="economic_sandbox"
+                  onClick={() => onEconomyModeChange('economic_sandbox')}
+                  className={`px-3 py-1.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                    economyMode === 'economic_sandbox' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  經濟沙盒
                 </button>
               </div>
             </div>

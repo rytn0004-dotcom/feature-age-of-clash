@@ -14,6 +14,9 @@ export type CivilizationId = 'medieval' | 'anime' | 'fantasy';
 export type MapPresetId = 'river_valley' | 'highland_basin' | 'twin_lakes';
 export type ResourceRichness = 'standard' | 'abundant';
 
+/** Match ruleset: classic keeps the original economy; sandbox accelerates economic experimentation. */
+export type EconomyMode = 'classic' | 'economic_sandbox';
+
 export interface MatchParticipant {
   id: string;
   name: string;
@@ -70,6 +73,10 @@ export interface UnitDefinition {
   id: string;
   name: string;
   factionPack: string; // 'medieval' | 'anime' | 'fantasy' | 'custom'
+  /** Marks a commander/hero-style unit in the roster and editor. */
+  isHero?: boolean;
+  /** Existing building templates that may train this custom unit. */
+  availableInBuildings?: BuildingType[];
   category: UnitCategory;
   description: string;
   stats: UnitStats;
@@ -215,7 +222,13 @@ export interface GameMod {
   description: string;
   version: string;
   enabled: boolean;
+  /** The civilization this pack extends; shared packs contribute to every civilization. */
+  civilizationId?: CivilizationId | 'shared';
   unitDefinitions: UnitDefinition[];
+  /** Optional per-pack overrides for existing building templates. */
+  buildingOverrides?: Partial<Record<BuildingType, Partial<BuildingDefinition>>>;
+  /** Additional technologies contributed by this pack. */
+  techDefinitions?: TechDefinition[];
   balanceMultipliers: {
     gatherRate: number;
     unitHp: number;

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   AgeLevel,
+  EconomyMode,
+  BuildingDefinition,
   BuildingEntity,
   BuildingType,
   CivilizationId,
@@ -22,6 +24,7 @@ import {
   UnitEntity,
 } from '../types/game';
 import { DEFAULT_BUILDINGS, INITIAL_MODS } from './mods';
+import { validateAndNormalizeGameMods } from './modValidation';
 import {
   applyCivilizationAndTechStats,
   canUnitGainXp,
@@ -70,6 +73,7 @@ import {
   MatchWinnerSummary,
   resolveMatchOutcome,
   selectClusterFocusTarget,
+  selectEconomyRebalancePlan,
   selectOptimalCombatTarget,
 } from './rules';
 import {
@@ -158,6 +162,7 @@ export class RtsEngine {
   // Map Preset & Terrain Obstacles
   public mapPreset: MapPresetId = 'river_valley';
   public resourceRichness: ResourceRichness = 'standard';
+  public economyMode: EconomyMode = 'classic';
   public mapLayout: MapLayoutResult | null = null;
   private environmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
@@ -288,6 +293,7 @@ export class RtsEngine {
 
   constructor(container: HTMLElement) {
     this.container = container;
+    this.restoreSavedMods();
     this.initThree();
     this.setupWorld();
     this.bindEvents();
@@ -617,6 +623,235 @@ export class RtsEngine {
     return getCivilizationConfig(this.getParticipant(factionId)?.civilization).id;
   }
 
+  private modScope(mod: GameMod): CivilizationId | 'shared' {
+    if (mod.civilizationId) return mod.civilizationId;
+    const legacyScope = mod.id.startsWith('mod_') ? mod.id.slice(4) : '';
+    return legacyScope === 'medieval' || legacyScope === 'anime' || legacyScope === 'fantasy'
+      ? legacyScope
+      : 'shared';
+  }
+
+  private modAppliesToFaction(mod: GameMod, faction: FactionId): boolean {
+    if (!mod.enabled) return false;
+    const scope = this.modScope(mod);
+    return scope === 'shared' || scope === this.getCivilizationForFaction(faction);
+  }
+
+  public getCustomTechDefinitions(faction: FactionId): TechDefinition[] {
+    return this.activeMods
+      .filter((mod) => this.modAppliesToFaction(mod, faction))
+      .flatMap((mod) => mod.techDefinitions || []);
+  }
+
+  public findTechDefinition(techId: string, faction: FactionId): TechDefinition | undefined {
+    return findTechDef(techId, this.getCustomTechDefinitions(faction));
+  }
+
+  public getAvailableTechsForBuilding(faction: FactionId, buildingType: BuildingType): TechDefinition[] {
+    const civ = this.getCivilizationForFaction(faction);
+    return getAvailableTechsForBuilding(
+      buildingType,
+      civ,
+      this.getResearchedTechs(faction),
+      (this.ageByFaction[faction] || 1) as AgeLevel,
+      this.getCustomTechDefinitions(faction)
+    );
+  }
+
+  public getAllTechsForBuilding(faction: FactionId, buildingType: BuildingType): TechDefinition[] {
+    return getAllTechsForBuilding(
+      buildingType,
+      this.getCivilizationForFaction(faction),
+      this.getCustomTechDefinitions(faction)
+    );
+  }
+
+  public getBuildingDefinition(type: BuildingType, faction?: FactionId): BuildingDefinition {
+    const base = DEFAULT_BUILDINGS[type];
+    if (!base) throw new Error(`Unknown building type: ${String(type)}`);
+    let resolved: BuildingDefinition = {
+      ...base,
+      cost: { ...base.cost },
+      trainableUnits: [...base.trainableUnits],
+    };
+
+    for (const mod of this.activeMods) {
+      if (!mod.enabled) continue;
+      if (faction && !this.modAppliesToFaction(mod, faction)) continue;
+      if (!faction && this.modScope(mod) !== 'shared') continue;
+      const override = mod.buildingOverrides?.[type];
+      if (!override) continue;
+      resolved = {
+        ...resolved,
+        ...override,
+        id: type,
+        cost: { ...resolved.cost, ...(override.cost || {}) },
+        trainableUnits: override.trainableUnits
+          ? [...override.trainableUnits]
+          : [...resolved.trainableUnits],
+      };
+    }
+
+    if (faction) {
+      const civ = this.getCivilizationForFaction(faction);
+      const civConfig = getCivilizationConfig(civ);
+      const applicableMods = this.activeMods.filter((mod) => this.modAppliesToFaction(mod, faction));
+      const hasExplicitTrainableOverride = applicableMods.some(
+        (mod) => mod.buildingOverrides?.[type]?.trainableUnits !== undefined
+      );
+      const factionTrainables = hasExplicitTrainableOverride
+        ? resolved.trainableUnits
+        : getTrainableUnitsForBuilding(type, civ, resolved.trainableUnits);
+      const customTrainables = applicableMods.flatMap((mod) =>
+        mod.unitDefinitions
+          .filter((unit) => unit.availableInBuildings?.includes(type))
+          .map((unit) => unit.id)
+      );
+      const customName = civConfig.buildingNames[type]
+        ? `${civConfig.buildingNames[type]} (${resolved.name.split('(')[1] || `${type})`}`
+        : resolved.name;
+      resolved = {
+        ...resolved,
+        name: customName,
+        trainableUnits: Array.from(new Set([...factionTrainables, ...customTrainables])),
+      };
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Returns a built-in replacement when a mod unit disappears or is disabled.
+   * Use the base Medieval roster so this fallback works for every civilization.
+   */
+  private getBuiltInFallbackUnitDef(
+    faction: FactionId,
+    category: UnitDefinition['category']
+  ): UnitDefinition | undefined {
+    const basePack = INITIAL_MODS.find((mod) => mod.id === 'mod_medieval') || INITIAL_MODS[0];
+    if (!basePack) return undefined;
+    const fallbackCategory = category === 'special' ? 'melee' : category;
+    const source = basePack.unitDefinitions.find((unit) => unit.category === fallbackCategory)
+      || basePack.unitDefinitions.find((unit) => unit.category === 'melee')
+      || basePack.unitDefinitions[0];
+    if (!source) return undefined;
+    const balancedStats = applyBalanceMultipliers(source.stats, basePack.balanceMultipliers);
+    return {
+      ...source,
+      isHero: false,
+      specialAbility: undefined,
+      stats: applyCivilizationAndTechStats(
+        balancedStats,
+        source.category,
+        this.getCivilizationForFaction(faction),
+        this.getResearchedTechs(faction),
+        this.getCustomTechDefinitions(faction)
+      ),
+    };
+  }
+
+  /**
+   * Re-resolves mod content in the current match.
+   * Orphaned units become built-in units of the same broad role. Queued units and
+   * in-progress technologies that no longer exist are cancelled instead of stalling.
+   * Current HP is kept proportionally when maximum HP changes.
+   */
+  public refreshModContent(): void {
+    for (const unit of this.units) {
+      if (unit.hp <= 0) continue;
+      let nextDef = this.findUnitDef(unit.unitDefId, unit.faction);
+      const wasOrphaned = !nextDef;
+      if (!nextDef) nextDef = this.getBuiltInFallbackUnitDef(unit.faction, unit.unitDef.category);
+      if (!nextDef) continue;
+
+      const hpRatio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
+      const previousCategory = unit.unitDef.category;
+      unit.unitDefId = nextDef.id;
+      unit.unitDef = JSON.parse(JSON.stringify(nextDef));
+      unit.maxHp = nextDef.stats.maxHp;
+      unit.hp = Math.max(1, Math.min(unit.maxHp, Math.round(unit.maxHp * hpRatio)));
+
+      if (wasOrphaned) {
+        unit.abilityCooldown = 0;
+        unit.buffSpeedUntil = undefined;
+        unit.buffDefenseBonus = undefined;
+        if (previousCategory !== nextDef.category && !unit.garrisonedInBuildingId) {
+          unit.state = 'idle';
+          unit.targetX = undefined;
+          unit.targetZ = undefined;
+          unit.targetEntityId = undefined;
+          unit.targetResourceNodeId = undefined;
+          unit.targetBuildingId = undefined;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          unit.attackMoveGoal = null;
+          unit.currentActionText = undefined;
+          if (nextDef.category !== 'worker') unit.carryingResource = undefined;
+        }
+      }
+
+      const oldMesh = this.unitMeshes.get(unit.id);
+      if (oldMesh) {
+        this.scene.remove(oldMesh);
+        const mesh = createUnitMesh(unit.unitDef, unit.faction);
+        mesh.position.set(unit.x, 0, unit.z);
+        Object.assign(mesh.userData, { type: 'unit', id: unit.id, faction: unit.faction, team: unit.team });
+        this.scene.add(mesh);
+        this.unitMeshes.set(unit.id, mesh);
+      }
+    }
+
+    for (const building of this.buildings) {
+      const originalQueueLength = building.queue.length;
+      building.queue = building.queue.filter((unitId) => !!this.findUnitDef(unitId, building.faction));
+      if (building.queue.length !== originalQueueLength) building.queueProgress = 0;
+      if (building.activeTechId && !this.findTechDefinition(building.activeTechId, building.faction)) {
+        building.activeTechId = null;
+        building.researchProgress = 0;
+      }
+
+      const nextDef = this.getBuildingDefinition(building.buildingType, building.faction);
+      const hpRatio = building.maxHp > 0 ? building.hp / building.maxHp : 1;
+      const researchedTechs = this.getResearchedTechs(building.faction);
+      let hpMultiplier = 1;
+      for (const techId of researchedTechs) {
+        const tech = this.findTechDefinition(techId, building.faction);
+        if (tech?.effect.buildingHpMultiplier) hpMultiplier *= tech.effect.buildingHpMultiplier;
+      }
+      building.buildingDef = nextDef;
+      building.maxHp = Math.round(nextDef.maxHp * hpMultiplier);
+      building.hp = Math.max(1, Math.min(building.maxHp, Math.round(building.maxHp * hpRatio)));
+    }
+
+    this.syncHumanResourcesAlias();
+    this.onResourcesChange?.(this.playerResources);
+    this.onSelectionChange?.();
+  }
+
+  public saveModsToLocalStorage(): boolean {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return false;
+      window.localStorage.setItem('age-of-clash-mods-v1', JSON.stringify(this.activeMods));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private restoreSavedMods(): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const raw = window.localStorage.getItem('age-of-clash-mods-v1');
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      const validated = validateAndNormalizeGameMods(parsed);
+      if (!validated.mods) return;
+      this.activeMods = validated.mods;
+    } catch {
+      // Ignore invalid browser storage and keep the built-in packs.
+    }
+  }
+
   public getResearchedTechs(factionId: FactionId): string[] {
     return this.researchedTechsByFaction[factionId] || [];
   }
@@ -694,10 +929,12 @@ export class RtsEngine {
   public setupWorld(
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
-    resourceRichness?: ResourceRichness
+    resourceRichness?: ResourceRichness,
+    economyMode?: EconomyMode
   ) {
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
+    if (economyMode) this.economyMode = economyMode;
 
     if (customParticipants && customParticipants.length >= 2) {
       this.participants = customParticipants.map((p) => ({ ...p }));
@@ -804,7 +1041,10 @@ export class RtsEngine {
     this.participants.forEach((p) => {
       const civId = getCivilizationConfig(p.civilization).id;
       p.civilization = civId;
-      this.resourcesByFaction[p.id] = { food: 250, wood: 200, gold: 120, stone: 60 };
+      this.resourcesByFaction[p.id] =
+        this.economyMode === 'economic_sandbox'
+          ? { food: 650, wood: 500, gold: 350, stone: 250 }
+          : { food: 250, wood: 200, gold: 120, stone: 60 };
       this.ageByFaction[p.id] = 1;
       this.landmarksByFaction[p.id] = [];
       this.researchedTechsByFaction[p.id] = [];
@@ -910,11 +1150,11 @@ export class RtsEngine {
       const tc = this.addBuilding('town_center', p.id, sp.x, sp.z, true);
       tc.rallyPoint = { x: sp.x + inX * 6, z: sp.z + inZ * 6 };
 
-      const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, DEFAULT_BUILDINGS.barracks.size);
+      const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, this.getBuildingDefinition('barracks', p.id).size);
       const barracks = this.addBuilding('barracks', p.id, barracksSpot.x, barracksSpot.z, true);
       barracks.rallyPoint = { x: barracksSpot.x + inX * 6.5, z: barracksSpot.z + inZ * 6.5 };
 
-      const farmSpot = findValidStarterSpot(sp.x - tanX * 8.5, sp.z - tanZ * 8.5, DEFAULT_BUILDINGS.farm.size);
+      const farmSpot = findValidStarterSpot(sp.x - tanX * 8.5, sp.z - tanZ * 8.5, this.getBuildingDefinition('farm', p.id).size);
       const farmBldg = this.addBuilding('farm', p.id, farmSpot.x, farmSpot.z, true);
       this.addResourceNode(`food_${farmBldg.id}`, 'food', farmSpot.x, farmSpot.z, 2500, true, 'farm');
 
@@ -953,7 +1193,7 @@ export class RtsEngine {
 
   public findUnitDef(id: string, faction?: FactionId): UnitDefinition | undefined {
     for (const mod of this.activeMods) {
-      if (!mod.enabled) continue;
+      if (!mod.enabled || (faction && !this.modAppliesToFaction(mod, faction))) continue;
       const found = mod.unitDefinitions.find((u) => u.id === id);
       if (found) {
         const modStats = applyBalanceMultipliers(found.stats, mod.balanceMultipliers);
@@ -962,7 +1202,7 @@ export class RtsEngine {
           const techs = this.getResearchedTechs(faction);
           return {
             ...found,
-            stats: applyCivilizationAndTechStats(modStats, found.category, civ, techs),
+            stats: applyCivilizationAndTechStats(modStats, found.category, civ, techs, this.getCustomTechDefinitions(faction)),
           };
         }
         return {
@@ -979,12 +1219,12 @@ export class RtsEngine {
     const civ = this.getCivilizationForFaction(faction);
     const techs = this.getResearchedTechs(faction);
     for (const mod of this.activeMods) {
-      if (!mod.enabled) continue;
+      if (!this.modAppliesToFaction(mod, faction)) continue;
       for (const u of mod.unitDefinitions) {
         const modStats = applyBalanceMultipliers(u.stats, mod.balanceMultipliers);
         list.push({
           ...u,
-          stats: applyCivilizationAndTechStats(modStats, u.category, civ, techs),
+          stats: applyCivilizationAndTechStats(modStats, u.category, civ, techs, this.getCustomTechDefinitions(faction)),
         });
       }
     }
@@ -1000,7 +1240,8 @@ export class RtsEngine {
         def.stats,
         def.category,
         this.getCivilizationForFaction(faction),
-        this.getResearchedTechs(faction)
+        this.getResearchedTechs(faction),
+        this.getCustomTechDefinitions(faction)
       ),
     };
 
@@ -1048,21 +1289,12 @@ export class RtsEngine {
     z: number,
     instant = false
   ): BuildingEntity {
-    const baseDef = DEFAULT_BUILDINGS[type];
+    const bDef = this.getBuildingDefinition(type, faction);
     const civ = this.getCivilizationForFaction(faction);
-    const civCfg = getCivilizationConfig(civ);
-    const customName = civCfg.buildingNames[type]
-      ? `${civCfg.buildingNames[type]} (${baseDef.name.split('(')[1] || `${type})`}`
-      : baseDef.name;
-    const bDef = {
-      ...baseDef,
-      name: customName,
-      trainableUnits: getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits),
-    };
     const researchedTechs = this.getResearchedTechs(faction);
     let hpMult = 1;
     researchedTechs.forEach((tId) => {
-      const t = findTechDef(tId);
+      const t = this.findTechDefinition(tId, faction);
       if (t?.effect.buildingHpMultiplier) hpMult *= t.effect.buildingHpMultiplier;
     });
     const finalMaxHp = Math.round(bDef.maxHp * hpMult);
@@ -1279,7 +1511,7 @@ export class RtsEngine {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     if (!bldg || !bldg.isConstructed || bldg.activeTechId) return false;
 
-    const tech = findTechDef(techId);
+    const tech = this.findTechDefinition(techId, bldg.faction);
     if (!tech) return false;
     if (tech.buildingType !== bldg.buildingType) return false;
 
@@ -1373,7 +1605,7 @@ export class RtsEngine {
     const researched = this.getResearchedTechs(unit.faction);
     let cdMult = 1;
     researched.forEach((tId) => {
-      const t = findTechDef(tId);
+      const t = this.findTechDefinition(tId, unit.faction);
       if (t?.effect.cooldownMultiplier) cdMult *= t.effect.cooldownMultiplier;
     });
     unit.abilityCooldown = Math.max(3, ab.cooldown * cdMult);
@@ -2256,7 +2488,7 @@ export class RtsEngine {
   }
 
   public startPlacement(type: BuildingType) {
-    const bDef = DEFAULT_BUILDINGS[type];
+    const bDef = this.getBuildingDefinition(type, this.humanPlayerId);
     if (!canAfford(this.playerResources, bDef.cost)) return;
 
     this.placementBuildingType = type;
@@ -2288,7 +2520,7 @@ export class RtsEngine {
 
   public confirmPlacement(x: number, z: number): boolean {
     if (!this.placementBuildingType) return false;
-    const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
+    const bDef = this.getBuildingDefinition(this.placementBuildingType, this.humanPlayerId);
     const humanRes = this.getResourcesForFaction(this.humanPlayerId);
     if (!canAfford(humanRes, bDef.cost)) {
       this.cancelPlacement();
@@ -3142,7 +3374,8 @@ export class RtsEngine {
         unit.carryingResource = { type: node.resourceType, amount: 0 };
       }
 
-      const gatherRate = unit.unitDef.stats.gatherSpeed || 2;
+      const modeGatherMultiplier = this.economyMode === 'economic_sandbox' ? 1.25 : 1;
+      const gatherRate = (unit.unitDef.stats.gatherSpeed || 2) * modeGatherMultiplier;
       const prevAmount = node.amount;
       const deltaGather = Math.min(node.amount, gatherRate * dt);
       unit.carryingResource.amount += deltaGather;
@@ -3779,7 +4012,7 @@ export class RtsEngine {
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
-        const tech = findTechDef(bldg.activeTechId);
+        const tech = this.findTechDefinition(bldg.activeTechId, bldg.faction);
         if (tech) {
           bldg.researchProgress = (bldg.researchProgress || 0) + (speedBonusMult / tech.researchTime) * dt;
           if (bldg.researchProgress >= 1) {
@@ -4440,6 +4673,7 @@ export class RtsEngine {
   // ------------------ AI TACTICS EVALUATOR ------------------
 
   private findSafeAiBuildSpot(
+    faction: FactionId,
     anchorX: number,
     anchorZ: number,
     bType: BuildingType,
@@ -4447,7 +4681,7 @@ export class RtsEngine {
     minDist = 7.5,
     maxDist = 17
   ): { x: number; z: number } | null {
-    const bDef = DEFAULT_BUILDINGS[bType];
+    const bDef = this.getBuildingDefinition(bType, faction);
     if (!bDef) return null;
     const obs = this.getTerrainNavObstacles();
     const baseAngle = preferredAngle ?? Math.random() * Math.PI * 2;
@@ -4487,7 +4721,7 @@ export class RtsEngine {
     anchorZ: number,
     preferredAngle?: number
   ): boolean {
-    const bDef = DEFAULT_BUILDINGS[bType];
+    const bDef = this.getBuildingDefinition(bType, aiId);
     const aiRes = this.getResourcesForFaction(aiId);
     if (!bDef || !canAfford(aiRes, bDef.cost)) return false;
 
@@ -4496,7 +4730,7 @@ export class RtsEngine {
       aiWorkers.find((w) => w.hp > 0 && w.state !== 'building' && w.state !== 'returning_resource');
     if (!builder) return false;
 
-    const spot = this.findSafeAiBuildSpot(anchorX, anchorZ, bType, preferredAngle);
+    const spot = this.findSafeAiBuildSpot(aiId, anchorX, anchorZ, bType, preferredAngle);
     if (!spot) return false;
 
     this.resourcesByFaction[aiId] = deductCost(aiRes, bDef.cost);
@@ -4558,8 +4792,6 @@ export class RtsEngine {
   }
 
   private evaluateAiLogic() {
-    const activeRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
-
     for (const participant of this.participants) {
       if (participant.controller !== 'ai') continue;
 
@@ -4670,6 +4902,9 @@ export class RtsEngine {
         enemyArmyCount,
       };
 
+      const activeRules = this.activeMods
+        .filter((mod) => this.modAppliesToFaction(mod, aiId))
+        .flatMap((mod) => mod.aiRules || []);
       const plan = evaluateAiPlan(activeRules, snapshot);
       const gatherFocus = plan.gatherAction?.targetId || (aiWorkers.length >= 8 ? 'military_eco' : 'balanced_eco');
 
@@ -4693,6 +4928,7 @@ export class RtsEngine {
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
         const node =
           findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, prefType, 34) ||
+          findClosestResourceNode(worker.x, worker.z, this.resourceNodes, prefType) ||
           findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, undefined, 48) ||
           findClosestResourceNode(worker.x, worker.z, this.resourceNodes);
         if (node) {
@@ -4719,20 +4955,32 @@ export class RtsEngine {
         assignWorkerToType(w, bestType);
       }
 
-      // Gently rebalance 1 surplus gatherer per tick if AI is starving for food/wood
-      if (aiRes.food < 75 && activeCounts.food < desiredAlloc.food) {
-        const surplusType = (['stone', 'gold', 'wood'] as ResourceType[]).find(
-          (t) => activeCounts[t] > desiredAlloc[t] + 1
-        );
-        if (surplusType) {
-          const reassignable = aiActiveWorkers.find((w) => {
-            if (w.state !== 'gathering' || !w.targetResourceNodeId) return false;
-            const n = this.resourceNodes.find((rn) => rn.id === w.targetResourceNodeId);
-            return n?.resourceType === surplusType;
-          });
-          if (reassignable) {
-            activeCounts[surplusType]--;
-            assignWorkerToType(reassignable, 'food');
+      // Rebalance one worker per AI cycle across all four resources. This avoids
+      // stockpiling one resource while another is blocking construction or research.
+      const availableResourceTypes = (['food', 'wood', 'gold', 'stone'] as ResourceType[]).filter((type) =>
+        this.resourceNodes.some((node) => node.amount > 0 && node.resourceType === type)
+      );
+      const rebalancePlan = selectEconomyRebalancePlan(
+        activeCounts,
+        desiredAlloc,
+        availableResourceTypes,
+        2
+      );
+      if (rebalancePlan) {
+        const reassignable = aiActiveWorkers.find((worker) => {
+          if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
+          const node = this.resourceNodes.find((resource) => resource.id === worker.targetResourceNodeId);
+          return node?.resourceType === rebalancePlan.from;
+        });
+        if (reassignable) {
+          activeCounts[rebalancePlan.from]--;
+          reassignable.targetResourceNodeId = undefined;
+          reassignable.waypoints = undefined;
+          if (reassignable.carryingResource && reassignable.carryingResource.amount > 0) {
+            reassignable.state = 'returning_resource';
+            reassignable.currentActionText = '🏃 送回已採集資源';
+          } else {
+            assignWorkerToType(reassignable, rebalancePlan.to);
           }
         }
       }
@@ -4798,7 +5046,7 @@ export class RtsEngine {
       const researched = this.getResearchedTechs(aiId);
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
-        const techs = getAvailableTechsForBuilding(b.buildingType, aiCiv.id, researched, aiAge as AgeLevel);
+        const techs = this.getAvailableTechsForBuilding(aiId, b.buildingType);
         if (techs.length > 0 && canAfford(this.getResourcesForFaction(aiId), techs[0].cost)) {
           this.startResearch(b.id, techs[0].id);
           break;
@@ -5028,7 +5276,7 @@ export class RtsEngine {
                   return;
                 }
                 const bCiv = bldg.civilization || this.getCivilizationForFaction(bldg.faction);
-                const techIds = getAllTechsForBuilding(bldg.buildingType, bCiv).map((t) => t.id);
+                const techIds = this.getAllTechsForBuilding(bldg.faction, bldg.buildingType).map((t) => t.id);
                 const techToResearch = findTechIdByHotkey(keyLabel, techIds);
                 if (techToResearch) {
                   this.startResearch(bldg.id, techToResearch);
@@ -5100,7 +5348,7 @@ export class RtsEngine {
   }
 
   public advanceAge(faction: FactionId, landmarkType: LandmarkType): void {
-    const landmarkDef = DEFAULT_BUILDINGS[landmarkType];
+    const landmarkDef = this.getBuildingDefinition(landmarkType, faction);
     const currentAge = this.ageByFaction[faction] || 1;
     const targetAge = landmarkDef?.landmarkAgeAdvance || ((currentAge + 1) as AgeLevel);
     this.ageByFaction[faction] = targetAge;

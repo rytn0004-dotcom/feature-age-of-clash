@@ -423,10 +423,11 @@ export function getAvailableTechsForBuilding(
   bType: BuildingType,
   civId?: CivilizationId,
   researchedIds: string[] = [],
-  currentAge: AgeLevel = 1
+  currentAge: AgeLevel = 1,
+  extraTechs: TechDefinition[] = []
 ): TechDefinition[] {
   const resolvedCiv = getCivilizationConfig(civId).id;
-  return CIVILIZATION_TECHS.filter(
+  return [...CIVILIZATION_TECHS, ...extraTechs].filter(
     (tech) =>
       tech.buildingType === bType &&
       (tech.civId === resolvedCiv || tech.civId === 'shared') &&
@@ -437,16 +438,17 @@ export function getAvailableTechsForBuilding(
 
 export function getAllTechsForBuilding(
   bType: BuildingType,
-  civId?: CivilizationId
+  civId?: CivilizationId,
+  extraTechs: TechDefinition[] = []
 ): TechDefinition[] {
   const resolvedCiv = getCivilizationConfig(civId).id;
-  return CIVILIZATION_TECHS.filter(
+  return [...CIVILIZATION_TECHS, ...extraTechs].filter(
     (tech) => tech.buildingType === bType && (tech.civId === resolvedCiv || tech.civId === 'shared')
   );
 }
 
-export function findTechDef(techId: string): TechDefinition | undefined {
-  return CIVILIZATION_TECHS.find((t) => t.id === techId);
+export function findTechDef(techId: string, extraTechs: TechDefinition[] = []): TechDefinition | undefined {
+  return CIVILIZATION_TECHS.find((t) => t.id === techId) || extraTechs.find((t) => t.id === techId);
 }
 
 /**
@@ -456,7 +458,8 @@ export function applyCivilizationAndTechStats(
   baseStats: UnitStats,
   category: UnitCategory,
   civId: CivilizationId | undefined,
-  researchedTechIds: string[]
+  researchedTechIds: string[],
+  extraTechs: TechDefinition[] = []
 ): UnitStats {
   const cfg = getCivilizationConfig(civId);
   let maxHp = baseStats.maxHp * (cfg.passiveBonuses.hpMultiplier || 1);
@@ -469,7 +472,7 @@ export function applyCivilizationAndTechStats(
   let buildingAttack = baseStats.buildingAttack;
 
   for (const techId of researchedTechIds) {
-    const tech = findTechDef(techId);
+    const tech = findTechDef(techId, extraTechs);
     if (!tech) continue;
     if (tech.targetCategories && !tech.targetCategories.includes(category)) continue;
 

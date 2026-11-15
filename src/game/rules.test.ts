@@ -12,7 +12,9 @@ import {
   findClosestResourceNode,
   findClosestEnemy,
 } from './rules';
-import { AiRule, ResourceNode, EntityCommon } from '../types/game';
+import { AiRule, ResourceNode, EntityCommon, TechDefinition, UnitStats, GameMod } from '../types/game';
+import { INITIAL_MODS } from './mods';
+import { validateAndNormalizeGameMods, validateGameMods } from './modValidation';
 
 test('economy: canAfford accurately checks resource amounts', () => {
   const current = { food: 100, wood: 50, gold: 20, stone: 0 };
@@ -635,6 +637,35 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
   assert.equal(starvedAlloc.food + starvedAlloc.wood + starvedAlloc.gold + starvedAlloc.stone, 8);
   assert.ok(starvedAlloc.food >= 4, `Expected >=4 workers on food when starving, got ${JSON.stringify(starvedAlloc)}`);
+
+  // Overstocked resources should lose allocation weight while every worker remains assigned.
+  const stockpiledAlloc = computeAiWorkerAllocation(
+    { food: 1800, wood: 1500, gold: 1300, stone: 1000 },
+    11,
+    'military_eco',
+    4
+  );
+  assert.equal(
+    stockpiledAlloc.food + stockpiledAlloc.wood + stockpiledAlloc.gold + stockpiledAlloc.stone,
+    11
+  );
+  assert.ok(stockpiledAlloc.stone <= 2, `Expected low stone allocation with a large stockpile, got ${JSON.stringify(stockpiledAlloc)}`);
+
+  const { selectEconomyRebalancePlan } = await import('./rules');
+  const rebalance = selectEconomyRebalancePlan(
+    { food: 1, wood: 5, gold: 1, stone: 1 },
+    { food: 4, wood: 1, gold: 1, stone: 1 },
+    ['food', 'wood']
+  );
+  assert.deepEqual(rebalance, { from: 'wood', to: 'food' });
+  assert.equal(
+    selectEconomyRebalancePlan(
+      { food: 2, wood: 2, gold: 2, stone: 2 },
+      { food: 2, wood: 2, gold: 2, stone: 2 },
+      ['food', 'wood', 'gold', 'stone']
+    ),
+    null
+  );
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
@@ -978,3 +1009,149 @@ test('siege-and-garrison: anti-building armor blocks early soldiers while siege 
 
 
 
+
+test('mods: faction-specific custom technologies are listed and apply to units', async () => {
+  const {
+    getAvailableTechsForBuilding,
+    getAllTechsForBuilding,
+    findTechDef,
+    applyCivilizationAndTechStats,
+  } = await import('./civilizations');
+
+  const customTech: TechDefinition = {
+    id: 'custom_test_gathering',
+    civId: 'anime',
+    buildingType: 'barracks',
+    name: '靈脈物流術',
+    icon: '✨',
+    description: '改善村民採集效率。',
+    effectLabel: '採集速度 +20%',
+    cost: { food: 100, wood: 50, gold: 25, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['worker'],
+    effect: { gatherMultiplier: 1.2 },
+  };
+
+  assert.equal(
+    getAvailableTechsForBuilding('barracks', 'anime', [], 2, [customTech]).some((tech) => tech.id === customTech.id),
+    false
+  );
+  assert.equal(
+    getAvailableTechsForBuilding('barracks', 'anime', [], 3, [customTech]).some((tech) => tech.id === customTech.id),
+    true
+  );
+  assert.equal(getAllTechsForBuilding('barracks', 'anime', [customTech]).some((tech) => tech.id === customTech.id), true);
+  assert.equal(findTechDef(customTech.id, [customTech])?.name, customTech.name);
+
+  const baseStats: UnitStats = {
+    maxHp: 50,
+    attack: 4,
+    defense: 1,
+    range: 1,
+    speed: 3,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 0, stone: 0 },
+    trainTime: 10,
+    gatherSpeed: 2,
+    carryCapacity: 10,
+  };
+  const boosted = applyCivilizationAndTechStats(baseStats, 'worker', 'anime', [customTech.id], [customTech]);
+  assert.ok(boosted.gatherSpeed >= 2.63, `Expected custom technology to increase gather speed, got ${boosted.gatherSpeed}`);
+});
+
+
+
+test('mods: deep validation accepts shipped packs and normalizes legacy metadata', () => {
+  const shipped = validateAndNormalizeGameMods(INITIAL_MODS);
+  assert.deepEqual(shipped.errors, []);
+  assert.equal(shipped.mods?.length, INITIAL_MODS.length);
+  assert.equal(shipped.mods?.[0].civilizationId, 'medieval');
+
+  const legacy = JSON.parse(JSON.stringify(INITIAL_MODS[0])) as Record<string, unknown>;
+  delete legacy.civilizationId;
+  delete legacy.buildingOverrides;
+  delete legacy.techDefinitions;
+  const normalized = validateAndNormalizeGameMods([legacy]);
+  assert.deepEqual(normalized.errors, []);
+  assert.equal(normalized.mods?.[0].civilizationId, 'medieval');
+  assert.deepEqual(normalized.mods?.[0].buildingOverrides, {});
+  assert.deepEqual(normalized.mods?.[0].techDefinitions, []);
+});
+
+test('mods: deep validation rejects extreme abilities, unsafe tech effects and duplicate IDs', () => {
+  const safeBase = JSON.parse(JSON.stringify(INITIAL_MODS[0])) as GameMod;
+  safeBase.id = 'custom_validation_pack';
+  safeBase.name = 'Validation Pack';
+  safeBase.unitDefinitions = [{
+    id: 'custom_validation_hero',
+    name: 'Validation Hero',
+    factionPack: 'custom',
+    isHero: true,
+    category: 'melee',
+    description: 'A test-only unit.',
+    stats: {
+      maxHp: 100,
+      attack: 10,
+      defense: 2,
+      range: 1.5,
+      speed: 4,
+      attackRate: 1,
+      cost: { food: 50, wood: 0, gold: 25, stone: 0 },
+      trainTime: 10,
+      gatherSpeed: 0,
+      carryCapacity: 0,
+    },
+    visual: { color: '#ffffff', modelType: 'swordsman' },
+    specialAbility: {
+      name: 'Burst',
+      type: 'ki_burst',
+      cooldown: 10,
+      potency: 99999,
+      description: 'Unsafe potency should be rejected.',
+    },
+  }];
+  assert.ok(validateGameMods([safeBase]).some((error) => error.includes('威力')));
+
+  const unsafeTechPack = JSON.parse(JSON.stringify(safeBase)) as GameMod;
+  unsafeTechPack.unitDefinitions[0].specialAbility!.potency = 50;
+  unsafeTechPack.techDefinitions = [{
+    id: 'custom_validation_tech',
+    civId: 'shared',
+    buildingType: 'town_center',
+    name: 'Overclock',
+    icon: '⚡',
+    description: 'Test only',
+    effectLabel: 'Gather rate multiplier',
+    cost: { food: 100, wood: 0, gold: 0, stone: 0 },
+    researchTime: 10,
+    targetCategories: ['worker'],
+    effect: { gatherMultiplier: 99 },
+  }];
+  assert.ok(validateGameMods([unsafeTechPack]).some((error) => error.includes('gatherMultiplier')));
+
+  const duplicate = JSON.parse(JSON.stringify(unsafeTechPack)) as GameMod;
+  duplicate.id = 'another_custom_pack';
+  duplicate.unitDefinitions[0].id = unsafeTechPack.unitDefinitions[0].id;
+  assert.ok(validateGameMods([unsafeTechPack, duplicate]).some((error) => error.includes('單位 ID 重複')));
+});
+
+test('economy: rebalance planner ignores resources without active nodes', async () => {
+  const { selectEconomyRebalancePlan } = await import('./rules');
+  assert.equal(
+    selectEconomyRebalancePlan(
+      { food: 1, wood: 6, gold: 1, stone: 1 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['wood']
+    ),
+    null
+  );
+  assert.deepEqual(
+    selectEconomyRebalancePlan(
+      { food: 1, wood: 6, gold: 1, stone: 1 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['food', 'wood']
+    ),
+    { from: 'wood', to: 'food' }
+  );
+});
