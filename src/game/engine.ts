@@ -1072,7 +1072,7 @@ export class RtsEngine {
 
   public findUnitDef(id: string, faction?: FactionId): UnitDefinition | undefined {
     for (const mod of this.activeMods) {
-      if (!mod.enabled) continue;
+      if (!mod.enabled || (faction && !this.modAppliesToFaction(mod, faction))) continue;
       const found = mod.unitDefinitions.find((u) => u.id === id);
       if (found) {
         const modStats = applyBalanceMultipliers(found.stats, mod.balanceMultipliers);
@@ -1081,7 +1081,7 @@ export class RtsEngine {
           const techs = this.getResearchedTechs(faction);
           return {
             ...found,
-            stats: applyCivilizationAndTechStats(modStats, found.category, civ, techs),
+            stats: applyCivilizationAndTechStats(modStats, found.category, civ, techs, this.getCustomTechDefinitions(faction)),
           };
         }
         return {
@@ -1098,12 +1098,12 @@ export class RtsEngine {
     const civ = this.getCivilizationForFaction(faction);
     const techs = this.getResearchedTechs(faction);
     for (const mod of this.activeMods) {
-      if (!mod.enabled) continue;
+      if (!this.modAppliesToFaction(mod, faction)) continue;
       for (const u of mod.unitDefinitions) {
         const modStats = applyBalanceMultipliers(u.stats, mod.balanceMultipliers);
         list.push({
           ...u,
-          stats: applyCivilizationAndTechStats(modStats, u.category, civ, techs),
+          stats: applyCivilizationAndTechStats(modStats, u.category, civ, techs, this.getCustomTechDefinitions(faction)),
         });
       }
     }
@@ -1119,7 +1119,8 @@ export class RtsEngine {
         def.stats,
         def.category,
         this.getCivilizationForFaction(faction),
-        this.getResearchedTechs(faction)
+        this.getResearchedTechs(faction),
+        this.getCustomTechDefinitions(faction)
       ),
     };
 
@@ -1167,21 +1168,30 @@ export class RtsEngine {
     z: number,
     instant = false
   ): BuildingEntity {
-    const baseDef = DEFAULT_BUILDINGS[type];
+    const baseDef = this.getBuildingDefinition(type, faction);
     const civ = this.getCivilizationForFaction(faction);
     const civCfg = getCivilizationConfig(civ);
     const customName = civCfg.buildingNames[type]
       ? `${civCfg.buildingNames[type]} (${baseDef.name.split('(')[1] || `${type})`}`
       : baseDef.name;
+    const customTrainables = this.activeMods
+      .filter((mod) => this.modAppliesToFaction(mod, faction))
+      .flatMap((mod) =>
+        mod.unitDefinitions
+          .filter((unit) => unit.availableInBuildings?.includes(type))
+          .map((unit) => unit.id)
+      );
     const bDef = {
       ...baseDef,
       name: customName,
-      trainableUnits: getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits),
+      trainableUnits: Array.from(
+        new Set([...getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits), ...customTrainables])
+      ),
     };
     const researchedTechs = this.getResearchedTechs(faction);
     let hpMult = 1;
     researchedTechs.forEach((tId) => {
-      const t = findTechDef(tId);
+      const t = this.findTechDefinition(tId, faction);
       if (t?.effect.buildingHpMultiplier) hpMult *= t.effect.buildingHpMultiplier;
     });
     const finalMaxHp = Math.round(bDef.maxHp * hpMult);
@@ -1398,7 +1408,7 @@ export class RtsEngine {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     if (!bldg || !bldg.isConstructed || bldg.activeTechId) return false;
 
-    const tech = findTechDef(techId);
+    const tech = this.findTechDefinition(techId, bldg.faction);
     if (!tech) return false;
     if (tech.buildingType !== bldg.buildingType) return false;
 
@@ -1492,7 +1502,7 @@ export class RtsEngine {
     const researched = this.getResearchedTechs(unit.faction);
     let cdMult = 1;
     researched.forEach((tId) => {
-      const t = findTechDef(tId);
+      const t = this.findTechDefinition(tId, unit.faction);
       if (t?.effect.cooldownMultiplier) cdMult *= t.effect.cooldownMultiplier;
     });
     unit.abilityCooldown = Math.max(3, ab.cooldown * cdMult);
@@ -2375,7 +2385,7 @@ export class RtsEngine {
   }
 
   public startPlacement(type: BuildingType) {
-    const bDef = DEFAULT_BUILDINGS[type];
+    const bDef = this.getBuildingDefinition(type, this.humanPlayerId);
     if (!canAfford(this.playerResources, bDef.cost)) return;
 
     this.placementBuildingType = type;
@@ -2407,7 +2417,7 @@ export class RtsEngine {
 
   public confirmPlacement(x: number, z: number): boolean {
     if (!this.placementBuildingType) return false;
-    const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
+    const bDef = this.getBuildingDefinition(this.placementBuildingType, this.humanPlayerId);
     const humanRes = this.getResourcesForFaction(this.humanPlayerId);
     if (!canAfford(humanRes, bDef.cost)) {
       this.cancelPlacement();
@@ -3899,7 +3909,7 @@ export class RtsEngine {
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
-        const tech = findTechDef(bldg.activeTechId);
+        const tech = this.findTechDefinition(bldg.activeTechId, bldg.faction);
         if (tech) {
           bldg.researchProgress = (bldg.researchProgress || 0) + (speedBonusMult / tech.researchTime) * dt;
           if (bldg.researchProgress >= 1) {
@@ -4560,6 +4570,7 @@ export class RtsEngine {
   // ------------------ AI TACTICS EVALUATOR ------------------
 
   private findSafeAiBuildSpot(
+    faction: FactionId,
     anchorX: number,
     anchorZ: number,
     bType: BuildingType,
@@ -4567,7 +4578,7 @@ export class RtsEngine {
     minDist = 7.5,
     maxDist = 17
   ): { x: number; z: number } | null {
-    const bDef = DEFAULT_BUILDINGS[bType];
+    const bDef = this.getBuildingDefinition(bType, faction);
     if (!bDef) return null;
     const obs = this.getTerrainNavObstacles();
     const baseAngle = preferredAngle ?? Math.random() * Math.PI * 2;
@@ -4607,7 +4618,7 @@ export class RtsEngine {
     anchorZ: number,
     preferredAngle?: number
   ): boolean {
-    const bDef = DEFAULT_BUILDINGS[bType];
+    const bDef = this.getBuildingDefinition(bType, aiId);
     const aiRes = this.getResourcesForFaction(aiId);
     if (!bDef || !canAfford(aiRes, bDef.cost)) return false;
 
@@ -4616,7 +4627,7 @@ export class RtsEngine {
       aiWorkers.find((w) => w.hp > 0 && w.state !== 'building' && w.state !== 'returning_resource');
     if (!builder) return false;
 
-    const spot = this.findSafeAiBuildSpot(anchorX, anchorZ, bType, preferredAngle);
+    const spot = this.findSafeAiBuildSpot(aiId, anchorX, anchorZ, bType, preferredAngle);
     if (!spot) return false;
 
     this.resourcesByFaction[aiId] = deductCost(aiRes, bDef.cost);
@@ -4918,7 +4929,7 @@ export class RtsEngine {
       const researched = this.getResearchedTechs(aiId);
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
-        const techs = getAvailableTechsForBuilding(b.buildingType, aiCiv.id, researched, aiAge as AgeLevel);
+        const techs = this.getAvailableTechsForBuilding(aiId, b.buildingType);
         if (techs.length > 0 && canAfford(this.getResourcesForFaction(aiId), techs[0].cost)) {
           this.startResearch(b.id, techs[0].id);
           break;
@@ -5148,7 +5159,7 @@ export class RtsEngine {
                   return;
                 }
                 const bCiv = bldg.civilization || this.getCivilizationForFaction(bldg.faction);
-                const techIds = getAllTechsForBuilding(bldg.buildingType, bCiv).map((t) => t.id);
+                const techIds = this.getAllTechsForBuilding(bldg.faction, bldg.buildingType).map((t) => t.id);
                 const techToResearch = findTechIdByHotkey(keyLabel, techIds);
                 if (techToResearch) {
                   this.startResearch(bldg.id, techToResearch);
@@ -5220,7 +5231,7 @@ export class RtsEngine {
   }
 
   public advanceAge(faction: FactionId, landmarkType: LandmarkType): void {
-    const landmarkDef = DEFAULT_BUILDINGS[landmarkType];
+    const landmarkDef = this.getBuildingDefinition(landmarkType, faction);
     const currentAge = this.ageByFaction[faction] || 1;
     const targetAge = landmarkDef?.landmarkAgeAdvance || ((currentAge + 1) as AgeLevel);
     this.ageByFaction[faction] = targetAge;
