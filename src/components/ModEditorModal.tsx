@@ -1218,7 +1218,20 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                         <input
                           value={override.trainableUnits ? override.trainableUnits.join(', ') : ''}
                           placeholder={base.trainableUnits.join(', ')}
-                          onChange={(e) => patchBuildingOverride({ trainableUnits: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })}
+                          onChange={(e) => {
+                            const ids = e.target.value.split(',').map((value) => value.trim()).filter(Boolean);
+                            if (ids.length > 0) {
+                              patchBuildingOverride({ trainableUnits: ids });
+                            } else {
+                              updateSelectedMod((mod) => {
+                                const overrides = { ...(mod.buildingOverrides || {}) };
+                                const buildingOverride = { ...(overrides[selectedBuildingType] || {}) };
+                                delete buildingOverride.trainableUnits;
+                                overrides[selectedBuildingType] = buildingOverride;
+                                mod.buildingOverrides = overrides;
+                              });
+                            }
+                          }}
                           className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-white"
                         />
                       </label>
