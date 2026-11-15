@@ -1277,7 +1277,7 @@ export const HUD: React.FC<HUDProps> = ({
                       </div>
                       <div className="grid grid-cols-3 sm:grid-cols-5 gap-1">
                         {buildableTypes.map((bType) => {
-                          const bDef = DEFAULT_BUILDINGS[bType];
+                          const bDef = engine.getBuildingDefinition(bType, engine.getObservedFactionId());
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
                           const isCivUnique = !!bDef.civExclusive;
                           const hotkey = BUILDING_HOTKEYS[bType];
