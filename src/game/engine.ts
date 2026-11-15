@@ -4827,6 +4827,7 @@ export class RtsEngine {
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
         const node =
           findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, prefType, 34) ||
+          findClosestResourceNode(worker.x, worker.z, this.resourceNodes, prefType) ||
           findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, undefined, 48) ||
           findClosestResourceNode(worker.x, worker.z, this.resourceNodes);
         if (node) {
@@ -4874,7 +4875,7 @@ export class RtsEngine {
           activeCounts[rebalancePlan.from]--;
           reassignable.targetResourceNodeId = undefined;
           reassignable.waypoints = undefined;
-          if (reassignable.carryingResource && reassignable.carryingResource.amount >= 1) {
+          if (reassignable.carryingResource && reassignable.carryingResource.amount > 0) {
             reassignable.state = 'returning_resource';
             reassignable.currentActionText = '🏃 送回已採集資源';
           } else {
