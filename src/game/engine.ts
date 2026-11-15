@@ -4692,8 +4692,6 @@ export class RtsEngine {
   }
 
   private evaluateAiLogic() {
-    const activeRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
-
     for (const participant of this.participants) {
       if (participant.controller !== 'ai') continue;
 
@@ -4804,6 +4802,9 @@ export class RtsEngine {
         enemyArmyCount,
       };
 
+      const activeRules = this.activeMods
+        .filter((mod) => this.modAppliesToFaction(mod, aiId))
+        .flatMap((mod) => mod.aiRules || []);
       const plan = evaluateAiPlan(activeRules, snapshot);
       const gatherFocus = plan.gatherAction?.targetId || (aiWorkers.length >= 8 ? 'military_eco' : 'balanced_eco');
 
