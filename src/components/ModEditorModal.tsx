@@ -234,14 +234,47 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
     setTimeout(() => setCopySuccess(false), 2500);
   };
 
-  // Import JSON
+  // Import JSON with a minimal schema check before it reaches the game engine.
   const handleImportJson = () => {
     try {
-      const parsed = JSON.parse(jsonText);
-      if (Array.isArray(parsed)) {
-        setMods(parsed);
-        alert('模組配置匯入成功！點擊右上角「儲存並套用」即可生效。');
+      const parsed: unknown = JSON.parse(jsonText);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        alert('匯入失敗：請提供至少一個模組包。');
+        return;
       }
+
+      const candidates = parsed as Array<Partial<GameMod>>;
+      const valid = candidates.every((mod) =>
+        !!mod &&
+        typeof mod.id === 'string' &&
+        !!mod.id.trim() &&
+        typeof mod.name === 'string' &&
+        !!mod.name.trim() &&
+        Array.isArray(mod.unitDefinitions) &&
+        Array.isArray(mod.aiRules) &&
+        !!mod.balanceMultipliers &&
+        ['gatherRate', 'unitHp', 'unitDamage', 'buildSpeed', 'moveSpeed'].every((key) =>
+          Number.isFinite(mod.balanceMultipliers?.[key as keyof GameMod['balanceMultipliers']])
+        )
+      );
+      const ids = candidates.map((mod) => mod.id);
+      if (!valid || new Set(ids).size !== ids.length) {
+        alert('匯入失敗：模組格式不完整，或模組 ID 重複。請檢查 JSON。');
+        return;
+      }
+
+      const normalized: GameMod[] = candidates.map((mod) => ({
+        ...(mod as GameMod),
+        enabled: mod.enabled !== false,
+        civilizationId: mod.civilizationId || 'shared',
+        buildingOverrides: mod.buildingOverrides || {},
+        techDefinitions: Array.isArray(mod.techDefinitions) ? mod.techDefinitions : [],
+        unitDefinitions: mod.unitDefinitions || [],
+        aiRules: mod.aiRules || [],
+      }));
+      setMods(normalized);
+      setSelectedModIndex(0);
+      alert('模組配置匯入成功！點擊右上角「儲存並套用」即可生效。');
     } catch {
       alert('JSON 格式錯誤，請檢查內容後重試。');
     }
@@ -562,7 +595,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div className="flex items-center gap-2">
                         <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: unit.visual.color }} />
                         <div>
-                          <div className="font-bold text-white text-sm">{unit.name}</div>
+                          <div className="font-bold text-white text-sm">{unit.name} {unit.isHero && <span className="text-[10px] text-amber-300">★ 英雄</span>}</div>
                           <div className="text-[11px] text-slate-400">{unit.description}</div>
                         </div>
                       </div>
