@@ -1174,19 +1174,22 @@ export class RtsEngine {
     const customName = civCfg.buildingNames[type]
       ? `${civCfg.buildingNames[type]} (${baseDef.name.split('(')[1] || `${type})`}`
       : baseDef.name;
-    const customTrainables = this.activeMods
-      .filter((mod) => this.modAppliesToFaction(mod, faction))
-      .flatMap((mod) =>
-        mod.unitDefinitions
-          .filter((unit) => unit.availableInBuildings?.includes(type))
-          .map((unit) => unit.id)
-      );
+    const applicableMods = this.activeMods.filter((mod) => this.modAppliesToFaction(mod, faction));
+    const customTrainables = applicableMods.flatMap((mod) =>
+      mod.unitDefinitions
+        .filter((unit) => unit.availableInBuildings?.includes(type))
+        .map((unit) => unit.id)
+    );
+    const hasExplicitTrainableOverride = applicableMods.some(
+      (mod) => mod.buildingOverrides?.[type]?.trainableUnits !== undefined
+    );
+    const factionTrainables = hasExplicitTrainableOverride
+      ? baseDef.trainableUnits
+      : getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits);
     const bDef = {
       ...baseDef,
       name: customName,
-      trainableUnits: Array.from(
-        new Set([...getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits), ...customTrainables])
-      ),
+      trainableUnits: Array.from(new Set([...factionTrainables, ...customTrainables])),
     };
     const researchedTechs = this.getResearchedTechs(faction);
     let hpMult = 1;
