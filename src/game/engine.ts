@@ -690,7 +690,67 @@ export class RtsEngine {
           : [...resolved.trainableUnits],
       };
     }
+
+    if (faction) {
+      const civ = this.getCivilizationForFaction(faction);
+      const civConfig = getCivilizationConfig(civ);
+      const applicableMods = this.activeMods.filter((mod) => this.modAppliesToFaction(mod, faction));
+      const hasExplicitTrainableOverride = applicableMods.some(
+        (mod) => mod.buildingOverrides?.[type]?.trainableUnits !== undefined
+      );
+      const factionTrainables = hasExplicitTrainableOverride
+        ? resolved.trainableUnits
+        : getTrainableUnitsForBuilding(type, civ, resolved.trainableUnits);
+      const customTrainables = applicableMods.flatMap((mod) =>
+        mod.unitDefinitions
+          .filter((unit) => unit.availableInBuildings?.includes(type))
+          .map((unit) => unit.id)
+      );
+      const customName = civConfig.buildingNames[type]
+        ? `${civConfig.buildingNames[type]} (${resolved.name.split('(')[1] || `${type})`}`
+        : resolved.name;
+      resolved = {
+        ...resolved,
+        name: customName,
+        trainableUnits: Array.from(new Set([...factionTrainables, ...customTrainables])),
+      };
+    }
+
     return resolved;
+  }
+
+  /**
+   * Re-resolves active mod data on existing entities after the user applies a mod pack.
+   * Current HP is kept proportionally when a unit/building's maximum HP changes.
+   */
+  public refreshModContent(): void {
+    for (const unit of this.units) {
+      if (unit.hp <= 0) continue;
+      const nextDef = this.findUnitDef(unit.unitDefId, unit.faction);
+      if (!nextDef) continue;
+      const hpRatio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
+      unit.unitDef = JSON.parse(JSON.stringify(nextDef));
+      unit.maxHp = nextDef.stats.maxHp;
+      unit.hp = Math.max(1, Math.min(unit.maxHp, Math.round(unit.maxHp * hpRatio)));
+    }
+
+    for (const building of this.buildings) {
+      const nextDef = this.getBuildingDefinition(building.buildingType, building.faction);
+      const hpRatio = building.maxHp > 0 ? building.hp / building.maxHp : 1;
+      const researchedTechs = this.getResearchedTechs(building.faction);
+      let hpMultiplier = 1;
+      for (const techId of researchedTechs) {
+        const tech = this.findTechDefinition(techId, building.faction);
+        if (tech?.effect.buildingHpMultiplier) hpMultiplier *= tech.effect.buildingHpMultiplier;
+      }
+      building.buildingDef = nextDef;
+      building.maxHp = Math.round(nextDef.maxHp * hpMultiplier);
+      building.hp = Math.max(1, Math.min(building.maxHp, Math.round(building.maxHp * hpRatio)));
+    }
+
+    this.syncHumanResourcesAlias();
+    this.onResourcesChange?.(this.playerResources);
+    this.onSelectionChange?.();
   }
 
   public saveModsToLocalStorage(): boolean {
@@ -1168,29 +1228,8 @@ export class RtsEngine {
     z: number,
     instant = false
   ): BuildingEntity {
-    const baseDef = this.getBuildingDefinition(type, faction);
+    const bDef = this.getBuildingDefinition(type, faction);
     const civ = this.getCivilizationForFaction(faction);
-    const civCfg = getCivilizationConfig(civ);
-    const customName = civCfg.buildingNames[type]
-      ? `${civCfg.buildingNames[type]} (${baseDef.name.split('(')[1] || `${type})`}`
-      : baseDef.name;
-    const applicableMods = this.activeMods.filter((mod) => this.modAppliesToFaction(mod, faction));
-    const customTrainables = applicableMods.flatMap((mod) =>
-      mod.unitDefinitions
-        .filter((unit) => unit.availableInBuildings?.includes(type))
-        .map((unit) => unit.id)
-    );
-    const hasExplicitTrainableOverride = applicableMods.some(
-      (mod) => mod.buildingOverrides?.[type]?.trainableUnits !== undefined
-    );
-    const factionTrainables = hasExplicitTrainableOverride
-      ? baseDef.trainableUnits
-      : getTrainableUnitsForBuilding(type, civ, baseDef.trainableUnits);
-    const bDef = {
-      ...baseDef,
-      name: customName,
-      trainableUnits: Array.from(new Set([...factionTrainables, ...customTrainables])),
-    };
     const researchedTechs = this.getResearchedTechs(faction);
     let hpMult = 1;
     researchedTechs.forEach((tId) => {
