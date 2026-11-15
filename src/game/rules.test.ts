@@ -1111,7 +1111,7 @@ test('mods: deep validation rejects extreme abilities, unsafe tech effects and d
       description: 'Unsafe potency should be rejected.',
     },
   }];
-  assert.ok(validateGameMods([safeBase]).some((error) => error.includes('potency')));
+  assert.ok(validateGameMods([safeBase]).some((error) => error.includes('威力')));
 
   const unsafeTechPack = JSON.parse(JSON.stringify(safeBase)) as GameMod;
   unsafeTechPack.unitDefinitions[0].specialAbility!.potency = 50;
