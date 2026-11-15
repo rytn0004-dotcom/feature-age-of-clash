@@ -104,8 +104,6 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
     });
   };
 
-  const handleAddModPack = handleAddModPack;
-
   // Toggle mod enabled
   const toggleModEnabled = (index: number) => {
     const updated = [...mods];
