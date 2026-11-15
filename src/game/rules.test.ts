@@ -635,6 +635,35 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
   assert.equal(starvedAlloc.food + starvedAlloc.wood + starvedAlloc.gold + starvedAlloc.stone, 8);
   assert.ok(starvedAlloc.food >= 4, `Expected >=4 workers on food when starving, got ${JSON.stringify(starvedAlloc)}`);
+
+  // Overstocked resources should lose allocation weight while every worker remains assigned.
+  const stockpiledAlloc = computeAiWorkerAllocation(
+    { food: 1800, wood: 1500, gold: 1300, stone: 1000 },
+    11,
+    'military_eco',
+    4
+  );
+  assert.equal(
+    stockpiledAlloc.food + stockpiledAlloc.wood + stockpiledAlloc.gold + stockpiledAlloc.stone,
+    11
+  );
+  assert.ok(stockpiledAlloc.stone <= 2, `Expected low stone allocation with a large stockpile, got ${JSON.stringify(stockpiledAlloc)}`);
+
+  const { selectEconomyRebalancePlan } = await import('./rules');
+  const rebalance = selectEconomyRebalancePlan(
+    { food: 1, wood: 5, gold: 1, stone: 1 },
+    { food: 4, wood: 1, gold: 1, stone: 1 },
+    ['food', 'wood']
+  );
+  assert.deepEqual(rebalance, { from: 'wood', to: 'food' });
+  assert.equal(
+    selectEconomyRebalancePlan(
+      { food: 2, wood: 2, gold: 2, stone: 2 },
+      { food: 2, wood: 2, gold: 2, stone: 2 },
+      ['food', 'wood', 'gold', 'stone']
+    ),
+    null
+  );
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
