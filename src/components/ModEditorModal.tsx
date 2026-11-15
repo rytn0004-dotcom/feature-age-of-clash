@@ -336,7 +336,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
             <Shield className="w-4 h-4" /> 科技與建築內容
           </button>
           <button
-            onClick={() => setActiveTab('ai')
+            onClick={() => setActiveTab('ai')}
             className={`py-3 px-4 text-xs font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors ${
               activeTab === 'ai'
                 ? 'border-amber-400 text-amber-300'
