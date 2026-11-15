@@ -19,6 +19,7 @@ import {
 import { RtsEngine } from '../game/engine';
 import { AiRule, BuildingDefinition, BuildingType, GameMod, TechDefinition, UnitDefinition, UnitCategory } from '../types/game';
 import { DEFAULT_BUILDINGS, INITIAL_MODS } from '../game/mods';
+import { validateAndNormalizeGameMods } from '../game/modValidation';
 
 interface ModEditorModalProps {
   engine: RtsEngine;
@@ -41,9 +42,14 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
 
   const currentMod = mods[selectedModIndex] || mods[0];
 
-  // Save changes to engine
+  // Validate the complete configuration before touching the running match.
   const handleSaveAndApply = () => {
-    engine.activeMods = JSON.parse(JSON.stringify(mods));
+    const validated = validateAndNormalizeGameMods(mods);
+    if (!validated.mods) {
+      alert('無法套用模組：\n' + validated.errors.slice(0, 8).join('\n'));
+      return;
+    }
+    engine.activeMods = JSON.parse(JSON.stringify(validated.mods));
     engine.refreshModContent();
     engine.saveModsToLocalStorage();
     onApply();
@@ -124,13 +130,18 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
 
   // Add / Edit Unit
   const handleSaveUnit = (unit: UnitDefinition) => {
-    const updated = [...mods];
+    const updated: GameMod[] = JSON.parse(JSON.stringify(mods));
     const unitList = updated[selectedModIndex].unitDefinitions;
     const existingIdx = unitList.findIndex((u) => u.id === unit.id);
     if (existingIdx >= 0) {
       unitList[existingIdx] = unit;
     } else {
       unitList.push(unit);
+    }
+    const validation = validateAndNormalizeGameMods(updated);
+    if (!validation.mods) {
+      alert('角色資料不符合安全範圍：\n' + validation.errors.slice(0, 8).join('\n'));
+      return;
     }
     setMods(updated);
     setEditingUnit(null);
@@ -235,47 +246,18 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
     setTimeout(() => setCopySuccess(false), 2500);
   };
 
-  // Import JSON with a minimal schema check before it reaches the game engine.
+  // Import JSON through the same deep validator used by save and localStorage restore.
   const handleImportJson = () => {
     try {
       const parsed: unknown = JSON.parse(jsonText);
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        alert('匯入失敗：請提供至少一個模組包。');
+      const validated = validateAndNormalizeGameMods(parsed);
+      if (!validated.mods) {
+        alert('匯入失敗：\n' + validated.errors.slice(0, 10).join('\n'));
         return;
       }
-
-      const candidates = parsed as Array<Partial<GameMod>>;
-      const valid = candidates.every((mod) =>
-        !!mod &&
-        typeof mod.id === 'string' &&
-        !!mod.id.trim() &&
-        typeof mod.name === 'string' &&
-        !!mod.name.trim() &&
-        Array.isArray(mod.unitDefinitions) &&
-        Array.isArray(mod.aiRules) &&
-        !!mod.balanceMultipliers &&
-        ['gatherRate', 'unitHp', 'unitDamage', 'buildSpeed', 'moveSpeed'].every((key) =>
-          Number.isFinite(mod.balanceMultipliers?.[key as keyof GameMod['balanceMultipliers']])
-        )
-      );
-      const ids = candidates.map((mod) => mod.id);
-      if (!valid || new Set(ids).size !== ids.length) {
-        alert('匯入失敗：模組格式不完整，或模組 ID 重複。請檢查 JSON。');
-        return;
-      }
-
-      const normalized: GameMod[] = candidates.map((mod) => ({
-        ...(mod as GameMod),
-        enabled: mod.enabled !== false,
-        civilizationId: mod.civilizationId || 'shared',
-        buildingOverrides: mod.buildingOverrides || {},
-        techDefinitions: Array.isArray(mod.techDefinitions) ? mod.techDefinitions : [],
-        unitDefinitions: mod.unitDefinitions || [],
-        aiRules: mod.aiRules || [],
-      }));
-      setMods(normalized);
+      setMods(validated.mods);
       setSelectedModIndex(0);
-      alert('模組配置匯入成功！點擊右上角「儲存並套用」即可生效。');
+      alert('模組配置匯入成功！已通過完整欄位與數值檢查，點擊「儲存並套用」即可生效。');
     } catch {
       alert('JSON 格式錯誤，請檢查內容後重試。');
     }
@@ -681,7 +663,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div>
                         <label className="text-slate-300 block mb-1">生命值 (HP)</label>
                         <input
-                          type="number"
+                          type="number" min="1" max="50000"
                           value={editingUnit.stats.maxHp}
                           onChange={(e) =>
                             setEditingUnit({
@@ -696,7 +678,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div>
                         <label className="text-slate-300 block mb-1">攻擊力 (Attack)</label>
                         <input
-                          type="number"
+                          type="number" min="0" max="5000"
                           value={editingUnit.stats.attack}
                           onChange={(e) =>
                             setEditingUnit({
@@ -711,7 +693,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div>
                         <label className="text-slate-300 block mb-1">防禦力 (Defense)</label>
                         <input
-                          type="number"
+                          type="number" min="0" max="500"
                           value={editingUnit.stats.defense}
                           onChange={(e) =>
                             setEditingUnit({
@@ -726,8 +708,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div>
                         <label className="text-slate-300 block mb-1">攻擊射程 (Range)</label>
                         <input
-                          type="number"
-                          step="0.5"
+                          type="number" min="0" max="100" step="0.5"
                           value={editingUnit.stats.range}
                           onChange={(e) =>
                             setEditingUnit({
@@ -909,7 +890,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             </label>
                             <label className="text-slate-400">冷卻秒數
                               <input
-                                type="number" min="3" value={editingUnit.specialAbility.cooldown}
+                                type="number" min="1" max="600" value={editingUnit.specialAbility.cooldown}
                                 onChange={(e) => setEditingUnit({
                                   ...editingUnit,
                                   specialAbility: { ...editingUnit.specialAbility!, cooldown: Math.max(3, Number(e.target.value) || 3) },
@@ -919,7 +900,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                             </label>
                             <label className="text-slate-400">技能威力 / 治療量
                               <input
-                                type="number" min="1" value={editingUnit.specialAbility.potency}
+                                type="number" min="0" max="500" value={editingUnit.specialAbility.potency}
                                 onChange={(e) => setEditingUnit({
                                   ...editingUnit,
                                   specialAbility: { ...editingUnit.specialAbility!, potency: Math.max(1, Number(e.target.value) || 1) },
@@ -1094,7 +1075,7 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       <div className="grid grid-cols-2 gap-2">
                         <label className="text-[10px] text-slate-400">研發秒數
                           <input
-                            type="number" min="1" step="1" value={tech.researchTime}
+                            type="number" min="0.1" max="3600" step="1" value={tech.researchTime}
                             onChange={(e) => patchCustomTech(tech.id, { researchTime: Math.max(1, Number(e.target.value) || 1) })}
                             className="mt-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
                           />

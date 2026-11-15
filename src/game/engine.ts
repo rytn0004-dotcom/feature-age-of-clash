@@ -24,6 +24,7 @@ import {
   UnitEntity,
 } from '../types/game';
 import { DEFAULT_BUILDINGS, INITIAL_MODS } from './mods';
+import { validateAndNormalizeGameMods } from './modValidation';
 import {
   applyCivilizationAndTechStats,
   canUnitGainXp,
@@ -720,21 +721,95 @@ export class RtsEngine {
   }
 
   /**
-   * Re-resolves active mod data on existing entities after the user applies a mod pack.
-   * Current HP is kept proportionally when a unit/building's maximum HP changes.
+   * Returns a built-in replacement when a mod unit disappears or is disabled.
+   * Use the base Medieval roster so this fallback works for every civilization.
+   */
+  private getBuiltInFallbackUnitDef(
+    faction: FactionId,
+    category: UnitDefinition['category']
+  ): UnitDefinition | undefined {
+    const basePack = INITIAL_MODS.find((mod) => mod.id === 'mod_medieval') || INITIAL_MODS[0];
+    if (!basePack) return undefined;
+    const fallbackCategory = category === 'special' ? 'melee' : category;
+    const source = basePack.unitDefinitions.find((unit) => unit.category === fallbackCategory)
+      || basePack.unitDefinitions.find((unit) => unit.category === 'melee')
+      || basePack.unitDefinitions[0];
+    if (!source) return undefined;
+    const balancedStats = applyBalanceMultipliers(source.stats, basePack.balanceMultipliers);
+    return {
+      ...source,
+      isHero: false,
+      specialAbility: undefined,
+      stats: applyCivilizationAndTechStats(
+        balancedStats,
+        source.category,
+        this.getCivilizationForFaction(faction),
+        this.getResearchedTechs(faction),
+        this.getCustomTechDefinitions(faction)
+      ),
+    };
+  }
+
+  /**
+   * Re-resolves mod content in the current match.
+   * Orphaned units become built-in units of the same broad role. Queued units and
+   * in-progress technologies that no longer exist are cancelled instead of stalling.
+   * Current HP is kept proportionally when maximum HP changes.
    */
   public refreshModContent(): void {
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
-      const nextDef = this.findUnitDef(unit.unitDefId, unit.faction);
+      let nextDef = this.findUnitDef(unit.unitDefId, unit.faction);
+      const wasOrphaned = !nextDef;
+      if (!nextDef) nextDef = this.getBuiltInFallbackUnitDef(unit.faction, unit.unitDef.category);
       if (!nextDef) continue;
+
       const hpRatio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
+      const previousCategory = unit.unitDef.category;
+      unit.unitDefId = nextDef.id;
       unit.unitDef = JSON.parse(JSON.stringify(nextDef));
       unit.maxHp = nextDef.stats.maxHp;
       unit.hp = Math.max(1, Math.min(unit.maxHp, Math.round(unit.maxHp * hpRatio)));
+
+      if (wasOrphaned) {
+        unit.abilityCooldown = 0;
+        unit.buffSpeedUntil = undefined;
+        unit.buffDefenseBonus = undefined;
+        if (previousCategory !== nextDef.category && !unit.garrisonedInBuildingId) {
+          unit.state = 'idle';
+          unit.targetX = undefined;
+          unit.targetZ = undefined;
+          unit.targetEntityId = undefined;
+          unit.targetResourceNodeId = undefined;
+          unit.targetBuildingId = undefined;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          unit.attackMoveGoal = null;
+          unit.currentActionText = undefined;
+          if (nextDef.category !== 'worker') unit.carryingResource = undefined;
+        }
+      }
+
+      const oldMesh = this.unitMeshes.get(unit.id);
+      if (oldMesh) {
+        this.scene.remove(oldMesh);
+        const mesh = createUnitMesh(unit.unitDef, unit.faction);
+        mesh.position.set(unit.x, 0, unit.z);
+        Object.assign(mesh.userData, { type: 'unit', id: unit.id, faction: unit.faction, team: unit.team });
+        this.scene.add(mesh);
+        this.unitMeshes.set(unit.id, mesh);
+      }
     }
 
     for (const building of this.buildings) {
+      const originalQueueLength = building.queue.length;
+      building.queue = building.queue.filter((unitId) => !!this.findUnitDef(unitId, building.faction));
+      if (building.queue.length !== originalQueueLength) building.queueProgress = 0;
+      if (building.activeTechId && !this.findTechDefinition(building.activeTechId, building.faction)) {
+        building.activeTechId = null;
+        building.researchProgress = 0;
+      }
+
       const nextDef = this.getBuildingDefinition(building.buildingType, building.faction);
       const hpRatio = building.maxHp > 0 ? building.hp / building.maxHp : 1;
       const researchedTechs = this.getResearchedTechs(building.faction);
@@ -768,24 +843,10 @@ export class RtsEngine {
       if (typeof window === 'undefined' || !window.localStorage) return;
       const raw = window.localStorage.getItem('age-of-clash-mods-v1');
       if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      const valid = parsed.filter(
-        (mod) =>
-          mod &&
-          typeof mod.id === 'string' &&
-          typeof mod.name === 'string' &&
-          Array.isArray(mod.unitDefinitions) &&
-          mod.balanceMultipliers &&
-          Array.isArray(mod.aiRules)
-      );
-      if (valid.length !== parsed.length) return;
-      this.activeMods = valid.map((mod) => ({
-        ...mod,
-        civilizationId: mod.civilizationId || this.modScope(mod),
-        buildingOverrides: mod.buildingOverrides || {},
-        techDefinitions: Array.isArray(mod.techDefinitions) ? mod.techDefinitions : [],
-      }));
+      const parsed: unknown = JSON.parse(raw);
+      const validated = validateAndNormalizeGameMods(parsed);
+      if (!validated.mods) return;
+      this.activeMods = validated.mods;
     } catch {
       // Ignore invalid browser storage and keep the built-in packs.
     }

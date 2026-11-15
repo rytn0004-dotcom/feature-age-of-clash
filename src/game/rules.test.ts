@@ -12,7 +12,9 @@ import {
   findClosestResourceNode,
   findClosestEnemy,
 } from './rules';
-import { AiRule, ResourceNode, EntityCommon, TechDefinition, UnitStats } from '../types/game';
+import { AiRule, ResourceNode, EntityCommon, TechDefinition, UnitStats, GameMod } from '../types/game';
+import { INITIAL_MODS } from './mods';
+import { validateAndNormalizeGameMods, validateGameMods } from './modValidation';
 
 test('economy: canAfford accurately checks resource amounts', () => {
   const current = { food: 100, wood: 50, gold: 20, stone: 0 };
@@ -1058,3 +1060,98 @@ test('mods: faction-specific custom technologies are listed and apply to units',
   assert.ok(boosted.gatherSpeed >= 2.63, `Expected custom technology to increase gather speed, got ${boosted.gatherSpeed}`);
 });
 
+
+
+test('mods: deep validation accepts shipped packs and normalizes legacy metadata', () => {
+  const shipped = validateAndNormalizeGameMods(INITIAL_MODS);
+  assert.deepEqual(shipped.errors, []);
+  assert.equal(shipped.mods?.length, INITIAL_MODS.length);
+  assert.equal(shipped.mods?.[0].civilizationId, 'medieval');
+
+  const legacy = JSON.parse(JSON.stringify(INITIAL_MODS[0])) as Record<string, unknown>;
+  delete legacy.civilizationId;
+  delete legacy.buildingOverrides;
+  delete legacy.techDefinitions;
+  const normalized = validateAndNormalizeGameMods([legacy]);
+  assert.deepEqual(normalized.errors, []);
+  assert.equal(normalized.mods?.[0].civilizationId, 'medieval');
+  assert.deepEqual(normalized.mods?.[0].buildingOverrides, {});
+  assert.deepEqual(normalized.mods?.[0].techDefinitions, []);
+});
+
+test('mods: deep validation rejects extreme abilities, unsafe tech effects and duplicate IDs', () => {
+  const safeBase = JSON.parse(JSON.stringify(INITIAL_MODS[0])) as GameMod;
+  safeBase.id = 'custom_validation_pack';
+  safeBase.name = 'Validation Pack';
+  safeBase.unitDefinitions = [{
+    id: 'custom_validation_hero',
+    name: 'Validation Hero',
+    factionPack: 'custom',
+    isHero: true,
+    category: 'melee',
+    description: 'A test-only unit.',
+    stats: {
+      maxHp: 100,
+      attack: 10,
+      defense: 2,
+      range: 1.5,
+      speed: 4,
+      attackRate: 1,
+      cost: { food: 50, wood: 0, gold: 25, stone: 0 },
+      trainTime: 10,
+      gatherSpeed: 0,
+      carryCapacity: 0,
+    },
+    visual: { color: '#ffffff', modelType: 'swordsman' },
+    specialAbility: {
+      name: 'Burst',
+      type: 'ki_burst',
+      cooldown: 10,
+      potency: 99999,
+      description: 'Unsafe potency should be rejected.',
+    },
+  }];
+  assert.ok(validateGameMods([safeBase]).some((error) => error.includes('potency')));
+
+  const unsafeTechPack = JSON.parse(JSON.stringify(safeBase)) as GameMod;
+  unsafeTechPack.unitDefinitions[0].specialAbility!.potency = 50;
+  unsafeTechPack.techDefinitions = [{
+    id: 'custom_validation_tech',
+    civId: 'shared',
+    buildingType: 'town_center',
+    name: 'Overclock',
+    icon: '⚡',
+    description: 'Test only',
+    effectLabel: 'Gather rate multiplier',
+    cost: { food: 100, wood: 0, gold: 0, stone: 0 },
+    researchTime: 10,
+    targetCategories: ['worker'],
+    effect: { gatherMultiplier: 99 },
+  }];
+  assert.ok(validateGameMods([unsafeTechPack]).some((error) => error.includes('gatherMultiplier')));
+
+  const duplicate = JSON.parse(JSON.stringify(unsafeTechPack)) as GameMod;
+  duplicate.id = 'another_custom_pack';
+  duplicate.unitDefinitions[0].id = unsafeTechPack.unitDefinitions[0].id;
+  assert.ok(validateGameMods([unsafeTechPack, duplicate]).some((error) => error.includes('單位 ID 重複')));
+});
+
+test('economy: rebalance planner ignores resources without active nodes', async () => {
+  const { selectEconomyRebalancePlan } = await import('./rules');
+  assert.equal(
+    selectEconomyRebalancePlan(
+      { food: 1, wood: 6, gold: 1, stone: 1 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['wood']
+    ),
+    null
+  );
+  assert.deepEqual(
+    selectEconomyRebalancePlan(
+      { food: 1, wood: 6, gold: 1, stone: 1 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['food', 'wood']
+    ),
+    { from: 'wood', to: 'food' }
+  );
+});
