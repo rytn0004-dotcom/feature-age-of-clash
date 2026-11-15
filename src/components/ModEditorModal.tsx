@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
-import { AiRule, BuildingType, GameMod, TechDefinition, UnitDefinition, UnitCategory } from '../types/game';
+import { AiRule, BuildingDefinition, BuildingType, GameMod, TechDefinition, UnitDefinition, UnitCategory } from '../types/game';
 import { INITIAL_MODS } from '../game/mods';
 
 interface ModEditorModalProps {
@@ -141,6 +141,60 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
       (u) => u.id !== unitId
     );
     setMods(updated);
+  };
+
+  const patchCustomTech = (techId: string, patch: Partial<TechDefinition>) => {
+    updateSelectedMod((mod) => {
+      mod.techDefinitions = (mod.techDefinitions || []).map((tech) =>
+        tech.id === techId ? { ...tech, ...patch } : tech
+      );
+    });
+  };
+
+  const patchCustomTechCost = (techId: string, resource: keyof TechDefinition['cost'], value: number) => {
+    updateSelectedMod((mod) => {
+      mod.techDefinitions = (mod.techDefinitions || []).map((tech) =>
+        tech.id === techId ? { ...tech, cost: { ...tech.cost, [resource]: value } } : tech
+      );
+    });
+  };
+
+  const patchCustomTechEffect = (
+    techId: string,
+    effectKey: keyof TechDefinition['effect'],
+    value: number
+  ) => {
+    updateSelectedMod((mod) => {
+      mod.techDefinitions = (mod.techDefinitions || []).map((tech) =>
+        tech.id === techId ? { ...tech, effect: { ...tech.effect, [effectKey]: value } } : tech
+      );
+    });
+  };
+
+  const patchBuildingOverride = (patch: Partial<BuildingDefinition>) => {
+    updateSelectedMod((mod) => {
+      mod.buildingOverrides = {
+        ...(mod.buildingOverrides || {}),
+        [selectedBuildingType]: {
+          ...(mod.buildingOverrides?.[selectedBuildingType] || {}),
+          ...patch,
+          cost: {
+            ...((mod.buildingOverrides?.[selectedBuildingType] as Partial<BuildingDefinition> | undefined)?.cost || {}),
+            ...(patch.cost || {}),
+          },
+        },
+      };
+    });
+  };
+
+  const patchBuildingCost = (resource: keyof BuildingDefinition['cost'], value: number) => {
+    const override = currentMod.buildingOverrides?.[selectedBuildingType];
+    patchBuildingOverride({
+      cost: {
+        ...((override?.cost || {}) as BuildingDefinition['cost']),
+        [resource]: value,
+      },
+    });
   };
 
   // AI Rule Management
