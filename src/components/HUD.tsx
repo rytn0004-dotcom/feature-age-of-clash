@@ -22,13 +22,10 @@ import {
   Keyboard,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
-import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType } from '../types/game';
 import { canAfford, getBuildingMaxGarrison, getEffectiveBuildingArmor } from '../game/rules';
 import {
   canUnitGainXp,
-  findTechDef,
-  getAllTechsForBuilding,
   getBuildableTypesForCiv,
   getCivilizationConfig,
   getLevelTitle,
@@ -1025,7 +1022,7 @@ export const HUD: React.FC<HUDProps> = ({
                     {isWorkerSelected && (
                       <div className="flex gap-1 ml-auto shrink-0">
                         {compactBuildTypes.map((bType) => {
-                          const bDef = DEFAULT_BUILDINGS[bType];
+                          const bDef = engine.getBuildingDefinition(bType, engine.getObservedFactionId());
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
                           return (
                             <button
@@ -1409,9 +1406,9 @@ export const HUD: React.FC<HUDProps> = ({
             {/* If a Building is selected */}
             {!selectedUnits.length && selectedBuilding && (() => {
               const bCiv = selectedBuilding.civilization || humanCivId;
-              const bldgTechs = getAllTechsForBuilding(selectedBuilding.buildingType, bCiv);
+              const bldgTechs = engine.getAllTechsForBuilding(selectedBuilding.faction, selectedBuilding.buildingType);
               const bldgResearched = engine.getResearchedTechs(selectedBuilding.faction);
-              const activeTech = selectedBuilding.activeTechId ? findTechDef(selectedBuilding.activeTechId) : null;
+              const activeTech = selectedBuilding.activeTechId ? engine.findTechDefinition(selectedBuilding.activeTechId, selectedBuilding.faction) : null;
               const bFactionAge = engine.ageByFaction[selectedBuilding.faction] || observedAge;
               const bArmor = getEffectiveBuildingArmor(selectedBuilding, bFactionAge, bldgResearched);
               const gMax = getBuildingMaxGarrison(selectedBuilding);
@@ -2010,7 +2007,7 @@ export const HUD: React.FC<HUDProps> = ({
               {/* Landmark Selection Cards (Dual AOE4 Choice) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {nextInfo.landmarks.map((lmId) => {
-                  const lmDef = DEFAULT_BUILDINGS[lmId];
+                  const lmDef = engine.getBuildingDefinition(lmId, engine.getObservedFactionId());
                   const hasBuilt = engine.playerLandmarks.includes(lmId);
 
                   return (
