@@ -238,7 +238,17 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
             <Sparkles className="w-4 h-4" /> 自訂兵種屬性 ({currentMod.unitDefinitions.length})
           </button>
           <button
-            onClick={() => setActiveTab('ai')}
+            onClick={() => setActiveTab('content')}
+            className={`py-3 px-4 text-xs font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors ${
+              activeTab === 'content'
+                ? 'border-amber-400 text-amber-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Shield className="w-4 h-4" /> 科技與建築內容
+          </button>
+          <button
+            onClick={() => setActiveTab('ai')
             className={`py-3 px-4 text-xs font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors ${
               activeTab === 'ai'
                 ? 'border-amber-400 text-amber-300'
@@ -269,7 +279,15 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
             <div className="space-y-6">
               {/* Mod Packs Switchboard */}
               <div>
-                <h3 className="text-sm font-bold text-white mb-3">已安裝的擴充模組包 (Installed Packs)</h3>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="text-sm font-bold text-white">已安裝的擴充模組包 (Installed Packs)</h3>
+                  <button
+                    onClick={handleAddModPack}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-lg text-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> 新增跨界模組
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {mods.map((mod, idx) => (
                     <div
