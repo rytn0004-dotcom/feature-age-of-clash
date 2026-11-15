@@ -180,7 +180,7 @@ export default function App() {
 
   const handleReturnTitle = () => {
     if (!engine) return;
-    engine.setupWorld(participants, mapPreset, resourceRichness);
+    engine.setupWorld(participants, mapPreset, resourceRichness, economyMode);
     engine.gameState = 'title';
     engine.gameOverResult = null;
     setGameState('title');
