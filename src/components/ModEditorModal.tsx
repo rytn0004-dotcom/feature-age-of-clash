@@ -514,6 +514,8 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                       id: `custom_unit_${Date.now()}`,
                       name: '新自訂角色 (Custom Hero)',
                       factionPack: currentMod.id,
+                      isHero: true,
+                      availableInBuildings: ['barracks', 'castle'],
                       category: 'melee',
                       description: '玩家自創的強大戰鬥單位！',
                       stats: {
@@ -701,6 +703,208 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                           }
                           className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
                         />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-slate-300 block mb-1">角色描述</label>
+                        <textarea
+                          rows={2}
+                          value={editingUnit.description}
+                          onChange={(e) => setEditingUnit({ ...editingUnit, description: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-300 block mb-1">兵種分類</label>
+                        <select
+                          value={editingUnit.category}
+                          onChange={(e) => setEditingUnit({ ...editingUnit, category: e.target.value as UnitCategory })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                        >
+                          <option value="worker">工人 / 採集者</option>
+                          <option value="melee">近戰步兵</option>
+                          <option value="ranged">遠程兵種</option>
+                          <option value="cavalry">騎兵</option>
+                          <option value="siege">攻城單位</option>
+                          <option value="special">特殊兵種 / 英雄</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-slate-300 block mb-1">需求時代</label>
+                        <select
+                          value={editingUnit.requiredAge || 0}
+                          onChange={(e) => setEditingUnit({
+                            ...editingUnit,
+                            requiredAge: Number(e.target.value) === 0 ? undefined : Number(e.target.value) as 1 | 2 | 3 | 4,
+                          })}
+                          className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                        >
+                          <option value={0}>不限制</option>
+                          <option value={1}>時代 I</option>
+                          <option value={2}>時代 II</option>
+                          <option value={3}>時代 III</option>
+                          <option value={4}>時代 IV</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!editingUnit.isHero}
+                          onChange={(e) => setEditingUnit({ ...editingUnit, isHero: e.target.checked })}
+                          className="accent-amber-500"
+                        />
+                        <label className="text-amber-300 font-bold">標記為英雄 / 跨界角色</label>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-slate-300 mb-2">可訓練建築（選擇後會自動加入該建築的招募清單）</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {([
+                            ['town_center', '城鎮中心'],
+                            ['barracks', '兵營'],
+                            ['archery_range', '射箭場'],
+                            ['castle', '城堡'],
+                          ] as [BuildingType, string][]).map(([type, label]) => (
+                            <label key={type} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+                              <input
+                                type="checkbox"
+                                checked={(editingUnit.availableInBuildings || []).includes(type)}
+                                onChange={(e) => {
+                                  const current = editingUnit.availableInBuildings || [];
+                                  const nextBuildings = e.target.checked
+                                    ? [...current, type]
+                                    : current.filter((item) => item !== type);
+                                  setEditingUnit({ ...editingUnit, availableInBuildings: nextBuildings });
+                                }}
+                                className="accent-amber-500"
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="col-span-2 border-t border-slate-800 pt-3">
+                        <div className="text-amber-300 font-bold mb-2">訓練成本與經濟屬性</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {(['food', 'wood', 'gold', 'stone'] as const).map((resource) => (
+                            <label key={resource} className="text-slate-400">
+                              {resource === 'food' ? '糧食' : resource === 'wood' ? '木材' : resource === 'gold' ? '黃金' : '石料'}
+                              <input
+                                type="number" min="0" value={editingUnit.stats.cost[resource]}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  stats: { ...editingUnit.stats, cost: { ...editingUnit.stats.cost, [resource]: Math.max(0, Number(e.target.value) || 0) } },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                          {([
+                            ['trainTime', '訓練秒數'],
+                            ['speed', '移動速度'],
+                            ['attackRate', '每秒攻擊次數'],
+                            ['gatherSpeed', '採集速度'],
+                            ['carryCapacity', '攜帶容量'],
+                          ] as const).map(([key, label]) => (
+                            <label key={key} className="text-slate-400">
+                              {label}
+                              <input
+                                type="number" min="0" step="0.1" value={editingUnit.stats[key]}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  stats: { ...editingUnit.stats, [key]: Math.max(0, Number(e.target.value) || 0) },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="col-span-2 border-t border-slate-800 pt-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!!editingUnit.specialAbility}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: editingUnit.specialAbility || {
+                                    name: '自訂奧義',
+                                    type: 'ki_burst',
+                                    cooldown: 15,
+                                    potency: 50,
+                                    description: '釋放角色專屬特殊能力。',
+                                  },
+                                });
+                              } else {
+                                const { specialAbility, ...withoutAbility } = editingUnit;
+                                setEditingUnit(withoutAbility);
+                              }
+                            }}
+                            className="accent-purple-500"
+                          />
+                          <span className="text-purple-300 font-bold">啟用角色專屬特殊技能</span>
+                        </div>
+                        {editingUnit.specialAbility && (
+                          <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-950/70 p-3">
+                            <label className="text-slate-400">技能名稱
+                              <input
+                                value={editingUnit.specialAbility.name}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: { ...editingUnit.specialAbility!, name: e.target.value },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                            <label className="text-slate-400">技能類型
+                              <select
+                                value={editingUnit.specialAbility.type}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: { ...editingUnit.specialAbility!, type: e.target.value as NonNullable<UnitDefinition['specialAbility']>['type'] },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              >
+                                <option value="whirlwind">旋風斬</option>
+                                <option value="ki_burst">能量爆發</option>
+                                <option value="heal">治療</option>
+                                <option value="haste">全軍加速</option>
+                              </select>
+                            </label>
+                            <label className="text-slate-400">冷卻秒數
+                              <input
+                                type="number" min="3" value={editingUnit.specialAbility.cooldown}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: { ...editingUnit.specialAbility!, cooldown: Math.max(3, Number(e.target.value) || 3) },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                            <label className="text-slate-400">技能威力 / 治療量
+                              <input
+                                type="number" min="1" value={editingUnit.specialAbility.potency}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: { ...editingUnit.specialAbility!, potency: Math.max(1, Number(e.target.value) || 1) },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                            <label className="col-span-2 text-slate-400">技能敘述
+                              <textarea
+                                rows={2} value={editingUnit.specialAbility.description}
+                                onChange={(e) => setEditingUnit({
+                                  ...editingUnit,
+                                  specialAbility: { ...editingUnit.specialAbility!, description: e.target.value },
+                                })}
+                                className="mt-1 w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-white"
+                              />
+                            </label>
+                          </div>
+                        )}
                       </div>
                     </div>
 
