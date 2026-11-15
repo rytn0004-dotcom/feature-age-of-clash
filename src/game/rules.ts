@@ -373,11 +373,26 @@ export function computeAiWorkerAllocation(
     weights = { food: 0.52, wood: 0.3, gold: 0.13, stone: 0.05 };
   }
 
-  // Dynamic deficit correction: boost starved essentials without starving everything else
+  // Dynamic deficit correction. The AI now reacts to both shortages and overstock,
+  // instead of continuing to flood a resource that already has a large reserve.
   if (resources.food < 110) weights.food += 0.26;
   if (resources.wood < 110) weights.wood += 0.22;
   if (resources.gold < 70 && workerCount >= 4) weights.gold += 0.18;
   if (age >= 2 && resources.stone < 60 && workerCount >= 7) weights.stone += 0.1;
+
+  const applyStockpileDamping = (type: ResourceType, softCap: number, hardCap: number) => {
+    if (resources[type] >= hardCap) weights[type] *= 0.28;
+    else if (resources[type] >= softCap) weights[type] *= 0.62;
+  };
+  applyStockpileDamping('food', 700, 1300);
+  applyStockpileDamping('wood', 600, 1100);
+  applyStockpileDamping('gold', 550, 1000);
+  applyStockpileDamping('stone', 450, 850);
+
+  // Keep every category viable, but do not force stone mining before it is useful.
+  for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+    weights[type] = Math.max(type === 'stone' && age < 2 ? 0.015 : 0.025, weights[type]);
+  }
 
   const totalW = weights.food + weights.wood + weights.gold + weights.stone;
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -407,6 +422,30 @@ export function computeAiWorkerAllocation(
   }
 
   return result;
+}
+
+/**
+ * Chooses one safe worker reassignment when a resource category is meaningfully
+ * overstaffed and another available category is meaningfully understaffed.
+ * Returning at most one move per AI cycle prevents workers from oscillating.
+ */
+export function selectEconomyRebalancePlan(
+  active: Record<ResourceType, number>,
+  desired: Record<ResourceType, number>,
+  availableTypes: ResourceType[],
+  minimumGap = 2
+): { from: ResourceType; to: ResourceType } | null {
+  const available = new Set(availableTypes);
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const surplus = types
+    .filter((type) => available.has(type) && active[type] - desired[type] >= minimumGap)
+    .sort((a, b) => active[b] - desired[b] - (active[a] - desired[a]));
+  const deficit = types
+    .filter((type) => available.has(type) && desired[type] - active[type] >= minimumGap)
+    .sort((a, b) => desired[b] - active[b] - (desired[a] - active[a]));
+
+  if (surplus.length === 0 || deficit.length === 0) return null;
+  return { from: surplus[0], to: deficit[0] };
 }
 
 /**
