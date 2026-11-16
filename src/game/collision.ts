@@ -1,5 +1,6 @@
 import {
   BuildingEntity,
+  BuildingType,
   ResourceNode,
   ResourceType,
   TerrainBlockedDisc,
@@ -72,6 +73,8 @@ export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType
     case 'lumber_camp':
     case 'mining_camp':
       return 2.05;
+    case 'dock':
+      return 2.15;
     case 'tower':
       return 1.65;
     case 'wall':
@@ -265,13 +268,117 @@ export function isPointInTerrainObstacle(
     const t = Math.max(0, Math.min(1, ((x - r.x1) * vx + (z - r.z1) * vz) / lenSq));
     const px = r.x1 + vx * t;
     const pz = r.z1 + vz * t;
-    const halfWidth = r.kind === 'water' ? 3.2 : 2.6;
+    const halfWidth = r.halfWidth ?? (r.kind === 'water' ? 9.8 : 2.6);
     if (Math.hypot(x - px, z - pz) <= halfWidth) {
       return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Signed distance to water boundary:
+ * Negative values mean point is inside water (`-signedDist` = distance from shore),
+ * Positive values mean point is on dry land away from water.
+ */
+export function getWaterSignedDistance(
+  x: number,
+  z: number,
+  waterRects: TerrainBlockedRect[] = [],
+  waterDiscs: TerrainBlockedDisc[] = []
+): number {
+  let minSigned = Infinity;
+
+  for (const d of waterDiscs) {
+    if (d.kind !== 'water') continue;
+    const sd = Math.hypot(x - d.x, z - d.z) - d.radius;
+    if (sd < minSigned) minSigned = sd;
+  }
+
+  for (const r of waterRects) {
+    if (r.kind !== 'water') continue;
+    const vx = r.x2 - r.x1;
+    const vz = r.z2 - r.z1;
+    const lenSq = vx * vx + vz * vz;
+    if (lenSq < 0.0001) continue;
+    const t = Math.max(0, Math.min(1, ((x - r.x1) * vx + (z - r.z1) * vz) / lenSq));
+    const px = r.x1 + vx * t;
+    const pz = r.z1 + vz * t;
+    const halfWidth = r.halfWidth ?? 9.8;
+    const sd = Math.hypot(x - px, z - pz) - halfWidth;
+    if (sd < minSigned) minSigned = sd;
+  }
+
+  return minSigned;
+}
+
+/**
+ * Returns true if (x, z) lies strictly offshore in deep water (at least minShoreDist meters inside water edge).
+ */
+export function isOffshoreDeepWater(
+  x: number,
+  z: number,
+  waterRects: TerrainBlockedRect[] = [],
+  waterDiscs: TerrainBlockedDisc[] = [],
+  bridges: TerrainPassableBridge[] = [],
+  minShoreDist = 5.0
+): boolean {
+  if (isPointOnBridge(x, z, bridges)) return false;
+  const sd = getWaterSignedDistance(x, z, waterRects, waterDiscs);
+  return sd <= -minShoreDist;
+}
+
+/**
+ * Validates shoreline placement for Docks (must sit right next to a river bank or lakeshore).
+ */
+export function canPlaceDockLocation(
+  x: number,
+  z: number,
+  footprintSize: number,
+  buildings: BuildingEntity[],
+  nodes: ResourceNode[],
+  terrainRects: TerrainBlockedRect[] = [],
+  terrainDiscs: TerrainBlockedDisc[] = [],
+  bridges: TerrainPassableBridge[] = []
+): boolean {
+  if (Math.abs(x) > 88 || Math.abs(z) > 88) return false;
+  if (isPointOnBridge(x, z, bridges)) return false;
+
+  const cliffDiscs = terrainDiscs.filter((d) => d.kind === 'cliff');
+  const cliffRects = terrainRects.filter((r) => r.kind === 'cliff');
+  if (isPointInTerrainObstacle(x, z, cliffRects, cliffDiscs, [])) return false;
+
+  const waterRects = terrainRects.filter((r) => r.kind === 'water');
+  const waterDiscs = terrainDiscs.filter((d) => d.kind === 'water');
+  if (waterRects.length === 0 && waterDiscs.length === 0) return false;
+
+  const sd = getWaterSignedDistance(x, z, waterRects, waterDiscs);
+  // Dock center must straddle the shoreline (-2.6m inside edge .. +3.2m on the bank)
+  if (sd < -2.6 || sd > 3.2) return false;
+
+  for (const br of bridges) {
+    if (Math.hypot(x - br.x, z - br.z) < Math.max(br.halfWidth, br.halfLength) + footprintSize + 1.5) {
+      return false;
+    }
+  }
+
+  for (const b of buildings) {
+    if (b.hp <= 0) continue;
+    if (Math.hypot(x - b.x, z - b.z) < footprintSize + b.buildingDef.size) {
+      return false;
+    }
+  }
+
+  for (const n of nodes) {
+    if (n.amount <= 0) continue;
+    const nRadius = getResourceColliderRadius(n.resourceType, n.subtype);
+    if (Math.hypot(x - n.x, z - n.z) < footprintSize + nRadius + 0.4) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -287,9 +394,14 @@ export function isPlacementLocationValid(
   _isWall = false,
   terrainRects: TerrainBlockedRect[] = [],
   terrainDiscs: TerrainBlockedDisc[] = [],
-  bridges: TerrainPassableBridge[] = []
+  bridges: TerrainPassableBridge[] = [],
+  buildingType?: BuildingType
 ): boolean {
-  if (Math.abs(x) > 56 || Math.abs(z) > 56) return false;
+  if (buildingType === 'dock') {
+    return canPlaceDockLocation(x, z, footprintSize, buildings, nodes, terrainRects, terrainDiscs, bridges);
+  }
+
+  if (Math.abs(x) > 90 || Math.abs(z) > 90) return false;
 
   if (
     isPointInTerrainObstacle(x, z, terrainRects, terrainDiscs, bridges) ||

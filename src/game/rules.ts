@@ -11,6 +11,7 @@ import {
   FactionId,
   MatchParticipant,
   UnitEntity,
+  UnitDefinition,
   BuildingEntity,
   AgeLevel,
 } from '../types/game';
@@ -557,20 +558,43 @@ export function findClosestResourceNode(
 }
 
 /**
+ * Enforces land vs naval gathering rules:
+ * - Land villagers CANNOT harvest offshore `deep_fish`.
+ * - Naval Fishing Boats can harvest both `deep_fish` and `shore_fish`, and cannot harvest land nodes.
+ */
+export function canUnitGatherNode(
+  unitDef: Pick<UnitDefinition, 'id' | 'category' | 'isNaval'>,
+  node: Pick<ResourceNode, 'resourceType' | 'subtype'>
+): boolean {
+  const isBoat = !!unitDef.isNaval || unitDef.id === 'fishing_boat';
+  if (isBoat) {
+    return node.resourceType === 'food' && (node.subtype === 'deep_fish' || node.subtype === 'shore_fish');
+  }
+  if (node.subtype === 'deep_fish') {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Selects optimal available food node balancing meat/fish gather speed priority (deep_fish > shore_fish > hunt > berry = farm)
- * against travel distance within maxDistance.
+ * against travel distance within maxDistance. Land harvesters automatically exclude `deep_fish`.
  */
 export function findBestFoodResourceNode(
   x: number,
   z: number,
   nodes: ResourceNode[],
-  maxDistance = 36
+  maxDistance = 36,
+  allowDeepFish = false,
+  fishOnly = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = -Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
+    if (!allowDeepFish && node.subtype === 'deep_fish') continue;
+    if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);
     if (dist >= maxDistance) continue;
     const prio = getFoodSourcePriority(node.subtype);
@@ -618,18 +642,18 @@ export function createDefaultParticipants(): MatchParticipant[] {
 }
 
 /**
- * Generates distinct, evenly-spaced starting positions around a tactical ring on the map.
+ * Generates distinct, evenly-spaced starting positions around an enlarged tactical ring on the map.
  */
 export function generateSpawnPositions(
   count: number,
-  radius = 34
+  radius = 58
 ): Array<{ x: number; z: number }> {
   if (count <= 0) return [];
   if (count === 2) {
-    // Classic diagonal opposition (-28, -24) vs (28, 24)
+    // Classic diagonal opposition (-46, -40) vs (46, 40) with wide room for outside-TC mines
     return [
-      { x: -28, z: -24 },
-      { x: 28, z: 24 },
+      { x: -46, z: -40 },
+      { x: 46, z: 40 },
     ];
   }
   const positions: Array<{ x: number; z: number }> = [];

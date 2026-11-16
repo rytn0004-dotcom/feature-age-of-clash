@@ -8,6 +8,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   town_center: 'C',
   lumber_camp: 'L',
   mining_camp: 'G',
+  dock: 'J',
   farm: 'R',
   barracks: 'V',
   archery_range: 'Y',
@@ -84,7 +85,8 @@ export const HOTKEY_REFERENCE_GROUPS = [
   {
     title: '部隊戰術與視野操作',
     items: [
-      { keys: 'WASD / 方向鍵', desc: '平滑移動戰場視野' },
+      { keys: 'WASD / 方向鍵 / 螢幕邊緣', desc: '平滑移動戰場視野' },
+      { keys: '滑鼠滾輪', desc: '拉近或拉遠攝影機視角縮放' },
       { keys: 'Q', desc: '施放主動文明奧義' },
       { keys: 'F', desc: '攻擊推進 (Attack-Move)' },
       { keys: 'X', desc: '立即停止當前指令' },
@@ -94,7 +96,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
   {
     title: '村民建造快捷鍵 (選取工人時)',
     items: [
-      { keys: 'R / L / G', desc: '農田 / 伐木場 / 採礦營' },
+      { keys: 'R / L / G / J', desc: '農田 / 伐木場 / 採礦營 / 碼頭' },
       { keys: 'V / Y / K', desc: '兵營 / 射箭場 / 文明專屬建築' },
       { keys: 'O / T / N / C', desc: '防禦圍牆 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },

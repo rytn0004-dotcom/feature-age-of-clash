@@ -22,9 +22,9 @@ export interface TerrainNavObstacles {
   bridges?: TerrainPassableBridge[];
 }
 
-export const MAP_HALF_EXTENT = 66;
+export const MAP_HALF_EXTENT = 104;
 export const NAV_CELL_SIZE = 1.0;
-export const NAV_GRID_DIM = Math.ceil((MAP_HALF_EXTENT * 2) / NAV_CELL_SIZE); // 132x132
+export const NAV_GRID_DIM = Math.ceil((MAP_HALF_EXTENT * 2) / NAV_CELL_SIZE); // 208x208
 
 export interface NavGrid {
   cellSize: number;
@@ -122,6 +122,62 @@ export function buildNavGrid(
     if (n.resourceType === 'food' && (!n.subtype || n.subtype === 'farm' || n.subtype === 'hunt')) continue;
     const r = getResourceColliderRadius(n.resourceType, n.subtype);
     markDisc(n.x, n.z, r + unitPadding * 0.65);
+  }
+
+  return {
+    cellSize: NAV_CELL_SIZE,
+    dim,
+    halfExtent: MAP_HALF_EXTENT,
+    blocked,
+  };
+}
+
+/**
+ * Builds a navigable waterway grid specifically for Fishing Boats:
+ * Open water cells (water rects / discs) are walkable (0); dry land, cliff obstacles,
+ * fish nodes, and inland docks/structures are blocked (1) except narrow shoreline dock buffer.
+ */
+export function buildWaterNavGrid(
+  buildings: BuildingEntity[],
+  nodes: ResourceNode[],
+  terrain?: TerrainNavObstacles
+): NavGrid {
+  const dim = NAV_GRID_DIM;
+  const blocked = new Uint8Array(dim * dim);
+  blocked.fill(1);
+
+  const rects = (terrain?.rects || []).filter((r) => r.kind === 'water');
+  const discs = (terrain?.discs || []).filter((d) => d.kind === 'water');
+  if (rects.length > 0 || discs.length > 0) {
+    for (let gz = 0; gz < dim; gz++) {
+      const wz = -MAP_HALF_EXTENT + (gz + 0.5) * NAV_CELL_SIZE;
+      for (let gx = 0; gx < dim; gx++) {
+        const wx = -MAP_HALF_EXTENT + (gx + 0.5) * NAV_CELL_SIZE;
+        if (isPointInTerrainObstacle(wx, wz, rects, discs, [])) {
+          blocked[gz * dim + gx] = 0;
+        }
+      }
+    }
+  }
+
+  // Allow slight shoreline pier apron around built docks so boats can pull right up to unload
+  for (const b of buildings) {
+    if (b.hp <= 0 || b.buildingType !== 'dock') continue;
+    const dockReach = 2.6;
+    const minGx = Math.max(0, Math.floor((b.x - dockReach + MAP_HALF_EXTENT) / NAV_CELL_SIZE));
+    const maxGx = Math.min(dim - 1, Math.floor((b.x + dockReach + MAP_HALF_EXTENT) / NAV_CELL_SIZE));
+    const minGz = Math.max(0, Math.floor((b.z - dockReach + MAP_HALF_EXTENT) / NAV_CELL_SIZE));
+    const maxGz = Math.min(dim - 1, Math.floor((b.z + dockReach + MAP_HALF_EXTENT) / NAV_CELL_SIZE));
+    for (let gz = minGz; gz <= maxGz; gz++) {
+      const wz = -MAP_HALF_EXTENT + (gz + 0.5) * NAV_CELL_SIZE;
+      for (let gx = minGx; gx <= maxGx; gx++) {
+        const wx = -MAP_HALF_EXTENT + (gx + 0.5) * NAV_CELL_SIZE;
+        const d = Math.hypot(wx - b.x, wz - b.z);
+        if (d > 1.2 && d <= dockReach && isPointInTerrainObstacle(wx, wz, rects, discs, [])) {
+          blocked[gz * dim + gx] = 0;
+        }
+      }
+    }
   }
 
   return {

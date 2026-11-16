@@ -31,6 +31,7 @@ export interface TerrainBlockedRect {
   x2: number;
   z2: number;
   kind: 'water' | 'cliff';
+  halfWidth?: number;
 }
 
 export interface TerrainBlockedDisc {
@@ -75,11 +76,12 @@ export interface UnitDefinition {
   stats: UnitStats;
   visual: {
     color: string;
-    modelType: 'villager' | 'swordsman' | 'archer' | 'knight' | 'ninja' | 'saiyan' | 'mage' | 'golem' | 'ram' | 'cannon';
+    modelType: 'villager' | 'swordsman' | 'archer' | 'knight' | 'ninja' | 'saiyan' | 'mage' | 'golem' | 'ram' | 'cannon' | 'boat';
     scale?: number;
     projectileType?: 'arrow' | 'fireball' | 'ki_blast' | 'slash';
     weaponColor?: string;
   };
+  isNaval?: boolean;
   specialAbility?: {
     name: string;
     type: 'whirlwind' | 'ki_burst' | 'heal' | 'haste';
@@ -104,6 +106,7 @@ export type BuildingType =
   | 'town_center'
   | 'barracks'
   | 'archery_range'
+  | 'dock'
   | 'farm'
   | 'lumber_camp'
   | 'mining_camp'

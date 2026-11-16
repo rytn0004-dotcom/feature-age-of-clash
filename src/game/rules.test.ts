@@ -308,13 +308,13 @@ test('pathfinding: flush buildings leave a passable corridor and units route ove
   const detour = findPath(-10, 0, 10, 0, gridSingle);
   assert.ok(detour.some((wp) => Math.abs(wp.z) >= 2.5), 'Expected detour around blocking building');
 
-  // River obstacle across z=0 (x=-65..65) with bridge at x=15 (width 6, x in [12, 18])
+  // River obstacle across z=0 (x=-104..104) with bridge at x=15 (width 6, spanning full river halfWidth=9.8)
   const riverGrid = buildNavGrid([], [], {
-    rects: [{ x1: -65, z1: 0, x2: 65, z2: 0, kind: 'water' }],
+    rects: [{ x1: -104, z1: 0, x2: 104, z2: 0, kind: 'water', halfWidth: 9.8 }],
     discs: [],
-    bridges: [{ x: 15, z: 0, halfWidth: 3.0, halfLength: 5.0, angle: 0 }],
+    bridges: [{ x: 15, z: 0, halfWidth: 3.0, halfLength: 11.4, angle: 0 }],
   });
-  const bridgePath = findPath(-5, -12, -5, 12, riverGrid);
+  const bridgePath = findPath(-5, -14, -5, 14, riverGrid);
   assert.ok(
     bridgePath.some((wp) => wp.x >= 11 && wp.x <= 19),
     `Expected unit to route over river bridge at x=[12,18], got ${JSON.stringify(bridgePath)}`
@@ -372,12 +372,12 @@ test('controlGroups: supports assigning, appending, and pruning dead units', asy
 
 test('teams & spawns: distinct spawn positions and team-based hostility', async () => {
   const { generateSpawnPositions, areHostile } = await import('./rules');
-  const spawns = generateSpawnPositions(6, 34);
+  const spawns = generateSpawnPositions(6, 58);
   assert.equal(spawns.length, 6);
   for (let i = 0; i < spawns.length; i++) {
     for (let j = i + 1; j < spawns.length; j++) {
       const dist = Math.hypot(spawns[i].x - spawns[j].x, spawns[i].z - spawns[j].z);
-      assert.ok(dist > 20, `Spawn ${i} and ${j} too close: ${dist}`);
+      assert.ok(dist > 40, `Spawn ${i} and ${j} too close: ${dist}`);
     }
   }
 
@@ -474,21 +474,21 @@ test('resources & map fairness: maxDistance cap and guaranteed starter resources
   assert.equal(findClosestResourceNode(0, 0, farNodes, 'gold', 24), null);
   assert.equal(findClosestResourceNode(0, 0, farNodes, 'gold', 45)?.id, 'farGold');
 
-  const spawns = generateSpawnPositions(4, 36).map((sp, i) => ({ id: `slot_${i + 1}`, x: sp.x, z: sp.z }));
+  const spawns = generateSpawnPositions(4, 58).map((sp, i) => ({ id: `slot_${i + 1}`, x: sp.x, z: sp.z }));
   for (const preset of ['river_valley', 'highland_basin', 'twin_lakes'] as const) {
     const layout = generateMapLayout(preset, 'standard', spawns);
     for (const sp of spawns) {
       const hasGold = layout.resourceNodes.some(
-        (n) => n.resourceType === 'gold' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 24
+        (n) => n.resourceType === 'gold' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
       );
       const hasStone = layout.resourceNodes.some(
-        (n) => n.resourceType === 'stone' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 24
+        (n) => n.resourceType === 'stone' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
       );
       const hasWood = layout.resourceNodes.some(
-        (n) => n.resourceType === 'wood' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 24
+        (n) => n.resourceType === 'wood' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
       );
       const hasFood = layout.resourceNodes.some(
-        (n) => n.resourceType === 'food' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 24
+        (n) => n.resourceType === 'food' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
       );
       assert.ok(hasGold, `${preset} spawn ${sp.id} missing nearby gold`);
       assert.ok(hasStone, `${preset} spawn ${sp.id} missing nearby stone`);
@@ -1111,28 +1111,33 @@ test('map-resource-clearance-and-food-priority: zero nodes in base, closest gold
     { id: 'shore1', resourceType: 'food', subtype: 'shore_fish', x: 14, z: 0, amount: 450, maxAmount: 450 },
     { id: 'deep1', resourceType: 'food', subtype: 'deep_fish', x: 18, z: 0, amount: 650, maxAmount: 650 },
   ];
-  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36)?.id, 'deep1');
-  assert.equal(
-    findBestFoodResourceNode(0, 0, sampleFoodNodes.filter((n) => n.subtype !== 'deep_fish'), 36)?.id,
-    'shore1'
-  );
+  // Land gatherers skip offshore deep_fish by default; naval fishing boats pick deep_fish first
+  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36)?.id, 'shore1');
+  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36, true, true)?.id, 'deep1');
   assert.equal(
     findBestFoodResourceNode(0, 0, sampleFoodNodes.filter((n) => n.subtype !== 'deep_fish' && n.subtype !== 'shore_fish'), 36)?.id,
     'hunt1'
   );
 
-  // 3. Seeded layout invariants: zero nodes inside any base & closest gold/stone right outside TC walls across presets & spawn counts
+  // 3. Seeded layout invariants: enlarged map, no roads, zero nodes in base, closest gold/stone strictly outside TC range
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+  const { isOffshoreDeepWater } = await import('./collision');
+  const tcRange = DEFAULT_BUILDINGS.town_center.range || 15;
+  assert.equal(tcRange, 15);
+  assert.equal(DEFAULT_BUILDINGS.tower.range, 12);
+
   const seeds = [101, 777, 2026, 4242, 9999];
   const presets = ['river_valley', 'highland_basin', 'twin_lakes'] as const;
   for (const preset of presets) {
     for (const playerCount of [2, 3, 4, 6]) {
-      const spawns = generateSpawnPositions(playerCount, 36).map((sp, i) => ({
+      const spawns = generateSpawnPositions(playerCount, 58).map((sp, i) => ({
         id: `slot_${i + 1}`,
         x: sp.x,
         z: sp.z,
       }));
       for (const seed of seeds) {
         const layout = generateMapLayout(preset, 'standard', spawns, seed);
+        assert.equal((layout as any).roads, undefined, 'MapLayout should not generate any roads');
 
         for (const sp of spawns) {
           for (const node of layout.resourceNodes) {
@@ -1153,12 +1158,12 @@ test('map-resource-clearance-and-food-priority: zero nodes in base, closest gold
             .sort((a, b) => a - b);
 
           assert.ok(
-            goldDists.length > 0 && goldDists[0] >= 9.2 && goldDists[0] <= 13.5,
-            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest gold at ${goldDists[0]?.toFixed(2)}, expected [9.2, 13.5]`
+            goldDists.length > 0 && goldDists[0] > tcRange + 0.5 && goldDists[0] <= 22.0,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest gold at ${goldDists[0]?.toFixed(2)}, expected (${tcRange + 0.5}, 22.0]`
           );
           assert.ok(
-            stoneDists.length > 0 && stoneDists[0] >= 9.2 && stoneDists[0] <= 13.5,
-            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest stone at ${stoneDists[0]?.toFixed(2)}, expected [9.2, 13.5]`
+            stoneDists.length > 0 && stoneDists[0] > tcRange + 0.5 && stoneDists[0] <= 22.0,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest stone at ${stoneDists[0]?.toFixed(2)}, expected (${tcRange + 0.5}, 22.0]`
           );
         }
 
@@ -1179,8 +1184,82 @@ test('map-resource-clearance-and-food-priority: zero nodes in base, closest gold
               `${preset} fish ${fn.id} must not overlap bridges`
             );
           }
+          for (const df of deepFish) {
+            assert.equal(
+              isOffshoreDeepWater(df.x, df.z, layout.waterRects, layout.waterDiscs, layout.bridges, 5.5),
+              true,
+              `${preset} deep_fish ${df.id} must stay strictly offshore (>=5.5m from dry land)`
+            );
+          }
         }
       }
     }
   }
 });
+
+test('unit-rebalance-and-naval: villager 55/5/0.7 vs Age-1 infantry 1.6x/1.6x/2x, Age/unique scaling, and dock/fishing_boat constraints', async () => {
+  const { canUnitGatherNode } = await import('./rules');
+  const { MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, DEFAULT_BUILDINGS } = await import('./mods');
+  const { applyCivilizationAndTechStats, getBuildableTypesForCiv } = await import('./civilizations');
+  const { canPlaceDockLocation, isPlacementLocationValid } = await import('./collision');
+
+  const villager = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
+  const swordsman = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
+  const boat = MEDIEVAL_UNITS.find((u) => u.id === 'fishing_boat')!;
+
+  // 1. Exact baseline villager vs Age I infantry ratios
+  assert.equal(villager.stats.maxHp, 55);
+  assert.equal(villager.stats.attack, 5);
+  assert.equal(villager.stats.attackRate, 0.7);
+  assert.equal(villager.stats.defense, 0);
+
+  assert.equal(swordsman.stats.maxHp, 88); // 55 * 1.6
+  assert.equal(swordsman.stats.attack, 8); // 5 * 1.6
+  assert.equal(swordsman.stats.attackRate, 1.4); // 0.7 * 2
+  assert.equal(swordsman.stats.defense, 1);
+
+  // All Age I combat units keep low base defense (0..2) so early fights stay decisive without unkillable walls
+  for (const def of [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS]) {
+    if ((!def.requiredAge || def.requiredAge === 1) && def.category !== 'siege') {
+      assert.ok(def.stats.defense <= 2, `${def.id} Age 1 base defense ${def.stats.defense} exceeds <= 2`);
+    }
+  }
+
+  // 2. Age progression (I->IV) and Special Building Aura progressively scale unit threat
+  const age1 = applyCivilizationAndTechStats(swordsman.stats, 'melee', 'medieval', [], 1, false);
+  const age4WithAura = applyCivilizationAndTechStats(swordsman.stats, 'melee', 'medieval', [], 4, true);
+  assert.ok(age4WithAura.maxHp > age1.maxHp * 1.35, 'Age IV + Unique Aura should substantially boost unit HP');
+  assert.ok(age4WithAura.attack > age1.attack + 5, 'Age IV + Unique Aura should substantially boost unit ATK');
+  assert.ok(age4WithAura.defense >= age1.defense + 3, 'Age IV + Unique Aura should scale armor (+2 Age IV +1 Forge Aura)');
+
+  // 3. Gather permissions: villagers blocked from deep_fish; fishing_boat restricted to water fish nodes
+  const deepNode = { resourceType: 'food' as const, subtype: 'deep_fish' as const };
+  const shoreNode = { resourceType: 'food' as const, subtype: 'shore_fish' as const };
+  const woodNode = { resourceType: 'wood' as const, subtype: 'wood' as const };
+  assert.equal(canUnitGatherNode(villager, deepNode), false);
+  assert.equal(canUnitGatherNode(villager, shoreNode), true);
+  assert.equal(canUnitGatherNode(villager, woodNode), true);
+  assert.equal(canUnitGatherNode(boat, deepNode), true);
+  assert.equal(canUnitGatherNode(boat, shoreNode), true);
+  assert.equal(canUnitGatherNode(boat, woodNode), false);
+
+  // 4. Dock availability and shoreline-only placement
+  assert.ok(getBuildableTypesForCiv('medieval').includes('dock'));
+  assert.ok(getBuildableTypesForCiv('anime').includes('dock'));
+  assert.ok(getBuildableTypesForCiv('fantasy').includes('dock'));
+  assert.ok(DEFAULT_BUILDINGS.dock.trainableUnits.includes('fishing_boat'));
+
+  const riverRects = [{ x1: -80, z1: 0, x2: 80, z2: 0, kind: 'water' as const, halfWidth: 10 }];
+  // Water boundary is z=±10. Shoreline spot z=11 (sd = +1.0 within [-2.6, 3.2]) is valid; z=30 inland is invalid
+  assert.equal(canPlaceDockLocation(0, 11, DEFAULT_BUILDINGS.dock.size, [], [], riverRects, [], []), true);
+  assert.equal(canPlaceDockLocation(0, 30, DEFAULT_BUILDINGS.dock.size, [], [], riverRects, [], []), false);
+  assert.equal(
+    isPlacementLocationValid(0, 30, DEFAULT_BUILDINGS.dock.size, [], [], false, riverRects, [], [], 'dock'),
+    false
+  );
+  assert.equal(
+    isPlacementLocationValid(0, 11, DEFAULT_BUILDINGS.dock.size, [], [], false, riverRects, [], [], 'dock'),
+    true
+  );
+});
+

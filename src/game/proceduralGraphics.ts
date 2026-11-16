@@ -69,7 +69,6 @@ import {
   getCraggyRockMaps,
   getFoliagePBRMaps,
   getLeatherMaps,
-  getRoadCobbleMaps,
   getRoofShingleMaps,
   getStoneMasonryMaps,
   getTerrainPBRMaps,
@@ -1172,6 +1171,103 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
     ore2.position.set(1.28, 0.7, 0.38);
     group.add(ore1, ore2);
   }
+
+  return group;
+}
+
+export function createDockMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+
+  addContactShadow(group, 2.8);
+
+  const woodMaps = getTimberWoodMaps();
+  const stoneMaps = getStoneMasonryMaps();
+  const roofMaps = getRoofShingleMaps();
+
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: 0x854d0e,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughness: 0.78,
+  });
+  const plankMat = new THREE.MeshStandardMaterial({
+    color: 0xb45309,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughness: 0.74,
+  });
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    roughness: 0.88,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    map: roofMaps.map,
+    normalMap: roofMaps.normalMap,
+    roughness: 0.42,
+  });
+  const sailClothMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.75 });
+
+  // Stone quay foundation & heavy harbor pilings
+  const quay = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.7, 2.8), stoneMat);
+  quay.position.set(0, 0.35, -0.75);
+  quay.castShadow = true;
+  quay.receiveShadow = true;
+  group.add(quay);
+
+  // Extended timber jetty deck reaching into water
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.22, 4.4), plankMat);
+  deck.position.set(0, 0.8, 0.85);
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+
+  // Support pilings down into water bed
+  [-1.9, -0.65, 0.65, 1.9].forEach((px) => {
+    [-0.6, 1.1, 2.75].forEach((pz) => {
+      const piling = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 1.35, 8), timberMat);
+      piling.position.set(px, 0.52, pz);
+      piling.castShadow = true;
+      group.add(piling);
+    });
+  });
+
+  // Harbor boathouse / fish-market warehouse on landward side
+  const house = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.9, 2.2), plankMat);
+  house.position.set(-0.4, 1.85, -0.6);
+  house.castShadow = true;
+  group.add(house);
+
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(2.45, 1.45, 4), roofMat);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.set(-0.4, 3.45, -0.6);
+  roof.castShadow = true;
+  group.add(roof);
+
+  // Harbor loading crane boom & hanging net/crate
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 3.3, 8), timberMat);
+  mast.position.set(1.5, 2.4, 1.9);
+  mast.castShadow = true;
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 1.9), timberMat);
+  boom.position.set(1.5, 3.55, 2.55);
+  boom.rotation.x = -0.3;
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.55, 0.65), timberMat);
+  crate.position.set(1.5, 1.2, 2.8);
+  const netRoll = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 1.1, 8), sailClothMat);
+  netRoll.rotation.z = Math.PI / 2;
+  netRoll.position.set(-1.3, 1.15, 2.1);
+  group.add(mast, boom, crate, netRoll);
+
+  // Harbor banner flag
+  const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.2, 6), timberMat);
+  flagPole.position.set(-0.4, 4.7, -0.6);
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.45, 0.04), roofMat);
+  banner.position.set(0.05, 5.45, -0.6);
+  banner.name = 'animatedFlag';
+  group.add(flagPole, banner);
 
   return group;
 }
@@ -2517,6 +2613,9 @@ export function createBuildingMesh(
     case 'archery_range':
       group = createArcheryRangeMesh(faction);
       break;
+    case 'dock':
+      group = createDockMesh(faction);
+      break;
     case 'farm':
       group = createFarmMesh();
       break;
@@ -2831,7 +2930,6 @@ const resWoodMaps = getTimberWoodMaps();
 const resBarkMaps = getTreeBarkMaps();
 const resFoliageMaps = getFoliagePBRMaps();
 const resRockMaps = getCraggyRockMaps();
-const resCobbleMaps = getRoadCobbleMaps();
 const resFurMaps = getAnimalFurMaps();
 const resLeatherMaps = getLeatherMaps();
 const unitArmorMaps = getArmorPlateMaps();
@@ -3567,25 +3665,12 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
   });
   const bankMat = new THREE.MeshStandardMaterial({
     color: 0xb89b6a,
-    map: resCobbleMaps.map,
-    normalMap: resCobbleMaps.normalMap,
-    normalScale: new THREE.Vector2(0.85, 0.85),
+    map: resRockMaps.map,
+    normalMap: resRockMaps.normalMap,
+    normalScale: new THREE.Vector2(0.8, 0.8),
     roughness: 0.94,
-    transparent: true,
-    depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -1,
-  });
-  const roadMat = new THREE.MeshStandardMaterial({
-    color: 0xb49d7d,
-    map: resCobbleMaps.map,
-    normalMap: resCobbleMaps.normalMap,
-    normalScale: new THREE.Vector2(1.1, 1.1),
-    roughness: 0.92,
-    transparent: true,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
   });
   const bridgeStoneMat = new THREE.MeshStandardMaterial({
     color: 0xcbd5e1,
@@ -3608,41 +3693,21 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     roughness: 0.92,
   });
 
-  // 1. Cobble / dirt roads (edge-feathered strips blending organically into meadow grass)
-  layout.roads.forEach((road) => {
-    const dx = road.x2 - road.x1;
-    const dz = road.z2 - road.z1;
-    const len = Math.hypot(dx, dz);
-    const angle = Math.atan2(dx, dz);
-    const roadGeo = new THREE.PlaneGeometry(road.width * 1.35, len);
-    roadGeo.rotateX(-Math.PI / 2);
-    const uv = roadGeo.attributes.uv;
-    if (uv) {
-      for (let i = 0; i < uv.count; i++) {
-        uv.setXY(i, uv.getX(i), uv.getY(i) * Math.max(1, len / 4.2));
-      }
-      uv.needsUpdate = true;
-    }
-    const mesh = new THREE.Mesh(roadGeo, roadMat);
-    mesh.position.set((road.x1 + road.x2) / 2, 0.024, (road.z1 + road.z2) / 2);
-    mesh.rotation.y = angle;
-    mesh.receiveShadow = true;
-    envGroup.add(mesh);
-  });
-
-  // 2. River strips
+  // River strips scaled to match wide navigable halfWidth
   layout.waterRects.forEach((wr) => {
     const dx = wr.x2 - wr.x1;
     const dz = wr.z2 - wr.z1;
     const len = Math.hypot(dx, dz);
     const angle = Math.atan2(dx, dz);
+    const waterWidth = (wr.halfWidth ?? 9.8) * 2;
+    const bankWidth = waterWidth + 4.4;
 
-    const bankGeo = new THREE.PlaneGeometry(9.6, len + 2);
+    const bankGeo = new THREE.PlaneGeometry(bankWidth, len + 2);
     bankGeo.rotateX(-Math.PI / 2);
     const bankUv = bankGeo.attributes.uv;
     if (bankUv) {
       for (let i = 0; i < bankUv.count; i++) {
-        bankUv.setXY(i, bankUv.getX(i), bankUv.getY(i) * Math.max(2, len / 4.5));
+        bankUv.setXY(i, bankUv.getX(i) * 2.5, bankUv.getY(i) * Math.max(3, len / 6.0));
       }
       bankUv.needsUpdate = true;
     }
@@ -3651,7 +3716,7 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     bank.rotation.y = angle;
     envGroup.add(bank);
 
-    const water = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.08, len), waterMat);
+    const water = new THREE.Mesh(new THREE.BoxGeometry(waterWidth, 0.08, len), waterMat);
     water.position.set((wr.x1 + wr.x2) / 2, 0.05, (wr.z1 + wr.z2) / 2);
     water.rotation.y = angle;
     envGroup.add(water);
@@ -3768,17 +3833,19 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     envGroup.add(instancedRocks);
   }
 
-  // 7. Instanced decorative grass tufts & wildflowers (1 single draw call!)
+  // 7. Instanced decorative grass tufts & wildflowers across enlarged terrain (1 draw call)
   const tuftGeo = new THREE.ConeGeometry(0.22, 0.45, 4);
   const tuftMat = new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.85 });
-  const tuftCount = 120;
+  const tuftCount = 220;
   const instancedTufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftCount);
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
   for (let i = 0; i < tuftCount; i++) {
-    const tx = ((Math.sin(i * 78.233) * 43758.5453) % 1) * 104 - 52;
-    const tz = ((Math.sin(i * 19.913) * 19283.1234) % 1) * 104 - 52;
-    dummy.position.set(Math.abs(tx) > 54 ? tx * 0.5 : tx, 0.22, Math.abs(tz) > 54 ? tz * 0.5 : tz);
+    const rawX = (Math.sin(i * 78.233) * 43758.5453) % 1;
+    const rawZ = (Math.sin(i * 19.913) * 19283.1234) % 1;
+    const tx = (rawX < 0 ? rawX + 1 : rawX) * 168 - 84;
+    const tz = (rawZ < 0 ? rawZ + 1 : rawZ) * 168 - 84;
+    dummy.position.set(tx, 0.22, tz);
     const scale = 0.7 + (i % 5) * 0.14;
     dummy.scale.set(scale, scale, scale);
     dummy.rotation.y = (i * 1.1) % (Math.PI * 2);
@@ -3997,6 +4064,7 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
 
   const roleIcons: Record<string, string> = {
     villager: '⛏️',
+    boat: '⛵',
     swordsman: '⚔️',
     archer: '🏹',
     knight: '🐎',
@@ -4770,6 +4838,73 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
     const counterweight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.26, 0.24), sharedStoneLightMat);
     counterweight.position.set(0, -0.2, 0.44);
     rightArmPivot.add(armBeam, spoon, boulder, counterweight);
+  } else if (mType === 'boat') {
+    // Sleek Wooden Offshore Fishing Vessel with Sail, Cabin & Lantern
+    bodyPivot.position.y = 0.08;
+    const oakMat = sharedWoodScaffoldMat;
+    const trimMat = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.45 });
+    const sailMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      map: unitClothMaps.map,
+      side: THREE.DoubleSide,
+      roughness: 0.68,
+    });
+    const lanternMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+
+    // Curved keel & hull
+    const hull = new THREE.Mesh(
+      makeLatheGeo([
+        [0.02, -0.92],
+        [0.34, -0.68],
+        [0.44, -0.1],
+        [0.42, 0.45],
+        [0.24, 0.85],
+        [0.02, 1.05],
+      ], 12),
+      oakMat
+    );
+    hull.rotation.x = Math.PI / 2;
+    hull.scale.set(1.0, 0.62, 1.0);
+    hull.position.set(0, 0.24, 0);
+    hull.castShadow = true;
+    animParts.hitMaterials.push(oakMat);
+    bodyPivot.add(hull);
+
+    // Gunwale trim & flat timber deck
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 1.28), leatherMat);
+    deck.position.set(0, 0.34, -0.02);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.44), trimMat);
+    cabin.position.set(0, 0.52, -0.35);
+    cabin.castShadow = true;
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), goldTrimMat);
+    crate.position.set(0.1, 0.46, 0.32);
+    bodyPivot.add(deck, cabin, crate);
+
+    // Mast & Yardarm with billowing sail
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.55, 8), oakMat);
+    mast.position.set(0, 1.1, 0.06);
+    mast.castShadow = true;
+    const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), oakMat);
+    yard.rotation.z = Math.PI / 2;
+    yard.position.set(0, 1.66, 0.08);
+    const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.92, 4, 4), sailMat);
+    sail.position.set(0, 1.18, 0.14);
+    const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.02), trimMat);
+    emblem.position.set(0, 1.2, 0.155);
+    bodyPivot.add(mast, yard, sail, emblem);
+
+    // Bow lantern
+    const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), lanternMat);
+    lantern.position.set(0, 0.55, 0.96);
+    bodyPivot.add(lantern);
+
+    // Fishing net boom articulated slightly via rightArmPivot while harvesting fish
+    rightArmPivot.position.set(-0.34, 0.42, 0.15);
+    bodyPivot.add(rightArmPivot);
+    const netPole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.85, 6), oakMat);
+    netPole.rotation.z = 0.55;
+    netPole.position.set(-0.22, 0.12, 0.18);
+    rightArmPivot.add(netPole);
   } else {
     // Ancient Living Treant / Guardian Colossus
     const barkMat = new THREE.MeshStandardMaterial({

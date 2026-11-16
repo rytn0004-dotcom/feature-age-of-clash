@@ -482,7 +482,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           !!bDef.isWall,
           obs?.rects,
           obs?.discs,
-          obs?.bridges
+          obs?.bridges,
+          engine.placementBuildingType
         );
 
         ghost.traverse((child) => {
@@ -545,6 +546,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       const u = engine.units.find((unit) => unit.id === uid);
       return !!u && u.hp > 0 && u.unitDef.category === 'worker' && engine.isHumanControlled(u.faction);
     });
+    const hasNavalBoatSelected = engine.selectedUnitIds.some((uid) => {
+      const u = engine.units.find((unit) => unit.id === uid);
+      return (
+        !!u &&
+        u.hp > 0 &&
+        (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat') &&
+        engine.isHumanControlled(u.faction)
+      );
+    });
+    const hasLandWorkersSelected = engine.selectedUnitIds.some((uid) => {
+      const u = engine.units.find((unit) => unit.id === uid);
+      return (
+        !!u &&
+        u.hp > 0 &&
+        u.unitDef.category === 'worker' &&
+        !u.unitDef.isNaval &&
+        u.unitDefId !== 'fishing_boat' &&
+        engine.isHumanControlled(u.faction)
+      );
+    });
 
     const selBldg =
       engine.selectedBuildingId && !hasSelectedUnits
@@ -552,7 +573,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             (b) => b.id === engine.selectedBuildingId && engine.isHumanControlled(b.faction) && b.buildingDef.trainableUnits.length > 0
           )
         : undefined;
-    const hasTcRally = selBldg?.buildingType === 'town_center';
+    const hasTcRally = selBldg?.buildingType === 'town_center' || selBldg?.buildingType === 'dock';
 
     const makeCursor = (svgBody: string) =>
       `url("data:image/svg+xml;utf8,${encodeURIComponent(
@@ -704,15 +725,47 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       const meta = actionMap[sub] || { action: '採集資源', label: '資源點' };
 
       if (hasWorkersSelected) {
-        setHoverHint({
-          x: e.clientX,
-          y: e.clientY,
-          cursorClass: 'cursor-cell',
-          cursorCss: resourceCursors[sub],
-          badgeText: `右鍵${meta.action}`,
-          tone: 'gather',
-          iconKind: sub,
-        });
+        if (sub === 'deep_fish') {
+          if (hasNavalBoatSelected) {
+            setHoverHint({
+              x: e.clientX,
+              y: e.clientY,
+              cursorClass: 'cursor-cell',
+              cursorCss: resourceCursors[sub],
+              badgeText: '⛵ 右鍵捕撈深海魚',
+              tone: 'gather',
+              iconKind: sub,
+            });
+          } else {
+            setHoverHint({
+              x: e.clientX,
+              y: e.clientY,
+              cursorClass: 'cursor-not-allowed',
+              badgeText: '⚠️ 深海魚需碼頭【漁船】捕撈',
+              tone: 'select',
+              iconKind: sub,
+            });
+          }
+        } else if (hasNavalBoatSelected && !hasLandWorkersSelected && sub !== 'shore_fish') {
+          setHoverHint({
+            x: e.clientX,
+            y: e.clientY,
+            cursorClass: 'cursor-not-allowed',
+            badgeText: '⚠️ 漁船僅能捕撈魚群',
+            tone: 'select',
+            iconKind: sub,
+          });
+        } else {
+          setHoverHint({
+            x: e.clientX,
+            y: e.clientY,
+            cursorClass: 'cursor-cell',
+            cursorCss: resourceCursors[sub],
+            badgeText: `右鍵${meta.action}`,
+            tone: 'gather',
+            iconKind: sub,
+          });
+        }
       } else if (hasTcRally) {
         setHoverHint({
           x: e.clientX,

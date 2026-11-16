@@ -7,7 +7,7 @@ import {
   TerrainBlockedRect,
   TerrainPassableBridge,
 } from '../types/game';
-import { isPointInTerrainObstacle } from './collision';
+import { isOffshoreDeepWater, isPointInTerrainObstacle } from './collision';
 
 export interface MapPresetMetadata {
   id: MapPresetId;
@@ -23,7 +23,7 @@ export const MAP_PRESETS: MapPresetMetadata[] = [
     id: 'river_valley',
     name: '河谷綠洲',
     subtitle: 'River Valley',
-    description: '蜿蜒長河搭配石橋與淺灘，河道蘊藏沿岸魚與深海魚群，兩岸富含漿果、山羌與金石礦脈。',
+    description: '開闊長河搭配石橋與淺灘，河中央蘊藏豐富深海魚群（須建造碼頭與漁船捕撈），兩岸分佈沿岸魚與礦脈。',
     groundTint: '#365314',
     accentHex: 0x0ea5e9,
   },
@@ -39,19 +39,11 @@ export const MAP_PRESETS: MapPresetMetadata[] = [
     id: 'twin_lakes',
     name: '雙湖渡口',
     subtitle: 'Twin Lakes',
-    description: '東西雙湖夾擊中央陸橋，湖泊蘊含豐沛深海魚與沿岸魚，湖畔遍佈漿果與山羌獵場。',
+    description: '東西雙大湖夾擊中央陸橋，湖心深水蘊含高產深海魚群，湖畔遍佈沿岸魚、漿果與礦脈。',
     groundTint: '#2f5233',
     accentHex: 0x10b981,
   },
 ];
-
-export interface RoadSegment {
-  x1: number;
-  z1: number;
-  x2: number;
-  z2: number;
-  width: number;
-}
 
 export interface MapLayoutResult {
   preset: MapPresetId;
@@ -60,7 +52,6 @@ export interface MapLayoutResult {
   waterDiscs: TerrainBlockedDisc[];
   cliffDiscs: TerrainBlockedDisc[];
   bridges: TerrainPassableBridge[];
-  roads: RoadSegment[];
   resourceNodes: ResourceNode[];
 }
 
@@ -79,97 +70,68 @@ export function generateMapLayout(
   spawns: Array<{ id: string; x: number; z: number }>,
   seed = 2026
 ): MapLayoutResult {
-  const rand = seededRandom(seed + spawns.length * 97 + (preset === 'river_valley' ? 1 : preset === 'highland_basin' ? 2 : 3));
+  const rand = seededRandom(
+    seed + spawns.length * 97 + (preset === 'river_valley' ? 1 : preset === 'highland_basin' ? 2 : 3)
+  );
   const mult = richness === 'abundant' ? 1.5 : 1.0;
 
   const waterRects: TerrainBlockedRect[] = [];
   const waterDiscs: TerrainBlockedDisc[] = [];
   const cliffDiscs: TerrainBlockedDisc[] = [];
   const bridges: TerrainPassableBridge[] = [];
-  const roads: RoadSegment[] = [];
   const resourceNodes: ResourceNode[] = [];
 
-  // 1. Build terrain features per map preset
+  // 1. Build enlarged terrain features per map preset (playable land spans [-88..88])
   if (preset === 'river_valley') {
-    // Diagonal river from SW (-62, 42) to NE (62, -42)
-    waterRects.push({ x1: -62, z1: 42, x2: 62, z2: -42, kind: 'water' });
-    const riverAngle = Math.atan2(-42 - 42, 62 - -62);
-    // Central stone bridge + two shallow fords
+    // Wide diagonal river from SW (-96, 64) to NE (96, -64) so center is >9.5m offshore
+    waterRects.push({ x1: -96, z1: 64, x2: 96, z2: -64, kind: 'water', halfWidth: 9.8 });
+    const riverAngle = Math.atan2(-64 - 64, 96 - -96);
+    // Central stone bridge + two flank shallow fords spanning the wide river
     bridges.push(
-      { x: 0, z: 0, halfWidth: 5.5, halfLength: 5.0, angle: riverAngle },
-      { x: -25, z: 17, halfWidth: 4.5, halfLength: 4.8, angle: riverAngle },
-      { x: 25, z: -17, halfWidth: 4.5, halfLength: 4.8, angle: riverAngle }
-    );
-    // Roads connecting bridges and spawns
-    roads.push(
-      { x1: -28, z1: -24, x2: 0, z2: 0, width: 2.3 },
-      { x1: 28, z1: 24, x2: 0, z2: 0, width: 2.3 },
-      { x1: -36, z1: 8, x2: -25, z2: 17, width: 2.0 },
-      { x1: 36, z1: -8, x2: 25, z2: -17, width: 2.0 }
+      { x: 0, z: 0, halfWidth: 6.2, halfLength: 11.4, angle: riverAngle },
+      { x: -42, z: 28, halfWidth: 5.0, halfLength: 11.2, angle: riverAngle },
+      { x: 42, z: -28, halfWidth: 5.0, halfLength: 11.2, angle: riverAngle }
     );
   } else if (preset === 'highland_basin') {
-    // Tactical cliff outcrops creating highland passes (kept clear of 2-6 player bases)
     const ridgeSpots = [
-      { x: -16, z: -4, r: 4.5 },
-      { x: -13, z: 3, r: 3.7 },
-      { x: 16, z: 4, r: 4.5 },
-      { x: 13, z: -3, r: 3.7 },
-      { x: -3, z: -19, r: 4.1 },
-      { x: 3, z: 19, r: 4.1 },
+      { x: -24, z: -7, r: 5.4 },
+      { x: -18, z: 6, r: 4.4 },
+      { x: 24, z: 7, r: 5.4 },
+      { x: 18, z: -6, r: 4.4 },
+      { x: -5, z: -28, r: 4.8 },
+      { x: 5, z: 28, r: 4.8 },
+      { x: -44, z: 18, r: 4.5 },
+      { x: 44, z: -18, r: 4.5 },
     ];
     ridgeSpots.forEach((spot) => {
-      if (spawns.every((sp) => Math.hypot(sp.x - spot.x, sp.z - spot.z) > 15.5)) {
+      if (spawns.every((sp) => Math.hypot(sp.x - spot.x, sp.z - spot.z) > 21)) {
         cliffDiscs.push({ x: spot.x, z: spot.z, radius: spot.r, kind: 'cliff' });
       }
     });
-    // Crossroad trails converging on central basin
-    roads.push(
-      { x1: -32, z1: -28, x2: 32, z2: 28, width: 2.3 },
-      { x1: -28, z1: 26, x2: 28, z2: -26, width: 2.1 }
-    );
   } else if (preset === 'twin_lakes') {
-    // Twin lakes on West and East flanks (with fallback North/South inner basins for 6-player spawns)
+    // Broad West/East lakes (radius 16.5..17.5) providing genuine offshore deep water
     const lakeCandidates = [
-      { x: -24, z: 0, radius: 7.8, kind: 'water' as const },
-      { x: 24, z: 0, radius: 7.8, kind: 'water' as const },
-      { x: 0, z: -15, radius: 6.8, kind: 'water' as const },
-      { x: 0, z: 15, radius: 6.8, kind: 'water' as const },
+      { x: -42, z: 0, radius: 17.5, kind: 'water' as const },
+      { x: 42, z: 0, radius: 17.5, kind: 'water' as const },
+      { x: 0, z: -28, radius: 15.5, kind: 'water' as const },
+      { x: 0, z: 28, radius: 15.5, kind: 'water' as const },
     ];
     for (const lake of lakeCandidates) {
       if (waterDiscs.length >= 2) break;
-      const clearOfSpawns = spawns.every((sp) => Math.hypot(sp.x - lake.x, sp.z - lake.z) > lake.radius + 8.7);
-      const clearOfLakes = waterDiscs.every((w) => Math.hypot(w.x - lake.x, w.z - lake.z) > lake.radius + w.radius + 4);
+      const clearOfSpawns = spawns.every((sp) => Math.hypot(sp.x - lake.x, sp.z - lake.z) > lake.radius + 11.5);
+      const clearOfLakes = waterDiscs.every((w) => Math.hypot(w.x - lake.x, w.z - lake.z) > lake.radius + w.radius + 6);
       if (clearOfSpawns && clearOfLakes) {
         waterDiscs.push(lake);
       }
     }
-    // Causeway trails skirting lake centers / connecting flanks
-    roads.push(
-      { x1: 0, z1: -42, x2: 0, z2: 42, width: 2.4 },
-      { x1: -36, z1: -28, x2: 0, z2: 0, width: 2.0 },
-      { x1: 36, z1: 28, x2: 0, z2: 0, width: 2.0 }
-    );
   }
-
-  // Connect each participant spawn toward the central arena with a weathered dirt trail
-  spawns.forEach((sp) => {
-    const len = Math.hypot(sp.x, sp.z) || 1;
-    const inX = -sp.x / len;
-    const inZ = -sp.z / len;
-    roads.push({
-      x1: +(sp.x + inX * 5.2).toFixed(2),
-      z1: +(sp.z + inZ * 5.2).toFixed(2),
-      x2: +(sp.x * 0.35).toFixed(2),
-      z2: +(sp.z * 0.35).toFixed(2),
-      width: 2.0,
-    });
-  });
 
   const allBlockedDiscs = [...waterDiscs, ...cliffDiscs];
 
-  // Strict dry-land resource clearance:
-  // - All land nodes must stay >= 9.4 units from EVERY Town Center (so nothing spawns inside any base!)
-  // - Wild / mid-map nodes must stay >= 15.8 units from EVERY Town Center (so starter closest gold & stone are unconditionally TC's base mines!)
+  // Dry-land node placement rules:
+  // - All land nodes stay >= 11.2m from EVERY Town Center (never inside TC base footprint)
+  // - Closest Gold & Stone mines are ringed strictly OUTSIDE TC firing range (15m): [16.8 .. 20.8]
+  // - Wild / mid-map nodes stay >= 23.5m from EVERY Town Center so base mines remain guaranteed closest
   const isClearForNode = (
     x: number,
     z: number,
@@ -177,8 +139,7 @@ export function generateMapLayout(
     edgePad = 2.6,
     isWild = false
   ): boolean => {
-    if (Math.abs(x) > 54 || Math.abs(z) > 54) return false;
-    // Keep land resource meshes completely off water, cliffs, riverbanks, and bridge decks
+    if (Math.abs(x) > 84 || Math.abs(z) > 84) return false;
     const samplePts: Array<[number, number]> = [
       [x, z],
       [x + edgePad, z],
@@ -189,23 +150,22 @@ export function generateMapLayout(
     for (const [sx, sz] of samplePts) {
       if (isPointInTerrainObstacle(sx, sz, waterRects, allBlockedDiscs, [])) return false;
       for (const br of bridges) {
-        if (Math.hypot(sx - br.x, sz - br.z) < Math.max(br.halfWidth, br.halfLength) + 1.5) {
+        if (Math.hypot(sx - br.x, sz - br.z) < Math.max(br.halfWidth, br.halfLength) + 1.8) {
           return false;
         }
       }
     }
-    const minTcDist = isWild ? 15.8 : 9.4;
+    const minTcDist = isWild ? 23.5 : 11.2;
     for (const sp of spawns) {
       if (Math.hypot(x - sp.x, z - sp.z) < minTcDist) return false;
-      // Keep base nodes well clear of the inward approach road corridor immediately in front of TC gate
+      // Keep approach path in front of TC gate clear
       const len = Math.hypot(sp.x, sp.z) || 1;
       const inX = -sp.x / len;
       const inZ = -sp.z / len;
-      const gateX = sp.x + inX * 6.0;
-      const gateZ = sp.z + inZ * 6.0;
-      if (Math.hypot(x - gateX, z - gateZ) < 3.6) return false;
+      const gateX = sp.x + inX * 7.2;
+      const gateZ = sp.z + inZ * 7.2;
+      if (Math.hypot(x - gateX, z - gateZ) < 4.0) return false;
     }
-    // Keep nodes from stacking on top of each other
     for (const existing of resourceNodes) {
       if (Math.hypot(x - existing.x, z - existing.z) < minPad) return false;
     }
@@ -225,7 +185,7 @@ export function generateMapLayout(
     const rx = +x.toFixed(2);
     const rz = +z.toFixed(2);
     const minNodeSpacing =
-      subtype === 'wood' ? 1.85 : subtype === 'berry' || subtype === 'hunt' ? 2.15 : 3.2;
+      subtype === 'wood' ? 1.85 : subtype === 'berry' || subtype === 'hunt' ? 2.2 : 3.3;
     if (!isClearForNode(rx, rz, minNodeSpacing, edgePad, isWild)) {
       return false;
     }
@@ -241,7 +201,7 @@ export function generateMapLayout(
     return true;
   };
 
-  // Concentric ring search strictly outside TC walls (9.6 <= dist <= 13.0) for starter Gold & Stone
+  // Concentric ring search placing base Gold & Stone mines strictly outside TC range (>15 -> 16.8..20.5)
   const placeBaseRingNode = (
     id: string,
     resourceType: ResourceType,
@@ -249,18 +209,17 @@ export function generateMapLayout(
     sp: { id: string; x: number; z: number },
     targetAngle: number,
     amount: number,
-    minR = 9.7,
-    maxR = 12.8
+    minR = 16.8,
+    maxR = 20.5
   ): boolean => {
     const radii: number[] = [];
-    for (let r = minR; r <= maxR + 0.01; r += 0.55) {
+    for (let r = minR; r <= maxR + 0.01; r += 0.65) {
       radii.push(r);
     }
     for (const r of radii) {
-      // Fan outward symmetrically from targetAngle so placement stays randomized yet tightly ringed around TC
-      for (let step = 0; step < 28; step++) {
+      for (let step = 0; step < 32; step++) {
         const sign = step % 2 === 0 ? 1 : -1;
-        const delta = Math.ceil(step / 2) * ((Math.PI * 2) / 28) * sign;
+        const delta = Math.ceil(step / 2) * ((Math.PI * 2) / 32) * sign;
         const ang = targetAngle + delta;
         const cx = sp.x + Math.cos(ang) * r;
         const cz = sp.z + Math.sin(ang) * r;
@@ -272,7 +231,6 @@ export function generateMapLayout(
     return false;
   };
 
-  // Expanded spiral search for secondary starter clusters & wild mid-map nodes
   const placeWithFallback = (
     id: string,
     resourceType: ResourceType,
@@ -284,18 +242,18 @@ export function generateMapLayout(
     isWild = false
   ) => {
     if (pushNode(id, resourceType, subtype, tx, tz, amount, 2.5, isWild)) return;
-    for (let r = 2.0; r <= 14.5; r += 2.1) {
-      for (let a = 0; a < 12; a++) {
-        const ang = (a / 12) * Math.PI * 2;
+    for (let r = 2.2; r <= 18.0; r += 2.3) {
+      for (let a = 0; a < 14; a++) {
+        const ang = (a / 14) * Math.PI * 2;
         if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 2.2, isWild)) {
           return;
         }
       }
     }
     if (critical) {
-      for (let r = 2.0; r <= 18; r += 2.4) {
-        for (let a = 0; a < 14; a++) {
-          const ang = (a / 14) * Math.PI * 2 + 0.22;
+      for (let r = 2.4; r <= 24; r += 2.6) {
+        for (let a = 0; a < 16; a++) {
+          const ang = (a / 16) * Math.PI * 2 + 0.2;
           if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 1.8, false)) {
             return;
           }
@@ -308,12 +266,11 @@ export function generateMapLayout(
   spawns.forEach((sp) => {
     const len = Math.hypot(sp.x, sp.z) || 1;
     const inAngle = Math.atan2(-sp.z / len, -sp.x / len);
-    // Seeded angular spin per match/spawn so layouts feel varied while remaining strictly fair
     const baseSpin = (rand() - 0.5) * 1.15;
     const goldPrimaryAngle = inAngle + (rand() < 0.5 ? -1 : 1) * (1.15 + rand() * 0.45) + baseSpin * 0.35;
     const stonePrimaryAngle = goldPrimaryAngle + Math.PI * (0.72 + rand() * 0.25);
 
-    // Closest Gold Vein & Closest Stone Quarry strictly outside Town Center walls (9.7 .. 12.8 units)
+    // Closest Gold & Stone strictly OUTSIDE TC firing range (15 -> placed at 16.8..20.5)
     placeBaseRingNode(
       `gold_base_${sp.id}`,
       'gold',
@@ -321,8 +278,8 @@ export function generateMapLayout(
       sp,
       goldPrimaryAngle,
       1400,
-      9.7,
-      12.6
+      16.8,
+      20.5
     );
     placeBaseRingNode(
       `stone_base_${sp.id}`,
@@ -331,45 +288,45 @@ export function generateMapLayout(
       sp,
       stonePrimaryAngle,
       1000,
-      9.7,
-      12.6
+      16.8,
+      20.5
     );
 
-    // Outer Flank Gold Vein (placed outside primary ring so gold_base_* always remains closest to TC)
+    // Outer Flank Gold Vein (>= 25m away)
     const outerGoldAngle = goldPrimaryAngle + (rand() - 0.5) * 0.8 + Math.PI * 0.35;
     placeWithFallback(
       `gold_outer_${sp.id}`,
       'gold',
       'gold',
-      sp.x + Math.cos(outerGoldAngle) * 17.5,
-      sp.z + Math.sin(outerGoldAngle) * 17.5,
-      1100,
+      sp.x + Math.cos(outerGoldAngle) * 26.0,
+      sp.z + Math.sin(outerGoldAngle) * 26.0,
+      1200,
       true,
       true
     );
 
-    // Berry Bush Cluster outside courtyard (~11.5–12.8 units out)
+    // Berry Bush Cluster outside courtyard (~14.5m out)
     const berryAngle = inAngle + (goldPrimaryAngle > inAngle ? -1.4 : 1.4) + (rand() - 0.5) * 0.4;
-    const berryCx = sp.x + Math.cos(berryAngle) * 12.4;
-    const berryCz = sp.z + Math.sin(berryAngle) * 12.4;
+    const berryCx = sp.x + Math.cos(berryAngle) * 14.8;
+    const berryCz = sp.z + Math.sin(berryAngle) * 14.8;
     for (let b = 0; b < 3; b++) {
       const ang = (b / 3) * Math.PI * 2 + rand() * 0.5;
       placeWithFallback(
         `berry_base_${sp.id}_${b}`,
         'food',
         'berry',
-        berryCx + Math.cos(ang) * 2.1,
-        berryCz + Math.sin(ang) * 2.1,
+        berryCx + Math.cos(ang) * 2.2,
+        berryCz + Math.sin(ang) * 2.2,
         350,
         b === 0,
         false
       );
     }
 
-    // Wild Muntjac Herd (野生山羌) outside courtyard (~13.2 units out)
+    // Wild Muntjac Herd (野生山羌) outside courtyard (~16.2m out)
     const huntAngle = inAngle + Math.PI + (rand() - 0.5) * 0.9;
-    const deerCx = sp.x + Math.cos(huntAngle) * 13.4;
-    const deerCz = sp.z + Math.sin(huntAngle) * 13.4;
+    const deerCx = sp.x + Math.cos(huntAngle) * 16.4;
+    const deerCz = sp.z + Math.sin(huntAngle) * 16.4;
     for (let d = 0; d < 2; d++) {
       placeWithFallback(
         `hunt_base_${sp.id}_${d}`,
@@ -383,13 +340,13 @@ export function generateMapLayout(
       );
     }
 
-    // Main Wood Grove outside base perimeter (~14.5 units out)
+    // Main Wood Grove outside courtyard (~17.8m out)
     const woodAngle = inAngle + Math.PI * 0.62 + baseSpin * 0.45;
-    const woodCx = sp.x + Math.cos(woodAngle) * 14.8;
-    const woodCz = sp.z + Math.sin(woodAngle) * 14.8;
-    for (let t = 0; t < 7; t++) {
-      const ang = (t / 7) * Math.PI * 2 + rand() * 0.35;
-      const dist = t === 0 ? 0.2 : 2.4 + (t % 2) * 0.9;
+    const woodCx = sp.x + Math.cos(woodAngle) * 18.0;
+    const woodCz = sp.z + Math.sin(woodAngle) * 18.0;
+    for (let t = 0; t < 8; t++) {
+      const ang = (t / 8) * Math.PI * 2 + rand() * 0.35;
+      const dist = t === 0 ? 0.2 : 2.5 + (t % 2) * 0.95;
       placeWithFallback(
         `wood_base_${sp.id}_${t}`,
         'wood',
@@ -403,18 +360,18 @@ export function generateMapLayout(
     }
   });
 
-  // 3. Contested Mid-Map & Flank Resource Richness (strictly outside all base courtyards!)
-  const jitter = () => (rand() - 0.5) * 3.2;
+  // 3. Contested Mid-Map & Outer Flank Resource Richness (strictly >= 23.5m from all TCs)
+  const jitter = () => (rand() - 0.5) * 5.0;
 
   const midGoldVeins = [
-    { x: -7 + jitter(), z: 4 + jitter(), amt: 2000 },
-    { x: 7 + jitter(), z: -4 + jitter(), amt: 2000 },
-    { x: -16 + jitter(), z: -18 + jitter(), amt: 1800 },
-    { x: 16 + jitter(), z: 18 + jitter(), amt: 1800 },
-    { x: -34 + jitter(), z: 24 + jitter(), amt: 2200 },
-    { x: 34 + jitter(), z: -24 + jitter(), amt: 2200 },
-    { x: 0 + jitter(), z: -34 + jitter(), amt: 1800 },
-    { x: 0 + jitter(), z: 34 + jitter(), amt: 1800 },
+    { x: -12 + jitter(), z: 6 + jitter(), amt: 2000 },
+    { x: 12 + jitter(), z: -6 + jitter(), amt: 2000 },
+    { x: -24 + jitter(), z: -28 + jitter(), amt: 1800 },
+    { x: 24 + jitter(), z: 28 + jitter(), amt: 1800 },
+    { x: -56 + jitter(), z: 36 + jitter(), amt: 2200 },
+    { x: 56 + jitter(), z: -36 + jitter(), amt: 2200 },
+    { x: 0 + jitter(), z: -56 + jitter(), amt: 1800 },
+    { x: 0 + jitter(), z: 56 + jitter(), amt: 1800 },
   ];
   midGoldVeins.forEach((g, idx) => {
     if (richness === 'standard' && idx >= 6) return;
@@ -423,10 +380,10 @@ export function generateMapLayout(
 
   const midStoneOutcrops = [
     { x: 0 + jitter(), z: 0 + jitter(), amt: 1400 },
-    { x: -22 + jitter(), z: -12 + jitter(), amt: 1200 },
-    { x: 22 + jitter(), z: 12 + jitter(), amt: 1200 },
-    { x: -14 + jitter(), z: 30 + jitter(), amt: 1200 },
-    { x: 14 + jitter(), z: -30 + jitter(), amt: 1200 },
+    { x: -34 + jitter(), z: -18 + jitter(), amt: 1200 },
+    { x: 34 + jitter(), z: 18 + jitter(), amt: 1200 },
+    { x: -22 + jitter(), z: 48 + jitter(), amt: 1200 },
+    { x: 22 + jitter(), z: -48 + jitter(), amt: 1200 },
   ];
   midStoneOutcrops.forEach((s, idx) => {
     if (richness === 'standard' && idx >= 3) return;
@@ -435,12 +392,12 @@ export function generateMapLayout(
 
   // Wild Berry Orchards across map flanks
   const berryGroves = [
-    { x: -12 + jitter(), z: -8 + jitter() },
-    { x: 12 + jitter(), z: 8 + jitter() },
-    { x: -30 + jitter(), z: -6 + jitter() },
-    { x: 30 + jitter(), z: 6 + jitter() },
-    { x: 6 + jitter(), z: -26 + jitter() },
-    { x: -6 + jitter(), z: 26 + jitter() },
+    { x: -18 + jitter(), z: -12 + jitter() },
+    { x: 18 + jitter(), z: 12 + jitter() },
+    { x: -50 + jitter(), z: -10 + jitter() },
+    { x: 50 + jitter(), z: 10 + jitter() },
+    { x: 10 + jitter(), z: -42 + jitter() },
+    { x: -10 + jitter(), z: 42 + jitter() },
   ];
   berryGroves.forEach((bg, gIdx) => {
     if (richness === 'standard' && gIdx >= 4) return;
@@ -450,8 +407,8 @@ export function generateMapLayout(
         `berry_wild_${gIdx}_${b}`,
         'food',
         'berry',
-        bg.x + Math.cos(ang) * 2.2,
-        bg.z + Math.sin(ang) * 2.2,
+        bg.x + Math.cos(ang) * 2.3,
+        bg.z + Math.sin(ang) * 2.3,
         350,
         false,
         true
@@ -459,12 +416,12 @@ export function generateMapLayout(
     }
   });
 
-  // Wild Muntjac Herds (野生山羌) roaming open meadows
+  // Wild Muntjac Herds roaming meadows
   const huntHerds = [
-    { x: -8 + jitter(), z: 16 + jitter() },
-    { x: 8 + jitter(), z: -16 + jitter() },
-    { x: -38 + jitter(), z: -2 + jitter() },
-    { x: 38 + jitter(), z: 2 + jitter() },
+    { x: -12 + jitter(), z: 24 + jitter() },
+    { x: 12 + jitter(), z: -24 + jitter() },
+    { x: -62 + jitter(), z: -4 + jitter() },
+    { x: 62 + jitter(), z: 4 + jitter() },
   ];
   huntHerds.forEach((h, hIdx) => {
     for (let d = 0; d < 3; d++) {
@@ -472,8 +429,8 @@ export function generateMapLayout(
         `hunt_wild_${hIdx}_${d}`,
         'food',
         'hunt',
-        h.x + (d - 1) * 2.3,
-        h.z + ((d % 2) - 0.5) * 2.0,
+        h.x + (d - 1) * 2.4,
+        h.z + ((d % 2) - 0.5) * 2.2,
         420,
         false,
         true
@@ -481,22 +438,22 @@ export function generateMapLayout(
     }
   });
 
-  // Forest Groves scattered strategically across mid-map & edges
+  // Forest Groves scattered strategically across enlarged battlefield
   const forestCenters = [
-    { cx: 0 + jitter(), cz: -21 + jitter(), count: 8 },
-    { cx: 0 + jitter(), cz: 21 + jitter(), count: 8 },
-    { cx: -21 + jitter(), cz: 2 + jitter(), count: 7 },
-    { cx: 21 + jitter(), cz: -2 + jitter(), count: 7 },
-    { cx: -42 + jitter(), cz: -14 + jitter(), count: 7 },
-    { cx: 42 + jitter(), cz: 14 + jitter(), count: 7 },
-    { cx: -14 + jitter(), cz: -42 + jitter(), count: 7 },
-    { cx: 14 + jitter(), cz: 42 + jitter(), count: 7 },
+    { cx: 0 + jitter(), cz: -34 + jitter(), count: 8 },
+    { cx: 0 + jitter(), cz: 34 + jitter(), count: 8 },
+    { cx: -32 + jitter(), cz: 4 + jitter(), count: 7 },
+    { cx: 32 + jitter(), cz: -4 + jitter(), count: 7 },
+    { cx: -66 + jitter(), cz: -20 + jitter(), count: 8 },
+    { cx: 66 + jitter(), cz: 20 + jitter(), count: 8 },
+    { cx: -22 + jitter(), cz: -66 + jitter(), count: 7 },
+    { cx: 22 + jitter(), cz: 66 + jitter(), count: 7 },
   ];
   forestCenters.forEach((spot, sIdx) => {
     const count = richness === 'abundant' ? spot.count + 2 : spot.count;
     for (let i = 0; i < count; i++) {
       const ang = (i / count) * Math.PI * 2 + rand() * 0.4;
-      const rad = 1.8 + rand() * 4.5;
+      const rad = 1.8 + rand() * 5.0;
       placeWithFallback(
         `wood_mid_${sIdx}_${i}`,
         'wood',
@@ -510,7 +467,9 @@ export function generateMapLayout(
     }
   });
 
-  // 4. Water Fish Schools (Shore Fish & Deep Fish) inside navigable waterways & lakes within bank reach
+  // 4. Water Fish Schools:
+  // - `shore_fish`: hugging riverbanks / lakeshores (gatherable by land villagers AND boats)
+  // - `deep_fish`: strictly far offshore (>= 5.5m from dry land; gatherable ONLY by Fishing Boats!)
   const pushWaterFish = (
     id: string,
     subtype: 'shore_fish' | 'deep_fish',
@@ -520,19 +479,21 @@ export function generateMapLayout(
   ): boolean => {
     const rx = +x.toFixed(2);
     const rz = +z.toFixed(2);
-    if (Math.abs(rx) > 52 || Math.abs(rz) > 52) return false;
-    // Must sit strictly inside water and off bridge decks
+    if (Math.abs(rx) > 84 || Math.abs(rz) > 84) return false;
     if (!isPointInTerrainObstacle(rx, rz, waterRects, waterDiscs, [])) return false;
+    if (subtype === 'deep_fish' && !isOffshoreDeepWater(rx, rz, waterRects, waterDiscs, bridges, 5.5)) {
+      return false;
+    }
     for (const br of bridges) {
-      if (Math.hypot(rx - br.x, rz - br.z) < Math.max(br.halfWidth, br.halfLength) + 1.8) {
+      if (Math.hypot(rx - br.x, rz - br.z) < Math.max(br.halfWidth, br.halfLength) + 2.2) {
         return false;
       }
     }
     for (const sp of spawns) {
-      if (Math.hypot(rx - sp.x, rz - sp.z) < 9.5) return false;
+      if (Math.hypot(rx - sp.x, rz - sp.z) < 12.0) return false;
     }
     for (const existing of resourceNodes) {
-      if (Math.hypot(rx - existing.x, rz - existing.z) < 2.8) return false;
+      if (Math.hypot(rx - existing.x, rz - existing.z) < 3.0) return false;
     }
     resourceNodes.push({
       id,
@@ -548,32 +509,34 @@ export function generateMapLayout(
 
   if (preset === 'river_valley' && waterRects.length > 0) {
     const wr = waterRects[0];
+    const hw = wr.halfWidth ?? 9.8;
     const rdx = wr.x2 - wr.x1;
     const rdz = wr.z2 - wr.z1;
     const rLen = Math.hypot(rdx, rdz) || 1;
     const tx = rdx / rLen;
     const tz = rdz / rLen;
-    // Perpendicular unit normal to river centerline
     const nx = -tz;
     const nz = tx;
 
-    const shoreSlotsT = [0.11, 0.21, 0.37, 0.43, 0.57, 0.63, 0.79, 0.89];
+    // Shore fish 1.5..2.0m inside shoreline
+    const shoreSlotsT = [0.09, 0.17, 0.35, 0.42, 0.58, 0.65, 0.83, 0.91];
     shoreSlotsT.forEach((tVal, idx) => {
-      const t = tVal + (rand() - 0.5) * 0.03;
+      const t = tVal + (rand() - 0.5) * 0.02;
       const side = idx % 2 === 0 ? 1 : -1;
-      const offset = 2.0 + rand() * 0.3;
+      const offset = hw - (1.45 + rand() * 0.45);
       const fx = wr.x1 + rdx * t + nx * side * offset;
       const fz = wr.z1 + rdz * t + nz * side * offset;
       pushWaterFish(`shore_fish_river_${idx}`, 'shore_fish', fx, fz, 450);
     });
 
-    const deepSlotsT = [0.15, 0.39, 0.61, 0.85, ...(richness === 'abundant' ? [0.24, 0.76] : [])];
+    // Deep fish strictly down river center (>= 8m offshore)
+    const deepSlotsT = [0.14, 0.37, 0.63, 0.86, ...(richness === 'abundant' ? [0.22, 0.78] : [])];
     deepSlotsT.forEach((tVal, idx) => {
-      const t = tVal + (rand() - 0.5) * 0.025;
-      const offset = (rand() - 0.5) * 0.7;
+      const t = tVal + (rand() - 0.5) * 0.02;
+      const offset = (rand() - 0.5) * 2.2;
       const fx = wr.x1 + rdx * t + nx * offset;
       const fz = wr.z1 + rdz * t + nz * offset;
-      pushWaterFish(`deep_fish_river_${idx}`, 'deep_fish', fx, fz, 650);
+      pushWaterFish(`deep_fish_river_${idx}`, 'deep_fish', fx, fz, 750);
     });
   }
 
@@ -582,7 +545,7 @@ export function generateMapLayout(
     const spin = rand() * Math.PI * 2;
     for (let s = 0; s < shoreCount; s++) {
       const ang = spin + (s / shoreCount) * Math.PI * 2 + (rand() - 0.5) * 0.2;
-      const r = lake.radius - (1.05 + rand() * 0.25);
+      const r = lake.radius - (1.35 + rand() * 0.35);
       pushWaterFish(
         `shore_fish_lake_${lIdx}_${s}`,
         'shore_fish',
@@ -592,10 +555,11 @@ export function generateMapLayout(
       );
     }
 
-    const deepCount = richness === 'abundant' ? 3 : 2;
+    const deepCount = richness === 'abundant' ? 4 : 3;
     for (let d = 0; d < deepCount; d++) {
       const baseAng = spin + ((d + 0.5) / deepCount) * Math.PI * 2;
-      const baseR = Math.max(2.1, lake.radius - 3.15);
+      // Place strictly >= 7m inside the lakeshore
+      const baseR = Math.max(2.2, Math.min(lake.radius - 7.5, lake.radius * 0.42));
       for (const offset of [0, 0.35, -0.35, 0.7]) {
         const ang = baseAng + offset;
         if (
@@ -604,7 +568,7 @@ export function generateMapLayout(
             'deep_fish',
             lake.x + Math.cos(ang) * baseR,
             lake.z + Math.sin(ang) * baseR,
-            650
+            750
           )
         ) {
           break;
@@ -620,7 +584,7 @@ export function generateMapLayout(
     waterDiscs,
     cliffDiscs,
     bridges,
-    roads,
     resourceNodes,
   };
 }
+

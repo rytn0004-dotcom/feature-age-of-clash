@@ -51,6 +51,7 @@ import {
   calculateBuildingDamage,
   calculateDamage,
   canAfford,
+  canUnitGatherNode,
   computeAiWorkerAllocation,
   computeBuildingVisualState,
   computeGarrisonDefenseProfile,
@@ -84,7 +85,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
 } from './collision';
-import { buildNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
+import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import {
   ControlGroupsMap,
@@ -166,9 +167,11 @@ export class RtsEngine {
   private environmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
 
-  // Pathfinding Navigation Grid Cache
+  // Pathfinding Navigation Grid Cache (land + naval waterway)
   private navGrid: NavGrid | null = null;
   private navGridDirty = true;
+  private waterNavGrid: NavGrid | null = null;
+  private waterNavGridDirty = true;
 
   // Reusable Raycaster & HUD Sync Throttle
   private raycaster = new THREE.Raycaster();
@@ -258,12 +261,17 @@ export class RtsEngine {
   public placementBuildingType: BuildingType | null = null;
   private placementGhostMesh: THREE.Group | null = null;
 
-  // Camera navigation
+  // Camera navigation (zoom + keyboard + screen edge panning)
   public cameraTarget = new THREE.Vector3(0, 0, 0);
+  public cameraZoom = 1.0;
+  private cameraTargetZoom = 1.0;
   private cameraDesiredTarget: THREE.Vector3 | null = null;
   private cameraPanVelX = 0;
   private cameraPanVelZ = 0;
+  private edgeScrollDirX = 0;
+  private edgeScrollDirZ = 0;
   private keysHeld = new Set<string>();
+  private cleanupWindowListeners: Array<() => void> = [];
 
   // Game stats
   public stats: GameStats = {
@@ -334,7 +342,7 @@ export class RtsEngine {
 
     // Isometric tilt RTS camera
     const aspect = this.container.clientWidth / this.container.clientHeight;
-    this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 300);
+    this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 360);
     this.updateCameraPosition();
 
     // Lighting: Warm key directional sun + cool hemisphere fill
@@ -361,19 +369,19 @@ export class RtsEngine {
     rimLight.castShadow = false;
     this.scene.add(rimLight);
 
-    // Terrain Plane with level playable arena [-55..55] and sculpted rolling outer hills
-    const terrainGeo = new THREE.PlaneGeometry(160, 160, 44, 44);
+    // Terrain Plane with level playable arena [-90..90] and sculpted rolling outer hills
+    const terrainGeo = new THREE.PlaneGeometry(240, 240, 56, 56);
     terrainGeo.rotateX(-Math.PI / 2);
     const posAttr = terrainGeo.attributes.position;
     for (let i = 0; i < posAttr.count; i++) {
       const vx = posAttr.getX(i);
       const vz = posAttr.getZ(i);
-      const edgeDist = Math.max(Math.abs(vx), Math.abs(vz)) - 56;
+      const edgeDist = Math.max(Math.abs(vx), Math.abs(vz)) - 90;
       if (edgeDist > 0) {
         const ridge =
           Math.sin(vx * 0.14) * Math.cos(vz * 0.14) * 1.4 +
           Math.sin((vx + vz) * 0.08) * 1.1;
-        const elev = Math.min(7.5, edgeDist * 0.22 + Math.max(0, ridge) * (edgeDist / 16));
+        const elev = Math.min(8.5, edgeDist * 0.24 + Math.max(0, ridge) * (edgeDist / 16));
         posAttr.setY(i, elev);
       }
     }
@@ -413,7 +421,7 @@ export class RtsEngine {
       // Multi-scale world-space biome variation (eliminates any visible texture tiling!)
       const macro = Math.sin(vx * 0.065) * Math.cos(vz * 0.065);
       const meso = Math.sin((vx + vz) * 0.14) * Math.cos((vx - vz) * 0.11);
-      const edgeDist = Math.max(0, Math.max(Math.abs(vx), Math.abs(vz)) - 54);
+      const edgeDist = Math.max(0, Math.max(Math.abs(vx), Math.abs(vz)) - 88);
       const ridgeShade = Math.max(0.74, 1 - edgeDist * 0.016);
 
       const r = Math.min(1.08, Math.max(0.68, (baseR + macro * 0.07 - meso * 0.03) * ridgeShade));
@@ -588,8 +596,8 @@ export class RtsEngine {
       roughness: 0.96,
     });
     const peakGeo = new THREE.DodecahedronGeometry(1, 1);
-    const count = 48;
-    const radius = 75;
+    const count = 64;
+    const radius = 114;
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
       const dist = radius + Math.sin(i * 1.9) * 3.5;
@@ -695,6 +703,14 @@ export class RtsEngine {
     return this.navGrid;
   }
 
+  public getWaterNavGrid(): NavGrid {
+    if (!this.waterNavGrid || this.waterNavGridDirty) {
+      this.waterNavGrid = buildWaterNavGrid(this.buildings, this.resourceNodes, this.getTerrainNavObstacles());
+      this.waterNavGridDirty = false;
+    }
+    return this.waterNavGrid;
+  }
+
   public setupWorld(
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
@@ -786,6 +802,11 @@ export class RtsEngine {
     this.cameraPanVelZ = 0;
     this.controlGroups = createEmptyControlGroups();
     this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    this.cameraZoom = 1.0;
+    this.cameraTargetZoom = 1.0;
+    this.edgeScrollDirX = 0;
+    this.edgeScrollDirZ = 0;
 
     // Update terrain biome PBR material & world-space vertex colors
     if (this.terrainMesh) {
@@ -840,7 +861,7 @@ export class RtsEngine {
       gameDuration: 0,
     };
 
-    const spawns = generateSpawnPositions(this.participants.length, 36);
+    const spawns = generateSpawnPositions(this.participants.length, 58);
     const matchSeed = Math.floor(Math.random() * 900000) + 1000;
     const layout = generateMapLayout(
       this.mapPreset,
@@ -876,8 +897,8 @@ export class RtsEngine {
       for (let r = 2.5; r <= 14; r += 2.5) {
         for (let a = 0; a < 12; a++) {
           const ang = (a / 12) * Math.PI * 2;
-          const cx = Math.max(-52, Math.min(52, tx + Math.cos(ang) * r));
-          const cz = Math.max(-52, Math.min(52, tz + Math.sin(ang) * r));
+          const cx = Math.max(-86, Math.min(86, tx + Math.cos(ang) * r));
+          const cz = Math.max(-86, Math.min(86, tz + Math.sin(ang) * r));
           if (
             isPlacementLocationValid(
               cx,
@@ -898,7 +919,7 @@ export class RtsEngine {
       return { x: tx, z: tz };
     };
 
-    let humanCameraTarget = { x: -28, z: -24 };
+    let humanCameraTarget = { x: -46, z: -40 };
 
     // Phase A: Place every participant's Town Center first so no resource can ever overlap any TC footprint
     this.participants.forEach((p, idx) => {
@@ -919,7 +940,7 @@ export class RtsEngine {
     const groveBadgeFlags = new Set<string>();
     layout.resourceNodes.forEach((rn) => {
       // Extra runtime safety guard: never drop a resource node inside any Town Center courtyard
-      const nearTc = this.buildings.some((b) => getDistance(rn.x, rn.z, b.x, b.z) < 8.8);
+      const nearTc = this.buildings.some((b) => getDistance(rn.x, rn.z, b.x, b.z) < 10.5);
       if (nearTc) return;
 
       let showBadge = true;
@@ -969,6 +990,35 @@ export class RtsEngine {
     this.updateCameraPosition();
   }
 
+  public hasUniqueBuildingAura(faction: FactionId): boolean {
+    const uniqueType = getCivilizationConfig(this.getCivilizationForFaction(faction)).uniqueBuildingType;
+    return this.buildings.some(
+      (b) => b.faction === faction && b.hp > 0 && b.isConstructed && b.buildingType === uniqueType
+    );
+  }
+
+  private applyLandmarkPerksToStats(
+    stats: UnitDefinition['stats'],
+    category: UnitDefinition['category'],
+    faction: FactionId
+  ): UnitDefinition['stats'] {
+    const landmarks = this.landmarksByFaction[faction] || [];
+    if (landmarks.length === 0) return stats;
+    const out = { ...stats };
+    if (landmarks.includes('landmark_aachen') && category === 'worker') {
+      out.gatherSpeed = +(out.gatherSpeed * 1.25).toFixed(4);
+      out.speed = +(out.speed * 1.15).toFixed(2);
+    }
+    if (landmarks.includes('landmark_barracks') && category !== 'worker') {
+      out.attack += 3;
+    }
+    if (landmarks.includes('landmark_observatory')) {
+      out.defense += 4;
+      out.maxHp = Math.round(out.maxHp * 1.2);
+    }
+    return out;
+  }
+
   public findUnitDef(id: string, faction?: FactionId): UnitDefinition | undefined {
     for (const mod of this.activeMods) {
       if (!mod.enabled) continue;
@@ -978,9 +1028,12 @@ export class RtsEngine {
         if (faction) {
           const civ = this.getCivilizationForFaction(faction);
           const techs = this.getResearchedTechs(faction);
+          const age = this.ageByFaction[faction] || 1;
+          const hasAura = this.hasUniqueBuildingAura(faction);
+          const progressed = applyCivilizationAndTechStats(modStats, found.category, civ, techs, age, hasAura);
           return {
             ...found,
-            stats: applyCivilizationAndTechStats(modStats, found.category, civ, techs),
+            stats: this.applyLandmarkPerksToStats(progressed, found.category, faction),
           };
         }
         return {
@@ -996,29 +1049,60 @@ export class RtsEngine {
     const list: UnitDefinition[] = [];
     const civ = this.getCivilizationForFaction(faction);
     const techs = this.getResearchedTechs(faction);
+    const age = this.ageByFaction[faction] || 1;
+    const hasAura = this.hasUniqueBuildingAura(faction);
     for (const mod of this.activeMods) {
       if (!mod.enabled) continue;
       for (const u of mod.unitDefinitions) {
         const modStats = applyBalanceMultipliers(u.stats, mod.balanceMultipliers);
+        const progressed = applyCivilizationAndTechStats(modStats, u.category, civ, techs, age, hasAura);
         list.push({
           ...u,
-          stats: applyCivilizationAndTechStats(modStats, u.category, civ, techs),
+          stats: this.applyLandmarkPerksToStats(progressed, u.category, faction),
         });
       }
     }
     return list;
   }
 
+  public refreshFactionUnitStats(faction: FactionId) {
+    const civ = this.getCivilizationForFaction(faction);
+    this.units.forEach((u) => {
+      if (u.faction !== faction || u.hp <= 0) return;
+      const fresh = this.findUnitDef(u.unitDefId, faction);
+      if (!fresh) return;
+      const s = { ...fresh.stats };
+      const lvl = canUnitGainXp(u.unitDefId, civ) ? u.level || 1 : 1;
+      for (let i = 1; i < lvl; i++) {
+        s.maxHp = Math.round(s.maxHp * 1.14);
+        s.attack = Math.round(s.attack * 1.12 + 2);
+        s.defense += 1;
+      }
+      const oldMax = Math.max(1, u.maxHp);
+      u.maxHp = s.maxHp;
+      u.hp = Math.min(u.maxHp, Math.max(1, Math.round(u.hp * (s.maxHp / oldMax))));
+      u.unitDef.stats = s;
+    });
+  }
+
   public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number): UnitEntity {
     const id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const team = this.getParticipant(faction)?.team ?? (faction === 'player' ? 1 : 2);
+    const age = this.ageByFaction[faction] || 1;
+    const hasAura = this.hasUniqueBuildingAura(faction);
     const effectiveDef = this.findUnitDef(def.id, faction) || {
       ...def,
-      stats: applyCivilizationAndTechStats(
-        def.stats,
+      stats: this.applyLandmarkPerksToStats(
+        applyCivilizationAndTechStats(
+          def.stats,
+          def.category,
+          this.getCivilizationForFaction(faction),
+          this.getResearchedTechs(faction),
+          age,
+          hasAura
+        ),
         def.category,
-        this.getCivilizationForFaction(faction),
-        this.getResearchedTechs(faction)
+        faction
       ),
     };
 
@@ -1109,6 +1193,7 @@ export class RtsEngine {
     };
     this.buildings.push(building);
     this.navGridDirty = true;
+    this.waterNavGridDirty = true;
 
     const mesh = createBuildingMesh(type, faction, civ);
     mesh.position.set(x, 0, z);
@@ -1246,9 +1331,9 @@ export class RtsEngine {
 
   public setCameraFocus(x: number, z: number) {
     this.cameraDesiredTarget = new THREE.Vector3(
-      Math.max(-45, Math.min(45, x)),
+      Math.max(-84, Math.min(84, x)),
       0,
-      Math.max(-45, Math.min(45, z))
+      Math.max(-84, Math.min(84, z))
     );
   }
 
@@ -1517,8 +1602,8 @@ export class RtsEngine {
       const col = idx % cols;
       const ox = (col - (cols - 1) / 2) * spacing;
       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
-      const gx = Math.max(-58, Math.min(58, x + ox));
-      const gz = Math.max(-58, Math.min(58, z + oz));
+      const gx = Math.max(-88, Math.min(88, x + ox));
+      const gz = Math.max(-88, Math.min(88, z + oz));
 
       unit.targetX = gx;
       unit.targetZ = gz;
@@ -1680,8 +1765,8 @@ export class RtsEngine {
       };
       this.addFloatingText(closestHostile.x, 3.0, closestHostile.z, '⚔️ 小地圖突擊指令', '#ef4444');
     } else {
-      const clampedX = Math.max(-56, Math.min(56, worldX));
-      const clampedZ = Math.max(-56, Math.min(56, worldZ));
+      const clampedX = Math.max(-86, Math.min(86, worldX));
+      const clampedZ = Math.max(-86, Math.min(86, worldZ));
       this.issueMoveOrder(clampedX, clampedZ);
       this.lastMinimapPing = {
         x: clampedX,
@@ -1714,8 +1799,8 @@ export class RtsEngine {
       const ox = (col - (cols - 1) / 2) * spacing;
       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
 
-      unit.targetX = Math.max(-58, Math.min(58, x + ox));
-      unit.targetZ = Math.max(-58, Math.min(58, z + oz));
+      unit.targetX = Math.max(-88, Math.min(88, x + ox));
+      unit.targetZ = Math.max(-88, Math.min(88, z + oz));
       unit.attackMoveGoal = null;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
@@ -1786,15 +1871,26 @@ export class RtsEngine {
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
 
     if (workers.length === 0) return;
-    sound.playOrder();
 
     const node = this.resourceNodes.find((n) => n.id === nodeId);
-    if (node) {
-      this.spawnCommandIndicator(node.x, node.z, 'gather');
-    }
-    const meta = node ? this.getResourceDisplayMeta(node) : { icon: '⛏️', name: '資源', action: '採集資源' };
+    if (!node) return;
 
-    workers.forEach((worker) => {
+    const eligibleWorkers = workers.filter((w) => canUnitGatherNode(w.unitDef, node));
+    if (eligibleWorkers.length === 0) {
+      sound.playInvalid();
+      if (node.subtype === 'deep_fish') {
+        this.addFloatingText(node.x, 2.5, node.z, '⛵ 深海魚群距離海岸太遠，村民無法採集！請建造【碼頭】並訓練【漁船】捕撈！', '#f59e0b');
+      } else {
+        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 漁船無法前往陸地資源點！', '#f59e0b');
+      }
+      return;
+    }
+
+    sound.playOrder();
+    this.spawnCommandIndicator(node.x, node.z, 'gather');
+    const meta = this.getResourceDisplayMeta(node);
+
+    eligibleWorkers.forEach((worker) => {
       worker.targetResourceNodeId = nodeId;
       worker.targetEntityId = undefined;
       worker.targetBuildingId = undefined;
@@ -1856,6 +1952,16 @@ export class RtsEngine {
         : undefined;
 
     if (targetNode) {
+      if (targetNode.subtype === 'deep_fish' && bldg.buildingType !== 'dock') {
+        sound.playInvalid();
+        this.addFloatingText(targetNode.x, 2.5, targetNode.z, '⛵ 村民無法集結採集深海魚！請使用碼頭訓練漁船', '#f59e0b');
+        return;
+      }
+      if (bldg.buildingType === 'dock' && targetNode.subtype !== 'deep_fish' && targetNode.subtype !== 'shore_fish') {
+        sound.playInvalid();
+        this.addFloatingText(targetNode.x, 2.5, targetNode.z, '⛵ 碼頭僅能對水域魚群設定採集集結點', '#f59e0b');
+        return;
+      }
       const meta = this.getResourceDisplayMeta(targetNode);
       bldg.rallyPoint = {
         x: targetNode.x,
@@ -2013,7 +2119,8 @@ export class RtsEngine {
     unitRadius: number,
     indexOffset = 0,
     ignoreBuildingId?: string,
-    preferredAngle?: number
+    preferredAngle?: number,
+    isNaval = false
   ): { x: number; z: number } {
     const obs = this.getTerrainNavObstacles();
     const minDistBase = Math.max(2.0, baseRadius + unitRadius + 0.75);
@@ -2022,17 +2129,23 @@ export class RtsEngine {
       ? preferredAngle! + (indexOffset === 0 ? 0 : (indexOffset % 2 === 0 ? 1 : -1) * Math.ceil(indexOffset / 2) * 0.42)
       : Math.PI * 0.5;
     const sweepOffsets = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6];
+    const waterRects = (obs?.rects || []).filter((r) => r.kind === 'water');
+    const waterDiscs = (obs?.discs || []).filter((d) => d.kind === 'water');
 
-    for (let ring = 0; ring < 4; ring++) {
+    for (let ring = 0; ring < 5; ring++) {
       const r = minDistBase + ring * 1.15;
       for (let step = 0; step < 12; step++) {
         const ang = hasPreferred
           ? anchorAngle + (sweepOffsets[step] / 12) * Math.PI * 2
           : anchorAngle + ((step + indexOffset) / 12) * Math.PI * 2;
-        const candX = Math.max(-56, Math.min(56, cx + Math.cos(ang) * r));
-        const candZ = Math.max(-56, Math.min(56, cz + Math.sin(ang) * r));
+        const candX = Math.max(-88, Math.min(88, cx + Math.cos(ang) * r));
+        const candZ = Math.max(-88, Math.min(88, cz + Math.sin(ang) * r));
 
-        if (isPointInTerrainObstacle(candX, candZ, obs?.rects, obs?.discs, obs?.bridges)) continue;
+        if (isNaval) {
+          if (!isPointInTerrainObstacle(candX, candZ, waterRects, waterDiscs, [])) continue;
+        } else {
+          if (isPointInTerrainObstacle(candX, candZ, obs?.rects, obs?.discs, obs?.bridges)) continue;
+        }
 
         const hitsBuilding = this.buildings.some((b) => {
           if (b.hp <= 0 || b.id === ignoreBuildingId) return false;
@@ -2054,8 +2167,8 @@ export class RtsEngine {
     }
 
     return {
-      x: Math.max(-56, Math.min(56, cx + Math.cos(anchorAngle) * minDistBase)),
-      z: Math.max(-56, Math.min(56, cz + Math.sin(anchorAngle) * minDistBase)),
+      x: Math.max(-88, Math.min(88, cx + Math.cos(anchorAngle) * minDistBase)),
+      z: Math.max(-88, Math.min(88, cz + Math.sin(anchorAngle) * minDistBase)),
     };
   }
 
@@ -2435,10 +2548,15 @@ export class RtsEngine {
       !!bDef.isWall,
       obs?.rects,
       obs?.discs,
-      obs?.bridges
+      obs?.bridges,
+      this.placementBuildingType
     );
     if (!isValid) {
-      this.addFloatingText(x, 2.5, z, '⚠️ 無法建造：不可建於水域、山崖或重疊建築！', '#ef4444');
+      const msg =
+        this.placementBuildingType === 'dock'
+          ? '⚠️ 碼頭必須緊鄰河流或湖泊岸邊建造（且不可蓋在橋樑或礦點上）！'
+          : '⚠️ 無法建造：不可建於水域、山崖或重疊建築！';
+      this.addFloatingText(x, 2.5, z, msg, '#ef4444');
       sound.playInvalid();
       return false;
     }
@@ -2759,50 +2877,112 @@ export class RtsEngine {
     }
   }
 
+  public adjustCameraZoom(deltaY: number) {
+    if (Math.abs(deltaY) < 0.01) return;
+    const mag = Math.min(0.22, Math.max(0.08, (Math.abs(deltaY) / 100) * 0.09));
+    const step = deltaY > 0 ? mag : -mag;
+    this.cameraTargetZoom = Math.max(0.55, Math.min(1.75, +(this.cameraTargetZoom + step).toFixed(3)));
+  }
+
+  public setEdgeScrollFromClient(clientX: number, clientY: number) {
+    const edgeMargin = 26;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    let sx = 0;
+    let sy = 0;
+    if (clientX <= edgeMargin) sx = -1;
+    else if (clientX >= w - edgeMargin) sx = 1;
+    if (clientY <= edgeMargin) sy = -1;
+    else if (clientY >= h - edgeMargin) sy = 1;
+
+    if (sx === 0 && sy === 0) {
+      this.edgeScrollDirX = 0;
+      this.edgeScrollDirZ = 0;
+      return;
+    }
+
+    // Map screen X/Y edge direction onto isometric world X/Z axes
+    const wx = sx + sy;
+    const wz = sy - sx;
+    const len = Math.hypot(wx, wz) || 1;
+    this.edgeScrollDirX = wx / len;
+    this.edgeScrollDirZ = wz / len;
+  }
+
+  public clearEdgeScroll() {
+    this.edgeScrollDirX = 0;
+    this.edgeScrollDirZ = 0;
+  }
+
   private handleCameraMovement(dt: number) {
-    const panSpeed = 28;
-    let inputX = 0;
-    let inputZ = 0;
+    const panSpeed = 32;
+    let kx = 0;
+    let kz = 0;
 
     if (this.keysHeld.has('KeyW') || this.keysHeld.has('ArrowUp')) {
-      inputX -= panSpeed;
-      inputZ -= panSpeed;
+      kx -= 1;
+      kz -= 1;
     }
     if (this.keysHeld.has('KeyS') || this.keysHeld.has('ArrowDown')) {
-      inputX += panSpeed;
-      inputZ += panSpeed;
+      kx += 1;
+      kz += 1;
     }
     if (this.keysHeld.has('KeyA') || this.keysHeld.has('ArrowLeft')) {
-      inputX -= panSpeed;
-      inputZ += panSpeed;
+      kx -= 1;
+      kz += 1;
     }
     if (this.keysHeld.has('KeyD') || this.keysHeld.has('ArrowRight')) {
-      inputX += panSpeed;
-      inputZ -= panSpeed;
+      kx += 1;
+      kz -= 1;
     }
+
+    const kLen = Math.hypot(kx, kz);
+    if (kLen > 0) {
+      kx /= kLen;
+      kz /= kLen;
+    }
+
+    let rawX = kx + this.edgeScrollDirX;
+    let rawZ = kz + this.edgeScrollDirZ;
+    const rawLen = Math.hypot(rawX, rawZ);
+    if (rawLen > 1) {
+      rawX /= rawLen;
+      rawZ /= rawLen;
+    }
+    const inputX = rawX * panSpeed;
+    const inputZ = rawZ * panSpeed;
 
     if (inputX !== 0 || inputZ !== 0) {
       this.cameraDesiredTarget = null;
     }
 
+    const prevZoom = this.cameraZoom;
+    this.cameraZoom = dampScalar(this.cameraZoom, this.cameraTargetZoom, 12, dt);
+    const zoomMoved = Math.abs(this.cameraZoom - prevZoom) > 0.0002;
+
     this.cameraPanVelX = dampScalar(this.cameraPanVelX, inputX, 14, dt);
     this.cameraPanVelZ = dampScalar(this.cameraPanVelZ, inputZ, 14, dt);
 
-    if (Math.abs(this.cameraPanVelX) > 0.05 || Math.abs(this.cameraPanVelZ) > 0.05) {
-      this.cameraTarget.x = Math.max(-46, Math.min(46, this.cameraTarget.x + this.cameraPanVelX * dt));
-      this.cameraTarget.z = Math.max(-46, Math.min(46, this.cameraTarget.z + this.cameraPanVelZ * dt));
-      this.updateCameraPosition();
+    const isPanning = Math.abs(this.cameraPanVelX) > 0.05 || Math.abs(this.cameraPanVelZ) > 0.05;
+    if (isPanning) {
+      this.cameraTarget.x = Math.max(-84, Math.min(84, this.cameraTarget.x + this.cameraPanVelX * dt));
+      this.cameraTarget.z = Math.max(-84, Math.min(84, this.cameraTarget.z + this.cameraPanVelZ * dt));
     } else {
       this.cameraPanVelX = 0;
       this.cameraPanVelZ = 0;
     }
+
+    if (isPanning || zoomMoved) {
+      this.updateCameraPosition();
+    }
   }
 
   private updateCameraPosition() {
+    const z = this.cameraZoom;
     this.camera.position.set(
-      this.cameraTarget.x + 22,
-      this.cameraTarget.y + 30,
-      this.cameraTarget.z + 26
+      this.cameraTarget.x + 22 * z,
+      this.cameraTarget.y + 30 * z,
+      this.cameraTarget.z + 26 * z
     );
     this.camera.lookAt(this.cameraTarget.x, 0, this.cameraTarget.z);
   }
@@ -2950,6 +3130,7 @@ export class RtsEngine {
 
             const roleIcons: Record<string, string> = {
               villager: '⛏️',
+              boat: '⛵',
               swordsman: '⚔️',
               archer: '🏹',
               knight: '🐎',
@@ -3003,7 +3184,8 @@ export class RtsEngine {
    * Moves a unit toward (goalX, goalZ) along obstacle-free A* waypoints with automatic re-routing if blocked.
    */
   private moveUnitAlongPath(unit: UnitEntity, goalX: number, goalZ: number, dt: number) {
-    const navGrid = this.getNavGrid();
+    const isNaval = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
+    const navGrid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
 
     // Detect if unit is stalled against an obstacle and force quick path refresh
     unit.stuckAccumulator = (unit.stuckAccumulator || 0) + dt;
@@ -3225,12 +3407,20 @@ export class RtsEngine {
       return;
     }
 
+    const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
-    if (!node || node.amount <= 0) {
-      const nextNode =
-        node?.resourceType === 'food'
-          ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 24)
-          : findClosestResourceNode(unit.x, unit.z, this.resourceNodes, node?.resourceType, 24);
+    if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      const nextNode = isBoat
+        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 95, true, true)
+        : node?.resourceType === 'food'
+        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 24, false, false)
+        : findClosestResourceNode(
+            unit.x,
+            unit.z,
+            this.resourceNodes.filter((n) => n.subtype !== 'deep_fish'),
+            node?.resourceType,
+            24
+          );
       if (nextNode) {
         unit.targetResourceNodeId = nextNode.id;
         unit.waypoints = undefined;
@@ -3407,19 +3597,23 @@ export class RtsEngine {
     const resNames: Record<ResourceType, string> = { wood: '木材', gold: '黃金', stone: '石料', food: '糧食' };
     unit.currentActionText = `🏃 運送${resNames[unit.carryingResource.type] || '物資'}回基地`;
 
+    const isNaval = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const dropOffs = this.buildings.filter(
       (b) =>
         b.faction === unit.faction &&
         b.isConstructed &&
-        (b.buildingType === 'town_center' ||
-          (unit.carryingResource?.type === 'wood' && b.buildingType === 'lumber_camp') ||
-          ((unit.carryingResource?.type === 'gold' || unit.carryingResource?.type === 'stone') &&
-            b.buildingType === 'mining_camp'))
+        (isNaval
+          ? b.buildingType === 'dock'
+          : b.buildingType === 'town_center' ||
+            (unit.carryingResource?.type === 'food' && b.buildingType === 'dock') ||
+            (unit.carryingResource?.type === 'wood' && b.buildingType === 'lumber_camp') ||
+            ((unit.carryingResource?.type === 'gold' || unit.carryingResource?.type === 'stone') &&
+              b.buildingType === 'mining_camp'))
     );
 
     if (dropOffs.length === 0) {
       unit.state = 'idle';
-      unit.currentActionText = '💤 無存放建築待命';
+      unit.currentActionText = isNaval ? '⚓ 需碼頭卸魚' : '💤 無存放建築待命';
       return;
     }
 
@@ -3433,7 +3627,10 @@ export class RtsEngine {
       }
     }
 
-    const depositRange = Math.max(2.6, getBuildingCollisionRadius(nearest) + 1.85);
+    const depositRange = Math.max(
+      2.6,
+      getBuildingCollisionRadius(nearest) + (nearest.buildingType === 'dock' ? 3.6 : 1.85)
+    );
     if (minDist > depositRange) {
       this.moveUnitAlongPath(unit, nearest.x, nearest.z, dt);
     } else {
@@ -3523,9 +3720,15 @@ export class RtsEngine {
         this.spawnParticleBurst(bldg.x, 1.1, bldg.z, 'dust', 8);
         this.spawnShockwaveRing(bldg.x, bldg.z, 0xfbbf24, bldg.buildingDef.size + 1.4);
         this.navGridDirty = true;
+        this.waterNavGridDirty = true;
         if (this.isHumanControlled(bldg.faction)) this.stats.buildingsConstructed++;
         if (this.selectedBuildingId === bldg.id) this.onSelectionChange?.();
         unit.targetBuildingId = undefined;
+
+        const factionCiv = getCivilizationConfig(this.getCivilizationForFaction(bldg.faction));
+        if (bldg.buildingType === factionCiv.uniqueBuildingType) {
+          this.refreshFactionUnitStats(bldg.faction);
+        }
 
         if (bldg.buildingDef.landmarkAgeAdvance) {
           this.advanceAge(bldg.faction, bldg.buildingType as LandmarkType);
@@ -3562,8 +3765,20 @@ export class RtsEngine {
             unit.state = 'idle';
             unit.currentActionText = '💤 待命中 (閒置)';
           }
+        } else if (bldg.buildingType === 'dock') {
+          const landNodes = this.resourceNodes.filter((n) => n.subtype !== 'deep_fish');
+          const nearbyLand = findClosestResourceNode(bldg.x, bldg.z, landNodes);
+          if (nearbyLand && getDistance(bldg.x, bldg.z, nearbyLand.x, nearbyLand.z) < 22) {
+            unit.targetResourceNodeId = nearbyLand.id;
+            unit.state = 'gathering';
+            unit.currentActionText = '⛏️ 自動採集資源';
+          } else {
+            unit.state = 'idle';
+            unit.currentActionText = '⚓ 碼頭竣工待命';
+          }
         } else {
-          const nearbyRes = findClosestResourceNode(bldg.x, bldg.z, this.resourceNodes);
+          const landNodes = this.resourceNodes.filter((n) => n.subtype !== 'deep_fish');
+          const nearbyRes = findClosestResourceNode(bldg.x, bldg.z, landNodes);
           if (nearbyRes && getDistance(bldg.x, bldg.z, nearbyRes.x, nearbyRes.z) < 18) {
             unit.targetResourceNodeId = nearbyRes.id;
             unit.state = 'gathering';
@@ -3654,6 +3869,7 @@ export class RtsEngine {
     for (const bldg of this.buildings) {
       if (bldg.hp <= 0) {
         this.navGridDirty = true;
+        this.waterNavGridDirty = true;
         // Eject any surviving garrisoned units before removing collapsed structure
         if (bldg.garrisonedUnitIds && bldg.garrisonedUnitIds.length > 0) {
           bldg.garrisonedUnitIds.forEach((uid, idx) => {
@@ -3784,6 +4000,7 @@ export class RtsEngine {
               farm: '🌾',
               lumber_camp: '🪵',
               mining_camp: '⛏️',
+              dock: '⚓',
               tower: '🗼',
               castle: '🏰',
               armory_forge: '⚒️',
@@ -3960,6 +4177,7 @@ export class RtsEngine {
             bldg.queueProgress = 0;
             // Spawn trained unit cleanly outside building collision perimeter (favoring rally point direction)
             const uRadius = getUnitColliderRadius(uDef.category, uDef.visual.scale);
+            const isNaval = !!uDef.isNaval || uDef.id === 'fishing_boat';
             const rallyAngle = bldg.rallyPoint
               ? Math.atan2(bldg.rallyPoint.z - bldg.z, bldg.rallyPoint.x - bldg.x)
               : undefined;
@@ -3970,18 +4188,57 @@ export class RtsEngine {
               uRadius,
               0,
               bldg.id,
-              rallyAngle
+              rallyAngle,
+              isNaval
             );
             const newUnit = this.addUnit(uDef, bldg.faction, spot.x, spot.z);
             this.spawnParticleBurst(spot.x, 0.35, spot.z, 'dust', 3);
             if (this.isHumanControlled(bldg.faction)) sound.playUnitTrained();
-            if (bldg.rallyPoint) {
+            if (isNaval) {
+              const rp = bldg.rallyPoint;
+              let assignedFish: ResourceNode | null = null;
+              if (rp?.targetResourceNodeId) {
+                const candidate = this.resourceNodes.find(
+                  (n) => n.id === rp.targetResourceNodeId && n.amount > 0 && canUnitGatherNode(newUnit.unitDef, n)
+                );
+                if (candidate) assignedFish = candidate;
+              }
+              if (!assignedFish) {
+                assignedFish = findBestFoodResourceNode(
+                  rp?.x ?? bldg.x,
+                  rp?.z ?? bldg.z,
+                  this.resourceNodes,
+                  110,
+                  true,
+                  true
+                );
+              }
+              if (assignedFish) {
+                const meta = this.getResourceDisplayMeta(assignedFish);
+                newUnit.targetResourceNodeId = assignedFish.id;
+                newUnit.state = 'gathering';
+                newUnit.currentActionText = `${meta.icon} 前往${meta.action}`;
+              } else if (rp) {
+                const obs = this.getTerrainNavObstacles();
+                const waterRects = (obs?.rects || []).filter((r) => r.kind === 'water');
+                const waterDiscs = (obs?.discs || []).filter((d) => d.kind === 'water');
+                if (isPointInTerrainObstacle(rp.x, rp.z, waterRects, waterDiscs, [])) {
+                  newUnit.targetX = rp.x;
+                  newUnit.targetZ = rp.z;
+                  newUnit.state = 'moving';
+                  newUnit.currentActionText = '⛵ 前往水域集結點';
+                }
+              }
+            } else if (bldg.rallyPoint) {
               const rp = bldg.rallyPoint;
               if (newUnit.unitDef.category === 'worker' && rp.targetResourceNodeId) {
-                const exactNode = this.resourceNodes.find((n) => n.id === rp.targetResourceNodeId && n.amount > 0);
+                const exactNode = this.resourceNodes.find(
+                  (n) => n.id === rp.targetResourceNodeId && n.amount > 0 && canUnitGatherNode(newUnit.unitDef, n)
+                );
+                const validNodes = this.resourceNodes.filter((n) => canUnitGatherNode(newUnit.unitDef, n));
                 const gatherNode =
                   exactNode ||
-                  findClosestResourceNode(rp.x, rp.z, this.resourceNodes, rp.resourceType, 14);
+                  findClosestResourceNode(rp.x, rp.z, validNodes, rp.resourceType, 14);
                 if (gatherNode) {
                   const meta = this.getResourceDisplayMeta(gatherNode);
                   newUnit.targetResourceNodeId = gatherNode.id;
@@ -4616,14 +4873,16 @@ export class RtsEngine {
     if (!bDef) return null;
     const obs = this.getTerrainNavObstacles();
     const baseAngle = preferredAngle ?? Math.random() * Math.PI * 2;
+    const radialStep = bType === 'dock' ? 3.2 : 2.6;
+    const angSamples = bType === 'dock' ? 24 : 12;
 
-    for (let r = minDist; r <= maxDist; r += 2.6) {
-      for (let i = 0; i < 12; i++) {
+    for (let r = minDist; r <= maxDist; r += radialStep) {
+      for (let i = 0; i < angSamples; i++) {
         const sign = i % 2 === 0 ? 1 : -1;
-        const offset = Math.ceil(i / 2) * (Math.PI / 6) * sign;
+        const offset = Math.ceil(i / 2) * ((Math.PI * 2) / angSamples) * sign;
         const ang = baseAngle + offset;
-        const cx = Math.max(-50, Math.min(50, anchorX + Math.cos(ang) * r));
-        const cz = Math.max(-50, Math.min(50, anchorZ + Math.sin(ang) * r));
+        const cx = Math.max(-86, Math.min(86, anchorX + Math.cos(ang) * r));
+        const cz = Math.max(-86, Math.min(86, anchorZ + Math.sin(ang) * r));
         if (
           isPlacementLocationValid(
             cx,
@@ -4634,7 +4893,8 @@ export class RtsEngine {
             !!bDef.isWall,
             obs?.rects,
             obs?.discs,
-            obs?.bridges
+            obs?.bridges,
+            bType
           )
         ) {
           return { x: cx, z: cz };
@@ -4650,7 +4910,9 @@ export class RtsEngine {
     aiWorkers: UnitEntity[],
     anchorX: number,
     anchorZ: number,
-    preferredAngle?: number
+    preferredAngle?: number,
+    minDist = 7.5,
+    maxDist = 17
   ): boolean {
     const bDef = DEFAULT_BUILDINGS[bType];
     const aiRes = this.getResourcesForFaction(aiId);
@@ -4661,7 +4923,7 @@ export class RtsEngine {
       aiWorkers.find((w) => w.hp > 0 && w.state !== 'building' && w.state !== 'returning_resource');
     if (!builder) return false;
 
-    const spot = this.findSafeAiBuildSpot(anchorX, anchorZ, bType, preferredAngle);
+    const spot = this.findSafeAiBuildSpot(anchorX, anchorZ, bType, preferredAngle, minDist, maxDist);
     if (!spot) return false;
 
     this.resourcesByFaction[aiId] = deductCost(aiRes, bDef.cost);
@@ -4734,16 +4996,33 @@ export class RtsEngine {
       const aiRes = this.getResourcesForFaction(aiId);
 
       const aiUnits = this.units.filter((u) => u.faction === aiId && u.hp > 0);
-      const aiWorkers = aiUnits.filter((u) => u.unitDef.category === 'worker');
+      const aiNavalBoats = aiUnits.filter((u) => !!u.unitDef.isNaval || u.unitDefId === 'fishing_boat');
+      const aiWorkers = aiUnits.filter(
+        (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'
+      );
       const aiActiveWorkers = aiWorkers.filter((u) => !u.garrisonedInBuildingId);
       const aiArmy = aiUnits.filter((u) => u.unitDef.category !== 'worker' && !u.garrisonedInBuildingId);
       const aiBuildings = this.buildings.filter((b) => b.faction === aiId && b.hp > 0);
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
       const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
+      const aiDocks = aiBuildings.filter((b) => b.buildingType === 'dock');
       const aiUniqueBldg = aiBuildings.find((b) => b.buildingType === aiCiv.uniqueBuildingType);
 
       if (!aiTC && aiWorkers.length === 0 && aiArmy.length === 0) continue;
+
+      // Auto-assign idle AI fishing boats to deep/shore fish
+      for (const boat of aiNavalBoats) {
+        if (boat.state === 'idle') {
+          const fishNode = findBestFoodResourceNode(boat.x, boat.z, this.resourceNodes, 120, true, true);
+          if (fishNode) {
+            boat.targetResourceNodeId = fishNode.id;
+            boat.waypoints = undefined;
+            boat.state = 'gathering';
+            boat.currentActionText = '⛵ 前往捕魚';
+          }
+        }
+      }
 
       const aiMaxPop = aiBuildings
         .filter((b) => b.isConstructed)
@@ -4855,13 +5134,14 @@ export class RtsEngine {
         }
       }
 
+      const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
         const node =
           (prefType === 'food'
-            ? findBestFoodResourceNode(anchorX, anchorZ, this.resourceNodes, 36)
-            : findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, prefType, 34)) ||
-          findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, undefined, 48) ||
-          findClosestResourceNode(worker.x, worker.z, this.resourceNodes);
+            ? findBestFoodResourceNode(anchorX, anchorZ, landNodes, 38, false)
+            : findClosestResourceNode(anchorX, anchorZ, landNodes, prefType, 36)) ||
+          findClosestResourceNode(anchorX, anchorZ, landNodes, undefined, 54) ||
+          findClosestResourceNode(worker.x, worker.z, landNodes);
         if (node) {
           worker.targetResourceNodeId = node.id;
           worker.waypoints = undefined;
@@ -4927,6 +5207,7 @@ export class RtsEngine {
         }
       }
 
+      const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
       const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
@@ -4947,8 +5228,8 @@ export class RtsEngine {
         } else if (!aiUniqueBldg && this.stats.gameDuration > 24) {
           this.tryAiConstructBuilding(aiId, aiCiv.uniqueBuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.75);
         } else {
-          // Sustainable Farms when wild food nearby depletes & fortifications starting Age I
-          const nearbyWildFood = this.resourceNodes.filter(
+          // Sustainable Farms when wild food nearby depletes, Shoreline Docks for deep fish, & fortifications starting Age I
+          const nearbyWildFood = landNodes.filter(
             (n) => n.amount > 0 && n.resourceType === 'food' && n.subtype !== 'farm' && getDistance(anchorX, anchorZ, n.x, n.z) <= 28
           ).length;
           const aiFarms = aiBuildings.filter((b) => b.buildingType === 'farm').length;
@@ -4957,7 +5238,9 @@ export class RtsEngine {
           const aiLumberCamps = aiBuildings.filter((b) => b.buildingType === 'lumber_camp').length;
           const aiMiningCamps = aiBuildings.filter((b) => b.buildingType === 'mining_camp').length;
 
-          if (nearbyWildFood < 2 && aiFarms < 4 && aiRes.wood >= 60) {
+          if (hasDeepFish && aiDocks.length === 0 && aiWorkers.length >= 5 && aiRes.wood >= 150 && this.stats.gameDuration > 28) {
+            this.tryAiConstructBuilding(aiId, 'dock', aiActiveWorkers, anchorX, anchorZ, toCenterAngle, 14, 54);
+          } else if (nearbyWildFood < 2 && aiFarms < 4 && aiRes.wood >= 60) {
             this.tryAiConstructBuilding(aiId, 'farm', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + Math.PI * 0.8);
           } else if (aiAge >= 1 && aiTowers < 2 && aiRes.wood >= 100 && aiRes.stone >= 35 && this.stats.gameDuration > 35) {
             this.tryAiConstructBuilding(aiId, 'tower', aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
@@ -4970,12 +5253,12 @@ export class RtsEngine {
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
           } else if (aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45) {
-            const woodNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'wood', 32);
+            const woodNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'wood', 36);
             if (woodNode && getDistance(anchorX, anchorZ, woodNode.x, woodNode.z) > 15) {
               this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z);
             }
           } else if (aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55) {
-            const mineNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 34);
+            const mineNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 38);
             if (mineNode && getDistance(anchorX, anchorZ, mineNode.x, mineNode.z) > 15) {
               this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z);
             }
@@ -4994,7 +5277,7 @@ export class RtsEngine {
         }
       }
 
-      // 5. Execute AI Production Actions (Reserve Age-up budget so AI advances Ages instead of endless Age I unit spam)
+      // 5. Execute AI Production Actions (Reserve Age-up budget + Train Fishing Boats if AI owns a constructed Dock)
       const savingForAge2 =
         aiAge === 1 &&
         aiWorkers.length >= 6 &&
@@ -5010,6 +5293,11 @@ export class RtsEngine {
         (aiRes.food < 1250 || aiRes.gold < 620);
 
       if (aiUnits.length < aiMaxPop) {
+        const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
+        if (hasDeepFish && readyDock && aiNavalBoats.length < 2 && aiRes.wood >= 75) {
+          this.trainUnit(readyDock.id, 'fishing_boat');
+        }
+
         for (const trainAct of plan.trainActions) {
           const isVillagerTrain = (trainAct.targetId || 'villager') === 'villager';
           if (!isVillagerTrain && (savingForAge2 || savingForAge3) && aiArmy.length >= 4 && underAttack === 0) {
@@ -5047,8 +5335,8 @@ export class RtsEngine {
           } else {
             // Form defensive perimeter in front of TC facing the threat
             const guardAngle = toCenterAngle + (Math.random() - 0.5) * 1.4;
-            const gx = Math.max(-52, Math.min(52, anchorX + Math.cos(guardAngle) * 8));
-            const gz = Math.max(-52, Math.min(52, anchorZ + Math.sin(guardAngle) * 8));
+            const gx = Math.max(-84, Math.min(84, anchorX + Math.cos(guardAngle) * 8));
+            const gz = Math.max(-84, Math.min(84, anchorZ + Math.sin(guardAngle) * 8));
             if (getDistance(unit.x, unit.z, anchorX, anchorZ) > 13 || unit.state === 'idle') {
               unit.targetX = gx;
               unit.targetZ = gz;
@@ -5077,8 +5365,8 @@ export class RtsEngine {
             } else if (getDistance(unit.x, unit.z, stageX, stageZ) > 7.5) {
               const row = Math.floor(idx / cols);
               const col = idx % cols;
-              const gx = Math.max(-50, Math.min(50, stageX + (col - (cols - 1) / 2) * 2.2));
-              const gz = Math.max(-50, Math.min(50, stageZ + (row - 1) * 2.2));
+              const gx = Math.max(-84, Math.min(84, stageX + (col - (cols - 1) / 2) * 2.2));
+              const gz = Math.max(-84, Math.min(84, stageZ + (row - 1) * 2.2));
               unit.targetX = gx;
               unit.targetZ = gz;
               unit.attackMoveGoal = { x: gx, z: gz };
@@ -5146,7 +5434,7 @@ export class RtsEngine {
   // ------------------ EVENT BINDINGS ------------------
 
   private bindEvents() {
-    window.addEventListener('keydown', (e) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       const targetTag = (e.target as HTMLElement)?.tagName;
       const isTyping = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT';
       const hasOpenUiModal =
@@ -5268,24 +5556,67 @@ export class RtsEngine {
           this.selectControlGroup(num, isDoubleTap);
         }
       }
-    });
+    };
 
-    window.addEventListener('keyup', (e) => {
+    const onKeyUp = (e: KeyboardEvent) => {
       this.keysHeld.delete(e.code);
-    });
+    };
 
-    window.addEventListener('blur', () => {
+    const onBlur = () => {
       this.keysHeld.clear();
-    });
+      this.clearEdgeScroll();
+    };
 
-    window.addEventListener('resize', () => {
+    const onMouseLeave = () => {
+      this.clearEdgeScroll();
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (this.gameState !== 'playing') {
+        this.clearEdgeScroll();
+        return;
+      }
+      if (document.querySelector('[data-hotkeys-modal="true"], [data-age-modal="true"]')) {
+        this.clearEdgeScroll();
+        return;
+      }
+      this.setEdgeScrollFromClient(e.clientX, e.clientY);
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (this.gameState !== 'playing') return;
+      const targetEl = e.target as HTMLElement | null;
+      if (targetEl?.closest('[data-hotkeys-modal="true"], [data-age-modal="true"], .overflow-y-auto')) return;
+      e.preventDefault();
+      this.adjustCameraZoom(e.deltaY);
+    };
+
+    const onResize = () => {
       if (!this.container) return;
       const width = this.container.clientWidth;
       const height = this.container.clientHeight;
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(width, height);
-    });
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('mouseleave', onMouseLeave);
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('resize', onResize);
+
+    this.cleanupWindowListeners.push(
+      () => window.removeEventListener('keydown', onKeyDown),
+      () => window.removeEventListener('keyup', onKeyUp),
+      () => window.removeEventListener('blur', onBlur),
+      () => document.removeEventListener('mouseleave', onMouseLeave),
+      () => window.removeEventListener('pointermove', onPointerMove),
+      () => window.removeEventListener('wheel', onWheel),
+      () => window.removeEventListener('resize', onResize)
+    );
   }
 
   public screenToWorld(clientX: number, clientY: number): THREE.Vector3 | null {
@@ -5316,29 +5647,8 @@ export class RtsEngine {
       this.landmarksByFaction[faction].push(landmarkType);
     }
 
-    // Apply landmark bonuses symmetrically for human and AI factions
-    if (landmarkType === 'landmark_aachen') {
-      this.units
-        .filter((u) => u.faction === faction && u.unitDef.category === 'worker')
-        .forEach((w) => {
-          w.unitDef.stats.gatherSpeed *= 1.25;
-          w.unitDef.stats.speed *= 1.15;
-        });
-    } else if (landmarkType === 'landmark_barracks') {
-      this.units
-        .filter((u) => u.faction === faction && u.unitDef.category !== 'worker')
-        .forEach((a) => {
-          a.unitDef.stats.attack += 3;
-        });
-    } else if (landmarkType === 'landmark_observatory') {
-      this.units
-        .filter((u) => u.faction === faction)
-        .forEach((u) => {
-          u.unitDef.stats.defense += 4;
-          u.maxHp = Math.round(u.maxHp * 1.2);
-          u.hp = Math.min(u.maxHp, Math.round(u.hp * 1.2));
-        });
-    }
+    // Recompute unit stats using updated Age + Landmarks + Unique Building Aura + Researched Techs
+    this.refreshFactionUnitStats(faction);
 
     const ageNames: Record<AgeLevel, string> = {
       1: '黑暗時代',
@@ -5501,6 +5811,8 @@ export class RtsEngine {
     this.isDestroyed = true;
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
+    this.cleanupWindowListeners.forEach((fn) => fn());
+    this.cleanupWindowListeners = [];
     this.renderer.dispose();
   }
 }

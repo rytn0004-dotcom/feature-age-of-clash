@@ -386,49 +386,6 @@ export function getRoofShingleMaps(): PBRMapSet {
   return roofCache;
 }
 
-let roadCache: PBRMapSet | null = null;
-export function getRoadCobbleMaps(): PBRMapSet {
-  if (roadCache) return roadCache;
-
-  const size = 256;
-  const colorData = new Uint8Array(size * size * 4);
-  const heights = new Float32Array(size * size);
-
-  for (let y = 0; y < size; y++) {
-    const v = y / size;
-    for (let x = 0; x < size; x++) {
-      const u = x / size;
-      const dirt = periodicFbm(u, v, 6, 3, 811);
-      const stone = periodicNoise(u, v, 14, 822);
-      const centerDist = Math.abs(u - 0.5) * 2; // 0 at road center, 1 at left/right border
-      const wobble = (periodicNoise(u, v * 4, 8, 833) - 0.5) * 0.14;
-      const edgeAlpha = 1 - smoothstep(Math.max(0, Math.min(1, (centerDist + wobble - 0.58) / 0.36)));
-
-      const isPebble = stone > 0.64 && centerDist < 0.72;
-      heights[y * size + x] = isPebble ? 0.82 : dirt * 0.45;
-
-      const idx = (y * size + x) * 4;
-      if (isPebble) {
-        const g = Math.round(142 + (stone - 0.64) * 145);
-        colorData[idx] = g;
-        colorData[idx + 1] = Math.round(g * 0.95);
-        colorData[idx + 2] = Math.round(g * 0.86);
-      } else {
-        colorData[idx] = Math.round(134 + dirt * 40);
-        colorData[idx + 1] = Math.round(110 + dirt * 34);
-        colorData[idx + 2] = Math.round(78 + dirt * 24);
-      }
-      colorData[idx + 3] = Math.max(0, Math.min(255, Math.round(edgeAlpha * 245)));
-    }
-  }
-
-  roadCache = {
-    map: makeColorDataTexture(colorData, size, size, 1, 5, true),
-    normalMap: heightToNormalDataTexture(heights, size, size, 3.6, 1, 5),
-  };
-  return roadCache;
-}
-
 let waterNormalCache: THREE.DataTexture | null = null;
 export function getWaterRippleNormalMap(): THREE.DataTexture {
   if (waterNormalCache) return waterNormalCache;

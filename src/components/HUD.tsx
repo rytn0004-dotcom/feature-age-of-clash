@@ -158,8 +158,8 @@ export const HUD: React.FC<HUDProps> = ({
     const clickX = Math.max(0, Math.min(rect.width, clientX - rect.left));
     const clickY = Math.max(0, Math.min(rect.height, clientY - rect.top));
 
-    const worldX = (clickX / rect.width) * 140 - 70;
-    const worldZ = (clickY / rect.height) * 140 - 70;
+    const worldX = (clickX / rect.width) * 200 - 100;
+    const worldZ = (clickY / rect.height) * 200 - 100;
     return { worldX, worldZ };
   };
 
@@ -168,8 +168,8 @@ export const HUD: React.FC<HUDProps> = ({
     if (!coords) return;
 
     (engine as any).cameraDesiredTarget = null;
-    engine.cameraTarget.x = Math.max(-45, Math.min(45, coords.worldX));
-    engine.cameraTarget.z = Math.max(-45, Math.min(45, coords.worldZ));
+    engine.cameraTarget.x = Math.max(-84, Math.min(84, coords.worldX));
+    engine.cameraTarget.z = Math.max(-84, Math.min(84, coords.worldZ));
     (engine as any).updateCameraPosition?.();
   };
 
@@ -217,11 +217,11 @@ export const HUD: React.FC<HUDProps> = ({
     const drawMinimap = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Map bounds are -70 to 70
-      const mapSize = 140;
+      // Map bounds are -100 to 100
+      const mapSize = 200;
       const toMinimap = (x: number, z: number) => {
-        const mx = ((x + 70) / mapSize) * canvas.width;
-        const my = ((z + 70) / mapSize) * canvas.height;
+        const mx = ((x + 100) / mapSize) * canvas.width;
+        const my = ((z + 100) / mapSize) * canvas.height;
         return [mx, my];
       };
 
@@ -250,25 +250,14 @@ export const HUD: React.FC<HUDProps> = ({
       }
 
       if (engine.mapLayout) {
-        // Roads
-        ctx.strokeStyle = 'rgba(180, 148, 100, 0.45)';
-        ctx.lineWidth = 3;
-        engine.mapLayout.roads.forEach((road) => {
-          const [rx1, ry1] = toMinimap(road.x1, road.z1);
-          const [rx2, ry2] = toMinimap(road.x2, road.z2);
-          ctx.beginPath();
-          ctx.moveTo(rx1, ry1);
-          ctx.lineTo(rx2, ry2);
-          ctx.stroke();
-        });
-
         // Water Rects (rivers as thick line segments)
         ctx.strokeStyle = '#0284c7';
         ctx.lineCap = 'round';
         engine.mapLayout.waterRects.forEach((wr) => {
           const [rx1, ry1] = toMinimap(wr.x1, wr.z1);
           const [rx2, ry2] = toMinimap(wr.x2, wr.z2);
-          ctx.lineWidth = Math.max(4, ((wr.kind === 'water' ? 6.4 : 5.2) / mapSize) * canvas.width);
+          const widthUnits = wr.halfWidth ? wr.halfWidth * 2 : wr.kind === 'water' ? 19.6 : 5.2;
+          ctx.lineWidth = Math.max(4, (widthUnits / mapSize) * canvas.width);
           ctx.beginPath();
           ctx.moveTo(rx1, ry1);
           ctx.lineTo(rx2, ry2);
@@ -472,8 +461,9 @@ export const HUD: React.FC<HUDProps> = ({
 
       // 7. Camera Viewport Box with translucent fill
       const [camX, camY] = toMinimap(engine.cameraTarget.x, engine.cameraTarget.z);
-      const boxW = (32 / 140) * canvas.width;
-      const boxH = (24 / 140) * canvas.height;
+      const zScale = engine.cameraZoom || 1;
+      const boxW = ((32 * zScale) / mapSize) * canvas.width;
+      const boxH = ((24 * zScale) / mapSize) * canvas.height;
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
       ctx.fillRect(camX - boxW / 2, camY - boxH / 2, boxW, boxH);
@@ -1331,6 +1321,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 )}
                                 {isCivUnique && '✦'}
                                 {bType === 'castle' && '🏰'}
+                                {bType === 'dock' && '⚓'}
                                 {bDef.name.split(' ')[0]}
                               </span>
                               <span className="text-[9px] text-amber-400 font-mono">

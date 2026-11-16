@@ -49,6 +49,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'barracks',
       'archery_range',
       'armory_forge',
+      'dock',
       'farm',
       'lumber_camp',
       'mining_camp',
@@ -60,12 +61,14 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       town_center: '帝國城堡中心',
       barracks: '鐵衛兵營',
       archery_range: '紫杉長弓營',
+      dock: '帝國海軍碼頭',
       wall: '石砌木欄防禦牆',
       tower: '石砌警戒箭塔',
       castle: '聖殿重裝要塞',
     },
     trainableByBuilding: {
       town_center: ['villager'],
+      dock: ['fishing_boat'],
       barracks: ['swordsman', 'knight', 'battering_ram', 'catapult'],
       archery_range: ['longbowman'],
       castle: ['knight', 'battering_ram', 'catapult', 'bombard_cannon'],
@@ -74,8 +77,8 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       landmark_arsenal: ['battering_ram', 'catapult', 'bombard_cannon'],
     },
     passiveBonuses: {
-      defenseBonus: 1,
-      hpMultiplier: 1.05,
+      defenseBonus: 0,
+      hpMultiplier: 1.04,
     },
   },
   {
@@ -95,6 +98,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'barracks',
       'archery_range',
       'spirit_shrine',
+      'dock',
       'farm',
       'lumber_camp',
       'mining_camp',
@@ -106,12 +110,14 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       town_center: '宗家天守本陣',
       barracks: '忍術劍豪道場',
       archery_range: '氣功忍具修煉殿',
+      dock: '蒼嵐漁港棧橋',
       wall: '竹木矢來防禦垣',
       tower: '靈脈結界哨塔',
       castle: '蒼嵐大本營御殿',
     },
     trainableByBuilding: {
       town_center: ['anime_spirit_harvester'],
+      dock: ['fishing_boat'],
       barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram'],
       archery_range: ['anime_ninja_assassin', 'anime_saiyan_brawler'],
       castle: ['anime_saiyan_brawler', 'battering_ram', 'catapult', 'bombard_cannon'],
@@ -120,8 +126,8 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       landmark_arsenal: ['anime_saiyan_brawler', 'catapult', 'bombard_cannon'],
     },
     passiveBonuses: {
-      moveSpeedMultiplier: 1.1,
-      gatherRateMultiplier: 1.1,
+      moveSpeedMultiplier: 1.05,
+      gatherRateMultiplier: 1.06,
     },
   },
   {
@@ -132,7 +138,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     accentColor: '#34d399',
     subtitle: '精靈魔力之泉與遠古樹靈，生命再生光環與毀滅奧術',
     progressionTitle: '魔力泉源與古樹共生',
-    progressionSummary: '建造【精靈魔力之泉】為周邊傷兵持續回血並產出糧食與黃金，全軍生命天生 +12%。',
+    progressionSummary: '建造【精靈魔力之泉】為周邊傷兵持續回血並產出糧食與黃金，全軍生命天生 +8%。',
     workerUnitId: 'fantasy_goblin_sapper',
     starterMeleeUnitId: 'fantasy_paladin',
     starterRangedUnitId: 'fantasy_mage',
@@ -141,6 +147,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'barracks',
       'archery_range',
       'mana_well',
+      'dock',
       'farm',
       'lumber_camp',
       'mining_camp',
@@ -152,12 +159,14 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       town_center: '永恆生命聖樹',
       barracks: '古樹聖騎士林苑',
       archery_range: '奧術賢者秘塔',
+      dock: '森靈港口棧道',
       wall: '秘銀棘石防禦牆',
       tower: '秘銀晶石守望塔',
       castle: '森靈遠古聖堡',
     },
     trainableByBuilding: {
       town_center: ['fantasy_goblin_sapper'],
+      dock: ['fishing_boat'],
       barracks: ['fantasy_paladin', 'fantasy_treant', 'battering_ram'],
       archery_range: ['fantasy_mage', 'fantasy_goblin_sapper'],
       castle: ['fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon'],
@@ -166,7 +175,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       landmark_arsenal: ['fantasy_mage', 'catapult', 'bombard_cannon'],
     },
     passiveBonuses: {
-      hpMultiplier: 1.12,
+      hpMultiplier: 1.08,
     },
   },
 ];
@@ -455,14 +464,26 @@ export function findTechDef(techId: string): TechDefinition | undefined {
   return CIVILIZATION_TECHS.find((t) => t.id === techId);
 }
 
+export const AGE_COMBAT_PROGRESSION: Record<
+  AgeLevel,
+  { hpMult: number; atkMult: number; rateMult: number; defenseAdd: number; speedAdd: number }
+> = {
+  1: { hpMult: 1.0, atkMult: 1.0, rateMult: 1.0, defenseAdd: 0, speedAdd: 0 },
+  2: { hpMult: 1.15, atkMult: 1.16, rateMult: 1.08, defenseAdd: 0, speedAdd: 0.12 },
+  3: { hpMult: 1.35, atkMult: 1.36, rateMult: 1.16, defenseAdd: 1, speedAdd: 0.24 },
+  4: { hpMult: 1.6, atkMult: 1.62, rateMult: 1.25, defenseAdd: 2, speedAdd: 0.36 },
+};
+
 /**
- * Applies researched civilization techs and passive civilization perks cleanly to a UnitStats snapshot.
+ * Applies researched civilization techs, Age progression, unique building aura, and passive perks to UnitStats.
  */
 export function applyCivilizationAndTechStats(
   baseStats: UnitStats,
   category: UnitCategory,
   civId: CivilizationId | undefined,
-  researchedTechIds: string[]
+  researchedTechIds: string[],
+  age: AgeLevel = 1,
+  hasUniqueBuildingAura = false
 ): UnitStats {
   const cfg = getCivilizationConfig(civId);
   let maxHp = baseStats.maxHp * (cfg.passiveBonuses.hpMultiplier || 1);
@@ -470,9 +491,37 @@ export function applyCivilizationAndTechStats(
   let defense = baseStats.defense + (cfg.passiveBonuses.defenseBonus || 0);
   let rangedDefense = baseStats.rangedDefense || 0;
   let speed = baseStats.speed * (cfg.passiveBonuses.moveSpeedMultiplier || 1);
+  let attackRate = baseStats.attackRate;
   let gatherSpeed = baseStats.gatherSpeed * (cfg.passiveBonuses.gatherRateMultiplier || 1);
   let range = baseStats.range;
   let buildingAttack = baseStats.buildingAttack;
+
+  // Progressive Age combat threat scaling for non-worker military units
+  if (category !== 'worker') {
+    const ageScale = AGE_COMBAT_PROGRESSION[age] || AGE_COMBAT_PROGRESSION[1];
+    maxHp *= ageScale.hpMult;
+    attack *= ageScale.atkMult;
+    attackRate *= ageScale.rateMult;
+    defense += ageScale.defenseAdd;
+    speed += ageScale.speedAdd;
+    if (buildingAttack !== undefined && buildingAttack > 0) {
+      buildingAttack = Math.round(buildingAttack * (1 + (age - 1) * 0.18));
+    }
+
+    // Special faction building aura boost (Armory Forge / Spirit Shrine / Mana Well)
+    if (hasUniqueBuildingAura) {
+      if (cfg.id === 'medieval') {
+        defense += 1;
+        attack *= 1.1;
+      } else if (cfg.id === 'anime') {
+        attackRate *= 1.12;
+        speed *= 1.06;
+      } else if (cfg.id === 'fantasy') {
+        maxHp *= 1.12;
+        defense += 1;
+      }
+    }
+  }
 
   for (const techId of researchedTechIds) {
     const tech = findTechDef(techId);
@@ -499,7 +548,8 @@ export function applyCivilizationAndTechStats(
     defense: Math.round(defense),
     rangedDefense: baseStats.rangedDefense !== undefined || rangedDefense > 0 ? rangedDefense : undefined,
     speed: +speed.toFixed(2),
-    gatherSpeed: +gatherSpeed.toFixed(2),
+    attackRate: +attackRate.toFixed(2),
+    gatherSpeed: +gatherSpeed.toFixed(4),
     range: +range.toFixed(2),
   };
 }
