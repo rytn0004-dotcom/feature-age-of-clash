@@ -122,6 +122,8 @@ export const HUD: React.FC<HUDProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const worldEventStatus = engine.getWorldEventStatus();
+
   // Selected entities
   const selectedUnits = engine.selectedUnitIds
     .map((id) => engine.units.find((u) => u.id === id))
@@ -698,6 +700,29 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
       </header>
+
+      {/* Match-wide rotating world event: visible to both human and spectator modes. */}
+      <div
+        data-world-event={worldEventStatus.event.id}
+        data-world-event-phase={worldEventStatus.phase}
+        className="fixed top-14 right-3 z-20 w-[min(250px,46vw)] rounded-xl border border-cyan-400/35 bg-slate-950/90 px-3 py-2 shadow-xl backdrop-blur pointer-events-none"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[9px] font-black tracking-widest text-cyan-300">
+            {worldEventStatus.isActive ? '世界事件進行中' : '下一場世界事件'}
+          </span>
+          <span className="text-[9px] font-mono text-slate-400 tabular-nums">
+            {worldEventStatus.isActive ? '結束倒數' : '開始倒數'} {formatTime(worldEventStatus.secondsRemaining)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <span className="text-base">{worldEventStatus.event.icon}</span>
+          <strong className="text-xs text-white">{worldEventStatus.event.title}</strong>
+        </div>
+        <p className="mt-0.5 text-[10px] leading-snug text-slate-300">
+          {worldEventStatus.event.description}
+        </p>
+      </div>
 
       {/* ================= DYNAMIC ALERT BANNERS ================= */}
       <div className="fixed top-14 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-none">

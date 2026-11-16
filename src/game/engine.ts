@@ -23,6 +23,13 @@ import {
 } from '../types/game';
 import { DEFAULT_BUILDINGS, INITIAL_MODS } from './mods';
 import {
+  createWorldEventOrder,
+  getWorldEventStatusAtTime,
+  NEUTRAL_WORLD_EVENT_MODIFIERS,
+  WorldEventModifiers,
+  WorldEventStatus,
+} from './worldEvents';
+import {
   applyCivilizationAndTechStats,
   canUnitGainXp,
   computeUnitXpGain,
@@ -164,6 +171,7 @@ export class RtsEngine {
   public mapPreset: MapPresetId = 'river_valley';
   public resourceRichness: ResourceRichness = 'standard';
   public mapLayout: MapLayoutResult | null = null;
+  private worldEventOrder = createWorldEventOrder(2026);
   private environmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
 
@@ -621,6 +629,15 @@ export class RtsEngine {
     }
   }
 
+  public getWorldEventStatus(): WorldEventStatus {
+    return getWorldEventStatusAtTime(this.stats.gameDuration, this.worldEventOrder);
+  }
+
+  private getActiveWorldEventModifiers(): WorldEventModifiers {
+    const status = this.getWorldEventStatus();
+    return status.isActive ? status.event.modifiers : NEUTRAL_WORLD_EVENT_MODIFIERS;
+  }
+
   public getParticipant(factionId: FactionId): MatchParticipant | undefined {
     return this.participants.find((p) => p.id === factionId);
   }
@@ -863,6 +880,7 @@ export class RtsEngine {
 
     const spawns = generateSpawnPositions(this.participants.length, 58);
     const matchSeed = Math.floor(Math.random() * 900000) + 1000;
+    this.worldEventOrder = createWorldEventOrder(matchSeed);
     const layout = generateMapLayout(
       this.mapPreset,
       this.resourceRichness,
@@ -3224,7 +3242,9 @@ export class RtsEngine {
     if (distToWp <= 0.001) return;
 
     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
-    const speed = unit.unitDef.stats.speed * hasteMult;
+    const eventMods = this.getActiveWorldEventModifiers();
+    const navalEventMult = unit.unitDef.isNaval ? eventMods.navalSpeedMultiplier : 1;
+    const speed = unit.unitDef.stats.speed * hasteMult * navalEventMult;
     const dx = (activeTarget.x - unit.x) / distToWp;
     const dz = (activeTarget.z - unit.z) / distToWp;
     const stepLen = Math.min(distToWp, speed * dt);
@@ -3343,7 +3363,8 @@ export class RtsEngine {
       (unit as any)._desiredYaw = Math.atan2(target.x - unit.x, target.z - unit.z);
 
       if (unit.attackCooldown <= 0) {
-        unit.attackCooldown = 1 / unit.unitDef.stats.attackRate;
+        const attackRateMultiplier = this.getActiveWorldEventModifiers().attackRateMultiplier;
+        unit.attackCooldown = 1 / (unit.unitDef.stats.attackRate * attackRateMultiplier);
         (unit as any)._attackSwing = 0.36;
 
         if (unit.unitDef.stats.range > 2.5) {
@@ -3473,7 +3494,16 @@ export class RtsEngine {
 
       const baseGatherRate = unit.unitDef.stats.gatherSpeed || 2;
       const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
-      const gatherRate = baseGatherRate * subtypeMult;
+      const eventMods = this.getActiveWorldEventModifiers();
+      const eventGatherMultiplier =
+        (node.subtype === 'deep_fish' || node.subtype === 'shore_fish') && isBoat
+          ? eventMods.fishingGatherMultiplier
+          : node.resourceType === 'food'
+          ? eventMods.foodGatherMultiplier
+          : node.resourceType === 'gold' || node.resourceType === 'stone'
+          ? eventMods.mineralGatherMultiplier
+          : 1;
+      const gatherRate = baseGatherRate * subtypeMult * eventGatherMultiplier;
       const prevAmount = node.amount;
       const deltaGather = Math.min(node.amount, gatherRate * dt);
       unit.carryingResource.amount += deltaGather;
@@ -4086,7 +4116,11 @@ export class RtsEngine {
       // Passive Resource Generation & Civ Unique Building Effects
       if (bldg.buildingDef.producesResource) {
         const prod = bldg.buildingDef.producesResource;
-        const delta = prod.amountPerSec * dt;
+        const eventMods = this.getActiveWorldEventModifiers();
+        const farmEventMultiplier = bldg.buildingType === 'farm' && prod.type === 'food'
+          ? eventMods.farmProductionMultiplier
+          : 1;
+        const delta = prod.amountPerSec * farmEventMultiplier * dt;
         const resBag = this.getResourcesForFaction(bldg.faction);
         resBag[prod.type] += delta;
         if (bldg.buildingType === 'landmark_guildhall') {
@@ -4144,6 +4178,7 @@ export class RtsEngine {
             getDistance(bldg.x, bldg.z, f.x, f.z) <= 16
         );
       const speedBonusMult = hasNearbyForge ? 1.25 : 1.0;
+      const eventTrainingMultiplier = this.getActiveWorldEventModifiers().trainingSpeedMultiplier;
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
@@ -4169,7 +4204,7 @@ export class RtsEngine {
         const currentUnitId = bldg.queue[0];
         const uDef = this.findUnitDef(currentUnitId, bldg.faction);
         if (uDef) {
-          const speed = speedBonusMult / uDef.stats.trainTime;
+          const speed = (speedBonusMult * eventTrainingMultiplier) / uDef.stats.trainTime;
           bldg.queueProgress += speed * dt;
 
           if (bldg.queueProgress >= 1) {
