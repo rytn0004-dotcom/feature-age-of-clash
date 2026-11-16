@@ -1263,3 +1263,74 @@ test('unit-rebalance-and-naval: villager 55/5/0.7 vs Age-1 infantry 1.6x/1.6x/2x
   );
 });
 
+
+
+test('world-events: deterministic match order, timed intermission, and rotating event schedule', async () => {
+  const {
+    createWorldEventOrder,
+    getWorldEventStatusAtTime,
+    WORLD_EVENT_CYCLE_SECONDS,
+    WORLD_EVENT_DURATION_SECONDS,
+  } = await import('./worldEvents');
+
+  const orderA = createWorldEventOrder(20261117);
+  const orderB = createWorldEventOrder(20261117);
+  const orderC = createWorldEventOrder(20261118);
+  assert.deepEqual(orderA.map((event) => event.id), orderB.map((event) => event.id));
+  assert.equal(new Set(orderA.map((event) => event.id)).size, 4);
+  assert.equal(orderA.length, 4);
+
+  const opening = getWorldEventStatusAtTime(0, orderA);
+  assert.equal(opening.isActive, true);
+  assert.equal(opening.phase, 'active');
+  assert.equal(opening.event.id, orderA[0].id);
+  assert.equal(opening.secondsRemaining, WORLD_EVENT_DURATION_SECONDS);
+
+  const lastActiveSecond = getWorldEventStatusAtTime(WORLD_EVENT_DURATION_SECONDS - 1, orderA);
+  assert.equal(lastActiveSecond.isActive, true);
+  assert.equal(lastActiveSecond.secondsRemaining, 1);
+
+  const intermission = getWorldEventStatusAtTime(WORLD_EVENT_DURATION_SECONDS, orderA);
+  assert.equal(intermission.isActive, false);
+  assert.equal(intermission.phase, 'intermission');
+  assert.equal(intermission.event.id, orderA[1].id);
+  assert.equal(intermission.secondsRemaining, WORLD_EVENT_CYCLE_SECONDS - WORLD_EVENT_DURATION_SECONDS);
+
+  const nextCycle = getWorldEventStatusAtTime(WORLD_EVENT_CYCLE_SECONDS, orderA);
+  assert.equal(nextCycle.isActive, true);
+  assert.equal(nextCycle.event.id, orderA[1].id);
+
+  const scheduleForAnotherSeed = getWorldEventStatusAtTime(0, orderC);
+  assert.ok(orderA.length === orderC.length);
+  assert.equal(scheduleForAnotherSeed.isActive, true);
+});
+
+test('world-events: each event grants only its intended strategic bonuses', async () => {
+  const { WORLD_EVENTS, NEUTRAL_WORLD_EVENT_MODIFIERS } = await import('./worldEvents');
+  const byId = Object.fromEntries(WORLD_EVENTS.map((event) => [event.id, event.modifiers]));
+
+  assert.ok(byId.tidal_surge.navalSpeedMultiplier > 1);
+  assert.ok(byId.tidal_surge.fishingGatherMultiplier > 1);
+  assert.equal(byId.tidal_surge.mineralGatherMultiplier, 1);
+
+  assert.ok(byId.harvest_bloom.foodGatherMultiplier > 1);
+  assert.ok(byId.harvest_bloom.farmProductionMultiplier > 1);
+  assert.equal(byId.harvest_bloom.attackRateMultiplier, 1);
+
+  assert.ok(byId.ore_pulse.mineralGatherMultiplier > 1);
+  assert.equal(byId.ore_pulse.trainingSpeedMultiplier, 1);
+
+  assert.ok(byId.war_drums.attackRateMultiplier > 1);
+  assert.ok(byId.war_drums.trainingSpeedMultiplier > 1);
+  assert.equal(byId.war_drums.navalSpeedMultiplier, 1);
+
+  assert.deepEqual(NEUTRAL_WORLD_EVENT_MODIFIERS, {
+    navalSpeedMultiplier: 1,
+    fishingGatherMultiplier: 1,
+    foodGatherMultiplier: 1,
+    farmProductionMultiplier: 1,
+    mineralGatherMultiplier: 1,
+    attackRateMultiplier: 1,
+    trainingSpeedMultiplier: 1,
+  });
+});
