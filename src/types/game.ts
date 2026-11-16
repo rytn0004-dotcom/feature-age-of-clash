@@ -107,6 +107,7 @@ export type BuildingType =
   | 'farm'
   | 'lumber_camp'
   | 'mining_camp'
+  | 'wall'
   | 'tower'
   | 'castle'
   | 'armory_forge'
@@ -297,7 +298,7 @@ export interface BuildingEntity extends EntityCommon {
 export interface ResourceNode {
   id: string;
   resourceType: ResourceType;
-  subtype?: 'farm' | 'berry' | 'hunt' | 'wood' | 'gold' | 'stone';
+  subtype?: 'farm' | 'berry' | 'hunt' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
   x: number;
   z: number;
   amount: number;

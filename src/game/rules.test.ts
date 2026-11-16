@@ -974,7 +974,213 @@ test('siege-and-garrison: anti-building armor blocks early soldiers while siege 
   assert.ok(cannonVsTcDmg >= 200, `Imperial bombard cannon (${cannonVsTcDmg}) should devastate fortified structures`);
 });
 
+test('economy-and-early-defense: 35/60s base gather rate, carry 15, Age I wall & tower unlock, and building combat stats inspection', async () => {
+  const { getBuildingCombatStats, calculateBuildingDamage } = await import('./rules');
+  const { isPlacementLocationValid } = await import('./collision');
+  const { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
+  const { getBuildableTypesForCiv } = await import('./civilizations');
 
+  const villager = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
+  const spiritWorker = ANIME_UNITS.find((u) => u.id === 'anime_spirit_harvester')!;
+  const goblinWorker = FANTASY_UNITS.find((u) => u.id === 'fantasy_goblin_sapper')!;
+  const swordsman = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
 
+  // 1. Gather rate ~35 resources per 60s (0.583/s) & carryCapacity 15
+  assert.ok(Math.abs(villager.stats.gatherSpeed - 35 / 60) < 0.01, `Expected ~0.583 gatherSpeed, got ${villager.stats.gatherSpeed}`);
+  assert.equal(villager.stats.carryCapacity, 15);
+  assert.equal(spiritWorker.stats.carryCapacity, 15);
+  assert.equal(goblinWorker.stats.carryCapacity, 15);
 
+  // 2. Age I unlocks both Wall and Watch Tower across all civilizations
+  assert.equal(DEFAULT_BUILDINGS.wall.requiredAge, 1);
+  assert.equal(DEFAULT_BUILDINGS.tower.requiredAge, 1);
+  assert.ok(getBuildableTypesForCiv('medieval').includes('wall'));
+  assert.ok(getBuildableTypesForCiv('anime').includes('wall'));
+  assert.ok(getBuildableTypesForCiv('fantasy').includes('wall'));
 
+  // 3. Regular early infantry only chips Age I walls/towers, requiring siege engines
+  const wallBldg = {
+    id: 'w1',
+    type: 'building' as const,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.wall.maxHp,
+    maxHp: DEFAULT_BUILDINGS.wall.maxHp,
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+    garrisonedUnitIds: [] as string[],
+  };
+  const towerBldg = {
+    ...wallBldg,
+    id: 'tw_inspect',
+    x: 8,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.tower.maxHp,
+    maxHp: DEFAULT_BUILDINGS.tower.maxHp,
+    buildingType: 'tower' as const,
+    buildingDef: DEFAULT_BUILDINGS.tower,
+  };
+  const tcBldg = {
+    ...wallBldg,
+    id: 'tc_inspect',
+    x: -10,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.town_center.maxHp,
+    maxHp: DEFAULT_BUILDINGS.town_center.maxHp,
+    buildingType: 'town_center' as const,
+    buildingDef: DEFAULT_BUILDINGS.town_center,
+  };
+
+  const swEnt = {
+    id: 'sw_chip',
+    type: 'unit' as const,
+    faction: 'enemy' as const,
+    x: 1,
+    z: 0,
+    hp: swordsman.stats.maxHp,
+    maxHp: swordsman.stats.maxHp,
+    unitDefId: swordsman.id,
+    unitDef: swordsman,
+    state: 'attacking' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+  };
+  assert.equal(calculateBuildingDamage(swEnt, wallBldg, 1, []), 1);
+  assert.equal(calculateBuildingDamage(swEnt, towerBldg, 1, []), 1);
+
+  // 4. Wall segments can chain tightly edge-to-edge while non-walls maintain clearance
+  assert.equal(isPlacementLocationValid(2.35, 0, DEFAULT_BUILDINGS.wall.size, [wallBldg], [], true), true);
+  assert.equal(isPlacementLocationValid(2.35, 0, DEFAULT_BUILDINGS.barracks.size, [wallBldg], [], false), false);
+
+  // 5. Building combat stats inspection accuracy
+  const wallStats = getBuildingCombatStats(wallBldg, [], 1, []);
+  assert.equal(wallStats.attackDamage, 0);
+  assert.equal(wallStats.buildingArmor, DEFAULT_BUILDINGS.wall.buildingArmor);
+  assert.ok(wallStats.attackMethod.includes('堅壁'));
+
+  const towerStats = getBuildingCombatStats(towerBldg, [], 1, ['shared_arrow_slits']);
+  assert.ok(towerStats.attackDamage >= 15);
+  assert.equal(DEFAULT_BUILDINGS.tower.maxHp, 700);
+  assert.ok((DEFAULT_BUILDINGS.tower.range || 0) <= 13);
+  assert.ok((DEFAULT_BUILDINGS.town_center.range || 0) > (DEFAULT_BUILDINGS.tower.range || 0));
+  assert.ok(towerStats.range >= (DEFAULT_BUILDINGS.tower.range || 13) + 2);
+  assert.ok(towerStats.attackType.includes('穿刺'));
+
+  const tcUnmannedStats = getBuildingCombatStats(tcBldg, [], 1, []);
+  assert.equal(tcUnmannedStats.volleyCount, 0);
+  assert.equal(tcUnmannedStats.range, DEFAULT_BUILDINGS.town_center.range);
+  assert.ok(tcUnmannedStats.buildingArmor >= 13);
+});
+
+test('map-resource-clearance-and-food-priority: zero nodes in base, closest gold/stone outside TC, and food speed deep_fish > shore_fish > hunt > berry = farm', async () => {
+  const { generateMapLayout } = await import('./mapGenerator');
+  const { generateSpawnPositions, getFoodGatherMultiplier, getFoodSourcePriority, findBestFoodResourceNode } = await import('./rules');
+  const { isPointInTerrainObstacle, isPointOnBridge } = await import('./collision');
+
+  // 1. Exact food speed & priority ordering
+  const deepRate = getFoodGatherMultiplier('deep_fish');
+  const shoreRate = getFoodGatherMultiplier('shore_fish');
+  const huntRate = getFoodGatherMultiplier('hunt');
+  const berryRate = getFoodGatherMultiplier('berry');
+  const farmRate = getFoodGatherMultiplier('farm');
+  assert.ok(deepRate > shoreRate, `Expected deep_fish (${deepRate}) > shore_fish (${shoreRate})`);
+  assert.ok(shoreRate > huntRate, `Expected shore_fish (${shoreRate}) > hunt (${huntRate})`);
+  assert.ok(huntRate > berryRate, `Expected hunt (${huntRate}) > berry (${berryRate})`);
+  assert.equal(berryRate, farmRate, `Expected berry (${berryRate}) === farm (${farmRate})`);
+
+  assert.ok(
+    getFoodSourcePriority('deep_fish') > getFoodSourcePriority('shore_fish') &&
+      getFoodSourcePriority('shore_fish') > getFoodSourcePriority('hunt') &&
+      getFoodSourcePriority('hunt') > getFoodSourcePriority('berry') &&
+      getFoodSourcePriority('berry') === getFoodSourcePriority('farm')
+  );
+
+  // 2. Priority selection beats closer lower-tier food sources cleanly
+  const sampleFoodNodes: ResourceNode[] = [
+    { id: 'farm1', resourceType: 'food', subtype: 'farm', x: 3, z: 0, amount: 2500, maxAmount: 2500 },
+    { id: 'berry1', resourceType: 'food', subtype: 'berry', x: 5, z: 0, amount: 350, maxAmount: 350 },
+    { id: 'hunt1', resourceType: 'food', subtype: 'hunt', x: 9, z: 0, amount: 400, maxAmount: 400 },
+    { id: 'shore1', resourceType: 'food', subtype: 'shore_fish', x: 14, z: 0, amount: 450, maxAmount: 450 },
+    { id: 'deep1', resourceType: 'food', subtype: 'deep_fish', x: 18, z: 0, amount: 650, maxAmount: 650 },
+  ];
+  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36)?.id, 'deep1');
+  assert.equal(
+    findBestFoodResourceNode(0, 0, sampleFoodNodes.filter((n) => n.subtype !== 'deep_fish'), 36)?.id,
+    'shore1'
+  );
+  assert.equal(
+    findBestFoodResourceNode(0, 0, sampleFoodNodes.filter((n) => n.subtype !== 'deep_fish' && n.subtype !== 'shore_fish'), 36)?.id,
+    'hunt1'
+  );
+
+  // 3. Seeded layout invariants: zero nodes inside any base & closest gold/stone right outside TC walls across presets & spawn counts
+  const seeds = [101, 777, 2026, 4242, 9999];
+  const presets = ['river_valley', 'highland_basin', 'twin_lakes'] as const;
+  for (const preset of presets) {
+    for (const playerCount of [2, 3, 4, 6]) {
+      const spawns = generateSpawnPositions(playerCount, 36).map((sp, i) => ({
+        id: `slot_${i + 1}`,
+        x: sp.x,
+        z: sp.z,
+      }));
+      for (const seed of seeds) {
+        const layout = generateMapLayout(preset, 'standard', spawns, seed);
+
+        for (const sp of spawns) {
+          for (const node of layout.resourceNodes) {
+            const distToTc = Math.hypot(node.x - sp.x, node.z - sp.z);
+            assert.ok(
+              distToTc >= 9.0,
+              `${preset} (${playerCount}p seed=${seed}) node ${node.id} spawned too close to TC ${sp.id}: dist=${distToTc.toFixed(2)}`
+            );
+          }
+
+          const goldDists = layout.resourceNodes
+            .filter((n) => n.resourceType === 'gold')
+            .map((n) => Math.hypot(n.x - sp.x, n.z - sp.z))
+            .sort((a, b) => a - b);
+          const stoneDists = layout.resourceNodes
+            .filter((n) => n.resourceType === 'stone')
+            .map((n) => Math.hypot(n.x - sp.x, n.z - sp.z))
+            .sort((a, b) => a - b);
+
+          assert.ok(
+            goldDists.length > 0 && goldDists[0] >= 9.2 && goldDists[0] <= 13.5,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest gold at ${goldDists[0]?.toFixed(2)}, expected [9.2, 13.5]`
+          );
+          assert.ok(
+            stoneDists.length > 0 && stoneDists[0] >= 9.2 && stoneDists[0] <= 13.5,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest stone at ${stoneDists[0]?.toFixed(2)}, expected [9.2, 13.5]`
+          );
+        }
+
+        if (preset === 'river_valley' || preset === 'twin_lakes') {
+          const shoreFish = layout.resourceNodes.filter((n) => n.subtype === 'shore_fish');
+          const deepFish = layout.resourceNodes.filter((n) => n.subtype === 'deep_fish');
+          assert.ok(shoreFish.length >= 4, `${preset} should spawn shore_fish nodes`);
+          assert.ok(deepFish.length >= 2, `${preset} should spawn deep_fish nodes`);
+          for (const fn of [...shoreFish, ...deepFish]) {
+            assert.equal(
+              isPointInTerrainObstacle(fn.x, fn.z, layout.waterRects, layout.waterDiscs, []),
+              true,
+              `${preset} fish ${fn.id} must be inside water`
+            );
+            assert.equal(
+              isPointOnBridge(fn.x, fn.z, layout.bridges),
+              false,
+              `${preset} fish ${fn.id} must not overlap bridges`
+            );
+          }
+        }
+      }
+    }
+  }
+});

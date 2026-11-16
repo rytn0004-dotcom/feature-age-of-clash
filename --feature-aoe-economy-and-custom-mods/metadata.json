@@ -1,0 +1,6 @@
+{
+  "name": "世紀帝國：亂鬥爭霸 (Age of Clash)",
+  "description": "簡化版即時戰略遊戲，融合資源採集、城堡與基地建造、即時對戰，並具備完整自訂模組、跨界角色屬性自訂與AI戰術指令集腳本編寫系統。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

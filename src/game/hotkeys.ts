@@ -14,6 +14,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   armory_forge: 'K',
   spirit_shrine: 'K',
   mana_well: 'K',
+  wall: 'O',
   tower: 'T',
   castle: 'N',
 };
@@ -95,7 +96,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
     items: [
       { keys: 'R / L / G', desc: '農田 / 伐木場 / 採礦營' },
       { keys: 'V / Y / K', desc: '兵營 / 射箭場 / 文明專屬建築' },
-      { keys: 'T / N / C', desc: '防禦箭塔 / 要塞城堡 / 城鎮中心' },
+      { keys: 'O / T / N / C', desc: '防禦圍牆 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },
     ],
   },

@@ -138,7 +138,7 @@ export function calculateBuildingDamage(
   }
 
   const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
-  const net = effectiveAtk - bArmor * 0.65;
+  const net = effectiveAtk - bArmor;
   return Math.max(1, Math.round(net));
 }
 
@@ -200,6 +200,93 @@ export function computeGarrisonDefenseProfile(
     damagePerBolt: Math.max(8, baseAttack + murderHolesBonus + (mannedCount > 0 ? 2 : 0)),
     range: baseRange + arrowSlitsRangeBonus,
     cooldown: +(baseCooldown / arrowSlitsRateMult).toFixed(2),
+  };
+}
+
+export interface BuildingCombatStats {
+  attackDamage: number;
+  volleyCount: number;
+  attackDisplay: string;
+  attackMethod: string;
+  attackType: string;
+  range: number;
+  cooldown: number;
+  buildingArmor: number;
+}
+
+/**
+ * Computes human-readable combat, attack method/type, range, and structural defense stats for building inspection HUD.
+ */
+export function getBuildingCombatStats(
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'garrisonedUnitIds'>,
+  allUnits: Array<Pick<UnitEntity, 'id' | 'hp' | 'unitDef'>>,
+  defenderAge = 1,
+  defenderTechIds: string[] = []
+): BuildingCombatStats {
+  const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
+  const defProfile = computeGarrisonDefenseProfile(building, allUnits, defenderTechIds);
+  const baseAttack = building.buildingDef.attack || 0;
+  const baseRange = building.buildingDef.range || 0;
+  const effectiveRange = defProfile.range > 0 ? defProfile.range : baseRange;
+  const canFireFromGarrison = !!building.buildingDef.canGarrisonAttack;
+  const isCastle = building.buildingType === 'castle' || building.buildingType === 'landmark_citadel';
+  const isArcaneOrShrine = building.buildingType === 'mana_well' || building.buildingType === 'spirit_shrine';
+  const requiresGarrison =
+    building.buildingType === 'town_center' ||
+    building.buildingType === 'armory_forge' ||
+    building.buildingType === 'spirit_shrine' ||
+    building.buildingType === 'mana_well';
+
+  if (baseAttack <= 0 && !canFireFromGarrison) {
+    return {
+      attackDamage: 0,
+      volleyCount: 0,
+      attackDisplay: '0 (無攻擊武裝)',
+      attackMethod: building.buildingDef.isWall ? '堅壁阻隔防線' : '無武裝輔助建築',
+      attackType: '無',
+      range: 0,
+      cooldown: 0,
+      buildingArmor: bArmor,
+    };
+  }
+
+  const attackType = isArcaneOrShrine
+    ? '魔法靈壓彈幕'
+    : isCastle || building.buildingType === 'landmark_arsenal'
+    ? '重型城防弩砲'
+    : '物理穿刺遠程';
+
+  const attackMethod = requiresGarrison
+    ? isArcaneOrShrine
+      ? '駐軍感應齊射'
+      : '駐軍齊射箭雨'
+    : isCastle
+    ? '自動火網＋駐軍'
+    : '自動哨塔＋駐軍';
+
+  if (defProfile.volleyCount === 0) {
+    const potentialDmg = Math.max(8, baseAttack + 2);
+    return {
+      attackDamage: 0,
+      volleyCount: 0,
+      attackDisplay: `待命 (駐軍後 ${potentialDmg}×2+ 發)`,
+      attackMethod,
+      attackType,
+      range: effectiveRange,
+      cooldown: defProfile.cooldown,
+      buildingArmor: bArmor,
+    };
+  }
+
+  return {
+    attackDamage: defProfile.damagePerBolt,
+    volleyCount: defProfile.volleyCount,
+    attackDisplay: `${defProfile.damagePerBolt} × ${defProfile.volleyCount} 發`,
+    attackMethod,
+    attackType,
+    range: effectiveRange,
+    cooldown: defProfile.cooldown,
+    buildingArmor: bArmor,
   };
 }
 
@@ -418,6 +505,32 @@ export function getDistance(x1: number, z1: number, x2: number, z2: number): num
   return Math.sqrt(dx * dx + dz * dz);
 }
 
+export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
+  deep_fish: 1.55,
+  shore_fish: 1.32,
+  hunt: 1.15,
+  berry: 1.0,
+  farm: 1.0,
+  food: 1.0,
+};
+
+export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
+  deep_fish: 5,
+  shore_fish: 4,
+  hunt: 3,
+  berry: 2,
+  farm: 2,
+  food: 1,
+};
+
+export function getFoodGatherMultiplier(subtype?: ResourceNode['subtype'] | string): number {
+  return FOOD_GATHER_MULTIPLIERS[subtype || 'farm'] ?? 1.0;
+}
+
+export function getFoodSourcePriority(subtype?: ResourceNode['subtype'] | string): number {
+  return FOOD_SOURCE_PRIORITY[subtype || 'farm'] ?? 1;
+}
+
 /**
  * Finds closest resource node of a given type with remaining resources.
  */
@@ -441,6 +554,33 @@ export function findClosestResourceNode(
     }
   }
   return closest;
+}
+
+/**
+ * Selects optimal available food node balancing meat/fish gather speed priority (deep_fish > shore_fish > hunt > berry = farm)
+ * against travel distance within maxDistance.
+ */
+export function findBestFoodResourceNode(
+  x: number,
+  z: number,
+  nodes: ResourceNode[],
+  maxDistance = 36
+): ResourceNode | null {
+  let best: ResourceNode | null = null;
+  let bestScore = -Infinity;
+
+  for (const node of nodes) {
+    if (node.amount <= 0 || node.resourceType !== 'food') continue;
+    const dist = getDistance(x, z, node.x, node.z);
+    if (dist >= maxDistance) continue;
+    const prio = getFoodSourcePriority(node.subtype);
+    const score = prio * 16 - dist;
+    if (score > bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  }
+  return best;
 }
 
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{

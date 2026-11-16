@@ -24,7 +24,12 @@ import {
 import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType } from '../types/game';
-import { canAfford, getBuildingMaxGarrison, getEffectiveBuildingArmor } from '../game/rules';
+import {
+  canAfford,
+  getBuildingCombatStats,
+  getBuildingMaxGarrison,
+  getEffectiveBuildingArmor,
+} from '../game/rules';
 import {
   canUnitGainXp,
   findTechDef,
@@ -343,6 +348,19 @@ export const HUD: React.FC<HUDProps> = ({
           ctx.beginPath();
           ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
           ctx.fill();
+        } else if (node.subtype === 'shore_fish') {
+          ctx.fillStyle = '#38bdf8';
+          ctx.beginPath();
+          ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (node.subtype === 'deep_fish') {
+          ctx.fillStyle = '#0284c7';
+          ctx.strokeStyle = '#bae6fd';
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.arc(mx, my, 2.9, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
         }
       });
 
@@ -479,8 +497,9 @@ export const HUD: React.FC<HUDProps> = ({
   const compactBuildTypes: BuildingType[] = [
     humanCiv.uniqueBuildingType,
     'barracks',
-    'farm',
+    'wall',
     'tower',
+    'farm',
   ];
 
   return (
@@ -1281,6 +1300,7 @@ export const HUD: React.FC<HUDProps> = ({
                       <div className="grid grid-cols-3 sm:grid-cols-5 gap-1">
                         {buildableTypes.map((bType) => {
                           const bDef = DEFAULT_BUILDINGS[bType];
+                          const ageLocked = !!(bDef.requiredAge && observedAge < bDef.requiredAge);
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
                           const isCivUnique = !!bDef.civExclusive;
                           const hotkey = BUILDING_HOTKEYS[bType];
@@ -1289,9 +1309,11 @@ export const HUD: React.FC<HUDProps> = ({
                               key={bType}
                               data-build-type={bType}
                               onClick={() => engine.startPlacement(bType)}
-                              disabled={!canBuild}
+                              disabled={!canBuild || ageLocked}
                               className={`relative flex flex-col items-center py-1 px-1 rounded border text-[10px] font-semibold transition-all ${
-                                !canBuild
+                                ageLocked
+                                  ? 'opacity-45 cursor-not-allowed bg-slate-900 border-slate-800 text-slate-500'
+                                  : !canBuild
                                   ? 'opacity-40 cursor-not-allowed bg-slate-900 border-slate-800 text-slate-500'
                                   : isCivUnique
                                   ? 'bg-cyan-950/70 hover:bg-cyan-900/80 text-cyan-200 border-cyan-400/70 shadow cursor-pointer'
@@ -1302,7 +1324,7 @@ export const HUD: React.FC<HUDProps> = ({
                               title={`${bDef.name}${hotkey ? ` [${hotkey}]` : ''} - ${bDef.description}`}
                             >
                               <span className="truncate max-w-full flex items-center gap-0.5 font-bold">
-                                {hotkey && (
+                                {hotkey && !ageLocked && (
                                   <span className="text-[9px] font-mono px-1 rounded bg-slate-950/80 text-amber-300 border border-slate-700">
                                     {hotkey}
                                   </span>
@@ -1312,9 +1334,9 @@ export const HUD: React.FC<HUDProps> = ({
                                 {bDef.name.split(' ')[0]}
                               </span>
                               <span className="text-[9px] text-amber-400 font-mono">
-                                {bDef.cost.wood ? `${bDef.cost.wood}W` : ''}
-                                {bDef.cost.gold ? ` ${bDef.cost.gold}G` : ''}
-                                {bDef.cost.stone ? ` ${bDef.cost.stone}S` : ''}
+                                {ageLocked
+                                  ? `🔒時代${bDef.requiredAge}`
+                                  : `${bDef.cost.wood ? `${bDef.cost.wood}W` : ''}${bDef.cost.gold ? ` ${bDef.cost.gold}G` : ''}${bDef.cost.stone ? ` ${bDef.cost.stone}S` : ''}`}
                               </span>
                             </button>
                           );
@@ -1414,8 +1436,17 @@ export const HUD: React.FC<HUDProps> = ({
               const activeTech = selectedBuilding.activeTechId ? findTechDef(selectedBuilding.activeTechId) : null;
               const bFactionAge = engine.ageByFaction[selectedBuilding.faction] || observedAge;
               const bArmor = getEffectiveBuildingArmor(selectedBuilding, bFactionAge, bldgResearched);
+              const bCombatStats = getBuildingCombatStats(
+                selectedBuilding,
+                engine.units,
+                bFactionAge,
+                bldgResearched
+              );
               const gMax = getBuildingMaxGarrison(selectedBuilding);
               const gCount = selectedBuilding.garrisonedUnitIds?.length || 0;
+              const garrisonUnits = (selectedBuilding.garrisonedUnitIds || [])
+                .map((uid) => engine.units.find((u) => u.id === uid && u.hp > 0))
+                .filter((u): u is NonNullable<typeof u> => !!u);
 
               return (
               <div className="flex flex-col md:flex-row gap-3 h-full">
@@ -1436,6 +1467,41 @@ export const HUD: React.FC<HUDProps> = ({
                         {selectedBuilding.isConstructed
                           ? '運作中'
                           : `建造中 ${Math.round(selectedBuilding.buildProgress * 100)}%`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Building Combat & Defense Stats Inspection */}
+                  <div
+                    data-building-stats-grid="true"
+                    className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 px-2 py-1 rounded bg-slate-950/75 border border-slate-800 text-[10px]"
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">⚔️ 攻擊力</span>
+                      <span className="font-mono font-bold text-amber-300">{bCombatStats.attackDisplay}</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">🎯 攻擊方式</span>
+                      <span className="font-bold text-slate-200 leading-tight" title={bCombatStats.attackMethod}>
+                        {bCombatStats.attackMethod}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">🔥 攻擊類型</span>
+                      <span className="font-bold text-orange-300 leading-tight" title={bCombatStats.attackType}>
+                        {bCombatStats.attackType}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">📏 攻擊範圍</span>
+                      <span className="font-mono font-bold text-cyan-300">
+                        {bCombatStats.range > 0 ? `${bCombatStats.range} 格` : '—'}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">🛡️ 防禦／城甲</span>
+                      <span className="font-mono font-bold text-sky-300">
+                        城甲 {bCombatStats.buildingArmor}
                       </span>
                     </div>
                   </div>
@@ -1499,41 +1565,61 @@ export const HUD: React.FC<HUDProps> = ({
                   {selectedBuilding.isConstructed && gMax > 0 && (
                     <div
                       data-garrison-panel="true"
-                      className="flex flex-wrap items-center justify-between gap-2 px-2 py-1 rounded-lg bg-sky-950/45 border border-sky-500/40 text-[11px]"
+                      className="flex flex-col gap-1.5 px-2 py-1.5 rounded-lg bg-sky-950/45 border border-sky-500/40 text-[11px]"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sky-200">
-                          🛡️ 駐防庇護: <strong className="font-mono text-white">{gCount}/{gMax}</strong>
-                        </span>
-                        <span className="text-[10px] text-sky-300/90">
-                          {selectedBuilding.buildingDef.canGarrisonAttack
-                            ? gCount > 0
-                              ? '🏹 矢箭齊發強化中'
-                              : '駐軍可開火防禦'
-                            : '💚 避戰療傷中'}
-                        </span>
-                      </div>
-                      {!isSpectator && (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            data-cmd-ungarrison="true"
-                            disabled={gCount === 0}
-                            onClick={() => engine.ungarrisonAll(selectedBuilding.id)}
-                            className="px-2 py-0.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-black rounded text-[10px] cursor-pointer"
-                            title={`撤出此建築內所有駐防單位 [${UNGARRISON_HOTKEY}]`}
-                          >
-                            🚪 全部撤出 [{UNGARRISON_HOTKEY}]
-                          </button>
-                          {selectedBuilding.buildingType === 'town_center' && (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sky-200">
+                            🛡️ 駐防庇護: <strong className="font-mono text-white">{gCount}/{gMax}</strong>
+                          </span>
+                          <span className="text-[10px] text-sky-300/90">
+                            {selectedBuilding.buildingDef.canGarrisonAttack
+                              ? gCount > 0
+                                ? '🏹 矢箭齊發強化中（放出優先朝集結點）'
+                                : '駐軍可開火防禦'
+                              : '💚 避戰療傷中（放出優先朝集結點）'}
+                          </span>
+                        </div>
+                        {!isSpectator && (
+                          <div className="flex items-center gap-1.5">
                             <button
-                              data-cmd-town-bell="true"
-                              onClick={() => engine.ringTownBell(selectedBuilding.id)}
-                              className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white font-black rounded text-[10px] cursor-pointer"
-                              title="敲響城鎮鐘聲：召回附近村民避難，或再次敲響全員撤出復工"
+                              data-cmd-ungarrison="true"
+                              disabled={gCount === 0}
+                              onClick={() => engine.ungarrisonAll(selectedBuilding.id)}
+                              className="px-2 py-0.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-black rounded text-[10px] cursor-pointer"
+                              title={`撤出此建築內所有駐防單位並優先從集結點方向離場 [${UNGARRISON_HOTKEY}]`}
                             >
-                              🔔 鐘聲避難
+                              🚪 全部撤出 [{UNGARRISON_HOTKEY}]
                             </button>
-                          )}
+                            {selectedBuilding.buildingType === 'town_center' && (
+                              <button
+                                data-cmd-town-bell="true"
+                                onClick={() => engine.ringTownBell(selectedBuilding.id)}
+                                className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white font-black rounded text-[10px] cursor-pointer"
+                                title="敲響城鎮鐘聲：召回附近村民避難，或再次敲響全員撤出復工"
+                              >
+                                🔔 鐘聲避難
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {garrisonUnits.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-0.5">
+                          {garrisonUnits.map((u) => (
+                            <button
+                              key={u.id}
+                              data-ungarrison-unit={u.id}
+                              disabled={isSpectator}
+                              onClick={() => engine.ungarrisonUnit(selectedBuilding.id, u.id)}
+                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-sky-900/80 disabled:hover:bg-slate-900/90 border border-sky-400/45 text-[10px] text-sky-100 cursor-pointer disabled:cursor-default"
+                              title={isSpectator ? `${u.unitDef.name}` : `點擊單獨放出「${u.unitDef.name}」（優先從集結點出口出現）`}
+                            >
+                              <span className="font-bold">{u.unitDef.name.split(' ')[0]}</span>
+                              <span className="text-[9px] font-mono text-emerald-300">{Math.round(u.hp)}HP</span>
+                              {!isSpectator && <span className="text-amber-300 font-black ml-0.5">✕</span>}
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -1555,11 +1641,11 @@ export const HUD: React.FC<HUDProps> = ({
                     </div>
                   )}
 
-                  {/* Production Queue */}
+                  {/* Production Queue with Per-Unit Cancellation */}
                   {selectedBuilding.queue.length > 0 && (
-                    <div className="text-[11px] text-amber-300 space-y-0.5">
-                      <div className="flex justify-between">
-                        <span>訓練隊列 ({selectedBuilding.queue.length})</span>
+                    <div data-production-queue="true" className="text-[11px] text-amber-300 space-y-1 bg-amber-950/25 border border-amber-500/30 rounded-lg px-2 py-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">⚙️ 生產中單位隊列 ({selectedBuilding.queue.length})</span>
                         <span className="font-mono font-bold">{Math.round(selectedBuilding.queueProgress * 100)}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -1567,6 +1653,37 @@ export const HUD: React.FC<HUDProps> = ({
                           className="h-full bg-amber-400 transition-all"
                           style={{ width: `${selectedBuilding.queueProgress * 100}%` }}
                         />
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {selectedBuilding.queue.map((qUnitId, qIdx) => {
+                          const qDef = engine.findUnitDef(qUnitId, selectedBuilding.faction);
+                          const qLabel = qDef ? qDef.name.split(' ')[0] : qUnitId;
+                          return (
+                            <button
+                              key={`${qUnitId}-${qIdx}`}
+                              data-cancel-queue-idx={qIdx}
+                              disabled={isSpectator}
+                              onClick={() => engine.cancelTrainingAt(selectedBuilding.id, qIdx)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] transition-colors ${
+                                qIdx === 0
+                                  ? 'bg-amber-500/20 hover:bg-red-950/80 border-amber-400/70 hover:border-red-400 text-amber-100'
+                                  : 'bg-slate-900/90 hover:bg-red-950/80 border-slate-700 hover:border-red-400 text-slate-200'
+                              } ${isSpectator ? 'cursor-default' : 'cursor-pointer'}`}
+                              title={isSpectator ? qLabel : `點擊取消訓練「${qLabel}」並全額退還資源`}
+                            >
+                              <span className="font-bold">
+                                {qIdx === 0 ? '▶ ' : `#${qIdx + 1} `}
+                                {qLabel}
+                              </span>
+                              {qIdx === 0 && (
+                                <span className="font-mono text-[9px] text-amber-300">
+                                  {Math.round(selectedBuilding.queueProgress * 100)}%
+                                </span>
+                              )}
+                              {!isSpectator && <span className="text-red-300 font-black ml-0.5">✕ 取消</span>}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1706,7 +1823,11 @@ export const HUD: React.FC<HUDProps> = ({
             {!selectedUnits.length && !selectedBuilding && selectedNode && (
               <div className="flex flex-col md:flex-row items-center gap-4 h-full p-2">
                 <div className="w-16 h-16 rounded-2xl bg-slate-800 border-2 border-amber-500/60 flex items-center justify-center text-3xl shadow-lg shrink-0">
-                  {selectedNode.subtype === 'berry'
+                  {selectedNode.subtype === 'deep_fish'
+                    ? '🐠'
+                    : selectedNode.subtype === 'shore_fish'
+                    ? '🐟'
+                    : selectedNode.subtype === 'berry'
                     ? '🫐'
                     : selectedNode.subtype === 'hunt'
                     ? '🦌'
@@ -1721,15 +1842,19 @@ export const HUD: React.FC<HUDProps> = ({
                 <div className="flex-1 space-y-1.5 w-full">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-1">
                     <span className="font-bold text-white text-sm">
-                      {selectedNode.subtype === 'berry' && '野生漿果叢 (Forage Berry Bush)'}
-                      {selectedNode.subtype === 'hunt' && '野生鹿群 (Wild Deer Herd)'}
+                      {selectedNode.subtype === 'deep_fish' && '深海魚群 (Deep-Sea Fish · ×1.55 最快)'}
+                      {selectedNode.subtype === 'shore_fish' && '沿岸魚群 (Shore Fish · ×1.32)'}
+                      {selectedNode.subtype === 'hunt' && '野生山羌 (Wild Muntjac · ×1.15)'}
+                      {selectedNode.subtype === 'berry' && '野生漿果叢 (Forage Berry Bush · ×1.0)'}
                       {selectedNode.resourceType === 'gold' && '天然金礦脈 (Gold Ore Node)'}
                       {selectedNode.resourceType === 'wood' && '茂密森林原木 (Forest Timber)'}
                       {selectedNode.resourceType === 'stone' && '堅硬花崗石礦 (Stone Quarry)'}
                       {selectedNode.resourceType === 'food' &&
+                        selectedNode.subtype !== 'deep_fish' &&
+                        selectedNode.subtype !== 'shore_fish' &&
                         selectedNode.subtype !== 'berry' &&
                         selectedNode.subtype !== 'hunt' &&
-                        '成熟麥田作物 (Harvest Farm)'}
+                        '成熟麥田作物 (Harvest Farm · ×1.0)'}
                     </span>
                     <span className="text-xs px-2.5 py-0.5 bg-amber-500/20 text-amber-300 font-mono rounded-full font-bold border border-amber-500/30">
                       剩餘 {Math.round((selectedNode.amount / selectedNode.maxAmount) * 100)}%
@@ -1862,6 +1987,9 @@ export const HUD: React.FC<HUDProps> = ({
 
               if (enemyBldg) {
                 const owner = engine.getParticipant(enemyBldg.faction);
+                const enemyAge = engine.ageByFaction[enemyBldg.faction] || 1;
+                const enemyResearched = engine.getResearchedTechs(enemyBldg.faction);
+                const ebStats = getBuildingCombatStats(enemyBldg, engine.units, enemyAge, enemyResearched);
                 return (
                   <div
                     className={`flex flex-col md:flex-row items-center gap-4 h-full p-2 border rounded-lg ${
@@ -1875,7 +2003,7 @@ export const HUD: React.FC<HUDProps> = ({
                     >
                       🏰
                     </div>
-                    <div className="flex-1 space-y-1 w-full">
+                    <div className="flex-1 space-y-1.5 w-full">
                       <div
                         className={`flex items-center justify-between border-b pb-1 ${
                           isSpectator ? 'border-slate-800' : 'border-red-900/60'
@@ -1913,7 +2041,40 @@ export const HUD: React.FC<HUDProps> = ({
                           style={{ width: `${Math.max(0, (enemyBldg.hp / enemyBldg.maxHp) * 100)}%` }}
                         />
                       </div>
-                      <div className="flex items-center justify-between text-xs text-slate-300 pt-1">
+                      <div
+                        data-building-stats-grid="true"
+                        className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 px-2 py-1 rounded bg-slate-950/75 border border-slate-800 text-[10px]"
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-slate-400">⚔️ 攻擊力</span>
+                          <span className="font-mono font-bold text-amber-300">{ebStats.attackDisplay}</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-slate-400">🎯 攻擊方式</span>
+                          <span className="font-bold text-slate-200 leading-tight" title={ebStats.attackMethod}>
+                            {ebStats.attackMethod}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-slate-400">🔥 攻擊類型</span>
+                          <span className="font-bold text-orange-300 leading-tight" title={ebStats.attackType}>
+                            {ebStats.attackType}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-slate-400">📏 攻擊範圍</span>
+                          <span className="font-mono font-bold text-cyan-300">
+                            {ebStats.range > 0 ? `${ebStats.range} 格` : '—'}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-slate-400">🛡️ 防禦／城甲</span>
+                          <span className="font-mono font-bold text-sky-300">
+                            城甲 {ebStats.buildingArmor}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-slate-300 pt-0.5">
                         <span>{enemyBldg.buildingDef.description}</span>
                         <span className={`text-[11px] font-bold shrink-0 ${isSpectator ? 'text-cyan-300' : 'text-red-400'}`}>
                           {isSpectator

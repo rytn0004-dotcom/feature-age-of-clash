@@ -59,12 +59,14 @@ import {
   createDefaultParticipants,
   deductCost,
   evaluateAiPlan,
+  findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
   generateSpawnPositions,
   getBuildingMaxGarrison,
   getDistance,
   getEffectiveBuildingArmor,
+  getFoodGatherMultiplier,
   getUnitVsUnitDamage,
   isAllAiMatch,
   MatchWinnerSummary,
@@ -98,12 +100,14 @@ import {
   createBerryBushMesh,
   createBuildingMesh,
   createCommandRingMesh,
+  createDeepFishMesh,
   createDeerMesh,
   createEnvironmentFeaturesGroup,
   createGoldMineMesh,
   createRallyFlagMesh,
   createRubbleDecalMesh,
   createSelectionRing,
+  createShoreFishMesh,
   createStoneQuarryMesh,
   createTreeMesh,
   createUnitMesh,
@@ -837,10 +841,12 @@ export class RtsEngine {
     };
 
     const spawns = generateSpawnPositions(this.participants.length, 36);
+    const matchSeed = Math.floor(Math.random() * 900000) + 1000;
     const layout = generateMapLayout(
       this.mapPreset,
       this.resourceRichness,
-      this.participants.map((p, idx) => ({ id: p.id, x: spawns[idx].x, z: spawns[idx].z }))
+      this.participants.map((p, idx) => ({ id: p.id, x: spawns[idx].x, z: spawns[idx].z })),
+      matchSeed
     );
     this.mapLayout = layout;
 
@@ -894,7 +900,41 @@ export class RtsEngine {
 
     let humanCameraTarget = { x: -28, z: -24 };
 
-    // Spawn each participant at a distinct position with balanced starter TC, Barracks & Farm
+    // Phase A: Place every participant's Town Center first so no resource can ever overlap any TC footprint
+    this.participants.forEach((p, idx) => {
+      const sp = spawns[idx];
+      const len = Math.hypot(sp.x, sp.z) || 1;
+      const inX = -sp.x / len;
+      const inZ = -sp.z / len;
+
+      const tc = this.addBuilding('town_center', p.id, sp.x, sp.z, true);
+      tc.rallyPoint = { x: sp.x + inX * 6, z: sp.z + inZ * 6 };
+
+      if (p.id === this.humanPlayerId) {
+        humanCameraTarget = { x: sp.x, z: sp.z };
+      }
+    });
+
+    // Phase B: Spawn all natural resource nodes outside Town Centers before starter buildings find free footprints
+    const groveBadgeFlags = new Set<string>();
+    layout.resourceNodes.forEach((rn) => {
+      // Extra runtime safety guard: never drop a resource node inside any Town Center courtyard
+      const nearTc = this.buildings.some((b) => getDistance(rn.x, rn.z, b.x, b.z) < 8.8);
+      if (nearTc) return;
+
+      let showBadge = true;
+      if (rn.subtype === 'wood' || rn.subtype === 'berry' || rn.subtype === 'hunt') {
+        const prefix = rn.id.replace(/_\d+$/, '');
+        if (groveBadgeFlags.has(prefix)) {
+          showBadge = false;
+        } else {
+          groveBadgeFlags.add(prefix);
+        }
+      }
+      this.addResourceNode(rn.id, rn.resourceType, rn.x, rn.z, rn.amount, showBadge, rn.subtype);
+    });
+
+    // Phase C: Place starter Barracks, Farm & Initial Units around each TC cleanly avoiding all natural resource nodes
     this.participants.forEach((p, idx) => {
       const sp = spawns[idx];
       const len = Math.hypot(sp.x, sp.z) || 1;
@@ -907,9 +947,6 @@ export class RtsEngine {
       const workerDef = this.findUnitDef(civCfg.workerUnitId) || fallbackWorker;
       const starterCombatDef = this.findUnitDef(civCfg.starterMeleeUnitId) || fallbackWarrior;
 
-      const tc = this.addBuilding('town_center', p.id, sp.x, sp.z, true);
-      tc.rallyPoint = { x: sp.x + inX * 6, z: sp.z + inZ * 6 };
-
       const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, DEFAULT_BUILDINGS.barracks.size);
       const barracks = this.addBuilding('barracks', p.id, barracksSpot.x, barracksSpot.z, true);
       barracks.rallyPoint = { x: barracksSpot.x + inX * 6.5, z: barracksSpot.z + inZ * 6.5 };
@@ -918,30 +955,11 @@ export class RtsEngine {
       const farmBldg = this.addBuilding('farm', p.id, farmSpot.x, farmSpot.z, true);
       this.addResourceNode(`food_${farmBldg.id}`, 'food', farmSpot.x, farmSpot.z, 2500, true, 'farm');
 
-      if (p.id === this.humanPlayerId) {
-        humanCameraTarget = { x: sp.x, z: sp.z };
-      }
-
       // Initial Civilization Units (3 unique workers + 1 signature guard)
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8 - tanX * 2, sp.z + inZ * 5.8 - tanZ * 2);
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8, sp.z + inZ * 5.8);
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8 + tanX * 2, sp.z + inZ * 5.8 + tanZ * 2);
       this.addUnit(starterCombatDef, p.id, sp.x + inX * 7.5 + tanX * 5.5, sp.z + inZ * 7.5 + tanZ * 5.5);
-    });
-
-    // Spawn all map resource nodes (mines, quarries, forests, berry groves, deer herds)
-    const groveBadgeFlags = new Set<string>();
-    layout.resourceNodes.forEach((rn) => {
-      let showBadge = true;
-      if (rn.subtype === 'wood' || rn.subtype === 'berry' || rn.subtype === 'hunt') {
-        const prefix = rn.id.replace(/_\d+$/, '');
-        if (groveBadgeFlags.has(prefix)) {
-          showBadge = false;
-        } else {
-          groveBadgeFlags.add(prefix);
-        }
-      }
-      this.addResourceNode(rn.id, rn.resourceType, rn.x, rn.z, rn.amount, showBadge, rn.subtype);
     });
 
     this.navGridDirty = true;
@@ -1143,6 +1161,10 @@ export class RtsEngine {
       mesh = createBerryBushMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'hunt') {
       mesh = createDeerMesh(amount, hasBadge);
+    } else if (resolvedSubtype === 'shore_fish') {
+      mesh = createShoreFishMesh(amount, hasBadge);
+    } else if (resolvedSubtype === 'deep_fish') {
+      mesh = createDeepFishMesh(amount, hasBadge);
     } else {
       // Farm food nodes sit inside Farms, which provide the visual crop building mesh
       mesh = new THREE.Group();
@@ -1739,8 +1761,12 @@ export class RtsEngine {
     switch (sub) {
       case 'wood':
         return { icon: '🪓', name: '森林原木', action: '伐木' };
+      case 'deep_fish':
+        return { icon: '🐠', name: '深海魚群', action: '捕撈深海魚' };
+      case 'shore_fish':
+        return { icon: '🐟', name: '沿岸魚群', action: '捕撈沿岸魚' };
       case 'hunt':
-        return { icon: '🥩', name: '野生鹿群', action: '採集肉類' };
+        return { icon: '🥩', name: '野生山羌', action: '狩獵肉類' };
       case 'berry':
         return { icon: '🫐', name: '野生漿果', action: '採集漿果' };
       case 'farm':
@@ -1986,15 +2012,23 @@ export class RtsEngine {
     baseRadius: number,
     unitRadius: number,
     indexOffset = 0,
-    ignoreBuildingId?: string
+    ignoreBuildingId?: string,
+    preferredAngle?: number
   ): { x: number; z: number } {
     const obs = this.getTerrainNavObstacles();
     const minDistBase = Math.max(2.0, baseRadius + unitRadius + 0.75);
+    const hasPreferred = preferredAngle !== undefined && Number.isFinite(preferredAngle);
+    const anchorAngle = hasPreferred
+      ? preferredAngle! + (indexOffset === 0 ? 0 : (indexOffset % 2 === 0 ? 1 : -1) * Math.ceil(indexOffset / 2) * 0.42)
+      : Math.PI * 0.5;
+    const sweepOffsets = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6];
 
     for (let ring = 0; ring < 4; ring++) {
       const r = minDistBase + ring * 1.15;
       for (let step = 0; step < 12; step++) {
-        const ang = Math.PI * 0.5 + ((step + indexOffset) / 12) * Math.PI * 2;
+        const ang = hasPreferred
+          ? anchorAngle + (sweepOffsets[step] / 12) * Math.PI * 2
+          : anchorAngle + ((step + indexOffset) / 12) * Math.PI * 2;
         const candX = Math.max(-56, Math.min(56, cx + Math.cos(ang) * r));
         const candZ = Math.max(-56, Math.min(56, cz + Math.sin(ang) * r));
 
@@ -2020,8 +2054,8 @@ export class RtsEngine {
     }
 
     return {
-      x: Math.max(-56, Math.min(56, cx)),
-      z: Math.max(-56, Math.min(56, cz + minDistBase)),
+      x: Math.max(-56, Math.min(56, cx + Math.cos(anchorAngle) * minDistBase)),
+      z: Math.max(-56, Math.min(56, cz + Math.sin(anchorAngle) * minDistBase)),
     };
   }
 
@@ -2084,6 +2118,90 @@ export class RtsEngine {
     return true;
   }
 
+  private releaseGarrisonedUnitEntity(bldg: BuildingEntity, unit: UnitEntity, idx: number) {
+    unit.garrisonedInBuildingId = undefined;
+    unit.targetGarrisonBuildingId = undefined;
+
+    const rp = bldg.rallyPoint;
+    const preferredAngle = rp ? Math.atan2(rp.z - bldg.z, rp.x - bldg.x) : undefined;
+    const uRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
+    const spot = this.findSafeExteriorSpot(
+      bldg.x,
+      bldg.z,
+      getBuildingCollisionRadius(bldg),
+      uRadius,
+      idx,
+      bldg.id,
+      preferredAngle
+    );
+    unit.x = spot.x;
+    unit.z = spot.z;
+    unit.velocity = { x: 0, z: 0 };
+    unit.waypoints = undefined;
+    unit.pathGoal = undefined;
+    unit.pathCooldown = 0;
+    unit.state = 'idle';
+    unit.currentActionText = '🚪 撤出建築待命';
+
+    const mesh = this.unitMeshes.get(unit.id);
+    if (mesh) {
+      mesh.position.set(unit.x, 0, unit.z);
+      mesh.visible = true;
+    }
+
+    if (rp) {
+      if (unit.unitDef.category === 'worker' && rp.targetResourceNodeId) {
+        const exactNode = this.resourceNodes.find(
+          (n) => n.id === rp.targetResourceNodeId && n.amount > 0
+        );
+        const gatherNode =
+          exactNode || findClosestResourceNode(rp.x, rp.z, this.resourceNodes, rp.resourceType, 14);
+        if (gatherNode) {
+          unit.targetResourceNodeId = gatherNode.id;
+          unit.state = 'gathering';
+          const meta = this.getResourceDisplayMeta(gatherNode);
+          unit.currentActionText = `${meta.icon} 前往${meta.action}`;
+          return;
+        }
+      } else if (unit.unitDef.category === 'worker' && rp.targetBuildingId) {
+        const targetBuild = this.buildings.find(
+          (b) => b.id === rp.targetBuildingId && !b.isConstructed && b.hp > 0
+        );
+        if (targetBuild) {
+          unit.targetBuildingId = targetBuild.id;
+          unit.state = 'building';
+          unit.currentActionText = `🔨 前往建造${targetBuild.buildingDef.name.split(' ')[0]}`;
+          return;
+        }
+      }
+      unit.targetX = rp.x;
+      unit.targetZ = rp.z;
+      unit.targetEntityId = undefined;
+      unit.state = 'moving';
+      unit.currentActionText = '👣 撤出前往集結點';
+    }
+  }
+
+  public ungarrisonUnit(buildingId: string, unitId: string): boolean {
+    const bldg = this.buildings.find((b) => b.id === buildingId);
+    if (!bldg || !bldg.garrisonedUnitIds || !bldg.garrisonedUnitIds.includes(unitId)) return false;
+
+    bldg.garrisonedUnitIds = bldg.garrisonedUnitIds.filter((id) => id !== unitId);
+    const unit = this.units.find((u) => u.id === unitId && u.hp > 0);
+    if (!unit) {
+      this.onSelectionChange?.();
+      return false;
+    }
+
+    this.releaseGarrisonedUnitEntity(bldg, unit, 0);
+    if (this.isHumanControlled(bldg.faction)) {
+      sound.playGarrison();
+      this.addFloatingText(unit.x, 2.5, unit.z, `🚪 ${unit.unitDef.name.split(' ')[0]} 撤出`, '#38bdf8');
+    }
+    this.onSelectionChange?.();
+    return true;
+  }
+
   public ungarrisonAll(buildingId: string): number {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     if (!bldg || !bldg.garrisonedUnitIds || bldg.garrisonedUnitIds.length === 0) return 0;
@@ -2095,35 +2213,7 @@ export class RtsEngine {
     ids.forEach((uid, idx) => {
       const unit = this.units.find((u) => u.id === uid && u.hp > 0);
       if (!unit) return;
-      unit.garrisonedInBuildingId = undefined;
-      unit.targetGarrisonBuildingId = undefined;
-
-      const uRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
-      const spot = this.findSafeExteriorSpot(bldg.x, bldg.z, getBuildingCollisionRadius(bldg), uRadius, idx, bldg.id);
-      unit.x = spot.x;
-      unit.z = spot.z;
-      unit.velocity = { x: 0, z: 0 };
-      unit.waypoints = undefined;
-      unit.state = 'idle';
-      unit.currentActionText = '🚪 撤出建築待命';
-
-      const mesh = this.unitMeshes.get(unit.id);
-      if (mesh) {
-        mesh.position.set(unit.x, 0, unit.z);
-        mesh.visible = true;
-      }
-
-      if (unit.unitDef.category === 'worker' && bldg.rallyPoint?.targetResourceNodeId) {
-        const resNode = this.resourceNodes.find(
-          (n) => n.id === bldg.rallyPoint!.targetResourceNodeId && n.amount > 0
-        );
-        if (resNode) {
-          unit.targetResourceNodeId = resNode.id;
-          unit.state = 'gathering';
-          const meta = this.getResourceDisplayMeta(resNode);
-          unit.currentActionText = `${meta.icon} 前往${meta.action}`;
-        }
-      }
+      this.releaseGarrisonedUnitEntity(bldg, unit, idx);
       released++;
     });
 
@@ -2255,8 +2345,47 @@ export class RtsEngine {
     return true;
   }
 
+  public cancelTrainingAt(buildingId: string, queueIndex: number): boolean {
+    const bldg = this.buildings.find((b) => b.id === buildingId);
+    if (!bldg || bldg.hp <= 0 || queueIndex < 0 || queueIndex >= bldg.queue.length) return false;
+
+    const unitDefId = bldg.queue[queueIndex];
+    const def = this.findUnitDef(unitDefId, bldg.faction);
+    bldg.queue.splice(queueIndex, 1);
+    if (queueIndex === 0) {
+      bldg.queueProgress = 0;
+    }
+
+    if (def) {
+      const res = this.getResourcesForFaction(bldg.faction);
+      this.resourcesByFaction[bldg.faction] = {
+        food: res.food + (def.stats.cost.food || 0),
+        wood: res.wood + (def.stats.cost.wood || 0),
+        gold: res.gold + (def.stats.cost.gold || 0),
+        stone: res.stone + (def.stats.cost.stone || 0),
+      };
+      this.syncHumanResourcesAlias();
+      if (this.isHumanControlled(bldg.faction)) {
+        this.onResourcesChange?.(this.playerResources);
+      }
+    }
+
+    if (this.isHumanControlled(bldg.faction)) {
+      sound.playOrder();
+      this.addFloatingText(bldg.x, 2.8, bldg.z, '↩️ 已取消訓練並全額退還資源', '#cbd5e1');
+    }
+    this.onSelectionChange?.();
+    return true;
+  }
+
   public startPlacement(type: BuildingType) {
     const bDef = DEFAULT_BUILDINGS[type];
+    const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+    if (bDef.requiredAge && currentAge < bDef.requiredAge) {
+      sound.playInvalid();
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
+      return;
+    }
     if (!canAfford(this.playerResources, bDef.cost)) return;
 
     this.placementBuildingType = type;
@@ -3098,7 +3227,10 @@ export class RtsEngine {
 
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
     if (!node || node.amount <= 0) {
-      const nextNode = findClosestResourceNode(unit.x, unit.z, this.resourceNodes, node?.resourceType, 24);
+      const nextNode =
+        node?.resourceType === 'food'
+          ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 24)
+          : findClosestResourceNode(unit.x, unit.z, this.resourceNodes, node?.resourceType, 24);
       if (nextNode) {
         unit.targetResourceNodeId = nextNode.id;
         unit.waypoints = undefined;
@@ -3121,8 +3253,10 @@ export class RtsEngine {
       wood: '木材',
       gold: '黃金',
       stone: '石料',
+      deep_fish: '深海魚',
+      shore_fish: '沿岸魚',
+      hunt: '山羌肉',
       berry: '漿果',
-      hunt: '獵物',
       farm: '農田',
       food: '糧食',
     };
@@ -3131,7 +3265,12 @@ export class RtsEngine {
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
     const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
-    const gatherRange = nodeRadius + 1.35;
+    const gatherRange =
+      node.subtype === 'deep_fish'
+        ? Math.max(5.5, nodeRadius + 4.4)
+        : node.subtype === 'shore_fish'
+        ? Math.max(3.6, nodeRadius + 2.65)
+        : nodeRadius + 1.35;
 
     if (dist > gatherRange) {
       this.moveUnitAlongPath(unit, node.x, node.z, dt);
@@ -3142,7 +3281,9 @@ export class RtsEngine {
         unit.carryingResource = { type: node.resourceType, amount: 0 };
       }
 
-      const gatherRate = unit.unitDef.stats.gatherSpeed || 2;
+      const baseGatherRate = unit.unitDef.stats.gatherSpeed || 2;
+      const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
+      const gatherRate = baseGatherRate * subtypeMult;
       const prevAmount = node.amount;
       const deltaGather = Math.min(node.amount, gatherRate * dt);
       unit.carryingResource.amount += deltaGather;
@@ -3159,8 +3300,10 @@ export class RtsEngine {
             ? 'gold'
             : node.resourceType === 'stone'
             ? 'stone'
+            : node.subtype === 'shore_fish' || node.subtype === 'deep_fish'
+            ? 'spark'
             : 'leaf';
-        this.spawnParticleBurst(node.x, 0.85, node.z, pKind, 4);
+        this.spawnParticleBurst(node.x, node.subtype === 'shore_fish' || node.subtype === 'deep_fish' ? 0.35 : 0.85, node.z, pKind, 4);
       } else {
         (unit as any)._gatherFxTimer = fxTimer;
         (unit as any)._gatherNodeType = node.subtype || node.resourceType;
@@ -3178,7 +3321,11 @@ export class RtsEngine {
               (node as any)._lastBucket = bucket;
               const curNodeAmt = Math.round(node.amount);
               const icon =
-                node.subtype === 'berry'
+                node.subtype === 'deep_fish'
+                  ? '🐠'
+                  : node.subtype === 'shore_fish'
+                  ? '🐟'
+                  : node.subtype === 'berry'
                   ? '🫐'
                   : node.subtype === 'hunt'
                   ? '🦌'
@@ -3190,10 +3337,14 @@ export class RtsEngine {
                   ? '🪨'
                   : '🌾';
               const title =
-                node.subtype === 'berry'
+                node.subtype === 'deep_fish'
+                  ? '深海魚群'
+                  : node.subtype === 'shore_fish'
+                  ? '沿岸魚群'
+                  : node.subtype === 'berry'
                   ? '野生漿果'
                   : node.subtype === 'hunt'
-                  ? '野生鹿群'
+                  ? '野生山羌'
                   : node.resourceType === 'wood'
                   ? '木材'
                   : node.resourceType === 'gold'
@@ -3807,15 +3958,19 @@ export class RtsEngine {
           if (bldg.queueProgress >= 1) {
             bldg.queue.shift();
             bldg.queueProgress = 0;
-            // Spawn trained unit cleanly outside building collision perimeter
+            // Spawn trained unit cleanly outside building collision perimeter (favoring rally point direction)
             const uRadius = getUnitColliderRadius(uDef.category, uDef.visual.scale);
+            const rallyAngle = bldg.rallyPoint
+              ? Math.atan2(bldg.rallyPoint.z - bldg.z, bldg.rallyPoint.x - bldg.x)
+              : undefined;
             const spot = this.findSafeExteriorSpot(
               bldg.x,
               bldg.z,
               getBuildingCollisionRadius(bldg),
               uRadius,
-              Math.floor(Math.random() * 6),
-              bldg.id
+              0,
+              bldg.id,
+              rallyAngle
             );
             const newUnit = this.addUnit(uDef, bldg.faction, spot.x, spot.z);
             this.spawnParticleBurst(spot.x, 0.35, spot.z, 'dust', 3);
@@ -4318,7 +4473,17 @@ export class RtsEngine {
       }
     } else if (unit.state === 'gathering') {
       const gSub = (unit as any)._gatherNodeType as string | undefined;
-      if (gSub === 'berry' || gSub === 'farm' || gSub === 'hunt') {
+      if (gSub === 'shore_fish' || gSub === 'deep_fish') {
+        // Bank angling / net-casting pull rhythm
+        const cast = 0.5 + 0.5 * Math.sin(t * 5.8);
+        tgtRArm = 0.45 - cast * 1.15;
+        tgtLArm = -0.3 - (1 - cast) * 0.4;
+        tgtBodyX = 0.14 + cast * 0.12;
+        tgtBodyYaw = (cast - 0.5) * 0.18;
+        tgtLLeg = 0.18;
+        tgtRLeg = -0.18;
+        tgtLKnee = 0.22;
+      } else if (gSub === 'berry' || gSub === 'farm' || gSub === 'hunt') {
         // Low crouching forage / harvest rhythm
         const harvest = 0.5 + 0.5 * Math.sin(t * 7.2);
         tgtRArm = -0.45 - harvest * 0.62;
@@ -4692,7 +4857,9 @@ export class RtsEngine {
 
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
         const node =
-          findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, prefType, 34) ||
+          (prefType === 'food'
+            ? findBestFoodResourceNode(anchorX, anchorZ, this.resourceNodes, 36)
+            : findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, prefType, 34)) ||
           findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, undefined, 48) ||
           findClosestResourceNode(worker.x, worker.z, this.resourceNodes);
         if (node) {
@@ -4737,8 +4904,30 @@ export class RtsEngine {
         }
       }
 
-      // 3. Base Expansion, Economic Camps, Defenses & Landmark Age Advancement
-      const hasAnyBuildingInProgress = aiBuildings.some((b) => !b.isConstructed);
+      // 3. Base Expansion, Orphaned Construction Resume, Defenses & Landmark Age Advancement
+      const incompleteBuildings = aiBuildings.filter((b) => !b.isConstructed);
+      for (const inc of incompleteBuildings) {
+        const activeBuilders = aiActiveWorkers.filter(
+          (w) => w.state === 'building' && w.targetBuildingId === inc.id
+        );
+        if (activeBuilders.length === 0 && aiActiveWorkers.length > 0) {
+          const resumeCandidates = aiActiveWorkers
+            .filter((w) => w.state !== 'building' && w.state !== 'returning_resource')
+            .sort((a, b) => getDistance(a.x, a.z, inc.x, inc.z) - getDistance(b.x, b.z, inc.x, inc.z))
+            .slice(0, Math.min(2, aiActiveWorkers.length));
+          resumeCandidates.forEach((w) => {
+            w.targetBuildingId = inc.id;
+            w.targetResourceNodeId = undefined;
+            w.targetEntityId = undefined;
+            w.waypoints = undefined;
+            w.pathGoal = undefined;
+            w.state = 'building';
+            w.currentActionText = `🔨 復工建造${inc.buildingDef.name.split(' ')[0]}`;
+          });
+        }
+      }
+
+      const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
         if (buildCmd?.type === 'advance_age' && aiAge < 4) {
@@ -4758,7 +4947,7 @@ export class RtsEngine {
         } else if (!aiUniqueBldg && this.stats.gameDuration > 24) {
           this.tryAiConstructBuilding(aiId, aiCiv.uniqueBuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.75);
         } else {
-          // Sustainable Farms when wild food nearby depletes & fortifications in Age II-III+
+          // Sustainable Farms when wild food nearby depletes & fortifications starting Age I
           const nearbyWildFood = this.resourceNodes.filter(
             (n) => n.amount > 0 && n.resourceType === 'food' && n.subtype !== 'farm' && getDistance(anchorX, anchorZ, n.x, n.z) <= 28
           ).length;
@@ -4770,7 +4959,7 @@ export class RtsEngine {
 
           if (nearbyWildFood < 2 && aiFarms < 4 && aiRes.wood >= 60) {
             this.tryAiConstructBuilding(aiId, 'farm', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + Math.PI * 0.8);
-          } else if (aiAge >= 2 && aiTowers < 2 && aiRes.wood >= 125 && aiRes.stone >= 50) {
+          } else if (aiAge >= 1 && aiTowers < 2 && aiRes.wood >= 100 && aiRes.stone >= 35 && this.stats.gameDuration > 35) {
             this.tryAiConstructBuilding(aiId, 'tower', aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
           } else if (aiAge >= 3 && aiCastles === 0 && aiRes.stone >= 650 && aiRes.wood >= 200) {
             this.tryAiConstructBuilding(aiId, 'castle', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.15);
@@ -4805,9 +4994,27 @@ export class RtsEngine {
         }
       }
 
-      // 5. Execute AI Production Actions (Worker + Military Composition concurrently)
+      // 5. Execute AI Production Actions (Reserve Age-up budget so AI advances Ages instead of endless Age I unit spam)
+      const savingForAge2 =
+        aiAge === 1 &&
+        aiWorkers.length >= 6 &&
+        this.stats.gameDuration >= 45 &&
+        !this.landmarksByFaction[aiId]?.includes('landmark_barracks') &&
+        (aiRes.food < 440 || aiRes.gold < 220);
+      const savingForAge3 =
+        aiAge === 2 &&
+        aiWorkers.length >= 8 &&
+        aiArmy.length >= 6 &&
+        this.stats.gameDuration >= 120 &&
+        !this.landmarksByFaction[aiId]?.includes('landmark_citadel') &&
+        (aiRes.food < 1250 || aiRes.gold < 620);
+
       if (aiUnits.length < aiMaxPop) {
         for (const trainAct of plan.trainActions) {
+          const isVillagerTrain = (trainAct.targetId || 'villager') === 'villager';
+          if (!isVillagerTrain && (savingForAge2 || savingForAge3) && aiArmy.length >= 4 && underAttack === 0) {
+            continue;
+          }
           this.resolveAiTrainRequest(aiId, aiCiv, trainAct.targetId || 'villager', aiBuildings);
         }
       }

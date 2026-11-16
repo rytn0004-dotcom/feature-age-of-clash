@@ -34,7 +34,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     cursorCss?: string;
     badgeText: string;
     tone: 'gather' | 'build' | 'attack' | 'rally' | 'select';
-    iconKind?: 'wood' | 'hunt' | 'berry' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison';
+    iconKind?: 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison';
   } | null>(null);
 
   useEffect(() => {
@@ -689,13 +689,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
     if (hit.hitType === 'resource' && hit.resource) {
       const r = hit.resource;
-      const sub = (r.subtype || r.resourceType) as 'wood' | 'hunt' | 'berry' | 'farm' | 'gold' | 'stone';
+      const sub = (r.subtype || r.resourceType) as 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone';
       const actionMap: Record<string, { action: string; label: string }> = {
         wood: { action: '伐木', label: '森林原木' },
         gold: { action: '開採金礦', label: '黃金礦脈' },
         stone: { action: '開採石料', label: '花崗石礦' },
+        deep_fish: { action: '捕撈深海魚', label: '深海魚群' },
+        shore_fish: { action: '捕撈沿岸魚', label: '沿岸魚群' },
         berry: { action: '採集漿果', label: '野生漿果' },
-        hunt: { action: '採集肉類', label: '野生鹿群' },
+        hunt: { action: '狩獵山羌', label: '野生山羌' },
         farm: { action: '農田耕作', label: '豐饒農田' },
         food: { action: '採集糧食', label: '糧食資源' },
       };
@@ -809,6 +811,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             <circle cx="10.5" cy="15.6" r="1.3" fill="#fdf4ff" />
           </svg>
         );
+      case 'deep_fish':
+        return <span className="text-sm leading-none">🐠</span>;
+      case 'shore_fish':
+        return <span className="text-sm leading-none">🐟</span>;
       case 'gold':
         return <span className="text-sm leading-none">🪙</span>;
       case 'stone':

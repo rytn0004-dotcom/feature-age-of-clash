@@ -1261,6 +1261,83 @@ export function createTowerMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+export function createWallMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const civ = civId || colors.civilization || 'medieval';
+
+  addContactShadow(group, 1.85);
+  const stoneMaps = getStoneMasonryMaps();
+  const woodMaps = getTimberWoodMaps();
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0xdbeafe : 0x64748b,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    normalScale: new THREE.Vector2(0.9, 0.9),
+    roughness: 0.85,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0xe7dec8 : 0x94a3b8,
+    map: stoneMaps.map,
+    roughness: 0.68,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0x7c2d12 : civ === 'fantasy' ? 0x166534 : 0x78350f,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughness: 0.78,
+  });
+  const bannerMat = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    roughness: 0.52,
+  });
+
+  // Ground stone sill (tier1)
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.42, 1.15), stoneMat);
+  sill.position.y = 0.21;
+  sill.castShadow = true;
+  sill.receiveShadow = true;
+  group.add(sill);
+
+  // Main fortified wall curtain (tier2)
+  const curtain = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.55, 0.88), civ === 'anime' ? trimMat : stoneMat);
+  curtain.position.y = 1.18;
+  curtain.castShadow = true;
+  curtain.receiveShadow = true;
+  group.add(curtain);
+
+  // Corner heavy buttresses
+  [-1.22, 1.22].forEach((px) => {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 2.25, 1.06), stoneMat);
+    pillar.position.set(px, 1.12, 0);
+    pillar.castShadow = true;
+    group.add(pillar);
+  });
+
+  // Top palisade / battlements & walkway (tier3)
+  const walkway = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.2, 1.08), woodMat);
+  walkway.position.y = 2.02;
+  group.add(walkway);
+
+  [-0.85, 0, 0.85].forEach((mx) => {
+    const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.42, 0.34), civ === 'fantasy' ? bannerMat : stoneMat);
+    merlon.position.set(mx, 2.32, 0.34);
+    merlon.castShadow = true;
+    group.add(merlon);
+  });
+
+  // Sharpened palisade stakes on outer face
+  for (let i = -2; i <= 2; i++) {
+    const stake = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.62, 6), woodMat);
+    stake.position.set(i * 0.48, 0.72, 0.62);
+    stake.rotation.x = Math.PI * 0.22;
+    group.add(stake);
+  }
+
+  return group;
+}
+
 export function createCastleMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -2449,6 +2526,9 @@ export function createBuildingMesh(
     case 'mining_camp':
       group = createCampMesh('mining', faction);
       break;
+    case 'wall':
+      group = createWallMesh(faction, resolvedCiv);
+      break;
     case 'tower':
       group = createTowerMesh(faction);
       break;
@@ -3282,8 +3362,171 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   });
 
   if (hasBadge) {
-    const badge = createBadgeSprite('野生鹿群', '🦌', `${amount}`, 1, false, true, '狩獵獲取糧食');
+    const badge = createBadgeSprite('野生山羌', '🦌', `${amount}`, 1, false, true, '狩獵採集肉類 (×1.15)');
     badge.position.set(0, 2.35, 0);
+    group.add(badge);
+    group.userData.badgeSprite = badge;
+  }
+  return group;
+}
+
+const sharedFishBodyGeo = makeLatheGeo([
+  [0.01, -0.22],
+  [0.065, -0.1],
+  [0.08, 0.04],
+  [0.045, 0.17],
+  [0.01, 0.24],
+], 8);
+sharedFishBodyGeo.rotateZ(-Math.PI / 2);
+
+const sharedShoreFishMat = new THREE.MeshStandardMaterial({
+  color: 0x38bdf8,
+  emissive: 0x0369a1,
+  emissiveIntensity: 0.22,
+  roughness: 0.28,
+  metalness: 0.35,
+});
+
+const sharedDeepFishMat = new THREE.MeshStandardMaterial({
+  color: 0xf59e0b,
+  emissive: 0x1d4ed8,
+  emissiveIntensity: 0.28,
+  roughness: 0.22,
+  metalness: 0.45,
+});
+
+const sharedFishTailGeo = new THREE.ConeGeometry(0.055, 0.12, 4);
+sharedFishTailGeo.rotateZ(-Math.PI / 2);
+
+export function createShoreFishMesh(amount = 450, hasBadge = false): THREE.Group {
+  const group = new THREE.Group();
+
+  // Gentle pale cyan water ripple ring around shallow fish shoal
+  const rippleOuter = new THREE.Mesh(
+    new THREE.RingGeometry(0.56, 0.78, 22),
+    new THREE.MeshBasicMaterial({
+      color: 0xbae6fd,
+      transparent: true,
+      opacity: 0.62,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  rippleOuter.rotation.x = -Math.PI / 2;
+  rippleOuter.position.y = 0.11;
+  group.add(rippleOuter);
+
+  const rippleInner = new THREE.Mesh(
+    new THREE.RingGeometry(0.24, 0.34, 18),
+    new THREE.MeshBasicMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.7,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  rippleInner.rotation.x = -Math.PI / 2;
+  rippleInner.position.y = 0.115;
+  group.add(rippleInner);
+
+  // Invisible raycast hit disc above water plane so clicking & hovering feels snappy
+  const hitDisc = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.0, 1.0, 0.35, 14),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  hitDisc.position.y = 0.18;
+  group.add(hitDisc);
+
+  // 3 darting shore fish circling just at the water surface
+  [
+    { x: 0.28, y: 0.14, z: 0.12, yaw: 0.4, scale: 1.0 },
+    { x: -0.26, y: 0.13, z: -0.22, yaw: 2.3, scale: 0.88 },
+    { x: -0.05, y: 0.16, z: 0.32, yaw: -1.4, scale: 0.82 },
+  ].forEach((f) => {
+    const fish = new THREE.Group();
+    const body = new THREE.Mesh(sharedFishBodyGeo, sharedShoreFishMat);
+    const tail = new THREE.Mesh(sharedFishTailGeo, sharedShoreFishMat);
+    tail.position.set(-0.24, 0, 0);
+    fish.add(body, tail);
+    fish.position.set(f.x, f.y, f.z);
+    fish.rotation.y = f.yaw;
+    fish.scale.setScalar(f.scale);
+    group.add(fish);
+  });
+
+  if (hasBadge) {
+    const badge = createBadgeSprite('沿岸魚群', '🐟', `${amount}`, 1, false, true, '沿岸捕魚 (×1.32)');
+    badge.position.set(0, 1.85, 0);
+    group.add(badge);
+    group.userData.badgeSprite = badge;
+  }
+  return group;
+}
+
+export function createDeepFishMesh(amount = 650, hasBadge = false): THREE.Group {
+  const group = new THREE.Group();
+
+  // Deeper sapphire water swirl pool + twin concentric ripples
+  const deepPool = new THREE.Mesh(
+    new THREE.CircleGeometry(0.92, 22),
+    new THREE.MeshBasicMaterial({
+      color: 0x0c4a6e,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  deepPool.rotation.x = -Math.PI / 2;
+  deepPool.position.y = 0.105;
+  group.add(deepPool);
+
+  const ripple = new THREE.Mesh(
+    new THREE.RingGeometry(0.68, 0.94, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  ripple.rotation.x = -Math.PI / 2;
+  ripple.position.y = 0.12;
+  group.add(ripple);
+
+  const hitDisc = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.15, 1.15, 0.45, 14),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  hitDisc.position.y = 0.22;
+  group.add(hitDisc);
+
+  // 3 larger golden-cobalt deep-water tuna/marlin arcing near surface
+  [
+    { x: 0.05, y: 0.22, z: -0.05, yaw: 0.75, pitch: -0.25, scale: 1.45 },
+    { x: -0.34, y: 0.16, z: 0.28, yaw: 2.5, pitch: 0.1, scale: 1.18 },
+    { x: 0.36, y: 0.15, z: 0.25, yaw: -1.1, pitch: 0.08, scale: 1.12 },
+  ].forEach((f) => {
+    const fish = new THREE.Group();
+    const body = new THREE.Mesh(sharedFishBodyGeo, sharedDeepFishMat);
+    const tail = new THREE.Mesh(sharedFishTailGeo, sharedDeepFishMat);
+    tail.position.set(-0.24, 0, 0);
+    const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.13, 3), sharedDeepFishMat);
+    dorsal.position.set(0.02, 0.1, 0);
+    dorsal.rotation.z = 0.45;
+    fish.add(body, tail, dorsal);
+    fish.position.set(f.x, f.y, f.z);
+    fish.rotation.y = f.yaw;
+    fish.rotation.z = f.pitch;
+    fish.scale.setScalar(f.scale);
+    group.add(fish);
+  });
+
+  if (hasBadge) {
+    const badge = createBadgeSprite('深海魚群', '🐠', `${amount}`, 1, false, true, '深海捕撈 (最快 ×1.55)');
+    badge.position.set(0, 2.0, 0);
     group.add(badge);
     group.userData.badgeSprite = badge;
   }

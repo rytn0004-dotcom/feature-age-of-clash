@@ -74,6 +74,8 @@ export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType
       return 2.05;
     case 'tower':
       return 1.65;
+    case 'wall':
+      return 1.48;
     default:
       return Math.max(1.2, b.buildingDef.size - 0.55);
   }
@@ -90,6 +92,8 @@ export function getResourceColliderRadius(
   if (resourceType === 'gold') return 1.88;
   if (resourceType === 'stone') return 1.78;
   if (resourceType === 'food') {
+    if (subtype === 'deep_fish') return 1.1;
+    if (subtype === 'shore_fish') return 0.95;
     if (subtype === 'berry') return 1.02;
     if (subtype === 'hunt') return 0.58;
     return 0.35; // Farm crops
@@ -297,10 +301,13 @@ export function isPlacementLocationValid(
     return false;
   }
 
-  // Prevent footprint overlap; non-overlapping adjacent footprints automatically preserve walkable channels
+  // Prevent footprint overlap; wall segments can chain closely to seal gaps, while other adjacent footprints preserve walkable channels
   for (const b of buildings) {
     if (b.hp <= 0) continue;
-    const minDist = footprintSize + b.buildingDef.size;
+    const minDist =
+      _isWall && b.buildingDef.isWall
+        ? Math.max(2.15, (footprintSize + b.buildingDef.size) * 0.72)
+        : footprintSize + b.buildingDef.size;
     if (Math.hypot(x - b.x, z - b.z) < minDist) {
       return false;
     }
