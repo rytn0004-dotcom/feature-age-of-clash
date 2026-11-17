@@ -1297,3 +1297,43 @@ test('medieval-assault: torch/sap channel, no burn DoT; greek fire profile', asy
   const sapped = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 12 }, farm, 1, [], [], []);
   assert.ok(sapped > fresh, 'sapping channel should increase torch damage');
 });
+
+
+test('ai-progression: every personality waits for the real landmark cost and can reach Age IV', async () => {
+  const {
+    DEFAULT_BUILDINGS,
+    DEFAULT_AI_RULES,
+    DEFENSIVE_AI_RULES,
+    EASY_AI_RULES,
+    HARD_AI_RULES,
+  } = await import('./mods');
+
+  const personalities = [
+    DEFAULT_AI_RULES,
+    DEFENSIVE_AI_RULES,
+    EASY_AI_RULES,
+    HARD_AI_RULES,
+  ];
+  const ageRules = [
+    ['landmark_barracks', 2],
+    ['landmark_citadel', 3],
+    ['landmark_arsenal', 4],
+  ] as const;
+
+  for (const rules of personalities) {
+    for (const [landmarkId, targetAge] of ageRules) {
+      const rule = rules.find((candidate) =>
+        candidate.action.type === 'advance_age' &&
+        candidate.action.targetId === landmarkId
+      );
+      assert.ok(rule, `Missing Age ${targetAge} rule for ${landmarkId}`);
+      const food = rule.conditions.find((condition) => condition.field === 'food');
+      const gold = rule.conditions.find((condition) => condition.field === 'gold');
+      const cost = DEFAULT_BUILDINGS[landmarkId].cost;
+      assert.equal(food?.operator, '>=');
+      assert.equal(gold?.operator, '>=');
+      assert.equal(food?.value, cost.food, `${rule.id} must wait for the actual food cost`);
+      assert.equal(gold?.value, cost.gold, `${rule.id} must wait for the actual gold cost`);
+    }
+  }
+});

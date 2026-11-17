@@ -2046,6 +2046,30 @@ export class RtsEngine {
     });
   }
 
+  private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string; name: string } {
+    switch (node.subtype || node.resourceType) {
+      case 'farm':
+        return { icon: '🌾', action: '耕作', name: '農田糧食' };
+      case 'berry':
+        return { icon: '🫐', action: '採集漿果', name: '漿果' };
+      case 'hunt':
+        return { icon: '🦌', action: '狩獵', name: '獵物' };
+      case 'shore_fish':
+      case 'deep_fish':
+        return { icon: '🐟', action: '捕魚', name: '魚群' };
+      case 'wood':
+        return { icon: '🪵', action: '伐木', name: '木材' };
+      case 'gold':
+        return { icon: '🪙', action: '採金', name: '黃金' };
+      case 'stone':
+        return { icon: '🪨', action: '採石', name: '石料' };
+      case 'food':
+        return { icon: '🍎', action: '採集糧食', name: '糧食' };
+      default:
+        return { icon: '📦', action: '採集資源', name: '資源' };
+    }
+  }
+
   public issueGatherOrder(nodeId: string, queue = false) {
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
@@ -5008,6 +5032,15 @@ export class RtsEngine {
               }
             }
           }
+        } else {
+          // A removed/disabled mod can leave an orphaned unit ID at the queue head.
+          // Drop it instead of letting this building remain permanently blocked.
+          bldg.queue.shift();
+          bldg.queueProgress = 0;
+          if (this.isHumanControlled(bldg.faction)) {
+            this.addFloatingText(bldg.x, 2.4, bldg.z, '⚠️ 訓練佇列含無效單位，已自動清除', '#f59e0b');
+            this.onSelectionChange?.();
+          }
         }
       }
     }
@@ -5755,7 +5788,7 @@ export class RtsEngine {
       const aiRes = this.getResourcesForFaction(aiId);
 
       const aiUnits = this.units.filter((u) => u.faction === aiId && u.hp > 0);
-      const aiNavalBoats = aiUnits.filter((u) => !!u.unitDef.isNaval || u.unitDefId === 'fishing_boat');
+      const aiNavalBoats = aiUnits.filter((u) => u.unitDef.category === 'worker' && (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat'));
       const aiWorkers = aiUnits.filter(
         (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'
       );
@@ -6183,8 +6216,8 @@ export class RtsEngine {
           personality !== 'easy' &&
           aiAge === 1 &&
           aiActiveWorkers.length >= (personality === 'hard' ? 4 : 5) &&
-          aiRes.food >= (personality === 'hard' ? 280 : 320) &&
-          aiRes.gold >= (personality === 'hard' ? 120 : 140) &&
+          aiRes.food >= 400 &&
+          aiRes.gold >= 200 &&
           !this.landmarksByFaction[aiId]?.includes('landmark_barracks')
         ) {
           // Fallback age-up when rule priority loses to eco spam
@@ -6227,9 +6260,9 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'tower', aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
           } else if (aiAge >= 3 && aiCastles === 0 && aiRes.stone >= 650 && aiRes.wood >= 200) {
             this.tryAiConstructBuilding(aiId, 'castle', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.15);
-          } else if (aiAge < 4 && aiAge === 2 && aiRes.food >= 700 && aiRes.gold >= 350) {
+          } else if (aiAge < 4 && aiAge === 2 && aiRes.food >= 1200 && aiRes.gold >= 600) {
             this.tryAiConstructBuilding(aiId, 'landmark_citadel', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.4);
-          } else if (aiAge < 4 && aiAge === 3 && aiRes.food >= 1100 && aiRes.gold >= 550) {
+          } else if (aiAge < 4 && aiAge === 3 && aiRes.food >= 2400 && aiRes.gold >= 1200) {
             this.tryAiConstructBuilding(aiId, 'landmark_arsenal', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.4);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
@@ -6247,31 +6280,48 @@ export class RtsEngine {
         }
       }
 
-      // 4. AI Researches available civilization techs cleanly
+      // 4. Research only from surplus resources; never spend the next landmark's budget.
       const researched = this.getResearchedTechs(aiId);
+      const nextAgeLandmark: LandmarkType | null =
+        aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
+      const nextAgeCost = nextAgeLandmark ? DEFAULT_BUILDINGS[nextAgeLandmark].cost : null;
+      const reserveFood = nextAgeCost?.food || 0;
+      const reserveGold = nextAgeCost?.gold || 0;
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
         const techs = getAvailableTechsForBuilding(b.buildingType, aiCiv.id, researched, aiAge as AgeLevel);
-        if (techs.length > 0 && canAfford(this.getResourcesForFaction(aiId), techs[0].cost)) {
-          this.startResearch(b.id, techs[0].id);
+        const tech = techs.find((candidate) => {
+          const afterFood = aiRes.food - candidate.cost.food;
+          const afterGold = aiRes.gold - candidate.cost.gold;
+          return canAfford(aiRes, candidate.cost) &&
+            afterFood >= reserveFood &&
+            afterGold >= reserveGold;
+        });
+        if (tech) {
+          this.startResearch(b.id, tech.id);
           break;
         }
       }
 
-      // 5. Execute AI Production Actions (Reserve Age-up budget + Train Fishing Boats if AI owns a constructed Dock)
+      // 5. Reserve the exact landmark cost before optional military production.
       const savingForAge2 =
         aiAge === 1 &&
-        aiWorkers.length >= 6 &&
-        this.stats.gameDuration >= 45 &&
+        aiWorkers.length >= 5 &&
+        this.stats.gameDuration >= 35 &&
         !this.landmarksByFaction[aiId]?.includes('landmark_barracks') &&
-        (aiRes.food < 440 || aiRes.gold < 220);
+        (aiRes.food < 400 || aiRes.gold < 200);
       const savingForAge3 =
         aiAge === 2 &&
-        aiWorkers.length >= 8 &&
-        aiArmy.length >= 6 &&
-        this.stats.gameDuration >= 120 &&
+        aiWorkers.length >= 6 &&
+        this.stats.gameDuration >= 90 &&
         !this.landmarksByFaction[aiId]?.includes('landmark_citadel') &&
-        (aiRes.food < 1250 || aiRes.gold < 620);
+        (aiRes.food < 1200 || aiRes.gold < 600);
+      const savingForAge4 =
+        aiAge === 3 &&
+        aiWorkers.length >= 8 &&
+        this.stats.gameDuration >= 180 &&
+        !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
+        (aiRes.food < 2400 || aiRes.gold < 1200);
 
       if (aiUnits.length < aiMaxPop) {
         const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
@@ -6281,7 +6331,7 @@ export class RtsEngine {
 
         for (const trainAct of plan.trainActions) {
           const isVillagerTrain = (trainAct.targetId || 'villager') === 'villager';
-          if (!isVillagerTrain && (savingForAge2 || savingForAge3) && aiArmy.length >= 4 && underAttack === 0) {
+          if (!isVillagerTrain && (savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
             continue;
           }
           this.resolveAiTrainRequest(aiId, aiCiv, trainAct.targetId || 'villager', aiBuildings);
