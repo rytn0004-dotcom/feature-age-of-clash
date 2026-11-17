@@ -2046,27 +2046,27 @@ export class RtsEngine {
     });
   }
 
-  private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string } {
+  private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string; name: string } {
     switch (node.subtype || node.resourceType) {
       case 'farm':
-        return { icon: '🌾', action: '耕作' };
+        return { icon: '🌾', action: '耕作', name: '農田糧食' };
       case 'berry':
-        return { icon: '🫐', action: '採集漿果' };
+        return { icon: '🫐', action: '採集漿果', name: '漿果' };
       case 'hunt':
-        return { icon: '🦌', action: '狩獵' };
+        return { icon: '🦌', action: '狩獵', name: '獵物' };
       case 'shore_fish':
       case 'deep_fish':
-        return { icon: '🐟', action: '捕魚' };
+        return { icon: '🐟', action: '捕魚', name: '魚群' };
       case 'wood':
-        return { icon: '🪵', action: '伐木' };
+        return { icon: '🪵', action: '伐木', name: '木材' };
       case 'gold':
-        return { icon: '🪙', action: '採金' };
+        return { icon: '🪙', action: '採金', name: '黃金' };
       case 'stone':
-        return { icon: '🪨', action: '採石' };
+        return { icon: '🪨', action: '採石', name: '石料' };
       case 'food':
-        return { icon: '🍎', action: '採集糧食' };
+        return { icon: '🍎', action: '採集糧食', name: '糧食' };
       default:
-        return { icon: '📦', action: '採集資源' };
+        return { icon: '📦', action: '採集資源', name: '資源' };
     }
   }
 
