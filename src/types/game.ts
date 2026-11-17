@@ -331,6 +331,9 @@ export interface ResourceNode {
   animalVz?: number;
 }
 
+/** Strategic shrine identity; each blessing supports a different army/economy plan. */
+export type ShrineType = 'war' | 'harvest' | 'forge';
+
 /** Neutral map objective: stand in the circle to capture; owner gains passive income + aura. */
 export interface ContestedPoint {
   id: string;
@@ -341,7 +344,8 @@ export interface ContestedPoint {
   captureProgress: number;
   capturingFaction?: FactionId;
   label: string;
-  /** Seconds continuously held by current owner — unlocks siege-supply buff */
+  shrineType: ShrineType;
+  /** Seconds continuously held by current owner — unlocks shrine blessing */
   holdTime: number;
   /** Owner has secured long enough for army-wide anti-building supply */
   siegeSupplyActive: boolean;
