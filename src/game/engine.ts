@@ -79,6 +79,8 @@ import {
   getEffectiveBuildingArmor,
   getFoodGatherMultiplier,
   getUnitVsUnitDamage,
+  getShrineIncome,
+  getShrineBlessingHoldTime,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -987,7 +989,8 @@ export class RtsEngine {
 
 
     // Neutral contested shrines
-    (layout.contestedPoints || []).forEach((cp) => {
+    (layout.contestedPoints || []).forEach((cp, shrineIndex) => {
+      const shrineType = (['war', 'harvest', 'forge'] as const)[shrineIndex % 3];
       const point: ContestedPoint = {
         id: cp.id,
         x: cp.x,
@@ -996,6 +999,7 @@ export class RtsEngine {
         ownerFaction: 'neutral',
         captureProgress: 0,
         label: cp.label,
+        shrineType,
         holdTime: 0,
         siegeSupplyActive: false,
       };
@@ -4544,11 +4548,24 @@ export class RtsEngine {
             this.contestedFirstLootClaimed.add(point.id);
             const bag = this.resourcesByFaction[leader];
             if (bag) {
-              bag.gold += 40;
-              bag.wood += 30;
-              bag.stone += 15;
+              const loot =
+                point.shrineType === 'harvest'
+                  ? { food: 60, wood: 35, gold: 0, stone: 0 }
+                  : point.shrineType === 'forge'
+                  ? { food: 0, wood: 0, gold: 35, stone: 30 }
+                  : { food: 0, wood: 25, gold: 60, stone: 0 };
+              bag.food += loot.food;
+              bag.wood += loot.wood;
+              bag.gold += loot.gold;
+              bag.stone += loot.stone;
               if (leader === this.humanPlayerId) this.onResourcesChange?.(bag);
-              this.addFloatingText(point.x, 2.7, point.z, '+40金 +30木 +15石', '#e2e8f0');
+              const lootText = [
+                loot.food ? `+${loot.food}糧` : '',
+                loot.wood ? `+${loot.wood}木` : '',
+                loot.gold ? `+${loot.gold}金` : '',
+                loot.stone ? `+${loot.stone}石` : '',
+              ].filter(Boolean).join(' ');
+              this.addFloatingText(point.x, 2.7, point.z, lootText, '#e2e8f0');
             }
           }
 
@@ -4567,9 +4584,10 @@ export class RtsEngine {
 
       // Long hold → Siege Supply (oil, ladders, mantlets): +18% non-siege building damage
       if (point.ownerFaction !== 'neutral' && point.ownerFaction === leader) {
-        if (!point.siegeSupplyActive && point.holdTime >= 22) {
+        if (!point.siegeSupplyActive && point.holdTime >= getShrineBlessingHoldTime(point.shrineType)) {
           point.siegeSupplyActive = true;
-          this.addFloatingText(point.x, 3.4, point.z, `${point.label} · 攻城補給`, '#fdba74');
+          const blessingName = point.shrineType === 'war' ? '戰意祝福' : point.shrineType === 'harvest' ? '豐饒祝福' : '鍛造祝福';
+          this.addFloatingText(point.x, 3.4, point.z, `${point.label} · ${blessingName}`, '#fdba74');
           this.spawnShockwaveRing(point.x, point.z, 0xfb923c, point.radius * 1.05);
         }
       } else if (point.holdTime < 12) {
@@ -4598,24 +4616,30 @@ export class RtsEngine {
           this.contestedIncomeAcc.set(point.id, acc - ticks);
           const bag = this.resourcesByFaction[point.ownerFaction];
           if (bag) {
-            // Passive trickle — supply mode pays better; multi-shrine adds stone logistics
-            const ownedCount = this.contestedPoints.filter(
-              (p) => p.ownerFaction === point.ownerFaction
-            ).length;
-            const g = point.siegeSupplyActive ? 3 : 2;
-            const w = point.siegeSupplyActive ? 2 : 1;
-            bag.gold += g * ticks;
-            bag.wood += w * ticks;
-            if (ownedCount >= 2) bag.stone += ticks; // 2+ shrines: slow stone income
+            // Each shrine has a distinct economy role; holding it unlocks a stronger blessing.
+            const income = getShrineIncome(point.shrineType, point.siegeSupplyActive);
+            bag.food += income.food * ticks;
+            bag.wood += income.wood * ticks;
+            bag.gold += income.gold * ticks;
+            bag.stone += income.stone * ticks;
             if (point.ownerFaction === this.humanPlayerId) this.onResourcesChange?.(bag);
           }
         }
         for (const u of this.units) {
           if (u.faction !== point.ownerFaction || u.hp <= 0) continue;
           if (getDistance(u.x, u.z, point.x, point.z) > point.radius + 5) continue;
-          if (u.unitDef.category === 'worker') continue;
+          if (point.shrineType === 'harvest') {
+            // Harvest shrines accelerate nearby logistics crews as well as protecting the area.
+            if (u.unitDef.category === 'worker') {
+              u.buffSpeedUntil = Math.max(u.buffSpeedUntil || 0, this.simTime + 0.45);
+              continue;
+            }
+          } else if (u.unitDef.category === 'worker') {
+            continue;
+          }
           u.buffSpeedUntil = Math.max(u.buffSpeedUntil || 0, this.simTime + 0.45);
-          u.buffDefenseBonus = Math.max(u.buffDefenseBonus || 0, point.siegeSupplyActive ? 2 : 1);
+          const defenseAura = point.shrineType === 'forge' ? 2 : point.siegeSupplyActive ? 2 : 1;
+          u.buffDefenseBonus = Math.max(u.buffDefenseBonus || 0, defenseAura);
         }
       }
     }
@@ -5913,6 +5937,10 @@ export class RtsEngine {
               else if (mine && (threat || !cp.siegeSupplyActive)) score = 55;
               else score = 8;
               score += (1 - cp.captureProgress) * 12;
+              // Choose objectives that solve the AI's current strategic shortage.
+              if (cp.shrineType === 'harvest' && aiRes.food < 500) score += 24;
+              if (cp.shrineType === 'forge' && (aiRes.gold < 450 || aiRes.stone < 180)) score += 20;
+              if (cp.shrineType === 'war' && aiArmy.length >= 8) score += 14;
               const distHome = getDistance(anchorX, anchorZ, cp.x, cp.z);
               score += Math.max(0, 40 - distHome * 0.35);
               return { cp, score, mine };
