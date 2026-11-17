@@ -20,6 +20,7 @@ import {
   starRelicShouldFall,
   STAR_RELIC_CHANNEL_SEC,
   STAR_RELIC_FALL_AT,
+  getCategoryCounterMultiplier,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 
@@ -422,9 +423,9 @@ test('civilizations: each civ has distinct workers, buildable structures, traini
   assert.ok(getBuildableTypesForCiv('fantasy').includes('mana_well'));
 
   // Building training rosters are tailored per civilization
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'knight', 'battering_ram', 'catapult']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'spearman', 'scout', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'spearman', 'scout', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'spearman', 'scout', 'knight', 'battering_ram', 'catapult']);
 
   // Tech research filtering and stat application
   const shrineTechs = getAvailableTechsForBuilding('spirit_shrine', 'anime', [], 1);
@@ -1414,4 +1415,12 @@ test('star relic: falls once, channels only while a worker stands on it, and del
     }),
     'none'
   );
+});
+
+test('counters: spear tips cavalry, cavalry tips melee, siege is soft vs units', () => {
+  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry', 'spearman') > 1.5);
+  assert.ok(getCategoryCounterMultiplier('cavalry', 'melee') > 1.15);
+  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry') < 0.85);
+  assert.ok(getCategoryCounterMultiplier('siege', 'melee') < 0.5);
+  assert.equal(getCategoryCounterMultiplier('melee', 'melee'), 1);
 });

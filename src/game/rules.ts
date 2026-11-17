@@ -87,11 +87,46 @@ export function calculateDamage(
 /**
  * Unit-vs-unit damage factoring in bonus ranged pierce defense (so battered siege rams resist arrow fire).
  */
+
+/**
+ * Rock-paper-scissors between army roles.
+ * Soft multipliers keep fights readable without binary "immune" matchups.
+ * Spearman (and similar anti-cav ids) get a hard tip against cavalry.
+ */
+export function getCategoryCounterMultiplier(
+  attackerCategory: string,
+  defenderCategory: string,
+  attackerId?: string
+): number {
+  if (attackerId === 'spearman' && defenderCategory === 'cavalry') return 1.8;
+  if (attackerId === 'spearman' && defenderCategory === 'melee') return 0.9;
+  if (attackerId === 'scout' && (defenderCategory === 'worker' || defenderCategory === 'ranged')) return 1.25;
+  if (attackerId === 'war_galley' && defenderCategory === 'worker') return 1.35;
+
+  if (attackerCategory === 'siege' && defenderCategory !== 'siege') return 0.4;
+  if (defenderCategory === 'siege' && attackerCategory === 'melee') return 1.35;
+  if (defenderCategory === 'siege' && attackerCategory === 'ranged') return 0.75;
+
+  if (attackerCategory === 'cavalry' && defenderCategory === 'melee') return 1.28;
+  if (attackerCategory === 'cavalry' && defenderCategory === 'ranged') return 1.12;
+  if (attackerCategory === 'cavalry' && defenderCategory === 'worker') return 1.2;
+
+  if (attackerCategory === 'melee' && defenderCategory === 'ranged') return 1.18;
+  if (attackerCategory === 'melee' && defenderCategory === 'cavalry') return 0.72;
+
+  if (attackerCategory === 'ranged' && defenderCategory === 'cavalry') return 0.88;
+  if (attackerCategory === 'ranged' && defenderCategory === 'melee') return 0.92;
+  if (attackerCategory === 'ranged' && defenderCategory === 'worker') return 1.1;
+
+  return 1;
+}
+
 export function getUnitVsUnitDamage(
   attackerAttack: number,
   defender: Pick<UnitEntity, 'unitDef' | 'buffSpeedUntil' | 'buffDefenseBonus'>,
   isRangedProjectile = false,
-  currentSimTime = 0
+  currentSimTime = 0,
+  attacker?: Pick<UnitEntity, 'unitDef' | 'unitDefId'>
 ): number {
   const buffDef =
     defender.buffSpeedUntil && defender.buffSpeedUntil > currentSimTime
@@ -99,7 +134,14 @@ export function getUnitVsUnitDamage(
       : 0;
   const pierceArmor = isRangedProjectile ? defender.unitDef.stats.rangedDefense || 0 : 0;
   const totalDef = (defender.unitDef.stats.defense || 0) + buffDef + pierceArmor;
-  return calculateDamage(attackerAttack, totalDef);
+  const counter = attacker
+    ? getCategoryCounterMultiplier(
+        attacker.unitDef.category,
+        defender.unitDef.category,
+        attacker.unitDefId || attacker.unitDef.id
+      )
+    : 1;
+  return calculateDamage(attackerAttack * counter, totalDef);
 }
 
 /**

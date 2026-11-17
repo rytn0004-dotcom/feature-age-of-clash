@@ -3773,7 +3773,7 @@ export class RtsEngine {
               unit.currentActionText = `掘進 ${pct}%`;
             }
           } else {
-            dmg = getUnitVsUnitDamage(unit.unitDef.stats.attack, target as UnitEntity, false, this.simTime);
+            dmg = getUnitVsUnitDamage(unit.unitDef.stats.attack, target as UnitEntity, false, this.simTime, unit);
             this.spawnParticleBurst(target.x, 0.9, target.z, 'hit', 5);
             this.spawnParticleBurst(target.x, 1.0, target.z, 'spark', 3);
           }
@@ -5118,7 +5118,13 @@ export class RtsEngine {
       // Passive Resource Generation & Civ Unique Building Effects
       if (bldg.buildingDef.producesResource) {
         const prod = bldg.buildingDef.producesResource;
-        const delta = prod.amountPerSec * dt;
+        let rate = prod.amountPerSec;
+        // Markets scale with Age — trade routes grow as the empire advances.
+        if (bldg.buildingType === 'market') {
+          const age = this.ageByFaction[bldg.faction] || 1;
+          rate *= 1 + Math.max(0, age - 1) * 0.2;
+        }
+        const delta = rate * dt;
         const resBag = this.getResourcesForFaction(bldg.faction);
         resBag[prod.type] += delta;
         if (bldg.buildingType === 'landmark_guildhall') {
@@ -5417,7 +5423,8 @@ export class RtsEngine {
             proj.damage,
             target as UnitEntity,
             proj.type === 'arrow' || proj.type === 'slash',
-            this.simTime
+            this.simTime,
+            attacker
           );
           this.spawnParticleBurst(
             target.x,

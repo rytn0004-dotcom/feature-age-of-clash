@@ -953,6 +953,40 @@ export function createGranaryMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+
+export function createMarketMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  addContactShadow(group, 1.5);
+  const wood = sharedWoodScaffoldMat;
+  const cloth = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.85 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 2.2), wood);
+  base.position.y = 0.12;
+  base.castShadow = true;
+  const stall = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.0, 1.6), wood);
+  stall.position.y = 0.7;
+  stall.castShadow = true;
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 1.9), cloth);
+  awning.position.y = 1.35;
+  awning.rotation.x = -0.15;
+  const poleL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), wood);
+  poleL.position.set(-1.0, 0.75, 0.9);
+  const poleR = poleL.clone();
+  poleR.position.x = 1.0;
+  // Gold crate
+  const crate = new THREE.Mesh(
+    new THREE.BoxGeometry(0.45, 0.35, 0.45),
+    new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.4, roughness: 0.4 })
+  );
+  crate.position.set(0.7, 0.35, 1.1);
+  group.add(base, stall, awning, poleL, poleR, crate);
+  const badge = createBadgeSprite('市集', '⚖️', '', 0.9, colors.isHostile, false);
+  badge.position.y = 2.4;
+  badge.name = 'bldgBadge';
+  group.add(badge);
+  return group;
+}
+
 export function createFarmMesh(): THREE.Group {
   const group = new THREE.Group();
 
@@ -2728,6 +2762,9 @@ export function createBuildingMesh(
       break;
     case 'granary':
       group = createGranaryMesh(faction);
+      break;
+    case 'market':
+      group = createMarketMesh(faction);
       break;
     case 'lumber_camp':
       group = createCampMesh('lumber', faction);

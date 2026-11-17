@@ -111,6 +111,7 @@ export type BuildingType =
   | 'dock'
   | 'farm'
   | 'granary'
+  | 'market'
   | 'lumber_camp'
   | 'mining_camp'
   | 'wall'

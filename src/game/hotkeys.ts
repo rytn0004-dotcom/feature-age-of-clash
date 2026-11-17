@@ -11,6 +11,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   dock: 'J',
   farm: 'R',
   granary: 'N',
+  market: 'E',
   barracks: 'V',
   archery_range: 'Y',
   armory_forge: 'K',
