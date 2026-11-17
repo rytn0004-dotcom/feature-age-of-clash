@@ -1068,21 +1068,19 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     action: { type: 'cluster_attack', priority: 82 },
   },
   {
-    
-  {
     id: 'ai_train_transport',
     name: '渡河運兵 (有碼頭且軍隊成軍後訓練運兵船)',
-    condition: {
-      all: [
-        { field: 'wood', op: 'gte', value: 120 },
-        { field: 'armyCount', op: 'gte', value: 6 },
-        { field: 'gameTime', op: 'gte', value: 120 },
-        { field: 'age', op: 'gte', value: 2 },
-      ],
-    },
-    action: { type: 'train_unit', unitId: 'transport_boat', buildingType: 'dock', priority: 42 },
+    enabled: true,
+    conditions: [
+      { field: 'wood', operator: '>=', value: 120 },
+      { field: 'armyCount', operator: '>=', value: 6 },
+      { field: 'gameTime', operator: '>=', value: 120 },
+      { field: 'age', operator: '>=', value: 2 },
+    ],
+    action: { type: 'train_unit', targetId: 'transport_boat', priority: 42 },
   },
-id: 'ai_mid_patrol',
+  {
+    id: 'ai_mid_patrol',
     name: '前線集結列陣 (部隊先行於基地前方會師警戒與防守)',
     enabled: true,
     conditions: [
