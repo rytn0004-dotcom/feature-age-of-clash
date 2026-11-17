@@ -199,7 +199,7 @@ export function getSiegeChannelMultiplier(channelTime: number | undefined, metho
   if (method !== 'torch' && method !== 'sap' && method !== 'blast') return 1;
   // Cap so mass infantry cannot fully replace siege engines
   const t = Math.min(12, channelTime);
-  return 1 + (t / 12) * 0.38;
+  return 1 + (t / 12) * 0.55;
 }
 
 /**
