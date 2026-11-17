@@ -1,0 +1,2605 @@
+From 8a97d77e6bed752b0af65ec939b89ef0118d3583 Mon Sep 17 00:00:00 2001
+From: rytn0004-dotcom <rytn0004@gmail.com>
+Date: Tue, 17 Nov 2026 04:07:59 +0000
+Subject: [PATCH] feat: contested shrines, medieval assault, naval transport,
+ visual tiers, minimap cache
+
+- Neutral contested points with capture, income, siege supply, AI contest
+- Non-siege building assault roles + sustained sapping; naphtha siphon cone
+- Transport boats (board/unload), fishing vs barge silhouettes
+- Age/tech procedural visual upgrades; refresh meshes on age/tech
+- Anime smoke veil, fantasy heal roots; minimap markers and status
+- Minimap static/dynamic offscreen layers with long-lived buffer refs
+---
+ FEATURE_CONTEST_AND_SIEGE.md   |  30 ++
+ src/components/HUD.tsx         | 520 +++++++++++++++++--------
+ src/game/civilizations.ts      |  12 +-
+ src/game/engine.ts             | 669 ++++++++++++++++++++++++++++++---
+ src/game/mapGenerator.ts       |  42 +++
+ src/game/mods.ts               |  88 ++++-
+ src/game/proceduralGraphics.ts | 372 ++++++++++++++----
+ src/game/rules.test.ts         |  34 ++
+ src/game/rules.ts              | 165 ++++++--
+ src/types/game.ts              |  32 ++
+ 10 files changed, 1664 insertions(+), 300 deletions(-)
+ create mode 100644 FEATURE_CONTEST_AND_SIEGE.md
+
+diff --git a/FEATURE_CONTEST_AND_SIEGE.md b/FEATURE_CONTEST_AND_SIEGE.md
+new file mode 100644
+index 0000000..58b563e
+--- /dev/null
++++ b/FEATURE_CONTEST_AND_SIEGE.md
+@@ -0,0 +1,30 @@
++# 中立爭奪點 + 中世紀攻城（無燃燒 DoT）
++
++## 設計原則
++- **沒有**建築持續燃燒傷害；火力只在命中當下結算。
++- 趣味來自「怎麼拆」與「地圖節奏」，不是被動掉血。
++
++## 中立爭奪點
++1. 軍事單位進圈佔領（工人不能單獨佔；攻城器權重 x2）
++2. 佔領後：基礎 +2金/+1木／秒
++3. **連續佔領約 28 秒 →「攻城補給就緒」**
++   - 收入提升為 +3金/+2木
++   - 全軍非攻城單位對建築傷害 +18%（油料、雲梯、盾車意象）
++   - 圈內友軍護甲光環略強
++4. 奪旗會中斷敵方補給並提示
++
++## 拆建築方式（非 DoT）
++| 方式 | 單位 | 要點 |
++|------|------|------|
++| 火把齊攻 | 步兵 | 對木建築強；**持續攻擊同一建築**可疊「掘進」加傷 |
++| 掘壘 | 工人 | 同上，偏工兵破壞 |
++| 騎槍戳擊 | 騎兵 | 拆房很弱，鼓勵去騷擾經濟而非硬拆堡 |
++| 羽箭點射 | 遠程 | 木可點、石幾乎無效 |
++| 撞槌 | 衝車/投石/樹精 | 高直擊、無視城甲 |
++| 火藥爆破 | 地精 | 高直擊近戰爆破 |
++| **希臘火** | `greek_fire_siphon` | 短程**錐形噴火**：主目標+扇形內建築/單位瞬間傷害與特效，無殘火 |
++
++## 希臘火噴射器
++- 城堡訓練、攻城類、短射程
++- `applyGreekFireCone`：朝主目標方向扇形濺射
++- VFX：ember/spark 向前噴射
+diff --git a/src/components/HUD.tsx b/src/components/HUD.tsx
+index 3c5a165..1365363 100644
+--- a/src/components/HUD.tsx
++++ b/src/components/HUD.tsx
+@@ -69,6 +69,9 @@ export const HUD: React.FC<HUDProps> = ({
+   onToggleSpeed,
+ }) => {
+   const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
++  /** Long-lived offscreen buffers — avoid realloc on selection changes */
++  const minimapStaticRef = useRef<HTMLCanvasElement | null>(null);
++  const minimapDynRef = useRef<HTMLCanvasElement | null>(null);
+   const [showAgeModal, setShowAgeModal] = useState(false);
+   const [showHotkeysModal, setShowHotkeysModal] = useState(false);
+   const [isHudCompact, setIsHudCompact] = useState(false);
+@@ -168,8 +171,8 @@ export const HUD: React.FC<HUDProps> = ({
+     if (!coords) return;
+ 
+     (engine as any).cameraDesiredTarget = null;
+-    engine.cameraTarget.x = Math.max(-84, Math.min(84, coords.worldX));
+-    engine.cameraTarget.z = Math.max(-84, Math.min(84, coords.worldZ));
++    engine.cameraTarget.x = Math.max(-92, Math.min(92, coords.worldX));
++    engine.cameraTarget.z = Math.max(-92, Math.min(92, coords.worldZ));
+     (engine as any).updateCameraPosition?.();
+   };
+ 
+@@ -206,202 +209,315 @@ export const HUD: React.FC<HUDProps> = ({
+     }
+   };
+ 
+-  // Render Minimap
++  // Render Minimap — static terrain cache + throttled entity layer
+   useEffect(() => {
+     const canvas = minimapCanvasRef.current;
+     if (!canvas) return;
+     const ctx = canvas.getContext('2d');
+     if (!ctx) return;
+ 
+-    let animId: number;
+-    const drawMinimap = () => {
+-      ctx.clearRect(0, 0, canvas.width, canvas.height);
++    const mapSize = 200;
++    const worldHalf = 100;
++    const toMinimap = (x: number, z: number): [number, number] => [
++      ((x + worldHalf) / mapSize) * canvas.width,
++      ((z + worldHalf) / mapSize) * canvas.height,
++    ];
++
++    // Reuse long-lived offscreen buffers (resize only when display canvas size changes)
++    if (!minimapStaticRef.current) minimapStaticRef.current = document.createElement('canvas');
++    if (!minimapDynRef.current) minimapDynRef.current = document.createElement('canvas');
++    const staticCanvas = minimapStaticRef.current;
++    const dynCanvas = minimapDynRef.current;
++    if (staticCanvas.width !== canvas.width || staticCanvas.height !== canvas.height) {
++      staticCanvas.width = canvas.width;
++      staticCanvas.height = canvas.height;
++    }
++    if (dynCanvas.width !== canvas.width || dynCanvas.height !== canvas.height) {
++      dynCanvas.width = canvas.width;
++      dynCanvas.height = canvas.height;
++    }
++    const staticCtx = staticCanvas.getContext('2d');
++    if (!staticCtx) return;
++
++    let cachedLayoutRef: typeof engine.mapLayout | null = null;
++    let cachedPreset = '';
++    let staticDirty = true;
+ 
+-      // Map bounds are -100 to 100
+-      const mapSize = 200;
+-      const toMinimap = (x: number, z: number) => {
+-        const mx = ((x + 100) / mapSize) * canvas.width;
+-        const my = ((z + 100) / mapSize) * canvas.height;
+-        return [mx, my];
+-      };
++    const rebuildStaticLayer = () => {
++      const w = staticCanvas.width;
++      const h = staticCanvas.height;
++      staticCtx.clearRect(0, 0, w, h);
+ 
+-      // 1. Terrain base & map terrain features
+       const presetTint =
+         engine.mapPreset === 'highland_basin'
+           ? '#3b4a1e'
+           : engine.mapPreset === 'twin_lakes'
+           ? '#1e3f24'
+           : '#1c3412';
+-      ctx.fillStyle = presetTint;
+-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+-
+-      // Subtle tactical grid
+-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+-      ctx.lineWidth = 1;
+-      for (let i = 0; i < canvas.width; i += 40) {
+-        ctx.beginPath();
+-        ctx.moveTo(i, 0);
+-        ctx.lineTo(i, canvas.height);
+-        ctx.stroke();
+-        ctx.beginPath();
+-        ctx.moveTo(0, i);
+-        ctx.lineTo(canvas.width, i);
+-        ctx.stroke();
++      staticCtx.fillStyle = presetTint;
++      staticCtx.fillRect(0, 0, w, h);
++
++      // Grid once (cached)
++      staticCtx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
++      staticCtx.lineWidth = 1;
++      for (let i = 0; i < w; i += 40) {
++        staticCtx.beginPath();
++        staticCtx.moveTo(i, 0);
++        staticCtx.lineTo(i, h);
++        staticCtx.stroke();
++        staticCtx.beginPath();
++        staticCtx.moveTo(0, i);
++        staticCtx.lineTo(w, i);
++        staticCtx.stroke();
+       }
+ 
+-      if (engine.mapLayout) {
+-        // Water Rects (rivers as thick line segments)
+-        ctx.strokeStyle = '#0284c7';
+-        ctx.lineCap = 'round';
+-        engine.mapLayout.waterRects.forEach((wr) => {
+-          const [rx1, ry1] = toMinimap(wr.x1, wr.z1);
+-          const [rx2, ry2] = toMinimap(wr.x2, wr.z2);
+-          const widthUnits = wr.halfWidth ? wr.halfWidth * 2 : wr.kind === 'water' ? 19.6 : 5.2;
+-          ctx.lineWidth = Math.max(4, (widthUnits / mapSize) * canvas.width);
+-          ctx.beginPath();
+-          ctx.moveTo(rx1, ry1);
+-          ctx.lineTo(rx2, ry2);
+-          ctx.stroke();
+-        });
+-        ctx.lineCap = 'butt';
++      const layout = engine.mapLayout;
++      if (!layout) return;
++
++      staticCtx.strokeStyle = '#0284c7';
++      staticCtx.lineCap = 'round';
++      layout.waterRects.forEach((wr) => {
++        const [rx1, ry1] = toMinimap(wr.x1, wr.z1);
++        const [rx2, ry2] = toMinimap(wr.x2, wr.z2);
++        const widthUnits = wr.halfWidth ? wr.halfWidth * 2 : wr.kind === 'water' ? 19.6 : 5.2;
++        staticCtx.lineWidth = Math.max(4, (widthUnits / mapSize) * w);
++        staticCtx.beginPath();
++        staticCtx.moveTo(rx1, ry1);
++        staticCtx.lineTo(rx2, ry2);
++        staticCtx.stroke();
++      });
++      staticCtx.lineCap = 'butt';
++
++      staticCtx.fillStyle = '#0284c7';
++      layout.waterDiscs.forEach((wd) => {
++        const [wx, wy] = toMinimap(wd.x, wd.z);
++        const wr = (wd.radius / mapSize) * w;
++        staticCtx.beginPath();
++        staticCtx.arc(wx, wy, wr, 0, Math.PI * 2);
++        staticCtx.fill();
++      });
+ 
+-        // Water Discs (lakes)
+-        ctx.fillStyle = '#0284c7';
+-        engine.mapLayout.waterDiscs.forEach((wd) => {
+-          const [wx, wy] = toMinimap(wd.x, wd.z);
+-          const wr = (wd.radius / mapSize) * canvas.width;
+-          ctx.beginPath();
+-          ctx.arc(wx, wy, wr, 0, Math.PI * 2);
+-          ctx.fill();
+-        });
++      layout.bridges.forEach((br) => {
++        const [bx, by] = toMinimap(br.x, br.z);
++        const bw = Math.max(4, ((br.halfWidth * 2) / mapSize) * w);
++        const bl = Math.max(4, ((br.halfLength * 2) / mapSize) * w);
++        staticCtx.save();
++        staticCtx.translate(bx, by);
++        staticCtx.rotate(br.angle);
++        staticCtx.fillStyle = '#d6b482';
++        staticCtx.fillRect(-bw / 2, -bl / 2, bw, bl);
++        staticCtx.restore();
++      });
+ 
+-        // Passable Bridges & Fords
+-        engine.mapLayout.bridges.forEach((br) => {
+-          const [bx, by] = toMinimap(br.x, br.z);
+-          const bw = Math.max(4, ((br.halfWidth * 2) / mapSize) * canvas.width);
+-          const bl = Math.max(4, ((br.halfLength * 2) / mapSize) * canvas.width);
+-          ctx.save();
+-          ctx.translate(bx, by);
+-          ctx.rotate(br.angle);
+-          ctx.fillStyle = '#d6b482';
+-          ctx.fillRect(-bw / 2, -bl / 2, bw, bl);
+-          ctx.restore();
+-        });
++      staticCtx.fillStyle = '#57534e';
++      layout.cliffDiscs.forEach((cd) => {
++        const [cx, cy] = toMinimap(cd.x, cd.z);
++        const cr = (cd.radius / mapSize) * w;
++        staticCtx.beginPath();
++        staticCtx.arc(cx, cy, cr, 0, Math.PI * 2);
++        staticCtx.fill();
++      });
++    };
+ 
+-        // Highland Cliffs
+-        ctx.fillStyle = '#475569';
+-        engine.mapLayout.cliffDiscs.forEach((cd) => {
+-          const [cx, cy] = toMinimap(cd.x, cd.z);
+-          const cr = (cd.radius / mapSize) * canvas.width;
+-          ctx.beginPath();
+-          ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+-          ctx.fill();
+-        });
+-      }
++    // Dynamic entity buffer (units/buildings/resources/objectives) — throttled
++    const dynCtx = dynCanvas.getContext('2d');
++    if (!dynCtx) return;
++
++    let lastDynDraw = 0;
++    const DYN_INTERVAL_MS = 66; // ~15 fps for entities
+ 
+-      // 2. Resource nodes with distinct shapes
++    const drawDynamicLayer = () => {
++      const w = dynCanvas.width;
++      const h = dynCanvas.height;
++      dynCtx.clearRect(0, 0, w, h);
++
++      // Resources (skip empty)
+       engine.resourceNodes.forEach((node) => {
+         if (node.amount <= 0) return;
+         const [mx, my] = toMinimap(node.x, node.z);
+-
+         if (node.resourceType === 'wood') {
+-          ctx.fillStyle = '#15803d';
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 2.7, 0, Math.PI * 2);
+-          ctx.fill();
++          dynCtx.fillStyle = '#15803d';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.7, 0, Math.PI * 2);
++          dynCtx.fill();
+         } else if (node.resourceType === 'gold') {
+-          ctx.fillStyle = '#fbbf24';
+-          ctx.strokeStyle = '#000000';
+-          ctx.lineWidth = 1.1;
+-          ctx.beginPath();
+-          ctx.moveTo(mx, my - 4.2);
+-          ctx.lineTo(mx + 4.2, my);
+-          ctx.lineTo(mx, my + 4.2);
+-          ctx.lineTo(mx - 4.2, my);
+-          ctx.closePath();
+-          ctx.fill();
+-          ctx.stroke();
++          dynCtx.fillStyle = '#fbbf24';
++          dynCtx.beginPath();
++          dynCtx.moveTo(mx, my - 4.2);
++          dynCtx.lineTo(mx + 4.2, my);
++          dynCtx.lineTo(mx, my + 4.2);
++          dynCtx.lineTo(mx - 4.2, my);
++          dynCtx.closePath();
++          dynCtx.fill();
+         } else if (node.resourceType === 'stone') {
+-          ctx.fillStyle = '#cbd5e1';
+-          ctx.strokeStyle = '#0f172a';
+-          ctx.lineWidth = 1;
+-          ctx.fillRect(mx - 2.8, my - 2.8, 5.6, 5.6);
+-          ctx.strokeRect(mx - 2.8, my - 2.8, 5.6, 5.6);
++          dynCtx.fillStyle = '#cbd5e1';
++          dynCtx.fillRect(mx - 2.8, my - 2.8, 5.6, 5.6);
+         } else if (node.subtype === 'berry') {
+-          ctx.fillStyle = '#fb7185';
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 2.6, 0, Math.PI * 2);
+-          ctx.fill();
++          dynCtx.fillStyle = '#fb7185';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.6, 0, Math.PI * 2);
++          dynCtx.fill();
+         } else if (node.subtype === 'hunt') {
+-          ctx.fillStyle = '#fdba74';
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
+-          ctx.fill();
++          dynCtx.fillStyle = '#fdba74';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
++          dynCtx.fill();
+         } else if (node.subtype === 'shore_fish') {
+-          ctx.fillStyle = '#38bdf8';
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
+-          ctx.fill();
++          dynCtx.fillStyle = '#38bdf8';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
++          dynCtx.fill();
+         } else if (node.subtype === 'deep_fish') {
+-          ctx.fillStyle = '#0284c7';
+-          ctx.strokeStyle = '#bae6fd';
+-          ctx.lineWidth = 0.9;
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 2.9, 0, Math.PI * 2);
+-          ctx.fill();
+-          ctx.stroke();
++          dynCtx.fillStyle = '#0284c7';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.9, 0, Math.PI * 2);
++          dynCtx.fill();
++        } else {
++          // farm / generic food
++          dynCtx.fillStyle = '#a3e635';
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 2.4, 0, Math.PI * 2);
++          dynCtx.fill();
+         }
+       });
+ 
+-      // 3. Buildings with prominent multi-faction participant colors
++      // Contested points
++      if (engine.contestedPoints) {
++        engine.contestedPoints.forEach((cp) => {
++          const [mx, my] = toMinimap(cp.x, cp.z);
++          const owner = cp.ownerFaction;
++          let fill = '#e2e8f0';
++          let stroke = '#fbbf24';
++          if (owner !== 'neutral') {
++            const p = engine.getParticipant(owner);
++            fill = p?.colorCss || '#38bdf8';
++            stroke = cp.siegeSupplyActive ? '#fdba74' : '#ffffff';
++          }
++          const rr = Math.max(5, (cp.radius / mapSize) * w * 0.55);
++          dynCtx.strokeStyle = owner === 'neutral' ? 'rgba(251,191,36,0.45)' : stroke;
++          dynCtx.lineWidth = cp.siegeSupplyActive ? 2.4 : 1.2;
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, rr, 0, Math.PI * 2);
++          dynCtx.stroke();
++          if (cp.siegeSupplyActive) {
++            dynCtx.strokeStyle = 'rgba(251,191,36,0.35)';
++            dynCtx.lineWidth = 1;
++            dynCtx.beginPath();
++            dynCtx.arc(mx, my, rr + 2.5, 0, Math.PI * 2);
++            dynCtx.stroke();
++          }
++          dynCtx.fillStyle = fill;
++          dynCtx.strokeStyle = '#0f172a';
++          dynCtx.lineWidth = 1.2;
++          dynCtx.beginPath();
++          dynCtx.moveTo(mx, my - 5);
++          dynCtx.lineTo(mx + 5, my);
++          dynCtx.lineTo(mx, my + 5);
++          dynCtx.lineTo(mx - 5, my);
++          dynCtx.closePath();
++          dynCtx.fill();
++          dynCtx.stroke();
++          if (cp.captureProgress > 0.05 && cp.captureProgress < 1) {
++            dynCtx.strokeStyle = '#fbbf24';
++            dynCtx.lineWidth = 2;
++            dynCtx.beginPath();
++            dynCtx.arc(mx, my, 7, -Math.PI / 2, -Math.PI / 2 + cp.captureProgress * Math.PI * 2);
++            dynCtx.stroke();
++          }
++        });
++      }
++
++      // Buildings
+       engine.buildings.forEach((bldg) => {
++        if (bldg.hp <= 0) return;
+         const [mx, my] = toMinimap(bldg.x, bldg.z);
+         const participant = engine.getParticipant(bldg.faction);
+         const isFriendly = !engine.isHostileToPlayer(bldg);
+         const isTC = bldg.buildingType === 'town_center';
+-        const size = isTC ? 10 : 7;
+-
+-        ctx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
+-        ctx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
+-        ctx.lineWidth = isTC ? 2 : 1;
+-        ctx.fillRect(mx - size / 2, my - size / 2, size, size);
+-        ctx.strokeRect(mx - size / 2, my - size / 2, size, size);
+-
+-        // Highlight center dot
+-        ctx.fillStyle = isFriendly ? '#e0f2fe' : '#fecaca';
+-        ctx.fillRect(mx - 1.5, my - 1.5, 3, 3);
++        const size = isTC ? 10 : bldg.buildingType === 'dock' ? 8 : 7;
++        dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
++        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
++        dynCtx.lineWidth = isTC ? 2 : 1;
++        dynCtx.fillRect(mx - size / 2, my - size / 2, size, size);
++        dynCtx.strokeRect(mx - size / 2, my - size / 2, size, size);
+       });
+ 
+-      // 4. Units with multi-faction colors and high-contrast outlines (skip garrisoned units)
++      // Units
+       engine.units.forEach((unit) => {
+         if (unit.garrisonedInBuildingId) return;
+         const [mx, my] = toMinimap(unit.x, unit.z);
+         const participant = engine.getParticipant(unit.faction);
+         const isFriendly = !engine.isHostileToPlayer(unit);
+         const isSelected = engine.selectedUnitIds.includes(unit.id);
++        const isBoat =
++          !!unit.unitDef.isNaval ||
++          unit.unitDefId === 'fishing_boat' ||
++          unit.unitDefId === 'transport_boat';
++        const cargo = unit.transportCargoIds?.length || 0;
+ 
+         if (isSelected) {
+-          // Golden pulse ring around selected unit
+-          ctx.strokeStyle = '#fbbf24';
+-          ctx.lineWidth = 2;
+-          ctx.beginPath();
+-          ctx.arc(mx, my, 6, 0, Math.PI * 2);
+-          ctx.stroke();
++          dynCtx.strokeStyle = '#fbbf24';
++          dynCtx.lineWidth = 2;
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, isBoat ? 8 : 6, 0, Math.PI * 2);
++          dynCtx.stroke();
+         }
+ 
+-        ctx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
+-        ctx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
+-        ctx.lineWidth = 1;
+-        ctx.beginPath();
+-        ctx.arc(mx, my, 3.8, 0, Math.PI * 2);
+-        ctx.fill();
+-        ctx.stroke();
++        dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
++        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
++        dynCtx.lineWidth = 1;
++        if (isBoat) {
++          dynCtx.beginPath();
++          dynCtx.ellipse(mx, my, 5.2, 3.2, 0, 0, Math.PI * 2);
++          dynCtx.fill();
++          dynCtx.stroke();
++          if (unit.unitDefId === 'transport_boat' && cargo > 0) {
++            dynCtx.fillStyle = '#fbbf24';
++            dynCtx.font = 'bold 8px sans-serif';
++            dynCtx.textAlign = 'center';
++            dynCtx.fillText(String(cargo), mx, my + 2.5);
++          }
++        } else {
++          dynCtx.beginPath();
++          dynCtx.arc(mx, my, 3.8, 0, Math.PI * 2);
++          dynCtx.fill();
++          dynCtx.stroke();
++        }
+       });
++    };
+ 
+-      // 5. Selected Building Rally Point Marker on Minimap
+-      if (selectedBuilding && selectedBuilding.rallyPoint) {
++    let animId = 0;
++    const drawMinimap = (now: number) => {
++      // Rebuild static only when map layout / preset changes
++      if (
++        staticDirty ||
++        engine.mapLayout !== cachedLayoutRef ||
++        engine.mapPreset !== cachedPreset
++      ) {
++        cachedLayoutRef = engine.mapLayout;
++        cachedPreset = engine.mapPreset || '';
++        rebuildStaticLayer();
++        staticDirty = false;
++        lastDynDraw = 0; // force entity refresh
++      }
++
++      if (now - lastDynDraw >= DYN_INTERVAL_MS) {
++        lastDynDraw = now;
++        drawDynamicLayer();
++      }
++
++      // Composite: static + dynamic (cheap blit)
++      ctx.clearRect(0, 0, canvas.width, canvas.height);
++      ctx.drawImage(staticCanvas, 0, 0);
++      ctx.drawImage(dynCanvas, 0, 0);
++
++      // Every frame: rally, alerts, camera (need smooth feedback)
++      if (selectedBuilding?.rallyPoint) {
+         const [bx, by] = toMinimap(selectedBuilding.x, selectedBuilding.z);
+-        const [rx, ry] = toMinimap(selectedBuilding.rallyPoint.x, selectedBuilding.rallyPoint.z);
++        const [rx, ry] = toMinimap(
++          selectedBuilding.rallyPoint.x,
++          selectedBuilding.rallyPoint.z
++        );
+         ctx.strokeStyle = '#f59e0b';
+         ctx.lineWidth = 1.5;
+         ctx.setLineDash([3, 3]);
+@@ -410,15 +526,13 @@ export const HUD: React.FC<HUDProps> = ({
+         ctx.lineTo(rx, ry);
+         ctx.stroke();
+         ctx.setLineDash([]);
+-
+         ctx.fillStyle = '#fbbf24';
+         ctx.beginPath();
+         ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
+         ctx.fill();
+       }
+ 
+-      // 6. Under Attack Minimap Radar Ping
+-      if (engine.lastAttackAlert && engine.lastAttackAlert.active) {
++      if (engine.lastAttackAlert?.active) {
+         const elapsed = (performance.now() - engine.lastAttackAlert.time) / 1000;
+         if (elapsed < 5.0) {
+           const [ax, ay] = toMinimap(engine.lastAttackAlert.x, engine.lastAttackAlert.z);
+@@ -429,7 +543,6 @@ export const HUD: React.FC<HUDProps> = ({
+           ctx.beginPath();
+           ctx.arc(ax, ay, radius, 0, Math.PI * 2);
+           ctx.stroke();
+-
+           ctx.fillStyle = '#ef4444';
+           ctx.beginPath();
+           ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+@@ -437,7 +550,6 @@ export const HUD: React.FC<HUDProps> = ({
+         }
+       }
+ 
+-      // 6.5 Direct Minimap Move/Attack Order Ping
+       if (engine.lastMinimapPing) {
+         const elapsed = (performance.now() - engine.lastMinimapPing.time) / 1000;
+         if (elapsed < 1.8) {
+@@ -451,7 +563,6 @@ export const HUD: React.FC<HUDProps> = ({
+           ctx.beginPath();
+           ctx.arc(px, py, 3 + progress * 14, 0, Math.PI * 2);
+           ctx.stroke();
+-
+           ctx.fillStyle = isAtk ? '#ef4444' : '#4ade80';
+           ctx.beginPath();
+           ctx.arc(px, py, 3, 0, Math.PI * 2);
+@@ -459,15 +570,13 @@ export const HUD: React.FC<HUDProps> = ({
+         }
+       }
+ 
+-      // 7. Camera Viewport Box with translucent fill
++      // Camera viewport (smooth every frame)
+       const [camX, camY] = toMinimap(engine.cameraTarget.x, engine.cameraTarget.z);
+       const zScale = engine.cameraZoom || 1;
+       const boxW = ((32 * zScale) / mapSize) * canvas.width;
+       const boxH = ((24 * zScale) / mapSize) * canvas.height;
+-
+       ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+       ctx.fillRect(camX - boxW / 2, camY - boxH / 2, boxW, boxH);
+-
+       ctx.strokeStyle = '#ffffff';
+       ctx.lineWidth = 1.8;
+       ctx.strokeRect(camX - boxW / 2, camY - boxH / 2, boxW, boxH);
+@@ -475,10 +584,27 @@ export const HUD: React.FC<HUDProps> = ({
+       animId = requestAnimationFrame(drawMinimap);
+     };
+ 
+-    drawMinimap();
+-    return () => cancelAnimationFrame(animId);
++    animId = requestAnimationFrame(drawMinimap);
++    return () => {
++      cancelAnimationFrame(animId);
++      // Keep offscreen buffers in refs across selection changes; release only when HUD unmounts.
++    };
+   }, [engine, selectedBuilding]);
+ 
++  // Release minimap offscreen backing stores when HUD leaves the tree
++  useEffect(() => {
++    return () => {
++      if (minimapStaticRef.current) {
++        minimapStaticRef.current.width = 0;
++        minimapStaticRef.current.height = 0;
++      }
++      if (minimapDynRef.current) {
++        minimapDynRef.current.width = 0;
++        minimapDynRef.current.height = 0;
++      }
++    };
++  }, []);
++
+   const isWorkerSelected = selectedUnits.some((u) => u.unitDef.category === 'worker');
+   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
+   const humanCiv = getCivilizationConfig(humanCivId);
+@@ -797,6 +923,39 @@ export const HUD: React.FC<HUDProps> = ({
+             </div>
+ 
+             <div className="relative w-32 h-32 md:w-36 md:h-36 bg-slate-900 border border-amber-600/70 rounded-lg overflow-hidden shadow-2xl shrink-0 touch-none">
++              
++              {/* Contested objectives status */}
++              {engine.contestedPoints && engine.contestedPoints.length > 0 && (
++                <div className="absolute bottom-full left-0 right-0 mb-1 px-1.5 py-1 rounded bg-slate-950/85 border border-slate-700 text-[9px] text-slate-300 space-y-0.5 pointer-events-none">
++                  {engine.contestedPoints.map((cp) => {
++                    const owned = cp.ownerFaction === engine.humanPlayerId;
++                    const enemy =
++                      cp.ownerFaction !== 'neutral' &&
++                      cp.ownerFaction !== engine.humanPlayerId;
++                    const tag = owned
++                      ? cp.siegeSupplyActive
++                        ? '補給中'
++                        : '己方'
++                      : enemy
++                      ? '敵方'
++                      : cp.captureProgress > 0.1
++                      ? `爭奪 ${Math.round(cp.captureProgress * 100)}%`
++                      : '中立';
++                    const col = owned
++                      ? 'text-sky-300'
++                      : enemy
++                      ? 'text-rose-300'
++                      : 'text-amber-200';
++                    return (
++                      <div key={cp.id} className="flex justify-between gap-2">
++                        <span className="truncate">◆ {cp.label}</span>
++                        <span className={col}>{tag}</span>
++                      </div>
++                    );
++                  })}
++                </div>
++              )}
++
+               <canvas
+                 ref={minimapCanvasRef}
+                 width={180}
+@@ -1407,6 +1566,55 @@ export const HUD: React.FC<HUDProps> = ({
+                           );
+                         })()}
+                       </div>
++
++
++                      {primary.unitDefId === 'transport_boat' && (
++                        <div className="text-[10px] text-sky-300">
++                          載員 {(primary.transportCargoIds?.length || 0)}/{primary.unitDef.stats.carryCapacity || 5}
++                          {(primary.transportCargoIds?.length || 0) > 0 ? ' · 可卸載' : ' · 點選陸軍再點此船登船'}
++                        </div>
++                      )}
++
++                      {primary.unitDefId === 'transport_boat' && (primary.transportCargoIds?.length || 0) > 0 && (
++                        <button
++                          type="button"
++                          onClick={() => {
++                            engine.unloadTransport(primary);
++                            engine.onSelectionChange?.();
++                          }}
++                          className="mt-1 w-full text-[11px] py-1 rounded bg-sky-700 hover:bg-sky-600 text-white border border-sky-400/40"
++                        >
++                          卸載登陸 (U)
++                        </button>
++                      )}
++
++                      {/* Assault / objective status */}
++                      {(() => {
++                        const ch = primary.siegeChannelTime || 0;
++                        const digPct = Math.min(100, Math.round((ch / 12) * 100));
++                        const hasSupply = engine.contestedPoints?.some(
++                          (p) => p.ownerFaction === primary.faction && p.siegeSupplyActive
++                        );
++                        const ownedShrines = engine.contestedPoints?.filter(
++                          (p) => p.ownerFaction === engine.humanPlayerId
++                        ).length || 0;
++                        if (digPct < 8 && !hasSupply && ownedShrines === 0) return null;
++                        return (
++                          <div className="flex flex-wrap gap-1.5 text-[10px]">
++                            {digPct >= 8 && primary.unitDef.category !== 'siege' && (
++                              <span className="px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-200 border border-amber-700/40">
++                                掘進 {digPct}%
++                              </span>
++                            )}
++                            {hasSupply && (
++                              <span className="px-1.5 py-0.5 rounded bg-orange-900/50 text-orange-200 border border-orange-700/40">
++                                攻城補給
++                              </span>
++                            )}
++                          </div>
++                        );
++                      })()}
++
+                       {primary.unitDef.specialAbility && (
+                         <div className="text-[10px] text-purple-300/90 leading-tight">
+                           ✦ {primary.unitDef.specialAbility.description}
+diff --git a/src/game/civilizations.ts b/src/game/civilizations.ts
+index 3b27743..c226211 100644
+--- a/src/game/civilizations.ts
++++ b/src/game/civilizations.ts
+@@ -68,10 +68,10 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
+     },
+     trainableByBuilding: {
+       town_center: ['villager'],
+-      dock: ['fishing_boat'],
++      dock: ['fishing_boat', 'transport_boat'],
+       barracks: ['swordsman', 'knight', 'battering_ram', 'catapult'],
+       archery_range: ['longbowman'],
+-      castle: ['knight', 'battering_ram', 'catapult', 'bombard_cannon'],
++      castle: ['knight', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
+       landmark_barracks: ['swordsman', 'knight', 'battering_ram'],
+       landmark_citadel: ['knight', 'battering_ram', 'catapult'],
+       landmark_arsenal: ['battering_ram', 'catapult', 'bombard_cannon'],
+@@ -117,10 +117,10 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
+     },
+     trainableByBuilding: {
+       town_center: ['anime_spirit_harvester'],
+-      dock: ['fishing_boat'],
++      dock: ['fishing_boat', 'transport_boat'],
+       barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram'],
+       archery_range: ['anime_ninja_assassin', 'anime_saiyan_brawler'],
+-      castle: ['anime_saiyan_brawler', 'battering_ram', 'catapult', 'bombard_cannon'],
++      castle: ['anime_saiyan_brawler', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
+       landmark_barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram'],
+       landmark_citadel: ['anime_saiyan_brawler', 'anime_ninja_assassin', 'catapult'],
+       landmark_arsenal: ['anime_saiyan_brawler', 'catapult', 'bombard_cannon'],
+@@ -166,10 +166,10 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
+     },
+     trainableByBuilding: {
+       town_center: ['fantasy_goblin_sapper'],
+-      dock: ['fishing_boat'],
++      dock: ['fishing_boat', 'transport_boat'],
+       barracks: ['fantasy_paladin', 'fantasy_treant', 'battering_ram'],
+       archery_range: ['fantasy_mage', 'fantasy_goblin_sapper'],
+-      castle: ['fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon'],
++      castle: ['fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
+       landmark_barracks: ['fantasy_paladin', 'fantasy_treant', 'battering_ram'],
+       landmark_citadel: ['fantasy_treant', 'fantasy_mage', 'catapult'],
+       landmark_arsenal: ['fantasy_mage', 'catapult', 'bombard_cannon'],
+diff --git a/src/game/engine.ts b/src/game/engine.ts
+index b6c92a5..9b7ae6a 100644
+--- a/src/game/engine.ts
++++ b/src/game/engine.ts
+@@ -20,6 +20,7 @@ import {
+   TechDefinition,
+   UnitDefinition,
+   UnitEntity,
++  ContestedPoint,
+ } from '../types/game';
+ import { DEFAULT_BUILDINGS, INITIAL_MODS } from './mods';
+ import {
+@@ -50,6 +51,8 @@ import {
+   areHostile,
+   calculateBuildingDamage,
+   calculateDamage,
++  getBuildingAssaultProfile,
++  getSiegeChannelMultiplier,
+   canAfford,
+   canUnitGatherNode,
+   computeAiWorkerAllocation,
+@@ -100,6 +103,7 @@ import {
+   applyTerrainBiomeMaterial,
+   createBerryBushMesh,
+   createBuildingMesh,
++  createContestedShrineMesh,
+   createCommandRingMesh,
+   createDeepFishMesh,
+   createDeerMesh,
+@@ -157,8 +161,13 @@ export class RtsEngine {
+   public units: UnitEntity[] = [];
+   public buildings: BuildingEntity[] = [];
+   public resourceNodes: ResourceNode[] = [];
++  public contestedPoints: ContestedPoint[] = [];
+   public projectiles: Projectile[] = [];
+   public floatingTexts: FloatingText[] = [];
++  private contestedMeshes = new Map<string, THREE.Group>();
++  private contestedIncomeAcc = new Map<string, number>();
++  /** One-time stash claimed per shrine id on first capture this match */
++  private contestedFirstLootClaimed = new Set<string>();
+ 
+   // Map Preset & Terrain Obstacles
+   public mapPreset: MapPresetId = 'river_valley';
+@@ -784,6 +793,11 @@ export class RtsEngine {
+     this.units = [];
+     this.buildings = [];
+     this.resourceNodes = [];
++    this.contestedPoints = [];
++    this.contestedMeshes.forEach((mesh) => this.scene.remove(mesh));
++    this.contestedMeshes.clear();
++    this.contestedIncomeAcc.clear();
++    this.contestedFirstLootClaimed.clear();
+     this.projectiles = [];
+     this.floatingTexts = [];
+     this.selectedUnitIds = [];
+@@ -955,6 +969,27 @@ export class RtsEngine {
+       this.addResourceNode(rn.id, rn.resourceType, rn.x, rn.z, rn.amount, showBadge, rn.subtype);
+     });
+ 
++
++    // Neutral contested shrines
++    (layout.contestedPoints || []).forEach((cp) => {
++      const point: ContestedPoint = {
++        id: cp.id,
++        x: cp.x,
++        z: cp.z,
++        radius: cp.radius,
++        ownerFaction: 'neutral',
++        captureProgress: 0,
++        label: cp.label,
++        holdTime: 0,
++        siegeSupplyActive: false,
++      };
++      this.contestedPoints.push(point);
++      const mesh = createContestedShrineMesh(cp.label);
++      mesh.position.set(cp.x, 0, cp.z);
++      this.scene.add(mesh);
++      this.contestedMeshes.set(cp.id, mesh);
++    });
++
+     // Phase C: Place starter Barracks, Farm & Initial Units around each TC cleanly avoiding all natural resource nodes
+     this.participants.forEach((p, idx) => {
+       const sp = spawns[idx];
+@@ -1130,7 +1165,11 @@ export class RtsEngine {
+     };
+     this.units.push(unit);
+ 
+-    const mesh = createUnitMesh(unit.unitDef, faction);
++    const mesh = createUnitMesh(unit.unitDef, faction, {
++      age: this.ageByFaction[faction] || 1,
++      researchedTechIds: this.getResearchedTechs(faction),
++      unitId: unit.unitDefId,
++    });
+     mesh.position.set(x, 0, z);
+     Object.assign(mesh.userData, { type: 'unit', id, faction, team });
+     this.scene.add(mesh);
+@@ -1456,6 +1495,7 @@ export class RtsEngine {
+       });
+     }
+ 
++    this.refreshFactionUnitMeshes(faction);
+     if (this.isHumanControlled(faction)) {
+       sound.playAgeUp();
+       this.addFloatingText(
+@@ -1497,7 +1537,18 @@ export class RtsEngine {
+           healedCount++;
+         }
+       });
+-      this.addFloatingText(unit.x, 2.8, unit.z, `💚 ${ab.name} (治療 ${healedCount} 名)`, '#34d399');
++      // 古樹：癒合時藤蔓纏足——附近敵軍短暫大幅降速
++      if (unit.unitDef.factionPack === 'fantasy' || unit.unitDefId.includes('paladin') || unit.unitDefId.includes('treant')) {
++        this.spawnParticleBurst(unit.x, 0.6, unit.z, 'leaf', 10);
++        this.units.forEach((enemy) => {
++          if (enemy.hp <= 0 || !this.isHostile(unit, enemy)) return;
++          if (getDistance(unit.x, unit.z, enemy.x, enemy.z) > 9) return;
++          (enemy as any)._rootSlowUntil = this.simTime + 4.5;
++        });
++        this.addFloatingText(unit.x, 2.8, unit.z, `癒合·纏足`, '#86efac');
++      } else {
++        this.addFloatingText(unit.x, 2.8, unit.z, `治療 ${healedCount}`, '#34d399');
++      }
+     } else if (ab.type === 'haste') {
+       if (gScale > 0.15) sound.playOrder();
+       this.spawnShockwaveRing(unit.x, unit.z, 0xfbbf24, 5.5);
+@@ -1508,7 +1559,24 @@ export class RtsEngine {
+           ally.buffDefenseBonus = Math.max(ally.buffDefenseBonus || 0, 2);
+         }
+       });
+-      this.addFloatingText(unit.x, 2.8, unit.z, `⚡ ${ab.name}！全軍疾衝`, '#fbbf24');
++      // 忍界煙幕：清除附近敵方對己方的鎖定
++      if (unit.unitDef.factionPack === 'anime' || unit.unitDefId.includes('ninja')) {
++        this.spawnParticleBurst(unit.x, 1.4, unit.z, 'smoke', 16);
++        this.units.forEach((enemy) => {
++          if (enemy.hp <= 0 || !this.isHostile(unit, enemy)) return;
++          if (getDistance(unit.x, unit.z, enemy.x, enemy.z) > 10) return;
++          if (enemy.targetEntityId) {
++            const locked = this.units.find((a) => a.id === enemy.targetEntityId);
++            if (locked && locked.faction === unit.faction) {
++              enemy.targetEntityId = undefined;
++              if (enemy.state === 'attacking') enemy.state = 'idle';
++            }
++          }
++        });
++        this.addFloatingText(unit.x, 2.8, unit.z, '煙幕', '#94a3b8');
++      } else {
++        this.addFloatingText(unit.x, 2.8, unit.z, `⚡ ${ab.name}`, '#fbbf24');
++      }
+     } else {
+       // 'whirlwind' or 'ki_burst' AOE burst
+       sound.playMagicShot(gScale);
+@@ -1583,6 +1651,87 @@ export class RtsEngine {
+     this.onSelectionChange?.();
+   }
+ 
++
++  public boardTransport(boat: UnitEntity, passengers: UnitEntity[]) {
++    if (boat.unitDefId !== 'transport_boat' || boat.hp <= 0) return;
++    if (!boat.transportCargoIds) boat.transportCargoIds = [];
++    const cap = boat.unitDef.stats.carryCapacity || 5;
++    let loaded = 0;
++    for (const u of passengers) {
++      if (boat.transportCargoIds.length >= cap) break;
++      if (u.id === boat.id || u.unitDef.isNaval) continue;
++      if (u.unitDef.category === 'siege') continue;
++      if (getDistance(u.x, u.z, boat.x, boat.z) > 18) {
++        // Walk toward boat first
++        u.targetX = boat.x;
++        u.targetZ = boat.z;
++        u.targetEntityId = boat.id;
++        u.state = 'moving';
++        u.currentActionText = '登船中';
++        continue;
++      }
++      if (boat.transportCargoIds.includes(u.id)) continue;
++      boat.transportCargoIds.push(u.id);
++      u.garrisonedInBuildingId = `transport:${boat.id}`;
++      u.state = 'idle';
++      u.velocity = { x: 0, z: 0 };
++      const mesh = this.unitMeshes.get(u.id);
++      if (mesh) mesh.visible = false;
++      loaded++;
++    }
++    if (loaded > 0) {
++      sound.playOrder();
++      this.addFloatingText(boat.x, 2.6, boat.z, `登船 ${boat.transportCargoIds.length}/${cap}`, '#38bdf8');
++      this.onSelectionChange?.();
++    }
++  }
++
++  public unloadSelectedTransports() {
++    const boats = this.selectedUnitIds
++      .map((id) => this.units.find((u) => u.id === id))
++      .filter((u): u is UnitEntity => !!u && u.unitDefId === 'transport_boat' && (u.transportCargoIds?.length || 0) > 0);
++    boats.forEach((b) => this.unloadTransport(b));
++  }
++
++  public unloadTransport(boat: UnitEntity) {
++    if (!boat.transportCargoIds || boat.transportCargoIds.length === 0) return;
++    const ids = [...boat.transportCargoIds];
++    boat.transportCargoIds = [];
++    (boat as any)._unloadOnArrive = false;
++    ids.forEach((uid, idx) => {
++      const u = this.units.find((x) => x.id === uid);
++      if (!u) return;
++      u.garrisonedInBuildingId = undefined;
++      const ang = (idx / Math.max(1, ids.length)) * Math.PI * 2;
++      let ux = boat.x + Math.cos(ang) * 2.8;
++      let uz = boat.z + Math.sin(ang) * 2.8;
++      // Nudge inland if spawn is in water
++      const layout = this.mapLayout;
++      if (layout) {
++        for (let step = 0; step < 6; step++) {
++          const wet = isPointInTerrainObstacle(ux, uz, layout.waterRects, layout.waterDiscs, layout.bridges);
++          if (!wet) break;
++          const len = Math.hypot(ux, uz) || 1;
++          ux -= (ux / len) * 1.2;
++          uz -= (uz / len) * 1.2;
++        }
++      }
++      u.x = ux;
++      u.z = uz;
++      u.state = 'idle';
++      u.currentActionText = '登陸';
++      u.targetEntityId = undefined;
++      u.waypoints = undefined;
++      const mesh = this.unitMeshes.get(u.id);
++      if (mesh) {
++        mesh.visible = true;
++        mesh.position.set(u.x, 0, u.z);
++      }
++    });
++    this.addFloatingText(boat.x, 2.6, boat.z, `卸載 ${ids.length}`, '#4ade80');
++    this.onSelectionChange?.();
++  }
++
+   public issueAttackMoveOrder(x: number, z: number) {
+     const playerUnits = this.selectedUnitIds
+       .map((uid) => this.units.find((u) => u.id === uid))
+@@ -1602,8 +1751,8 @@ export class RtsEngine {
+       const col = idx % cols;
+       const ox = (col - (cols - 1) / 2) * spacing;
+       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
+-      const gx = Math.max(-88, Math.min(88, x + ox));
+-      const gz = Math.max(-88, Math.min(88, z + oz));
++      const gx = Math.max(-95, Math.min(95, x + ox));
++      const gz = Math.max(-95, Math.min(95, z + oz));
+ 
+       unit.targetX = gx;
+       unit.targetZ = gz;
+@@ -1793,14 +1942,35 @@ export class RtsEngine {
+     const spacing = 1.5;
+     const cols = Math.ceil(Math.sqrt(count));
+ 
++    // Transport with cargo: move then unload near destination
++    const transports = playerUnits.filter((u) => u.unitDefId === 'transport_boat');
++    if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
++      const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
++      if (nearSelf) {
++        transports.forEach((boat) => this.unloadTransport(boat));
++        return;
++      }
++      transports.forEach((boat) => {
++        boat.targetX = Math.max(-95, Math.min(95, x));
++        boat.targetZ = Math.max(-95, Math.min(95, z));
++        boat.attackMoveGoal = null;
++        boat.targetEntityId = undefined;
++        boat.waypoints = undefined;
++        boat.state = 'moving';
++        boat.currentActionText = '卸載航向';
++        (boat as any)._unloadOnArrive = true;
++      });
++      return;
++    }
++
+     playerUnits.forEach((unit, idx) => {
+       const row = Math.floor(idx / cols);
+       const col = idx % cols;
+       const ox = (col - (cols - 1) / 2) * spacing;
+       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
+ 
+-      unit.targetX = Math.max(-88, Math.min(88, x + ox));
+-      unit.targetZ = Math.max(-88, Math.min(88, z + oz));
++      unit.targetX = Math.max(-95, Math.min(95, x + ox));
++      unit.targetZ = Math.max(-95, Math.min(95, z + oz));
+       unit.attackMoveGoal = null;
+       unit.targetEntityId = undefined;
+       unit.targetResourceNodeId = undefined;
+@@ -1819,11 +1989,20 @@ export class RtsEngine {
+       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
+     if (playerUnits.length === 0) return;
+     this.pendingCommandMode = 'normal';
+-    sound.playAttackOrder();
+ 
+-    const target =
+-      this.units.find((u) => u.id === targetId) ||
+-      this.buildings.find((b) => b.id === targetId);
++    const targetUnit = this.units.find((u) => u.id === targetId);
++    // Board friendly transport boat
++    if (
++      targetUnit &&
++      targetUnit.unitDefId === 'transport_boat' &&
++      targetUnit.faction === playerUnits[0].faction
++    ) {
++      this.boardTransport(targetUnit, playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege'));
++      return;
++    }
++
++    sound.playAttackOrder();
++    const target = targetUnit || this.buildings.find((b) => b.id === targetId);
+     if (target) {
+       this.spawnCommandIndicator(target.x, target.z, 'attack');
+     }
+@@ -1841,30 +2020,6 @@ export class RtsEngine {
+     });
+   }
+ 
+-  public getResourceDisplayMeta(node: ResourceNode): { icon: string; name: string; action: string } {
+-    const sub = node.subtype || node.resourceType;
+-    switch (sub) {
+-      case 'wood':
+-        return { icon: '🪓', name: '森林原木', action: '伐木' };
+-      case 'deep_fish':
+-        return { icon: '🐠', name: '深海魚群', action: '捕撈深海魚' };
+-      case 'shore_fish':
+-        return { icon: '🐟', name: '沿岸魚群', action: '捕撈沿岸魚' };
+-      case 'hunt':
+-        return { icon: '🥩', name: '野生山羌', action: '狩獵肉類' };
+-      case 'berry':
+-        return { icon: '🫐', name: '野生漿果', action: '採集漿果' };
+-      case 'farm':
+-        return { icon: '🌾', name: '豐饒農田', action: '農田耕作' };
+-      case 'gold':
+-        return { icon: '🪙', name: '黃金礦脈', action: '開採金礦' };
+-      case 'stone':
+-        return { icon: '🪨', name: '花崗石礦', action: '開採石料' };
+-      default:
+-        return { icon: '🌾', name: '糧食', action: '採集糧食' };
+-    }
+-  }
+-
+   public issueGatherOrder(nodeId: string) {
+     const workers = this.selectedUnitIds
+       .map((id) => this.units.find((u) => u.id === id))
+@@ -2751,6 +2906,7 @@ export class RtsEngine {
+ 
+     // 3. Buildings simulation & Civ Building Auras
+     this.updateBuildings(dt);
++    this.updateContestedPoints(dt);
+ 
+     // 4. Projectiles
+     this.updateProjectiles(dt);
+@@ -2965,8 +3121,8 @@ export class RtsEngine {
+ 
+     const isPanning = Math.abs(this.cameraPanVelX) > 0.05 || Math.abs(this.cameraPanVelZ) > 0.05;
+     if (isPanning) {
+-      this.cameraTarget.x = Math.max(-84, Math.min(84, this.cameraTarget.x + this.cameraPanVelX * dt));
+-      this.cameraTarget.z = Math.max(-84, Math.min(84, this.cameraTarget.z + this.cameraPanVelZ * dt));
++      this.cameraTarget.x = Math.max(-92, Math.min(92, this.cameraTarget.x + this.cameraPanVelX * dt));
++      this.cameraTarget.z = Math.max(-92, Math.min(92, this.cameraTarget.z + this.cameraPanVelZ * dt));
+     } else {
+       this.cameraPanVelX = 0;
+       this.cameraPanVelZ = 0;
+@@ -2994,6 +3150,9 @@ export class RtsEngine {
+     for (const unit of this.units) {
+       if (unit.hp <= 0) {
+         anyDied = true;
++        if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
++          this.unloadTransport(unit);
++        }
+         // Unit died -> move mesh to smooth KO topple transition instead of sudden vanish!
+         const mesh = this.unitMeshes.get(unit.id);
+         if (mesh) {
+@@ -3017,6 +3176,13 @@ export class RtsEngine {
+ 
+       remainingUnits.push(unit);
+ 
++      if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
++        const cap = unit.unitDef.stats.carryCapacity || 5;
++        if (!unit.currentActionText?.includes('航向') && !unit.currentActionText?.includes('卸載')) {
++          unit.currentActionText = `載員 ${unit.transportCargoIds.length}/${cap}`;
++        }
++      }
++
+       // Cooldowns & timers
+       if (unit.attackCooldown > 0) unit.attackCooldown -= dt;
+       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
+@@ -3026,6 +3192,23 @@ export class RtsEngine {
+ 
+       // Garrisoned units are sheltered from enemy melee/ranged fire & regenerate HP slowly
+       if (unit.garrisonedInBuildingId) {
++        if (unit.garrisonedInBuildingId.startsWith('transport:')) {
++          const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
++          const boat = this.units.find((b) => b.id === boatId && b.hp > 0);
++          if (!boat) {
++            unit.garrisonedInBuildingId = undefined;
++            unit.state = 'idle';
++            const mesh = this.unitMeshes.get(unit.id);
++            if (mesh) mesh.visible = true;
++          } else {
++            unit.x = boat.x;
++            unit.z = boat.z;
++            unit.velocity = { x: 0, z: 0 };
++            const mesh = this.unitMeshes.get(unit.id);
++            if (mesh) mesh.visible = false;
++            continue;
++          }
++        }
+         const hostBldg = this.buildings.find((b) => b.id === unit.garrisonedInBuildingId && b.hp > 0 && b.isConstructed);
+         if (!hostBldg) {
+           unit.garrisonedInBuildingId = undefined;
+@@ -3224,7 +3407,8 @@ export class RtsEngine {
+     if (distToWp <= 0.001) return;
+ 
+     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
+-    const speed = unit.unitDef.stats.speed * hasteMult;
++    const rootSlow = (unit as any)._rootSlowUntil && (unit as any)._rootSlowUntil > this.simTime ? 0.55 : 1;
++    const speed = unit.unitDef.stats.speed * hasteMult * rootSlow;
+     const dx = (activeTarget.x - unit.x) / distToWp;
+     const dz = (activeTarget.z - unit.z) / distToWp;
+     const stepLen = Math.min(distToWp, speed * dt);
+@@ -3235,6 +3419,26 @@ export class RtsEngine {
+   }
+ 
+   private stepUnitMoving(unit: UnitEntity, dt: number) {
++    // Finish boarding if we were ordered onto a friendly transport
++    if (unit.targetEntityId && !unit.unitDef.isNaval) {
++      const boat = this.units.find(
++        (b) =>
++          b.id === unit.targetEntityId &&
++          b.unitDefId === 'transport_boat' &&
++          b.faction === unit.faction &&
++          b.hp > 0
++      );
++      if (boat) {
++        if (getDistance(unit.x, unit.z, boat.x, boat.z) <= 7.5) {
++          this.boardTransport(boat, [unit]);
++          return;
++        }
++        this.moveUnitAlongPath(unit, boat.x, boat.z, dt);
++        unit.currentActionText = '登船中';
++        return;
++      }
++    }
++
+     if (unit.targetX === undefined || unit.targetZ === undefined) {
+       unit.state = 'idle';
+       unit.attackMoveGoal = null;
+@@ -3246,9 +3450,13 @@ export class RtsEngine {
+     if (dist < 0.45) {
+       unit.state = 'idle';
+       unit.attackMoveGoal = null;
+-      unit.currentActionText = '💤 待命中 (閒置)';
+       unit.velocity = { x: 0, z: 0 };
+       unit.waypoints = undefined;
++      if ((unit as any)._unloadOnArrive && unit.unitDefId === 'transport_boat') {
++        this.unloadTransport(unit);
++      } else {
++        unit.currentActionText = '💤 待命中 (閒置)';
++      }
+       return;
+     }
+ 
+@@ -3267,6 +3475,21 @@ export class RtsEngine {
+ 
+     let targetUnit = this.units.find((u) => u.id === unit.targetEntityId);
+     let targetBuilding = this.buildings.find((b) => b.id === unit.targetEntityId);
++    if (
++      targetUnit &&
++      targetUnit.unitDefId === 'transport_boat' &&
++      targetUnit.faction === unit.faction &&
++      !unit.unitDef.isNaval
++    ) {
++      if (getDistance(unit.x, unit.z, targetUnit.x, targetUnit.z) <= 7.0) {
++        this.boardTransport(targetUnit, [unit]);
++        unit.targetEntityId = undefined;
++        return;
++      }
++      this.moveUnitAlongPath(unit, targetUnit.x, targetUnit.z, dt);
++      unit.currentActionText = '登船中';
++      return;
++    }
+     let target: UnitEntity | BuildingEntity | undefined = targetUnit || targetBuilding;
+ 
+     // Smart dynamic re-targeting for AI or attack-moving units (switches off buildings onto approaching soldiers or better 1v1 counters)
+@@ -3362,17 +3585,52 @@ export class RtsEngine {
+           let dmg: number;
+           if (target.type === 'building') {
+             const targetBldg = target as BuildingEntity;
++            // Sustained sapping / torching on the same structure
++            if (unit.siegeTargetId === targetBldg.id) {
++              unit.siegeChannelTime = (unit.siegeChannelTime || 0) + 1 / Math.max(0.35, unit.unitDef.stats.attackRate);
++            } else {
++              unit.siegeTargetId = targetBldg.id;
++              unit.siegeChannelTime = 0;
++            }
++            const supply = this.factionHasSiegeSupply(unit.faction);
+             dmg = calculateBuildingDamage(
+               unit,
+               targetBldg,
+               this.ageByFaction[targetBldg.faction] || 1,
+               this.getResearchedTechs(targetBldg.faction),
+               this.getResearchedTechs(unit.faction),
+-              this.landmarksByFaction[unit.faction] || []
++              this.landmarksByFaction[unit.faction] || [],
++              supply
++            );
++            const assault = getBuildingAssaultProfile(unit);
++            targetBldg.lastAttackerFaction = unit.faction;
++            if (assault.method === 'greek_fire') {
++              dmg += this.applyGreekFireCone(unit, targetBldg);
++            }
++            const heavy =
++              assault.method === 'ram' ||
++              assault.method === 'blast' ||
++              assault.method === 'greek_fire' ||
++              unit.unitDef.category === 'siege';
++            this.spawnParticleBurst(
++              target.x,
++              heavy ? 1.25 : 1.0,
++              target.z,
++              assault.method === 'greek_fire' || assault.method === 'torch' || assault.method === 'blast'
++                ? 'ember'
++                : heavy
++                ? 'stone'
++                : 'ember',
++              heavy ? 7 : 4
+             );
+-            const isRamOrTreant = unit.unitDef.category === 'siege' || unit.unitDefId === 'fantasy_treant';
+-            this.spawnParticleBurst(target.x, isRamOrTreant ? 1.2 : 1.0, target.z, isRamOrTreant ? 'stone' : 'ember', isRamOrTreant ? 6 : 4);
+-            this.spawnParticleBurst(target.x, 1.1, target.z, isRamOrTreant ? 'dust' : 'smoke', 3);
++            this.spawnParticleBurst(target.x, 1.1, target.z, heavy ? 'dust' : 'smoke', 3);
++            if (assault.method === 'greek_fire') {
++              this.spawnParticleBurst(target.x, 1.6, target.z, 'spark', 8);
++            }
++            if ((assault.method === 'torch' || assault.method === 'sap') && (unit.siegeChannelTime || 0) >= 3) {
++              const pct = Math.min(100, Math.round(((unit.siegeChannelTime || 0) / 12) * 100));
++              unit.currentActionText = `掘進 ${pct}%`;
++            }
+           } else {
+             dmg = getUnitVsUnitDamage(unit.unitDef.stats.attack, target as UnitEntity, false, this.simTime);
+             this.spawnParticleBurst(target.x, 0.9, target.z, 'hit', 5);
+@@ -3862,6 +4120,225 @@ export class RtsEngine {
+     this.onSelectionChange?.();
+   }
+ 
++
++
++  private factionHasSiegeSupply(faction: FactionId): boolean {
++    return this.contestedPoints.some(
++      (p) => p.ownerFaction === faction && p.siegeSupplyActive
++    );
++  }
++
++  /**
++   * Greek-fire siphon: cone splash in front of the attacker toward the primary building.
++   * Instant burst only — no residual burn DoT on structures or units.
++   */
++  private applyGreekFireCone(attacker: UnitEntity, primary: BuildingEntity): number {
++    const dx = primary.x - attacker.x;
++    const dz = primary.z - attacker.z;
++    const len = Math.hypot(dx, dz) || 1;
++    const fx = dx / len;
++    const fz = dz / len;
++    const range = 6.5;
++    const cosHalf = Math.cos((42 * Math.PI) / 180); // ~84° cone
++    let bonus = 0;
++
++    for (const b of this.buildings) {
++      if (b.hp <= 0 || b.id === primary.id) continue;
++      if (!this.isHostile(attacker, b)) continue;
++      const bx = b.x - attacker.x;
++      const bz = b.z - attacker.z;
++      const bd = Math.hypot(bx, bz);
++      if (bd > range || bd < 0.2) continue;
++      const dot = (bx / bd) * fx + (bz / bd) * fz;
++      if (dot < cosHalf) continue;
++      const splash = Math.max(3, Math.round(12 * dot * (1 - bd / range)));
++      b.hp -= splash;
++      b.hitFlashTimer = 0.1;
++      b.lastAttackerFaction = attacker.faction;
++      bonus += Math.round(splash * 0.15);
++      this.spawnParticleBurst(b.x, 1.4, b.z, 'ember', 5);
++    }
++
++    for (const u of this.units) {
++      if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
++      if (!this.isHostile(attacker, u)) continue;
++      const ux = u.x - attacker.x;
++      const uz = u.z - attacker.z;
++      const ud = Math.hypot(ux, uz);
++      if (ud > range * 0.9 || ud < 0.2) continue;
++      const dot = (ux / ud) * fx + (uz / ud) * fz;
++      if (dot < cosHalf) continue;
++      const splash = Math.max(2, Math.round(9 * dot * (1 - ud / range)));
++      u.hp -= splash;
++      u.hitFlashTimer = 0.1;
++      u.recoilTimer = 0.12;
++      this.spawnParticleBurst(u.x, 1.1, u.z, 'ember', 4);
++      this.addFloatingText(u.x, 2.1, u.z, `-${splash}`, '#fb923c');
++    }
++
++    // Dramatic forward spray VFX
++    for (let i = 1; i <= 4; i++) {
++      const px = attacker.x + fx * (i * 1.3);
++      const pz = attacker.z + fz * (i * 1.3);
++      this.spawnParticleBurst(px, 1.0 + i * 0.15, pz, 'ember', 3);
++      this.spawnParticleBurst(px, 1.2 + i * 0.1, pz, 'spark', 2);
++    }
++    return bonus;
++  }
++
++  private updateContestedPoints(dt: number) {
++    for (const point of this.contestedPoints) {
++      const counts = new Map<string, number>();
++      for (const u of this.units) {
++        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
++        // Only military presence captures — workers cannot claim shrines alone
++        if (u.unitDef.category === 'worker') continue;
++        if (u.unitDef.isNaval) continue;
++        const d = getDistance(u.x, u.z, point.x, point.z);
++        if (d > point.radius) continue;
++        // Siege engines count double (securing a shrine with artillery feels decisive)
++        const weight = u.unitDef.category === 'siege' ? 2 : 1;
++        counts.set(u.faction, (counts.get(u.faction) || 0) + weight);
++      }
++
++      const present = [...counts.entries()].sort((a, b) => b[1] - a[1]);
++      const leader = present.length > 0 ? present[0][0] : null;
++      const contested =
++        present.length >= 2 && present[0][1] === present[1][1];
++
++      const mesh = this.contestedMeshes.get(point.id);
++      const ring = mesh?.getObjectByName('captureRing') as THREE.Mesh | undefined;
++      const ringMat = ring?.material as THREE.MeshBasicMaterial | undefined;
++
++      if (!leader || contested) {
++        if (!leader) {
++          point.captureProgress = Math.max(0, point.captureProgress - dt * 0.1);
++          if (point.captureProgress <= 0.02) point.capturingFaction = undefined;
++        }
++        if (point.ownerFaction !== 'neutral' && !leader) {
++          // Unattended owned points slowly decay holdTime (supply can drop)
++          point.holdTime = Math.max(0, point.holdTime - dt * 0.35);
++        }
++        if (ringMat) {
++          ringMat.color.setHex(contested ? 0xfbbf24 : 0xe2e8f0);
++          ringMat.opacity = contested ? 0.58 : 0.32;
++        }
++      } else {
++        const weight = counts.get(leader) || 1;
++        const rate = 0.24 + Math.min(0.32, (weight - 1) * 0.04);
++        if (point.ownerFaction === leader) {
++          point.captureProgress = 1;
++          point.capturingFaction = leader;
++          point.holdTime += dt;
++        } else if (point.capturingFaction === leader) {
++          point.captureProgress = Math.min(1, point.captureProgress + rate * dt);
++        } else {
++          point.captureProgress = Math.max(0, point.captureProgress - rate * 1.25 * dt);
++          if (point.captureProgress <= 0.05) {
++            point.capturingFaction = leader;
++            point.captureProgress = 0;
++          }
++        }
++
++        if (point.captureProgress >= 1 && point.ownerFaction !== leader) {
++          const prev = point.ownerFaction;
++          point.ownerFaction = leader;
++          point.captureProgress = 1;
++          point.holdTime = 0;
++          point.siegeSupplyActive = false;
++          const name = this.participants.find((p) => p.id === leader)?.name || leader;
++          this.addFloatingText(point.x, 3.2, point.z, `佔領 ${point.label}`, '#fbbf24');
++          this.spawnShockwaveRing(point.x, point.z, 0xfbbf24, point.radius * 0.9);
++          this.lastMinimapPing = {
++            x: point.x,
++            z: point.z,
++            type: 'attack',
++            time: performance.now(),
++          };
++          this.contestedIncomeAcc.set(point.id, 0);
++
++          // First capture of this shrine this match: one-time supply cache (tempo spike)
++          if (!this.contestedFirstLootClaimed.has(point.id)) {
++            this.contestedFirstLootClaimed.add(point.id);
++            const bag = this.resourcesByFaction[leader];
++            if (bag) {
++              bag.gold += 40;
++              bag.wood += 30;
++              bag.stone += 15;
++              if (leader === this.humanPlayerId) this.onResourcesChange?.(bag);
++              this.addFloatingText(point.x, 2.7, point.z, '+40金 +30木 +15石', '#e2e8f0');
++            }
++          }
++
++          if (prev !== 'neutral' && prev !== leader) {
++            this.addFloatingText(point.x, 2.5, point.z, '敵方失去據點', '#f87171');
++          }
++        }
++
++        if (ringMat) {
++          const ownerId = point.ownerFaction === 'neutral' ? leader : point.ownerFaction;
++          const ownerP = this.participants.find((p) => p.id === ownerId);
++          ringMat.color.setHex(ownerP?.colorHex ?? 0x38bdf8);
++          ringMat.opacity = 0.35 + point.captureProgress * 0.45;
++        }
++      }
++
++      // Long hold → Siege Supply (oil, ladders, mantlets): +18% non-siege building damage
++      if (point.ownerFaction !== 'neutral' && point.ownerFaction === leader) {
++        if (!point.siegeSupplyActive && point.holdTime >= 22) {
++          point.siegeSupplyActive = true;
++          this.addFloatingText(point.x, 3.4, point.z, `${point.label} · 攻城補給`, '#fdba74');
++          this.spawnShockwaveRing(point.x, point.z, 0xfb923c, point.radius * 1.05);
++        }
++      } else if (point.holdTime < 12) {
++        point.siegeSupplyActive = false;
++      }
++
++      // Sync 3D shrine banner with ownership
++      if (mesh) {
++        const banner = mesh.getObjectByName('shrineBanner') as THREE.Mesh | undefined;
++        const ownerP =
++          point.ownerFaction !== 'neutral'
++            ? this.participants.find((p) => p.id === point.ownerFaction)
++            : null;
++        if (banner?.material && (banner.material as THREE.MeshStandardMaterial).color) {
++          (banner.material as THREE.MeshStandardMaterial).color.setHex(
++            ownerP?.colorHex ?? 0xa8a29e
++          );
++        }
++      }
++
++      // Income + local aura
++      if (point.ownerFaction !== 'neutral') {
++        const acc = (this.contestedIncomeAcc.get(point.id) || 0) + dt;
++        if (acc >= 1) {
++          const ticks = Math.floor(acc);
++          this.contestedIncomeAcc.set(point.id, acc - ticks);
++          const bag = this.resourcesByFaction[point.ownerFaction];
++          if (bag) {
++            // Passive trickle — supply mode pays better; multi-shrine adds stone logistics
++            const ownedCount = this.contestedPoints.filter(
++              (p) => p.ownerFaction === point.ownerFaction
++            ).length;
++            const g = point.siegeSupplyActive ? 3 : 2;
++            const w = point.siegeSupplyActive ? 2 : 1;
++            bag.gold += g * ticks;
++            bag.wood += w * ticks;
++            if (ownedCount >= 2) bag.stone += ticks; // 2+ shrines: slow stone income
++            if (point.ownerFaction === this.humanPlayerId) this.onResourcesChange?.(bag);
++          }
++        }
++        for (const u of this.units) {
++          if (u.faction !== point.ownerFaction || u.hp <= 0) continue;
++          if (getDistance(u.x, u.z, point.x, point.z) > point.radius + 5) continue;
++          if (u.unitDef.category === 'worker') continue;
++          u.buffSpeedUntil = Math.max(u.buffSpeedUntil || 0, this.simTime + 0.45);
++          u.buffDefenseBonus = Math.max(u.buffDefenseBonus || 0, point.siegeSupplyActive ? 2 : 1);
++        }
++      }
++    }
++  }
++
+   private updateBuildings(dt: number) {
+     const remainingBuildings: BuildingEntity[] = [];
+     let selectedDestroyed = false;
+@@ -3930,6 +4407,7 @@ export class RtsEngine {
+ 
+       remainingBuildings.push(bldg);
+ 
++
+       if ((bldg as any).hitFlashTimer && (bldg as any).hitFlashTimer > 0) {
+         (bldg as any).hitFlashTimer = Math.max(0, (bldg as any).hitFlashTimer - dt);
+       }
+@@ -4342,14 +4820,26 @@ export class RtsEngine {
+         if (target.type === 'building') {
+           const targetBldg = target as BuildingEntity;
+           if (attacker) {
++            if (attacker.siegeTargetId === targetBldg.id) {
++              attacker.siegeChannelTime = (attacker.siegeChannelTime || 0) + 0.8;
++            } else {
++              attacker.siegeTargetId = targetBldg.id;
++              attacker.siegeChannelTime = 0;
++            }
+             dmg = calculateBuildingDamage(
+               attacker,
+               targetBldg,
+               this.ageByFaction[targetBldg.faction] || 1,
+               this.getResearchedTechs(targetBldg.faction),
+               this.getResearchedTechs(attacker.faction),
+-              this.landmarksByFaction[attacker.faction] || []
++              this.landmarksByFaction[attacker.faction] || [],
++              this.factionHasSiegeSupply(attacker.faction)
+             );
++            const assault = getBuildingAssaultProfile(attacker);
++            targetBldg.lastAttackerFaction = attacker.faction;
++            if (assault.method === 'greek_fire') {
++              dmg += this.applyGreekFireCone(attacker, targetBldg);
++            }
+           } else {
+             const armor = getEffectiveBuildingArmor(targetBldg, this.ageByFaction[targetBldg.faction] || 1, this.getResearchedTechs(targetBldg.faction));
+             dmg = Math.max(1, Math.round(proj.damage - armor * 0.65));
+@@ -5099,6 +5589,55 @@ export class RtsEngine {
+         (u) => u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category !== 'worker' && this.isHostile({ faction: aiId, team: aiTeam }, u)
+       ).length;
+ 
++
++      // 1b. Contest neutral / enemy shrines — keeps map objectives alive in AI matches
++      if (aiArmy.length >= 3 && this.contestedPoints.length > 0 && this.stats.gameDuration > 70) {
++        const targets = this.contestedPoints
++          .map((cp) => {
++            const mine = cp.ownerFaction === aiId;
++            const threat = this.units.some(
++              (u) =>
++                u.hp > 0 &&
++                !u.garrisonedInBuildingId &&
++                this.isHostile({ faction: aiId, team: aiTeam }, u) &&
++                getDistance(u.x, u.z, cp.x, cp.z) <= cp.radius + 6
++            );
++            let score = 0;
++            if (cp.ownerFaction === 'neutral') score = 50;
++            else if (!mine) score = 70;
++            else if (mine && (threat || !cp.siegeSupplyActive)) score = 40;
++            else score = 5;
++            score += (1 - cp.captureProgress) * 10;
++            return { cp, score, mine };
++          })
++          .filter((t) => t.score >= 40)
++          .sort((a, b) => b.score - a.score);
++
++        if (targets.length > 0) {
++          const focus = targets[0].cp;
++          // Send a detachment, not the whole army
++          const idleMil = aiArmy.filter(
++            (u) =>
++              u.state === 'idle' ||
++              (u.state === 'moving' && !u.attackMoveGoal && !u.targetEntityId)
++          );
++          const squad = (idleMil.length >= 3 ? idleMil : aiArmy)
++            .slice(0, Math.min(6, Math.max(3, Math.floor(aiArmy.length * 0.35))));
++          for (const u of squad) {
++            if (u.unitDef.category === 'siege' && focus.ownerFaction === 'neutral') continue;
++            u.targetEntityId = undefined;
++            u.targetBuildingId = undefined;
++            u.targetResourceNodeId = undefined;
++            u.attackMoveGoal = { x: focus.x, z: focus.z };
++            u.targetX = focus.x + (Math.random() - 0.5) * 6;
++            u.targetZ = focus.z + (Math.random() - 0.5) * 6;
++            u.state = 'moving';
++            u.waypoints = undefined;
++            u.currentActionText = '奪取據點';
++          }
++        }
++      }
++
+       const snapshot = {
+         food: aiRes.food,
+         wood: aiRes.wood,
+@@ -5484,6 +6023,8 @@ export class RtsEngine {
+ 
+         if (e.code === 'KeyQ' && this.selectedUnitIds.length > 0) {
+           this.activateSelectedUnitsAbility();
++        } else if (e.code === 'KeyU' && this.selectedUnitIds.length > 0) {
++          this.unloadSelectedTransports();
+         } else if (e.code === 'KeyX' && this.selectedUnitIds.length > 0) {
+           this.stopSelectedUnits();
+         } else if (e.code === 'KeyF' && this.selectedUnitIds.length > 0) {
+@@ -5637,11 +6178,51 @@ export class RtsEngine {
+     return null;
+   }
+ 
++
++  /** Rebuild unit silhouettes when age or visual techs change. */
++  public refreshFactionUnitMeshes(faction: FactionId) {
++    const age = this.ageByFaction[faction] || 1;
++    const techs = this.getResearchedTechs(faction);
++    for (const unit of this.units) {
++      if (unit.faction !== faction || unit.hp <= 0) continue;
++      if (unit.garrisonedInBuildingId?.startsWith('transport:')) continue;
++      const old = this.unitMeshes.get(unit.id);
++      if (!old) continue;
++      const pos = old.position.clone();
++      const rotY = old.rotation.y;
++      this.scene.remove(old);
++      // Only dispose non-shared geometries (named unique parts); skip materials
++      old.traverse((obj) => {
++        const mesh = obj as THREE.Mesh;
++        if (!mesh.isMesh || !mesh.geometry) return;
++        if (mesh.name === 'agePlume' || mesh.name === 'weaponGlow' || mesh.userData?.uniqueGeo) {
++          mesh.geometry.dispose();
++        }
++      });
++      const next = createUnitMesh(unit.unitDef, faction, {
++        age,
++        researchedTechIds: techs,
++        unitId: unit.unitDefId,
++      });
++      next.position.copy(pos);
++      next.rotation.y = rotY;
++      Object.assign(next.userData, {
++        type: 'unit',
++        id: unit.id,
++        faction,
++        team: unit.team,
++      });
++      this.scene.add(next);
++      this.unitMeshes.set(unit.id, next);
++    }
++  }
++
+   public advanceAge(faction: FactionId, landmarkType: LandmarkType): void {
+     const landmarkDef = DEFAULT_BUILDINGS[landmarkType];
+     const currentAge = this.ageByFaction[faction] || 1;
+     const targetAge = landmarkDef?.landmarkAgeAdvance || ((currentAge + 1) as AgeLevel);
+     this.ageByFaction[faction] = targetAge;
++    this.refreshFactionUnitMeshes(faction);
+     if (!this.landmarksByFaction[faction]) this.landmarksByFaction[faction] = [];
+     if (!this.landmarksByFaction[faction].includes(landmarkType)) {
+       this.landmarksByFaction[faction].push(landmarkType);
+diff --git a/src/game/mapGenerator.ts b/src/game/mapGenerator.ts
+index 20260d9..24d6864 100644
+--- a/src/game/mapGenerator.ts
++++ b/src/game/mapGenerator.ts
+@@ -53,6 +53,7 @@ export interface MapLayoutResult {
+   cliffDiscs: TerrainBlockedDisc[];
+   bridges: TerrainPassableBridge[];
+   resourceNodes: ResourceNode[];
++  contestedPoints: Array<{ id: string; x: number; z: number; radius: number; label: string }>;
+ }
+ 
+ function seededRandom(seed: number): () => number {
+@@ -577,6 +578,46 @@ export function generateMapLayout(
+     }
+   });
+ 
++  // Neutral contested shrines — contest these to swing mid-game tempo
++  const contestedPoints: Array<{ id: string; x: number; z: number; radius: number; label: string }> = [];
++  const shrineCandidates: Array<{ x: number; z: number; label: string }> = [];
++  if (preset === 'river_valley') {
++    shrineCandidates.push(
++      { x: 0, z: 24, label: '河心古祭壇' },
++      { x: 0, z: -24, label: '渡口戰旗' },
++      { x: -58, z: -10, label: '西岸遺跡' },
++      { x: 58, z: 10, label: '東岸遺跡' }
++    );
++  } else if (preset === 'highland_basin') {
++    shrineCandidates.push(
++      { x: 0, z: 0, label: '盆地聖石' },
++      { x: -34, z: 34, label: '北脊烽火' },
++      { x: 34, z: -34, label: '南脊烽火' }
++    );
++  } else {
++    shrineCandidates.push(
++      { x: 0, z: 0, label: '雙湖中樞' },
++      { x: -30, z: 38, label: '北灣燈塔' },
++      { x: 30, z: -38, label: '南灣燈塔' }
++    );
++  }
++
++  let shrineIdx = 0;
++  for (const c of shrineCandidates) {
++    if (spawns.some((sp) => Math.hypot(sp.x - c.x, sp.z - c.z) < 26)) continue;
++    contestedPoints.push({
++      id: `shrine_${shrineIdx++}`,
++      x: c.x,
++      z: c.z,
++      radius: 11,
++      label: c.label,
++    });
++    if (contestedPoints.length >= 3) break;
++  }
++  if (contestedPoints.length === 0) {
++    contestedPoints.push({ id: 'shrine_0', x: 0, z: 20, radius: 11, label: '中立爭奪點' });
++  }
++
+   return {
+     preset,
+     richness,
+@@ -585,6 +626,7 @@ export function generateMapLayout(
+     cliffDiscs,
+     bridges,
+     resourceNodes,
++    contestedPoints,
+   };
+ }
+ 
+diff --git a/src/game/mods.ts b/src/game/mods.ts
+index 303b758..f576ab5 100644
+--- a/src/game/mods.ts
++++ b/src/game/mods.ts
+@@ -65,7 +65,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
+     maxHp: 1100,
+     cost: { food: 0, wood: 110, gold: 0, stone: 0 },
+     buildTime: 16,
+-    trainableUnits: ['fishing_boat'],
++    trainableUnits: ['fishing_boat', 'transport_boat'],
+     buildingArmor: 7,
+     maxGarrison: 0,
+     size: 3.0,
+@@ -363,6 +363,35 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
+       scale: 1.05,
+     },
+   },
++
++  {
++    id: 'transport_boat',
++    name: '運兵船 (Transport)',
++    factionPack: 'medieval',
++    category: 'special',
++    isNaval: true,
++    description:
++      '載運陸上部隊渡河的平底船。靠近己方單位可登船，移動至對岸後卸載。本身幾乎無戰鬥力，需護衛。',
++    stats: {
++      maxHp: 160,
++      attack: 0,
++      buildingAttack: 0,
++      defense: 2,
++      rangedDefense: 1,
++      range: 1.5,
++      speed: 3.6,
++      attackRate: 1,
++      cost: { food: 0, wood: 100, gold: 20, stone: 0 },
++      trainTime: 18,
++      gatherSpeed: 0,
++      carryCapacity: 5,
++    },
++    visual: {
++      color: '#78716c',
++      modelType: 'boat',
++      scale: 1.25,
++    },
++  },
+   {
+     id: 'swordsman',
+     name: '重裝劍士 (Man-at-Arms)',
+@@ -542,6 +571,35 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
+     },
+     requiredAge: 4,
+   },
++  {
++    id: 'greek_fire_siphon',
++    name: '猛火油噴射器 (Naphtha Siphon)',
++    factionPack: 'medieval',
++    category: 'siege',
++    description:
++      '【獨特攻城】中世紀攻城用的猛火油虹吸管：將沸油與樹脂混合物短距噴出。擅長掃除木造工事與密集駐防，對石造仍有直擊，但不留下殘火。',
++    stats: {
++      maxHp: 125,
++      attack: 16,
++      buildingAttack: 34,
++      ignoresBuildingArmor: true,
++      defense: 1,
++      rangedDefense: 4,
++      range: 5.2,
++      speed: 2.35,
++      attackRate: 0.5,
++      cost: { food: 0, wood: 110, gold: 85, stone: 35 },
++      trainTime: 26,
++      gatherSpeed: 0,
++      carryCapacity: 0,
++    },
++    visual: {
++      color: '#f97316',
++      modelType: 'cannon',
++      scale: 1.05,
++      projectileType: 'fireball',
++    },
++  },
+ ];
+ 
+ export const ANIME_UNITS: UnitDefinition[] = [
+@@ -571,11 +629,11 @@ export const ANIME_UNITS: UnitDefinition[] = [
+       projectileType: 'slash',
+     },
+     specialAbility: {
+-      name: '千鳥突刺 (Chidori Rush)',
+-      type: 'whirlwind',
+-      cooldown: 10,
+-      potency: 24,
+-      description: '雷光瞬身斬擊，對目標造成爆發電擊傷害。',
++      name: '煙遁 (Smoke Veil)',
++      type: 'haste',
++      cooldown: 14,
++      potency: 1.4,
++      description: '釋放煙幕加速友軍，並短暫打斷附近敵軍對己方的攻擊鎖定。',
+     },
+   },
+   {
+@@ -704,7 +762,7 @@ export const FANTASY_UNITS: UnitDefinition[] = [
+       type: 'heal',
+       cooldown: 12,
+       potency: 28,
+-      description: '為自身及周圍5碼內的友軍恢復生命值。',
++      description: '治療友軍，並以藤蔓纏住附近敵軍雙足、短暫大幅緩速。',
+     },
+     requiredAge: 2,
+   },
+@@ -965,7 +1023,21 @@ export const DEFAULT_AI_RULES: AiRule[] = [
+     action: { type: 'cluster_attack', priority: 82 },
+   },
+   {
+-    id: 'ai_mid_patrol',
++    
++  {
++    id: 'ai_train_transport',
++    name: '渡河運兵 (有碼頭且軍隊成軍後訓練運兵船)',
++    condition: {
++      all: [
++        { field: 'wood', op: 'gte', value: 120 },
++        { field: 'armyCount', op: 'gte', value: 6 },
++        { field: 'gameTime', op: 'gte', value: 120 },
++        { field: 'age', op: 'gte', value: 2 },
++      ],
++    },
++    action: { type: 'train_unit', unitId: 'transport_boat', buildingType: 'dock', priority: 42 },
++  },
++id: 'ai_mid_patrol',
+     name: '前線集結列陣 (部隊先行於基地前方會師警戒與防守)',
+     enabled: true,
+     conditions: [
+diff --git a/src/game/proceduralGraphics.ts b/src/game/proceduralGraphics.ts
+index 507896b..1981c1d 100644
+--- a/src/game/proceduralGraphics.ts
++++ b/src/game/proceduralGraphics.ts
+@@ -2596,6 +2596,79 @@ export function createRubbleDecalMesh(footprintSize: number): THREE.Group {
+   return group;
+ }
+ 
++
++/** Neutral contested shrine / banner — readable from mid-distance */
++export function createContestedShrineMesh(label = '爭奪點'): THREE.Group {
++  const group = new THREE.Group();
++  group.name = 'contestedShrine';
++  addContactShadow(group, 2.4);
++
++  const stoneMat = new THREE.MeshStandardMaterial({
++    color: 0x78716c,
++    roughness: 0.88,
++    metalness: 0.08,
++  });
++  const goldMat = new THREE.MeshStandardMaterial({
++    color: 0xfbbf24,
++    emissive: 0xb45309,
++    emissiveIntensity: 0.35,
++    roughness: 0.45,
++    metalness: 0.4,
++  });
++  const clothMat = new THREE.MeshStandardMaterial({
++    color: 0xa8a29e,
++    roughness: 0.75,
++  });
++
++  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 0.45, 8), stoneMat);
++  plinth.position.y = 0.22;
++  plinth.castShadow = true;
++  group.add(plinth);
++
++  const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 2.2, 0.55), stoneMat);
++  pillar.position.y = 1.4;
++  pillar.castShadow = true;
++  group.add(pillar);
++
++  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.45, 4), goldMat);
++  cap.position.y = 2.7;
++  group.add(cap);
++
++  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.8, 6), stoneMat);
++  pole.position.set(0.85, 1.5, 0);
++  group.add(pole);
++
++  const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.1), clothMat);
++  banner.position.set(1.35, 2.1, 0);
++  banner.rotation.y = -0.4;
++  banner.name = 'shrineBanner';
++  group.add(banner);
++
++  // Capture ring (horizontal)
++  const ringGeo = new THREE.RingGeometry(9.5, 11.0, 48);
++  ringGeo.rotateX(-Math.PI / 2);
++  const ring = new THREE.Mesh(
++    ringGeo,
++    new THREE.MeshBasicMaterial({
++      color: 0xf8fafc,
++      transparent: true,
++      opacity: 0.35,
++      side: THREE.DoubleSide,
++      depthWrite: false,
++    })
++  );
++  ring.position.y = 0.06;
++  ring.name = 'captureRing';
++  group.add(ring);
++
++  const badge = createBadgeSprite(label, '⚔️', '中立', 1, false, false, '爭奪中');
++  badge.position.y = 3.4;
++  badge.name = 'shrineBadge';
++  group.add(badge);
++
++  return group;
++}
++
+ export function createBuildingMesh(
+   type: BuildingType,
+   faction: FactionId,
+@@ -4016,10 +4089,38 @@ const horseLegUpperGeo = new THREE.CylinderGeometry(0.085, 0.055, 0.34, 8);
+ const horseLegLowerGeo = new THREE.CylinderGeometry(0.052, 0.04, 0.28, 7);
+ const horseHoofGeo = new THREE.CylinderGeometry(0.044, 0.054, 0.07, 8);
+ 
+-export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THREE.Group {
++export interface UnitVisualContext {
++  age?: number;
++  researchedTechIds?: string[];
++  unitId?: string;
++}
++
++/** Map researched tech ids to silhouette upgrades (procedural accessories). */
++export function getUnitVisualFlags(ctx?: UnitVisualContext) {
++  const age = ctx?.age || 1;
++  const techs = ctx?.researchedTechIds || [];
++  const has = (id: string) => techs.includes(id);
++  return {
++    age,
++    plateArmor: has('med_plate_tempering') || has('fan_elder_bark') || has('ani_ki_awakening') || age >= 4,
++    forgedWeapons: has('med_forged_blades') || has('fan_arcane_resonance') || has('ani_chakra_flow') || age >= 3,
++    eliteTrim: age >= 3,
++    imperial: age >= 4,
++    siegeEngineers: has('shared_siege_engineers'),
++  };
++}
++
++export function createUnitMesh(
++  unitDef: UnitDefinition,
++  faction: FactionId,
++  visualCtx?: UnitVisualContext
++): THREE.Group {
+   const group = new THREE.Group();
+   const colors = getFactionPalette(faction);
+   const s = unitDef.visual.scale || 1;
++  const unitId = visualCtx?.unitId || unitDef.id;
++  const flags = getUnitVisualFlags(visualCtx);
++
+ 
+   addContactShadow(group, 0.72 * s);
+ 
+@@ -4075,7 +4176,12 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
+     cannon: '💣',
+     golem: unitDef.category === 'siege' ? '🪨' : '🪵',
+   };
+-  const icon = roleIcons[unitDef.visual.modelType] || '⚔️';
++  const icon =
++    unitId === 'transport_boat'
++      ? '🚢'
++      : unitId === 'greek_fire_siphon'
++      ? '🔥'
++      : roleIcons[unitDef.visual.modelType] || '⚔️';
+   const displayName = `${colors.labelPrefix || ''}${unitDef.name.split(' ')[0]}`;
+   const badge = createBadgeSprite(
+     displayName,
+@@ -4839,72 +4945,143 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
+     counterweight.position.set(0, -0.2, 0.44);
+     rightArmPivot.add(armBeam, spoon, boulder, counterweight);
+   } else if (mType === 'boat') {
+-    // Sleek Wooden Offshore Fishing Vessel with Sail, Cabin & Lantern
+-    bodyPivot.position.y = 0.08;
+     const oakMat = sharedWoodScaffoldMat;
+     const trimMat = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.45 });
+-    const sailMat = new THREE.MeshStandardMaterial({
+-      color: 0xf8fafc,
+-      map: unitClothMaps.map,
+-      side: THREE.DoubleSide,
+-      roughness: 0.68,
+-    });
+-    const lanternMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
++    const isTransport = unitId === 'transport_boat';
++
++    if (isTransport) {
++      // Wide flat-bottom troop barge — distinct from fishing sailboat
++      bodyPivot.position.y = 0.06;
++      const bargeMat = new THREE.MeshStandardMaterial({
++        color: flags.imperial ? 0x57534e : flags.eliteTrim ? 0x78716c : 0x92400e,
++        roughness: 0.7,
++        metalness: 0.08,
++      });
++      animParts.hitMaterials.push(bargeMat);
++      const hull = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.32, 1.85), bargeMat);
++      hull.position.set(0, 0.28, 0);
++      hull.castShadow = true;
++      // Bow/stern taper blocks
++      const bow = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 0.35), bargeMat);
++      bow.position.set(0, 0.26, 0.95);
++      const stern = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 0.3), bargeMat);
++      stern.position.set(0, 0.26, -0.95);
++      const deck = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.06, 1.7), leatherMat);
++      deck.position.set(0, 0.46, 0);
++      bodyPivot.add(hull, bow, stern, deck);
++
++      // Troop benches
++      [-0.28, 0.28].forEach((bx) => {
++        const bench = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 1.2), oakMat);
++        bench.position.set(bx, 0.54, 0);
++        bodyPivot.add(bench);
++      });
++      // Side shields / gunwales (faction color)
++      [-0.58, 0.58].forEach((sx, i) => {
++        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.28, 1.5), trimMat);
++        rail.position.set(sx, 0.58, 0);
++        bodyPivot.add(rail);
++        if (flags.eliteTrim || flags.plateArmor) {
++          const shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.34, 0.28), armorMat);
++          shield.position.set(sx * 1.05, 0.72, i === 0 ? -0.35 : 0.35);
++          bodyPivot.add(shield);
++        }
++      });
++      // Boarding ramp (front)
++      const ramp = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.05, 0.7), oakMat);
++      ramp.position.set(0, 0.38, 1.15);
++      ramp.rotation.x = -0.35;
++      bodyPivot.add(ramp);
++      // Short mast + signal flag (not a fishing sail)
++      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.1, 6), oakMat);
++      mast.position.set(0, 1.0, -0.4);
++      const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.28), trimMat);
++      flag.position.set(0.28, 1.45, -0.4);
++      bodyPivot.add(mast, flag);
++      if (flags.siegeEngineers || flags.imperial) {
++        const ironBand = new THREE.Mesh(
++          new THREE.TorusGeometry(0.55, 0.04, 6, 16),
++          new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7, roughness: 0.35 })
++        );
++        ironBand.rotation.x = Math.PI / 2;
++        ironBand.position.set(0, 0.42, 0);
++        bodyPivot.add(ironBand);
++      }
++      // Iconic oars on sides
++      rightArmPivot.position.set(0.7, 0.5, 0.2);
++      bodyPivot.add(rightArmPivot);
++      const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 1.1, 5), oakMat);
++      oar.rotation.z = Math.PI / 2.2;
++      rightArmPivot.add(oar);
++    } else {
++      // Fishing vessel — pointed hull, tall sail, lantern, net boom
++      bodyPivot.position.y = 0.08;
++      const sailMat = new THREE.MeshStandardMaterial({
++        color: flags.imperial ? 0xfef3c7 : 0xf8fafc,
++        map: unitClothMaps.map,
++        side: THREE.DoubleSide,
++        roughness: 0.68,
++      });
++      const lanternMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
++      const hull = new THREE.Mesh(
++        makeLatheGeo(
++          [
++            [0.02, -0.92],
++            [0.34, -0.68],
++            [0.44, -0.1],
++            [0.42, 0.45],
++            [0.24, 0.85],
++            [0.02, 1.05],
++          ],
++          12
++        ),
++        oakMat
++      );
++      hull.rotation.x = Math.PI / 2;
++      hull.scale.set(flags.eliteTrim ? 1.08 : 1.0, 0.62, flags.eliteTrim ? 1.1 : 1.0);
++      hull.position.set(0, 0.24, 0);
++      hull.castShadow = true;
++      animParts.hitMaterials.push(oakMat);
++      bodyPivot.add(hull);
++
++      const deck = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 1.28), leatherMat);
++      deck.position.set(0, 0.34, -0.02);
++      const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.44), trimMat);
++      cabin.position.set(0, 0.52, -0.35);
++      cabin.castShadow = true;
++      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), goldTrimMat);
++      crate.position.set(0.1, 0.46, 0.32);
++      bodyPivot.add(deck, cabin, crate);
++
++      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.55, 8), oakMat);
++      mast.position.set(0, 1.1, 0.06);
++      mast.castShadow = true;
++      const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), oakMat);
++      yard.rotation.z = Math.PI / 2;
++      yard.position.set(0, 1.66, 0.08);
++      const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.92, 4, 4), sailMat);
++      sail.position.set(0, 1.18, 0.14);
++      const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.02), trimMat);
++      emblem.position.set(0, 1.2, 0.155);
++      bodyPivot.add(mast, yard, sail, emblem);
++
++      const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), lanternMat);
++      lantern.position.set(0, 0.55, 0.96);
++      bodyPivot.add(lantern);
++
++      if (flags.forgedWeapons || flags.age >= 3) {
++        const netPile = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.05, 6, 10), leatherMat);
++        netPile.position.set(-0.2, 0.48, 0.4);
++        bodyPivot.add(netPile);
++      }
+ 
+-    // Curved keel & hull
+-    const hull = new THREE.Mesh(
+-      makeLatheGeo([
+-        [0.02, -0.92],
+-        [0.34, -0.68],
+-        [0.44, -0.1],
+-        [0.42, 0.45],
+-        [0.24, 0.85],
+-        [0.02, 1.05],
+-      ], 12),
+-      oakMat
+-    );
+-    hull.rotation.x = Math.PI / 2;
+-    hull.scale.set(1.0, 0.62, 1.0);
+-    hull.position.set(0, 0.24, 0);
+-    hull.castShadow = true;
+-    animParts.hitMaterials.push(oakMat);
+-    bodyPivot.add(hull);
+-
+-    // Gunwale trim & flat timber deck
+-    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 1.28), leatherMat);
+-    deck.position.set(0, 0.34, -0.02);
+-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.44), trimMat);
+-    cabin.position.set(0, 0.52, -0.35);
+-    cabin.castShadow = true;
+-    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), goldTrimMat);
+-    crate.position.set(0.1, 0.46, 0.32);
+-    bodyPivot.add(deck, cabin, crate);
+-
+-    // Mast & Yardarm with billowing sail
+-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.55, 8), oakMat);
+-    mast.position.set(0, 1.1, 0.06);
+-    mast.castShadow = true;
+-    const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), oakMat);
+-    yard.rotation.z = Math.PI / 2;
+-    yard.position.set(0, 1.66, 0.08);
+-    const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.92, 4, 4), sailMat);
+-    sail.position.set(0, 1.18, 0.14);
+-    const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.02), trimMat);
+-    emblem.position.set(0, 1.2, 0.155);
+-    bodyPivot.add(mast, yard, sail, emblem);
+-
+-    // Bow lantern
+-    const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), lanternMat);
+-    lantern.position.set(0, 0.55, 0.96);
+-    bodyPivot.add(lantern);
+-
+-    // Fishing net boom articulated slightly via rightArmPivot while harvesting fish
+-    rightArmPivot.position.set(-0.34, 0.42, 0.15);
+-    bodyPivot.add(rightArmPivot);
+-    const netPole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.85, 6), oakMat);
+-    netPole.rotation.z = 0.55;
+-    netPole.position.set(-0.22, 0.12, 0.18);
+-    rightArmPivot.add(netPole);
++      rightArmPivot.position.set(-0.34, 0.42, 0.15);
++      bodyPivot.add(rightArmPivot);
++      const netPole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.85, 6), oakMat);
++      netPole.rotation.z = 0.55;
++      netPole.position.set(-0.22, 0.12, 0.18);
++      rightArmPivot.add(netPole);
++    }
+   } else {
+     // Ancient Living Treant / Guardian Colossus
+     const barkMat = new THREE.MeshStandardMaterial({
+@@ -4961,7 +5138,72 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
+     });
+   }
+ 
++
++  // --- Age / tech silhouette upgrades (shared accents) ---
++  if (flags.eliteTrim || flags.plateArmor || flags.forgedWeapons || flags.imperial) {
++    const accent = new THREE.MeshStandardMaterial({
++      color: flags.imperial ? 0xfbbf24 : flags.plateArmor ? 0xcbd5e1 : colors.primary,
++      metalness: flags.plateArmor ? 0.75 : 0.35,
++      roughness: 0.35,
++    });
++    if (mType === 'swordsman' || mType === 'knight' || mType === 'ninja' || mType === 'saiyan') {
++      if (flags.eliteTrim || flags.imperial) {
++        const plume = new THREE.Mesh(new THREE.ConeGeometry(0.06 * s, 0.28 * s, 5), accent);
++        plume.position.set(0, 1.22 * s, -0.02);
++        plume.name = 'agePlume';
++        bodyPivot.add(plume);
++      }
++      if (flags.plateArmor) {
++        const gorget = new THREE.Mesh(new THREE.TorusGeometry(0.16 * s, 0.035 * s, 6, 12), accent);
++        gorget.rotation.x = Math.PI / 2;
++        gorget.position.set(0, 0.62 * s, 0.05);
++        bodyPivot.add(gorget);
++      }
++      if (flags.forgedWeapons) {
++        const edgeGlow = new THREE.Mesh(
++          new THREE.BoxGeometry(0.04 * s, 0.5 * s, 0.04 * s),
++          new THREE.MeshBasicMaterial({ color: flags.imperial ? 0xfde68a : 0x93c5fd })
++        );
++        edgeGlow.position.set(0.42 * s, 0.35 * s, 0.15 * s);
++        edgeGlow.name = 'weaponGlow';
++        bodyPivot.add(edgeGlow);
++      }
++    }
++    if (mType === 'archer' && (flags.eliteTrim || flags.age >= 2)) {
++      const quiverCap = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * s, 0.09 * s, 0.12 * s, 6), accent);
++      quiverCap.position.set(-0.28 * s, 0.55 * s, -0.15 * s);
++      bodyPivot.add(quiverCap);
++    }
++    if ((mType === 'cannon' || mType === 'ram') && (flags.siegeEngineers || flags.imperial)) {
++      const plate = new THREE.Mesh(
++        new THREE.BoxGeometry(0.5 * s, 0.08 * s, 0.6 * s),
++        new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.3 })
++      );
++      plate.position.set(0, 0.55 * s, 0);
++      bodyPivot.add(plate);
++    }
++  }
++
++
++  // Unique unit silhouettes (always on)
++  if (unitId === 'greek_fire_siphon' && mType === 'cannon') {
++    const nozzle = new THREE.Mesh(
++      new THREE.CylinderGeometry(0.07 * s, 0.13 * s, 0.6 * s, 8),
++      new THREE.MeshStandardMaterial({ color: 0xea580c, metalness: 0.55, roughness: 0.38 })
++    );
++    nozzle.rotation.z = Math.PI / 2;
++    nozzle.position.set(0.5 * s, 0.55 * s, 0.15 * s);
++    const tank = new THREE.Mesh(
++      new THREE.SphereGeometry(0.24 * s, 8, 6),
++      new THREE.MeshStandardMaterial({ color: 0x44403c, metalness: 0.4, roughness: 0.5 })
++    );
++    tank.position.set(-0.2 * s, 0.48 * s, -0.12 * s);
++    bodyPivot.add(nozzle, tank);
++  }
++
+   group.userData.animParts = animParts;
++  group.userData.visualFlags = flags;
++  group.userData.visualUnitId = unitId;
+   group.scale.set(s, s, s);
+   return group;
+ }
+diff --git a/src/game/rules.test.ts b/src/game/rules.test.ts
+index 6b42dc1..da71e09 100644
+--- a/src/game/rules.test.ts
++++ b/src/game/rules.test.ts
+@@ -1263,3 +1263,37 @@ test('unit-rebalance-and-naval: villager 55/5/0.7 vs Age-1 infantry 1.6x/1.6x/2x
+   );
+ });
+ 
++
++
++test('medieval-assault: torch/sap channel, no burn DoT; greek fire profile', async () => {
++  const { getBuildingAssaultProfile, calculateBuildingDamage, getSiegeChannelMultiplier } = await import('./rules');
++  const { MEDIEVAL_UNITS, DEFAULT_BUILDINGS } = await import('./mods');
++  const sword = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
++  const ram = MEDIEVAL_UNITS.find((u) => u.id === 'battering_ram')!;
++  const archer = MEDIEVAL_UNITS.find((u) => u.id === 'longbowman')!;
++  const flame = MEDIEVAL_UNITS.find((u) => u.id === 'greek_fire_siphon');
++  const farm = { buildingDef: DEFAULT_BUILDINGS.farm, buildingType: 'farm' as const };
++  const castle = { buildingDef: DEFAULT_BUILDINGS.castle, buildingType: 'castle' as const };
++
++  const torch = getBuildingAssaultProfile({ unitDef: sword, unitDefId: 'swordsman' });
++  assert.equal(torch.method, 'torch');
++  assert.equal(torch.wantsContact, true);
++
++  const ramP = getBuildingAssaultProfile({ unitDef: ram, unitDefId: 'battering_ram' });
++  assert.equal(ramP.method, 'ram');
++
++  const arrow = getBuildingAssaultProfile({ unitDef: archer, unitDefId: 'longbowman' });
++  assert.equal(arrow.method, 'arrow_chip');
++
++  if (flame) {
++    const g = getBuildingAssaultProfile({ unitDef: flame, unitDefId: 'greek_fire_siphon' });
++    assert.equal(g.method, 'greek_fire');
++  }
++
++  assert.ok(getSiegeChannelMultiplier(14, 'torch') > 1.4);
++  assert.equal(getSiegeChannelMultiplier(0, 'torch'), 1);
++
++  const fresh = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 0 }, farm, 1, [], [], []);
++  const sapped = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 12 }, farm, 1, [], [], []);
++  assert.ok(sapped > fresh, 'sapping channel should increase torch damage');
++});
+diff --git a/src/game/rules.ts b/src/game/rules.ts
+index 8d63298..698b914 100644
+--- a/src/game/rules.ts
++++ b/src/game/rules.ts
+@@ -100,42 +100,165 @@ export function getEffectiveBuildingArmor(
+   return baseArmor + ageBonus + techBonus;
+ }
+ 
++
++/**
++ * Medieval assault methods — NO residual burn DoT.
++ * Damage identity comes from role + sustained sapping channel + structure material.
++ * Greek-fire siphons use a dedicated short-range cone profile (handled in engine splash).
++ */
++export function getBuildingAssaultProfile(
++  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId'>
++): {
++  method: import('../types/game').BuildingAssaultMethod;
++  damageMultiplier: number;
++  floatLabel: string;
++  /** Prefer adjacent assault (torch / sap); engine may slow attack-move from range */
++  wantsContact: boolean;
++} {
++  const cat = attacker.unitDef.category;
++  const stats = attacker.unitDef.stats;
++  const id = attacker.unitDefId;
++
++  if (id === 'greek_fire_siphon') {
++    return {
++      method: 'greek_fire',
++      damageMultiplier: 1.05,
++      floatLabel: '',
++      wantsContact: false,
++    };
++  }
++
++  if (stats.ignoresBuildingArmor || cat === 'siege') {
++    if (id === 'fantasy_goblin_sapper' || id.includes('sapper')) {
++      return {
++        method: 'blast',
++        damageMultiplier: 1.05,
++        floatLabel: '',
++        wantsContact: true,
++      };
++    }
++    return {
++      method: 'ram',
++      damageMultiplier: 1,
++      floatLabel: '',
++      wantsContact: true,
++    };
++  }
++
++  if (cat === 'ranged' || cat === 'special') {
++    return {
++      method: 'arrow_chip',
++      damageMultiplier: 1,
++      floatLabel: '',
++      wantsContact: false,
++    };
++  }
++
++  if (cat === 'cavalry') {
++    return {
++      method: 'cavalry_harass',
++      damageMultiplier: 0.5,
++      floatLabel: '',
++      wantsContact: true,
++    };
++  }
++
++  if (cat === 'worker') {
++    return {
++      method: 'sap',
++      damageMultiplier: 0.75,
++      floatLabel: '',
++      wantsContact: true,
++    };
++  }
++
++  // Infantry: classic torch assault — burst identity, not DoT
++  return {
++    method: 'torch',
++    damageMultiplier: 0.9,
++    floatLabel: '',
++    wantsContact: true,
++  };
++}
++
++export function isWoodenBuilding(buildingType: string): boolean {
++  return (
++    buildingType === 'farm' ||
++    buildingType === 'lumber_camp' ||
++    buildingType === 'mining_camp' ||
++    buildingType === 'dock'
++  );
++}
++
++/**
++ * Sustained assault bonus: infantry/workers "sap" or torch the same structure.
++ * After ~8s continuous attack on one building, up to +55% anti-building damage.
++ */
++export function getSiegeChannelMultiplier(channelTime: number | undefined, method: string): number {
++  if (!channelTime || channelTime <= 0) return 1;
++  if (method !== 'torch' && method !== 'sap' && method !== 'blast') return 1;
++  // Cap so mass infantry cannot fully replace siege engines
++  const t = Math.min(12, channelTime);
++  return 1 + (t / 12) * 0.38;
++}
++
+ /**
+- * Separate anti-building damage profile: regular infantry/cavalry use torch/chip damage mitigated
+- * by Building Armor, whereas dedicated Siege Engines & Treants ignore Building Armor.
++ * Building damage — material, assault method, channeling, tech/landmarks.
++ * No residual fire DoT; greek-fire direct hits are front-loaded.
+  */
+ export function calculateBuildingDamage(
+-  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId'>,
++  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId' | 'siegeChannelTime'>,
+   building: Pick<BuildingEntity, 'buildingDef' | 'buildingType'>,
+   defenderAge = 1,
+   defenderTechIds: string[] = [],
+   attackerTechIds: string[] = [],
+-  attackerLandmarks: string[] = []
++  attackerLandmarks: string[] = [],
++  ownerHasSiegeSupply = false
+ ): number {
+   const stats = attacker.unitDef.stats;
+-  const baseBuildingAtk =
++  const profile = getBuildingAssaultProfile(attacker);
++  const cat = attacker.unitDef.category;
++
++  let baseBuildingAtk =
+     stats.buildingAttack ??
+-    (attacker.unitDef.category === 'siege'
++    (cat === 'siege'
+       ? stats.attack * 2.2
+-      : attacker.unitDef.category === 'ranged'
+-      ? Math.max(2, Math.round(stats.attack * 0.4))
+-      : Math.max(3, Math.round(stats.attack * 0.65)));
+-
+-  let mult = 1;
+-  if (attackerLandmarks.includes('landmark_arsenal')) {
+-    mult *= 2.0;
++      : cat === 'ranged' || cat === 'special'
++      ? Math.max(2, Math.round(stats.attack * 0.32))
++      : cat === 'cavalry'
++      ? Math.max(2, Math.round(stats.attack * 0.38))
++      : Math.max(3, Math.round(stats.attack * 0.52)));
++
++  if (profile.method === 'arrow_chip') {
++    baseBuildingAtk *= isWoodenBuilding(building.buildingType) ? 1.2 : 0.5;
+   }
+-  if (
+-    attacker.unitDef.category !== 'siege' &&
+-    attackerTechIds.includes('shared_siege_engineers')
+-  ) {
+-    // Non-siege units get a smaller +25% torch boost (siege units already received 1.45x on stats.buildingAttack)
+-    mult *= 1.25;
++  if (profile.method === 'torch' || profile.method === 'sap') {
++    if (isWoodenBuilding(building.buildingType)) baseBuildingAtk *= 1.4;
+   }
++  if (profile.method === 'greek_fire') {
++    // Naphtha excels vs timber/docks; solid but not a castle eraser
++    baseBuildingAtk *= isWoodenBuilding(building.buildingType) ? 1.55 : 1.05;
++  }
++
++  let mult = profile.damageMultiplier;
++  mult *= getSiegeChannelMultiplier(attacker.siegeChannelTime, profile.method);
++
++  if (attackerLandmarks.includes('landmark_arsenal')) mult *= 2.0;
++  if (cat !== 'siege' && attackerTechIds.includes('shared_siege_engineers')) mult *= 1.25;
++  // Contested shrine long-hold: army-wide siege supplies (oil, ladders, pavises)
++  if (ownerHasSiegeSupply && cat !== 'siege') mult *= 1.12;
+ 
+   const effectiveAtk = baseBuildingAtk * mult;
+-  if (stats.ignoresBuildingArmor || attacker.unitDef.category === 'siege') {
+-    return Math.max(5, Math.round(effectiveAtk));
++
++  if (
++    stats.ignoresBuildingArmor ||
++    cat === 'siege' ||
++    profile.method === 'ram' ||
++    profile.method === 'blast' ||
++    profile.method === 'greek_fire'
++  ) {
++    const floor = profile.method === 'greek_fire' ? 6 : profile.method === 'blast' ? 4 : 5;
++    return Math.max(floor, Math.round(effectiveAtk));
+   }
+ 
+   const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
+diff --git a/src/types/game.ts b/src/types/game.ts
+index 18c4f8b..9858ee8 100644
+--- a/src/types/game.ts
++++ b/src/types/game.ts
+@@ -271,6 +271,11 @@ export interface UnitEntity extends EntityCommon {
+   pathCooldown?: number;
+   lastProgressCheckPos?: { x: number; z: number };
+   stuckAccumulator?: number;
++  /** Continuous assault on the same building (sapping / sustained torching) */
++  siegeTargetId?: string;
++  siegeChannelTime?: number;
++  /** Naval transport cargo (unit ids loaded onto a transport boat) */
++  transportCargoIds?: string[];
+ }
+ 
+ export interface BuildingEntity extends EntityCommon {
+@@ -296,6 +301,7 @@ export interface BuildingEntity extends EntityCommon {
+   attackCooldown: number;
+   hitFlashTimer?: number;
+   garrisonedUnitIds?: string[];
++  lastAttackerFaction?: FactionId;
+ }
+ 
+ export interface ResourceNode {
+@@ -308,6 +314,32 @@ export interface ResourceNode {
+   maxAmount: number;
+ }
+ 
++/** Neutral map objective: stand in the circle to capture; owner gains passive income + aura. */
++export interface ContestedPoint {
++  id: string;
++  x: number;
++  z: number;
++  radius: number;
++  ownerFaction: FactionId | 'neutral';
++  captureProgress: number;
++  capturingFaction?: FactionId;
++  label: string;
++  /** Seconds continuously held by current owner — unlocks siege-supply buff */
++  holdTime: number;
++  /** Owner has secured long enough for army-wide anti-building supply */
++  siegeSupplyActive: boolean;
++}
++
++/** Medieval-inspired structure assault methods (no residual burn DoT). */
++export type BuildingAssaultMethod =
++  | 'torch'
++  | 'sap'
++  | 'arrow_chip'
++  | 'cavalry_harass'
++  | 'ram'
++  | 'blast'
++  | 'greek_fire';
++
+ export interface Projectile {
+   id: string;
+   type: 'arrow' | 'fireball' | 'ki_blast' | 'slash';
+-- 
+2.43.0
+
