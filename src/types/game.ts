@@ -110,6 +110,7 @@ export type BuildingType =
   | 'archery_range'
   | 'dock'
   | 'farm'
+  | 'granary'
   | 'lumber_camp'
   | 'mining_camp'
   | 'wall'
@@ -278,6 +279,13 @@ export interface UnitEntity extends EntityCommon {
   siegeChannelTime?: number;
   /** Naval transport cargo (unit ids loaded onto a transport boat) */
   transportCargoIds?: string[];
+  /** Shift-queue: pending orders after current action finishes */
+  commandQueue?: Array<
+    | { type: 'move'; x: number; z: number }
+    | { type: 'gather'; nodeId: string }
+    | { type: 'attack'; targetId: string }
+    | { type: 'build'; buildingId: string }
+  >;
 }
 
 export interface BuildingEntity extends EntityCommon {

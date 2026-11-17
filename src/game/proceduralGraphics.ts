@@ -919,6 +919,40 @@ export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+
+export function createGranaryMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  addContactShadow(group, 1.4);
+  const wood = sharedWoodScaffoldMat;
+  const roof = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.7 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.35, 2.0), wood);
+  base.position.y = 0.18;
+  base.castShadow = true;
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.1, 1.7), wood);
+  walls.position.y = 0.85;
+  walls.castShadow = true;
+  const roofMesh = new THREE.Mesh(new THREE.ConeGeometry(1.55, 0.7, 4), roof);
+  roofMesh.position.y = 1.75;
+  roofMesh.rotation.y = Math.PI / 4;
+  roofMesh.castShadow = true;
+  // Grain sacks
+  for (let i = 0; i < 3; i++) {
+    const sack = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 6, 5),
+      new THREE.MeshStandardMaterial({ color: 0xd6b482, roughness: 0.9 })
+    );
+    sack.position.set(-0.5 + i * 0.45, 0.45, 1.15);
+    group.add(sack);
+  }
+  group.add(base, walls, roofMesh);
+  const badge = createBadgeSprite('農莊', '🌾', '', 0.9, colors.isHostile, false);
+  badge.position.y = 2.6;
+  badge.name = 'bldgBadge';
+  group.add(badge);
+  return group;
+}
+
 export function createFarmMesh(): THREE.Group {
   const group = new THREE.Group();
 
@@ -2691,6 +2725,9 @@ export function createBuildingMesh(
       break;
     case 'farm':
       group = createFarmMesh();
+      break;
+    case 'granary':
+      group = createGranaryMesh(faction);
       break;
     case 'lumber_camp':
       group = createCampMesh('lumber', faction);

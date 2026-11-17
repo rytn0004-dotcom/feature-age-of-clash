@@ -616,6 +616,7 @@ export const HUD: React.FC<HUDProps> = ({
     'wall',
     'tower',
     'farm',
+    'granary',
   ];
 
   return (

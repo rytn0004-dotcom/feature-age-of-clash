@@ -1944,7 +1944,7 @@ export class RtsEngine {
     this.onSelectionChange?.();
   }
 
-  public issueMoveOrder(x: number, z: number) {
+  public issueMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
@@ -1984,9 +1984,19 @@ export class RtsEngine {
       const col = idx % cols;
       const ox = (col - (cols - 1) / 2) * spacing;
       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
+      const tx = Math.max(-95, Math.min(95, x + ox));
+      const tz = Math.max(-95, Math.min(95, z + oz));
 
-      unit.targetX = Math.max(-95, Math.min(95, x + ox));
-      unit.targetZ = Math.max(-95, Math.min(95, z + oz));
+      if (queue) {
+        if (!unit.commandQueue) unit.commandQueue = [];
+        unit.commandQueue.push({ type: 'move', x: tx, z: tz });
+        unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
+        return;
+      }
+
+      unit.commandQueue = undefined;
+      unit.targetX = tx;
+      unit.targetZ = tz;
       unit.attackMoveGoal = null;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
@@ -1999,7 +2009,7 @@ export class RtsEngine {
     });
   }
 
-  public issueAttackOrder(targetId: string) {
+  public issueAttackOrder(targetId: string, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
@@ -2036,7 +2046,7 @@ export class RtsEngine {
     });
   }
 
-  public issueGatherOrder(nodeId: string) {
+  public issueGatherOrder(nodeId: string, queue = false) {
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
@@ -2062,6 +2072,13 @@ export class RtsEngine {
     const meta = this.getResourceDisplayMeta(node);
 
     eligibleWorkers.forEach((worker) => {
+      if (queue) {
+        if (!worker.commandQueue) worker.commandQueue = [];
+        worker.commandQueue.push({ type: 'gather', nodeId });
+        worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+        return;
+      }
+      worker.commandQueue = undefined;
       worker.targetResourceNodeId = nodeId;
       worker.targetEntityId = undefined;
       worker.targetBuildingId = undefined;
@@ -2071,6 +2088,51 @@ export class RtsEngine {
       worker.state = 'gathering';
       worker.currentActionText = `${meta.icon} 前往${meta.action}`;
     });
+  }
+
+  /** Consume next Shift-queued order when a unit finishes its current task. */
+  private tryDequeueCommand(unit: UnitEntity): boolean {
+    if (!unit.commandQueue || unit.commandQueue.length === 0) return false;
+    const next = unit.commandQueue.shift()!;
+    if (unit.commandQueue.length === 0) unit.commandQueue = undefined;
+    if (next.type === 'move') {
+      unit.targetX = next.x;
+      unit.targetZ = next.z;
+      unit.targetEntityId = undefined;
+      unit.targetResourceNodeId = undefined;
+      unit.targetBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.state = 'moving';
+      unit.currentActionText = '👣 佇列行軍';
+      return true;
+    }
+    if (next.type === 'gather') {
+      unit.targetResourceNodeId = next.nodeId;
+      unit.targetEntityId = undefined;
+      unit.targetBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.state = 'gathering';
+      unit.currentActionText = '⋯佇列採集';
+      return true;
+    }
+    if (next.type === 'attack') {
+      unit.targetEntityId = next.targetId;
+      unit.targetResourceNodeId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.state = 'attacking';
+      unit.currentActionText = '⚔️ 佇列攻擊';
+      return true;
+    }
+    if (next.type === 'build') {
+      unit.targetBuildingId = next.buildingId;
+      unit.state = 'building';
+      unit.currentActionText = '🔨 佇列建造';
+      return true;
+    }
+    return false;
   }
 
   public issueBuildOrder(buildingId: string) {
@@ -3193,6 +3255,10 @@ export class RtsEngine {
 
       remainingUnits.push(unit);
 
+      if (unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
+        this.tryDequeueCommand(unit);
+      }
+
       if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
         const cap = unit.unitDef.stats.carryCapacity || 5;
         if (!unit.currentActionText?.includes('航向') && !unit.currentActionText?.includes('卸載')) {
@@ -3471,6 +3537,8 @@ export class RtsEngine {
       unit.waypoints = undefined;
       if ((unit as any)._unloadOnArrive && unit.unitDefId === 'transport_boat') {
         this.unloadTransport(unit);
+      } else if (this.tryDequeueCommand(unit)) {
+        return;
       } else {
         unit.currentActionText = '💤 待命中 (閒置)';
       }
@@ -3706,8 +3774,10 @@ export class RtsEngine {
         unit.currentActionText = '🏃 送回剩餘資源';
       } else {
         unit.targetResourceNodeId = undefined;
-        unit.state = 'idle';
-        unit.currentActionText = '💤 附近資源已採盡';
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 附近資源已採盡';
+        }
       }
       return;
     }
@@ -3926,7 +3996,8 @@ export class RtsEngine {
         (isNaval
           ? b.buildingType === 'dock'
           : b.buildingType === 'town_center' ||
-            (unit.carryingResource?.type === 'food' && b.buildingType === 'dock') ||
+            (unit.carryingResource?.type === 'food' &&
+              (b.buildingType === 'dock' || b.buildingType === 'granary' || b.buildingType === 'farm')) ||
             (unit.carryingResource?.type === 'wood' && b.buildingType === 'lumber_camp') ||
             ((unit.carryingResource?.type === 'gold' || unit.carryingResource?.type === 'stone') &&
               b.buildingType === 'mining_camp'))

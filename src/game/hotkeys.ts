@@ -10,6 +10,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   mining_camp: 'G',
   dock: 'J',
   farm: 'R',
+  granary: 'N',
   barracks: 'V',
   archery_range: 'Y',
   armory_forge: 'K',

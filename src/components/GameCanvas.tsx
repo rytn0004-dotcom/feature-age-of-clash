@@ -347,13 +347,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
       // 2. Attack order if targeted hostile unit
       if (hit.hitType === 'unit' && hit.unit && engine.isHostileToPlayer(hit.unit)) {
-        engine.issueAttackOrder(hit.unit.id);
+        engine.issueAttackOrder(hit.unit.id, e.shiftKey);
         return;
       }
 
       // 3. Attack order if targeted hostile building
       if (hit.hitType === 'building' && hit.building && engine.isHostileToPlayer(hit.building)) {
-        engine.issueAttackOrder(hit.building.id);
+        engine.issueAttackOrder(hit.building.id, e.shiftKey);
         return;
       }
 
@@ -380,7 +380,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       ) {
         const farmNode = engine.getOrCreateFarmFoodNode(hit.building);
         if (farmNode) {
-          engine.issueGatherOrder(farmNode.id);
+          engine.issueGatherOrder(farmNode.id, e.shiftKey);
           return;
         }
       }
@@ -406,13 +406,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       // 6. Gather order if targeted resource node
       if (hit.hitType === 'resource' && hit.resource) {
         if (hasWorkersSelected) {
-          engine.issueGatherOrder(hit.resource.id);
+          engine.issueGatherOrder(hit.resource.id, e.shiftKey);
           return;
         }
       }
 
       // 7. Default: Move order to clicked terrain location
-      engine.issueMoveOrder(worldPoint.x, worldPoint.z);
+      engine.issueMoveOrder(worldPoint.x, worldPoint.z, e.shiftKey);
       return;
     }
 
@@ -431,11 +431,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       if (engine.pendingCommandMode === 'attack_move') {
         const hit = engine.raycastInteractive(e.clientX, e.clientY);
         if (hit.hitType === 'unit' && hit.unit && engine.isHostileToPlayer(hit.unit)) {
-          engine.issueAttackOrder(hit.unit.id);
+          engine.issueAttackOrder(hit.unit.id, e.shiftKey);
           return;
         }
         if (hit.hitType === 'building' && hit.building && engine.isHostileToPlayer(hit.building)) {
-          engine.issueAttackOrder(hit.building.id);
+          engine.issueAttackOrder(hit.building.id, e.shiftKey);
           return;
         }
         const worldPoint = hit.point || engine.screenToWorld(e.clientX, e.clientY);
