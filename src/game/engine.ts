@@ -83,6 +83,7 @@ import {
   resolveStarRelicDelivery,
   starRelicChannelComplete,
   starRelicShouldFall,
+  STAR_RELIC_CHANNEL_SEC,
   STAR_RELIC_CARRY_SPEED,
   STAR_RELIC_OATH_GATHER,
   STAR_RELIC_OATH_SEC,
