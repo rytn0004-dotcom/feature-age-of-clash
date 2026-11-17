@@ -1424,3 +1424,49 @@ test('counters: spear tips cavalry, cavalry tips melee, siege is soft vs units',
   assert.ok(getCategoryCounterMultiplier('siege', 'melee') < 0.5);
   assert.equal(getCategoryCounterMultiplier('melee', 'melee'), 1);
 });
+
+test('military techs: shared line covers melee/ranged/cavalry by age and stacks with filters', async () => {
+  const { getAvailableTechsForBuilding, findTechDef, applyCivilizationAndTechStats } = await import('./civilizations');
+  const age1Barracks = getAvailableTechsForBuilding('barracks', 'medieval', [], 1).map((t) => t.id);
+  assert.ok(age1Barracks.includes('shared_basic_training'));
+  assert.ok(!age1Barracks.includes('shared_champion_line'));
+
+  const age3Archery = getAvailableTechsForBuilding('archery_range', 'medieval', [], 3).map((t) => t.id);
+  assert.ok(age3Archery.includes('shared_thumb_ring'));
+  assert.ok(age3Archery.includes('shared_bodkin'));
+
+  const charge = findTechDef('shared_cavalry_charge');
+  assert.ok(charge);
+  assert.equal(charge!.requiredAge, 3);
+
+  const base = {
+    maxHp: 100,
+    attack: 10,
+    defense: 1,
+    range: 1.2,
+    speed: 3,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 0, stone: 0 },
+    trainTime: 10,
+    gatherSpeed: 0,
+    carryCapacity: 0,
+  };
+  const melee = applyCivilizationAndTechStats(base, 'melee', 'medieval', ['shared_basic_training', 'shared_pike_drill'], 2);
+  assert.ok(melee.attack >= 12);
+  assert.ok(melee.maxHp > 100);
+  const ranged = applyCivilizationAndTechStats(base, 'ranged', 'medieval', ['shared_fletching', 'shared_bodkin'], 2);
+  assert.ok(ranged.attack >= 14);
+  assert.ok(ranged.range >= 1.2 + 1);
+});
+
+test('economy techs: shared gather bonuses are moderate so they do not erase map control', async () => {
+  const { findTechDef } = await import('./civilizations');
+  const axe = findTechDef('shared_double_bit_axe');
+  assert.ok(axe && axe.effect.gatherMultiplier! <= 1.15);
+  const crop = findTechDef('shared_crop_rotation');
+  assert.ok(crop && crop.effect.gatherMultiplier! <= 1.16);
+  const wheel = findTechDef('shared_wheelbarrow');
+  assert.ok(wheel);
+  const guild = findTechDef('shared_guild_contracts');
+  assert.ok(guild && guild.requiredAge === 3);
+});
