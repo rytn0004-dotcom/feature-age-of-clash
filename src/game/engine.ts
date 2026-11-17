@@ -22,7 +22,14 @@ import {
   UnitEntity,
   ContestedPoint,
 } from '../types/game';
-import { DEFAULT_BUILDINGS, INITIAL_MODS } from './mods';
+import {
+  DEFAULT_BUILDINGS,
+  INITIAL_MODS,
+  DEFAULT_AI_RULES,
+  DEFENSIVE_AI_RULES,
+  EASY_AI_RULES,
+  HARD_AI_RULES,
+} from './mods';
 import {
   applyCivilizationAndTechStats,
   canUnitGainXp,
@@ -843,7 +850,16 @@ export class RtsEngine {
     this.participants.forEach((p) => {
       const civId = getCivilizationConfig(p.civilization).id;
       p.civilization = civId;
-      this.resourcesByFaction[p.id] = { food: 250, wood: 200, gold: 120, stone: 60 };
+      // AI difficulty economy bias (player always standard start)
+      let startRes = { food: 250, wood: 200, gold: 120, stone: 60 };
+      if (p.controller === 'ai') {
+        if (p.aiPersonality === 'easy') {
+          startRes = { food: 200, wood: 160, gold: 80, stone: 40 };
+        } else if (p.aiPersonality === 'hard') {
+          startRes = { food: 320, wood: 260, gold: 160, stone: 90 };
+        }
+      }
+      this.resourcesByFaction[p.id] = startRes;
       this.ageByFaction[p.id] = 1;
       this.landmarksByFaction[p.id] = [];
       this.researchedTechsByFaction[p.id] = [];
@@ -2906,6 +2922,7 @@ export class RtsEngine {
 
     // 3. Buildings simulation & Civ Building Auras
     this.updateBuildings(dt);
+    this.updateWildAnimals(dt);
     this.updateContestedPoints(dt);
 
     // 4. Projectiles
@@ -3709,7 +3726,10 @@ export class RtsEngine {
       food: '糧食',
     };
     const rLabel = labelMap[node.subtype || node.resourceType] || '資源';
-    unit.currentActionText = `⛏️ 採集${rLabel} (${curAmt}/${cap})`;
+    const huntingLive = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    unit.currentActionText = huntingLive
+      ? `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
+      : `⛏️ 採集${rLabel} (${curAmt}/${cap})`;
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
     const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
@@ -3733,9 +3753,43 @@ export class RtsEngine {
       const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
       const gatherRate = baseGatherRate * subtypeMult;
       const prevAmount = node.amount;
-      const deltaGather = Math.min(node.amount, gatherRate * dt);
-      unit.carryingResource.amount += deltaGather;
-      node.amount -= deltaGather;
+
+      // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
+      // Non-workers (if ever hunting here) deal real attack damage toward the same 32 HP pool.
+      if (node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0)) {
+        if (node.animalHp === undefined) {
+          node.animalMaxHp = 32;
+          node.animalHp = 32;
+          node.animalAlive = true;
+        }
+        const isVillager = unit.unitDef.category === 'worker';
+        let hitCd = (unit as any)._huntHitCd || 0;
+        hitCd -= dt;
+        if (hitCd <= 0) {
+          const dmg = isVillager ? 16 : Math.max(1, unit.unitDef.stats.attack);
+          node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
+          hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
+          this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
+        }
+        (unit as any)._huntHitCd = hitCd;
+        const awayX = node.x - unit.x;
+        const awayZ = node.z - unit.z;
+        const al = Math.hypot(awayX, awayZ) || 1;
+        node.animalVx = (awayX / al) * 7.5;
+        node.animalVz = (awayZ / al) * 7.5;
+        if (node.animalHp <= 0) {
+          node.animalAlive = false;
+          node.animalVx = 0;
+          node.animalVz = 0;
+          this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
+          const nm = this.nodeMeshes.get(node.id);
+          if (nm) nm.rotation.x = 0.55;
+        }
+      } else {
+        const deltaGather = Math.min(node.amount, gatherRate * dt);
+        unit.carryingResource.amount += deltaGather;
+        node.amount -= deltaGather;
+      }
 
       const fxTimer = ((unit as any)._gatherFxTimer || 0) + dt;
       if (fxTimer >= 0.52) {
@@ -3792,7 +3846,9 @@ export class RtsEngine {
                   : node.subtype === 'berry'
                   ? '野生漿果'
                   : node.subtype === 'hunt'
-                  ? '野生山羌'
+                  ? node.animalAlive === false
+                    ? '山羌屍體'
+                    : '野生山羌'
                   : node.resourceType === 'wood'
                   ? '木材'
                   : node.resourceType === 'gold'
@@ -3800,15 +3856,22 @@ export class RtsEngine {
                   : node.resourceType === 'stone'
                   ? '石礦'
                   : '農田';
+              const isLiveHunt = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const badgeAmt = isLiveHunt
+                ? `${Math.ceil(node.animalHp || 0)}/${node.animalMaxHp || 32} HP`
+                : `${curNodeAmt}/${node.maxAmount}`;
+              const badgeRatio = isLiveHunt
+                ? (node.animalHp || 0) / (node.animalMaxHp || 32)
+                : node.amount / node.maxAmount;
               updateBadgeSprite(
                 badge,
                 title,
                 icon,
-                `${curNodeAmt}/${node.maxAmount}`,
-                node.amount / node.maxAmount,
+                badgeAmt,
+                badgeRatio,
                 false,
                 true,
-                `剩餘 ${Math.round((node.amount / node.maxAmount) * 100)}%`
+                isLiveHunt ? '受驚會逃 · 先獵殺再採肉' : `剩餘 ${Math.round((node.amount / node.maxAmount) * 100)}%`
               );
             }
           }
@@ -4184,6 +4247,130 @@ export class RtsEngine {
       this.spawnParticleBurst(px, 1.2 + i * 0.1, pz, 'spark', 2);
     }
     return bonus;
+  }
+
+
+  /**
+   * Living 山羌: flee from nearby units; carcass stays put for meat gather.
+   */
+  private updateWildAnimals(dt: number) {
+    const DETECT = 13;
+    const FLEE_SPEED = 5.2;
+    const WANDER = 0.85;
+
+    for (const node of this.resourceNodes) {
+      if (node.subtype !== 'hunt' || node.amount <= 0) continue;
+      if (node.animalAlive === undefined) {
+        node.animalMaxHp = 32;
+        node.animalHp = 32;
+        node.animalAlive = true;
+        node.animalVx = 0;
+        node.animalVz = 0;
+      }
+
+      const mesh = this.nodeMeshes.get(node.id);
+      if (!node.animalAlive) {
+        if (mesh) {
+          mesh.position.x = node.x;
+          mesh.position.z = node.z;
+          mesh.rotation.x = 0.55;
+        }
+        continue;
+      }
+
+      let nearest: { x: number; z: number; d: number } | null = null;
+      for (const u of this.units) {
+        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
+        if (u.unitDef.isNaval) continue;
+        const d = getDistance(node.x, node.z, u.x, u.z);
+        if (d < DETECT && (!nearest || d < nearest.d)) {
+          nearest = { x: u.x, z: u.z, d };
+        }
+      }
+
+      if (nearest) {
+        const dx = node.x - nearest.x;
+        const dz = node.z - nearest.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const urgency = 1 + (1 - nearest.d / DETECT) * 0.7;
+        node.animalVx = (dx / len) * FLEE_SPEED * urgency;
+        node.animalVz = (dz / len) * FLEE_SPEED * urgency;
+      } else {
+        node.animalVx = (node.animalVx || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
+        node.animalVz = (node.animalVz || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
+        const sp = Math.hypot(node.animalVx || 0, node.animalVz || 0);
+        if (sp > 1.6) {
+          node.animalVx = ((node.animalVx || 0) / sp) * 1.6;
+          node.animalVz = ((node.animalVz || 0) / sp) * 1.6;
+        }
+      }
+
+      let nx = node.x + (node.animalVx || 0) * dt;
+      let nz = node.z + (node.animalVz || 0) * dt;
+      nx = Math.max(-92, Math.min(92, nx));
+      nz = Math.max(-92, Math.min(92, nz));
+
+      if (this.mapLayout) {
+        const wet = isPointInTerrainObstacle(
+          nx,
+          nz,
+          this.mapLayout.waterRects,
+          this.mapLayout.waterDiscs,
+          this.mapLayout.bridges
+        );
+        if (wet) {
+          node.animalVx = -(node.animalVx || 0) * 0.5;
+          node.animalVz = -(node.animalVz || 0) * 0.5;
+          nx = node.x;
+          nz = node.z;
+        }
+      }
+
+      node.x = nx;
+      node.z = nz;
+
+      if (mesh) {
+        mesh.position.x = node.x;
+        mesh.position.z = node.z;
+        const spd = Math.hypot(node.animalVx || 0, node.animalVz || 0);
+        if (spd > 0.4) {
+          mesh.rotation.y = Math.atan2(node.animalVx || 0, node.animalVz || 0);
+        }
+        mesh.position.y = spd > 1.2 ? Math.abs(Math.sin(this.simTime * 10)) * 0.12 : 0;
+      }
+
+
+      // Non-villager combat damage vs living 山羌 (still needs full 32 HP of real damage)
+      if (node.animalAlive) {
+        for (const u of this.units) {
+          if (u.hp <= 0 || u.unitDef.category === 'worker' || u.unitDef.isNaval) continue;
+          if (u.state !== 'attacking' && !u.attackMoveGoal) continue;
+          const d = getDistance(node.x, node.z, u.x, u.z);
+          if (d > Math.max(2.4, (u.unitDef.stats.range || 1.5) + 0.5)) continue;
+          let cd = (u as any)._huntHitCd || 0;
+          cd -= dt;
+          if (cd <= 0) {
+            const dmg = Math.max(1, u.unitDef.stats.attack);
+            node.animalHp = Math.max(0, (node.animalHp || 32) - dmg);
+            cd = Math.max(0.5, 1 / Math.max(0.35, u.unitDef.stats.attackRate || 1));
+            const awayX = node.x - u.x;
+            const awayZ = node.z - u.z;
+            const al = Math.hypot(awayX, awayZ) || 1;
+            node.animalVx = (awayX / al) * 6.5;
+            node.animalVz = (awayZ / al) * 6.5;
+            if (node.animalHp <= 0) {
+              node.animalAlive = false;
+              node.animalVx = 0;
+              node.animalVz = 0;
+              this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
+              if (mesh) mesh.rotation.x = 0.55;
+            }
+          }
+          (u as any)._huntHitCd = cd;
+        }
+      }
+
+    }
   }
 
   private updateContestedPoints(dt: number) {
@@ -5475,10 +5662,21 @@ export class RtsEngine {
   }
 
   private evaluateAiLogic() {
-    const activeRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
+    const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
+    const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
     for (const participant of this.participants) {
       if (participant.controller !== 'ai') continue;
+
+      const personality = participant.aiPersonality || 'standard';
+      const activeRules =
+        personality === 'defensive'
+          ? DEFENSIVE_AI_RULES
+          : personality === 'easy'
+          ? EASY_AI_RULES
+          : personality === 'hard'
+          ? HARD_AI_RULES
+          : standardRules;
 
       const aiId = participant.id;
       const aiTeam = participant.team;
@@ -5590,49 +5788,181 @@ export class RtsEngine {
       ).length;
 
 
-      // 1b. Contest neutral / enemy shrines — keeps map objectives alive in AI matches
-      if (aiArmy.length >= 3 && this.contestedPoints.length > 0 && this.stats.gameDuration > 70) {
-        const targets = this.contestedPoints
-          .map((cp) => {
-            const mine = cp.ownerFaction === aiId;
-            const threat = this.units.some(
+      // 1b. Map control: contested shrines + deny high-value resources
+      if (participant.aiPersonality !== 'defensive' || underAttack) {
+        const contestTimeGate = personality === 'hard' ? 30 : personality === 'easy' ? 100 : 45;
+        const contestArmyMin = personality === 'hard' ? 2 : personality === 'easy' ? 4 : 2;
+        if (aiArmy.length >= contestArmyMin && this.contestedPoints.length > 0 && this.stats.gameDuration > contestTimeGate) {
+          const targets = this.contestedPoints
+            .map((cp) => {
+              const mine = cp.ownerFaction === aiId;
+              const threat = this.units.some(
+                (u) =>
+                  u.hp > 0 &&
+                  !u.garrisonedInBuildingId &&
+                  this.isHostile({ faction: aiId, team: aiTeam }, u) &&
+                  getDistance(u.x, u.z, cp.x, cp.z) <= cp.radius + 8
+              );
+              let score = 0;
+              if (cp.ownerFaction === 'neutral') score = 65;
+              else if (!mine) score = 90 + (cp.siegeSupplyActive ? 15 : 0);
+              else if (mine && (threat || !cp.siegeSupplyActive)) score = 55;
+              else score = 8;
+              score += (1 - cp.captureProgress) * 12;
+              const distHome = getDistance(anchorX, anchorZ, cp.x, cp.z);
+              score += Math.max(0, 40 - distHome * 0.35);
+              return { cp, score, mine };
+            })
+            .filter((t) => t.score >= 40)
+            .sort((a, b) => b.score - a.score);
+
+          if (targets.length > 0) {
+            const focus = targets[0].cp;
+            const idleMil = aiArmy.filter(
+              (u) =>
+                u.unitDef.category !== 'siege' &&
+                (u.state === 'idle' ||
+                  (u.state === 'moving' && !u.attackMoveGoal && !u.targetEntityId) ||
+                  u.currentActionText === '奪取據點')
+            );
+            const want = Math.min(
+              8,
+              Math.max(3, Math.floor(aiArmy.length * (focus.ownerFaction === aiId ? 0.25 : 0.45)))
+            );
+            const squad = (idleMil.length >= 2 ? idleMil : aiArmy.filter((u) => u.unitDef.category !== 'siege')).slice(
+              0,
+              want
+            );
+            for (const u of squad) {
+              u.targetEntityId = undefined;
+              u.targetBuildingId = undefined;
+              u.targetResourceNodeId = undefined;
+              u.attackMoveGoal = { x: focus.x, z: focus.z };
+              u.targetX = focus.x + (Math.random() - 0.5) * 5;
+              u.targetZ = focus.z + (Math.random() - 0.5) * 5;
+              u.state = 'moving';
+              u.waypoints = undefined;
+              u.currentActionText = '奪取據點';
+            }
+          }
+        }
+
+        const raidTimeGate = personality === 'hard' ? 40 : personality === 'easy' ? 150 : 55;
+        const raidArmyMin = personality === 'hard' ? 3 : personality === 'easy' ? 6 : 4;
+        if (
+          personality !== 'easy' &&
+          aiArmy.length >= raidArmyMin &&
+          this.stats.gameDuration > raidTimeGate
+        ) {
+          const enemyWorkers = this.units.filter(
+            (u) =>
+              u.hp > 0 &&
+              u.unitDef.category === 'worker' &&
+              !u.garrisonedInBuildingId &&
+              this.isHostile({ faction: aiId, team: aiTeam }, u)
+          );
+          let bestRaid: { x: number; z: number; score: number; targetId?: string } | null = null;
+          for (const ew of enemyWorkers) {
+            let score = 20;
+            if (ew.state === 'gathering' || ew.targetResourceNodeId) {
+              const node = ew.targetResourceNodeId
+                ? this.resourceNodes.find((n) => n.id === ew.targetResourceNodeId)
+                : null;
+              if (node?.resourceType === 'gold') score += 55;
+              else if (node?.resourceType === 'stone') score += 40;
+              else if (node?.subtype === 'hunt' || node?.subtype === 'berry') score += 25;
+              else score += 15;
+            }
+            const nearTheirTc = this.buildings.some(
+              (b) =>
+                b.buildingType === 'town_center' &&
+                b.hp > 0 &&
+                b.faction === ew.faction &&
+                getDistance(b.x, b.z, ew.x, ew.z) < 14
+            );
+            if (nearTheirTc) score -= 25;
+            else score += 20;
+            if (!bestRaid || score > bestRaid.score) {
+              bestRaid = { x: ew.x, z: ew.z, score, targetId: ew.id };
+            }
+          }
+          for (const b of this.buildings) {
+            if (b.hp <= 0 || !b.isConstructed) continue;
+            if (!this.isHostile({ faction: aiId, team: aiTeam }, b)) continue;
+            if (b.buildingType !== 'farm' && b.buildingType !== 'dock' && b.buildingType !== 'mining_camp') continue;
+            const guarded = this.units.some(
               (u) =>
                 u.hp > 0 &&
-                !u.garrisonedInBuildingId &&
-                this.isHostile({ faction: aiId, team: aiTeam }, u) &&
-                getDistance(u.x, u.z, cp.x, cp.z) <= cp.radius + 6
+                u.unitDef.category !== 'worker' &&
+                u.faction === b.faction &&
+                getDistance(u.x, u.z, b.x, b.z) < 12
             );
-            let score = 0;
-            if (cp.ownerFaction === 'neutral') score = 50;
-            else if (!mine) score = 70;
-            else if (mine && (threat || !cp.siegeSupplyActive)) score = 40;
-            else score = 5;
-            score += (1 - cp.captureProgress) * 10;
-            return { cp, score, mine };
-          })
-          .filter((t) => t.score >= 40)
-          .sort((a, b) => b.score - a.score);
+            let score = b.buildingType === 'dock' ? 50 : b.buildingType === 'mining_camp' ? 45 : 30;
+            if (guarded) score -= 30;
+            if (!bestRaid || score > bestRaid.score) {
+              bestRaid = { x: b.x, z: b.z, score, targetId: b.id };
+            }
+          }
+          if (bestRaid && bestRaid.score >= 40) {
+            const raiders = aiArmy
+              .filter(
+                (u) =>
+                  u.unitDef.category !== 'siege' &&
+                  u.currentActionText !== '奪取據點' &&
+                  (u.state === 'idle' || u.state === 'moving')
+              )
+              .slice(0, Math.min(5, Math.max(2, Math.floor(aiArmy.length * 0.3))));
+            for (const u of raiders) {
+              if (bestRaid.targetId) {
+                u.targetEntityId = bestRaid.targetId;
+                u.state = 'attacking';
+              } else {
+                u.targetEntityId = undefined;
+                u.state = 'moving';
+              }
+              u.attackMoveGoal = { x: bestRaid.x, z: bestRaid.z };
+              u.waypoints = undefined;
+              u.currentActionText = '襲擊經濟';
+            }
+          }
+        }
 
-        if (targets.length > 0) {
-          const focus = targets[0].cp;
-          // Send a detachment, not the whole army
-          const idleMil = aiArmy.filter(
-            (u) =>
-              u.state === 'idle' ||
-              (u.state === 'moving' && !u.attackMoveGoal && !u.targetEntityId)
-          );
-          const squad = (idleMil.length >= 3 ? idleMil : aiArmy)
-            .slice(0, Math.min(6, Math.max(3, Math.floor(aiArmy.length * 0.35))));
+        if (aiArmy.length >= 8 && !underAttack) {
+          const localGold = this.resourceNodes
+            .filter((n) => n.resourceType === 'gold' && n.amount > 0)
+            .map((n) => ({ n, d: getDistance(anchorX, anchorZ, n.x, n.z) }))
+            .filter((x) => x.d < 28)
+            .sort((a, b) => a.d - b.d)[0];
+          if (localGold) {
+            const pickets = aiArmy
+              .filter((u) => u.unitDef.category === 'melee' || u.unitDef.category === 'ranged')
+              .filter((u) => u.state === 'idle' || u.currentActionText === '礦區警戒')
+              .slice(0, 2);
+            for (const u of pickets) {
+              if (getDistance(u.x, u.z, localGold.n.x, localGold.n.z) > 6) {
+                u.targetX = localGold.n.x + (Math.random() - 0.5) * 3;
+                u.targetZ = localGold.n.z + (Math.random() - 0.5) * 3;
+                u.attackMoveGoal = { x: localGold.n.x, z: localGold.n.z };
+                u.targetEntityId = undefined;
+                u.state = 'moving';
+                u.currentActionText = '礦區警戒';
+              }
+            }
+          }
+        }
+      } else if (participant.aiPersonality === 'defensive' && aiArmy.length >= 2) {
+        const homeShrine = this.contestedPoints
+          .map((cp) => ({ cp, d: getDistance(anchorX, anchorZ, cp.x, cp.z) }))
+          .filter((x) => x.cp.ownerFaction === 'neutral' || x.cp.ownerFaction === aiId)
+          .sort((a, b) => a.d - b.d)[0];
+        if (homeShrine && homeShrine.d < 45 && this.stats.gameDuration > 80) {
+          const squad = aiArmy.filter((u) => u.unitDef.category !== 'siege').slice(0, 3);
           for (const u of squad) {
-            if (u.unitDef.category === 'siege' && focus.ownerFaction === 'neutral') continue;
-            u.targetEntityId = undefined;
-            u.targetBuildingId = undefined;
-            u.targetResourceNodeId = undefined;
-            u.attackMoveGoal = { x: focus.x, z: focus.z };
-            u.targetX = focus.x + (Math.random() - 0.5) * 6;
-            u.targetZ = focus.z + (Math.random() - 0.5) * 6;
+            if (u.state !== 'idle' && u.currentActionText !== '奪取據點') continue;
+            u.attackMoveGoal = { x: homeShrine.cp.x, z: homeShrine.cp.z };
+            u.targetX = homeShrine.cp.x;
+            u.targetZ = homeShrine.cp.z;
             u.state = 'moving';
-            u.waypoints = undefined;
             u.currentActionText = '奪取據點';
           }
         }
@@ -5692,7 +6022,25 @@ export class RtsEngine {
       const resourcePriorityOrder: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
       for (const w of aiActiveWorkers) {
         if (w.state !== 'idle') continue;
-        // Find resource type with biggest deficit relative to desired allocation
+        // Contest forward gold: if we are poor on gold, claim nodes closer to map center / contested
+        if (aiRes.gold < 120 && activeCounts.gold < desiredAlloc.gold) {
+          const forwardGold = this.resourceNodes
+            .filter((n) => n.resourceType === 'gold' && n.amount > 80)
+            .map((n) => {
+              const dHome = getDistance(anchorX, anchorZ, n.x, n.z);
+              const dCenter = getDistance(0, 0, n.x, n.z);
+              // Prefer somewhat forward mines (not only safest)
+              return { n, score: n.amount * 0.02 - dHome * 0.4 - dCenter * 0.15 };
+            })
+            .sort((a, b) => b.score - a.score)[0];
+          if (forwardGold && forwardGold.score > -30) {
+            w.targetResourceNodeId = forwardGold.n.id;
+            w.waypoints = undefined;
+            w.state = 'gathering';
+            activeCounts.gold++;
+            continue;
+          }
+        }
         let bestType: ResourceType = 'food';
         let biggestNeed = -Infinity;
         for (const rt of resourcePriorityOrder) {
@@ -5760,6 +6108,23 @@ export class RtsEngine {
           if (lmType && !this.landmarksByFaction[aiId]?.includes(lmType)) {
             this.tryAiConstructBuilding(aiId, lmType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.5);
           }
+        } else if (
+          personality !== 'easy' &&
+          aiAge === 1 &&
+          aiActiveWorkers.length >= (personality === 'hard' ? 4 : 5) &&
+          aiRes.food >= (personality === 'hard' ? 280 : 320) &&
+          aiRes.gold >= (personality === 'hard' ? 120 : 140) &&
+          !this.landmarksByFaction[aiId]?.includes('landmark_barracks')
+        ) {
+          // Fallback age-up when rule priority loses to eco spam
+          this.tryAiConstructBuilding(
+            aiId,
+            'landmark_barracks',
+            aiActiveWorkers,
+            anchorX,
+            anchorZ,
+            toCenterAngle + 0.5
+          );
         } else if (buildCmd?.type === 'build' && buildCmd.targetId) {
           this.tryAiConstructBuilding(aiId, buildCmd.targetId as BuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
         } else if (!aiArcheryList.length && this.stats.gameDuration > 16) {
@@ -5781,13 +6146,19 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'dock', aiActiveWorkers, anchorX, anchorZ, toCenterAngle, 14, 54);
           } else if (nearbyWildFood < 2 && aiFarms < 4 && aiRes.wood >= 60) {
             this.tryAiConstructBuilding(aiId, 'farm', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + Math.PI * 0.8);
-          } else if (aiAge >= 1 && aiTowers < 2 && aiRes.wood >= 100 && aiRes.stone >= 35 && this.stats.gameDuration > 35) {
+          } else if (
+            aiAge >= 1 &&
+            aiTowers < (participant.aiPersonality === 'defensive' ? 4 : 2) &&
+            aiRes.wood >= 100 &&
+            aiRes.stone >= 35 &&
+            this.stats.gameDuration > 30
+          ) {
             this.tryAiConstructBuilding(aiId, 'tower', aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
           } else if (aiAge >= 3 && aiCastles === 0 && aiRes.stone >= 650 && aiRes.wood >= 200) {
             this.tryAiConstructBuilding(aiId, 'castle', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.15);
-          } else if (aiAge < 4 && aiAge === 2 && aiRes.food >= 1200 && aiRes.gold >= 600) {
+          } else if (aiAge < 4 && aiAge === 2 && aiRes.food >= 700 && aiRes.gold >= 350) {
             this.tryAiConstructBuilding(aiId, 'landmark_citadel', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.4);
-          } else if (aiAge < 4 && aiAge === 3 && aiRes.food >= 2400 && aiRes.gold >= 1200) {
+          } else if (aiAge < 4 && aiAge === 3 && aiRes.food >= 1100 && aiRes.gold >= 550) {
             this.tryAiConstructBuilding(aiId, 'landmark_arsenal', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.4);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
@@ -5843,6 +6214,46 @@ export class RtsEngine {
             continue;
           }
           this.resolveAiTrainRequest(aiId, aiCiv, trainAct.targetId || 'villager', aiBuildings);
+        }
+      }
+
+
+      // Organize siege with the army: when age >= 2 and army pushing, send siege toward enemy TC
+      if (
+        personality !== 'defensive' &&
+        personality !== 'easy' &&
+        aiAge >= 2 &&
+        aiArmy.length >= (personality === 'hard' ? 4 : 5) &&
+        this.stats.gameDuration > (personality === 'hard' ? 70 : 100)
+      ) {
+        const siegeUnits = aiArmy.filter((u) => u.unitDef.category === 'siege');
+        const enemyTc = this.buildings.find(
+          (b) =>
+            b.hp > 0 &&
+            b.isConstructed &&
+            b.buildingType === 'town_center' &&
+            this.isHostile({ faction: aiId, team: aiTeam }, b)
+        );
+        if (siegeUnits.length > 0 && enemyTc) {
+          for (const s of siegeUnits) {
+            if (s.state === 'idle' || s.state === 'moving') {
+              s.targetEntityId = enemyTc.id;
+              s.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
+              s.state = 'attacking';
+              s.currentActionText = '攻城推進';
+            }
+          }
+          // Escort: send a few non-siege with them
+          const escort = aiArmy
+            .filter((u) => u.unitDef.category !== 'siege')
+            .slice(0, Math.min(4, Math.max(2, siegeUnits.length * 2)));
+          for (const e of escort) {
+            if (e.state === 'idle') {
+              e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
+              e.targetEntityId = enemyTc.id;
+              e.state = 'attacking';
+            }
+          }
         }
       }
 
@@ -5915,33 +6326,125 @@ export class RtsEngine {
           }
         });
       } else if (combatCmd.type === 'cluster_attack' || combatCmd.type === 'attack_player') {
+        const enemyTc =
+          this.buildings.find(
+            (b) =>
+              b.hp > 0 &&
+              b.isConstructed &&
+              b.buildingType === 'town_center' &&
+              this.isHostile({ faction: aiId, team: aiTeam }, b)
+          ) || null;
         const stronghold =
+          enemyTc ||
           findClosestEnemy(anchorX, anchorZ, aiId, this.buildings, Infinity, aiTeam) ||
           findClosestEnemy(anchorX, anchorZ, aiId, this.units, Infinity, aiTeam);
 
         if (stronghold) {
-          const strikeUnits = aiArmy.filter((u) => u.state === 'idle' || u.state === 'moving' || u.state === 'attacking');
+          const strikeUnits = aiArmy.filter(
+            (u) =>
+              u.currentActionText !== '奪取據點' &&
+              u.currentActionText !== '礦區警戒' &&
+              (u.state === 'idle' || u.state === 'moving' || u.state === 'attacking')
+          );
+
+          // Preferred soft targets: exposed enemy villagers
+          const exposedWorkers = this.units.filter(
+            (u) =>
+              u.hp > 0 &&
+              u.unitDef.category === 'worker' &&
+              !u.garrisonedInBuildingId &&
+              this.isHostile({ faction: aiId, team: aiTeam }, u)
+          );
+
+          const ecoBuilding =
+            this.buildings
+              .filter(
+                (b) =>
+                  b.hp > 0 &&
+                  b.isConstructed &&
+                  this.isHostile({ faction: aiId, team: aiTeam }, b) &&
+                  (b.buildingType === 'farm' ||
+                    b.buildingType === 'dock' ||
+                    b.buildingType === 'mining_camp' ||
+                    b.buildingType === 'lumber_camp')
+              )
+              .sort(
+                (a, b) =>
+                  getDistance(anchorX, anchorZ, a.x, a.z) - getDistance(anchorX, anchorZ, b.x, b.z)
+              )[0] || null;
+
           const clusterTarget =
             combatCmd.type === 'cluster_attack'
               ? selectClusterFocusTarget(strikeUnits, this.units, this.buildings, {
-                  maxEnemyRangeFromCentroid: 28,
+                  maxEnemyRangeFromCentroid: 32,
                 })
               : null;
 
-          strikeUnits.forEach((unit) => {
-            // Allow units to keep fighting valid targets if already close and in range, otherwise assign optimal 1v1 / cluster target
-            if (unit.state === 'idle' || unit.state === 'moving' || combatCmd.type === 'cluster_attack') {
-              const optimalLocal = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-                clusterFocusTargetId: clusterTarget?.id,
-                maxSearchRange: 26,
-              });
-              const chosen = optimalLocal || clusterTarget || stronghold;
-              if (unit.state !== 'attacking' || !unit.targetEntityId || (chosen && chosen.id !== unit.targetEntityId && Math.random() < 0.45)) {
-                unit.targetEntityId = chosen.id;
-                unit.attackMoveGoal = { x: stronghold.x, z: stronghold.z };
-                unit.waypoints = undefined;
-                unit.state = 'attacking';
-              }
+          const goalX = stronghold.x;
+          const goalZ = stronghold.z;
+
+          strikeUnits.forEach((unit, idx) => {
+            // Siege: always commit to TC / buildings
+            if (unit.unitDef.category === 'siege') {
+              const bTarget =
+                enemyTc ||
+                selectOptimalCombatTarget(unit, [], this.buildings, this.units, {
+                  maxSearchRange: 40,
+                }) ||
+                stronghold;
+              unit.targetEntityId = bTarget.id;
+              unit.attackMoveGoal = { x: bTarget.x, z: bTarget.z };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              unit.currentActionText = '攻城主力';
+              return;
+            }
+
+            // Fast units / every 3rd unit: harass workers & eco
+            const isRaider =
+              unit.unitDef.category === 'cavalry' ||
+              idx % 3 === 0 ||
+              unit.unitDef.stats.speed >= 3.6;
+
+            if (isRaider && exposedWorkers.length > 0) {
+              const prey = exposedWorkers.reduce((best, w) =>
+                getDistance(unit.x, unit.z, w.x, w.z) < getDistance(unit.x, unit.z, best.x, best.z)
+                  ? w
+                  : best
+              );
+              unit.targetEntityId = prey.id;
+              unit.attackMoveGoal = { x: prey.x, z: prey.z };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              unit.currentActionText = '獵殺村民';
+              return;
+            }
+
+            if (isRaider && ecoBuilding && Math.random() < 0.35) {
+              unit.targetEntityId = ecoBuilding.id;
+              unit.attackMoveGoal = { x: ecoBuilding.x, z: ecoBuilding.z };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              unit.currentActionText = '破壞經濟';
+              return;
+            }
+
+            // Main body: push toward stronghold, retarget opportunistically
+            const optimalLocal = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
+              clusterFocusTargetId: clusterTarget?.id,
+              maxSearchRange: 28,
+            });
+            const chosen = optimalLocal || clusterTarget || stronghold;
+            if (
+              unit.state !== 'attacking' ||
+              !unit.targetEntityId ||
+              (chosen && chosen.id !== unit.targetEntityId && Math.random() < 0.5)
+            ) {
+              unit.targetEntityId = chosen.id;
+              unit.attackMoveGoal = { x: goalX, z: goalZ };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              unit.currentActionText = '集群進攻';
             }
           });
         }

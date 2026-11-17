@@ -890,11 +890,11 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     enabled: true,
     conditions: [
       { field: 'age', operator: '<', value: 2 },
-      { field: 'workerCount', operator: '>=', value: 6 },
-      { field: 'food', operator: '>=', value: 400 },
-      { field: 'gold', operator: '>=', value: 200 },
+      { field: 'workerCount', operator: '>=', value: 5 },
+      { field: 'food', operator: '>=', value: 320 },
+      { field: 'gold', operator: '>=', value: 140 },
     ],
-    action: { type: 'advance_age', targetId: 'landmark_barracks', priority: 84 },
+    action: { type: 'advance_age', targetId: 'landmark_barracks', priority: 92 },
   },
   {
     id: 'ai_advance_age_3',
@@ -902,11 +902,11 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     enabled: true,
     conditions: [
       { field: 'age', operator: '==', value: 2 },
-      { field: 'workerCount', operator: '>=', value: 9 },
-      { field: 'food', operator: '>=', value: 1200 },
-      { field: 'gold', operator: '>=', value: 600 },
+      { field: 'workerCount', operator: '>=', value: 7 },
+      { field: 'food', operator: '>=', value: 700 },
+      { field: 'gold', operator: '>=', value: 350 },
     ],
-    action: { type: 'advance_age', targetId: 'landmark_citadel', priority: 83 },
+    action: { type: 'advance_age', targetId: 'landmark_citadel', priority: 91 },
   },
   {
     id: 'ai_advance_age_4',
@@ -914,10 +914,11 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     enabled: true,
     conditions: [
       { field: 'age', operator: '==', value: 3 },
-      { field: 'food', operator: '>=', value: 2400 },
-      { field: 'gold', operator: '>=', value: 1200 },
+      { field: 'workerCount', operator: '>=', value: 8 },
+      { field: 'food', operator: '>=', value: 1100 },
+      { field: 'gold', operator: '>=', value: 550 },
     ],
-    action: { type: 'advance_age', targetId: 'landmark_arsenal', priority: 83 },
+    action: { type: 'advance_age', targetId: 'landmark_arsenal', priority: 90 },
   },
   {
     id: 'ai_train_worker',
@@ -961,9 +962,9 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     enabled: true,
     conditions: [
       { field: 'age', operator: '>=', value: 2 },
-      { field: 'wood', operator: '>=', value: 140 },
-      { field: 'gold', operator: '>=', value: 60 },
-      { field: 'armyCount', operator: '>=', value: 3 },
+      { field: 'wood', operator: '>=', value: 120 },
+      { field: 'gold', operator: '>=', value: 50 },
+      { field: 'armyCount', operator: '>=', value: 2 },
       { field: 'armyCount', operator: '<', value: 22 },
     ],
     action: { type: 'train_unit', targetId: 'battering_ram', priority: 69 },
@@ -1006,11 +1007,11 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     name: '集群協同總攻 (軍隊達 8 隊且備妥時代攻勢後發動編隊集火推進)',
     enabled: true,
     conditions: [
-      { field: 'armyCount', operator: '>=', value: 8 },
+      { field: 'armyCount', operator: '>=', value: 6 },
       { field: 'age', operator: '>=', value: 2 },
       { field: 'underAttack', operator: '==', value: 0 },
     ],
-    action: { type: 'cluster_attack', priority: 85 },
+    action: { type: 'cluster_attack', priority: 88 },
   },
   {
     id: 'ai_late_fallback_attack',
@@ -1047,6 +1048,362 @@ id: 'ai_mid_patrol',
     action: { type: 'patrol_mid', priority: 45 },
   },
 ];
+
+/** Practice AI: prioritizes walls, age-up, eco; almost never launches all-out attacks. */
+export const DEFENSIVE_AI_RULES: AiRule[] = [
+  {
+    id: 'def_emergency_defend',
+    name: '防守型·緊急回防',
+    enabled: true,
+    conditions: [{ field: 'underAttack', operator: '==', value: 1 }],
+    action: { type: 'defend_base', priority: 100 },
+  },
+  {
+    id: 'def_proximity_defend',
+    name: '防守型·領地警戒',
+    enabled: true,
+    conditions: [{ field: 'enemyProximity', operator: '<=', value: 26 }],
+    action: { type: 'defend_base', priority: 98 },
+  },
+  {
+    id: 'def_advance_age_2',
+    name: '防守型·時代 II',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '<', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 5 },
+      { field: 'food', operator: '>=', value: 300 },
+      { field: 'gold', operator: '>=', value: 120 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_barracks', priority: 94 },
+  },
+  {
+    id: 'def_advance_age_3',
+    name: '防守型·時代 III',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '==', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 7 },
+      { field: 'food', operator: '>=', value: 650 },
+      { field: 'gold', operator: '>=', value: 320 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_citadel', priority: 93 },
+  },
+  {
+    id: 'def_advance_age_4',
+    name: '防守型·時代 IV',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '==', value: 3 },
+      { field: 'food', operator: '>=', value: 1000 },
+      { field: 'gold', operator: '>=', value: 500 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_arsenal', priority: 92 },
+  },
+  {
+    id: 'def_train_worker',
+    name: '防守型·擴編村民',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 50 },
+      { field: 'workerCount', operator: '<', value: 14 },
+    ],
+    action: { type: 'train_unit', targetId: 'villager', priority: 78 },
+  },
+  {
+    id: 'def_train_melee',
+    name: '防守型·守軍步兵',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 60 },
+      { field: 'armyCount', operator: '<', value: 14 },
+    ],
+    action: { type: 'train_unit', targetId: 'swordsman', priority: 55 },
+  },
+  {
+    id: 'def_train_ranged',
+    name: '防守型·守軍弓兵',
+    enabled: true,
+    conditions: [
+      { field: 'wood', operator: '>=', value: 40 },
+      { field: 'armyCount', operator: '<', value: 16 },
+    ],
+    action: { type: 'train_unit', targetId: 'longbowman', priority: 54 },
+  },
+  {
+    id: 'def_eco',
+    name: '防守型·均衡經濟',
+    enabled: true,
+    conditions: [{ field: 'workerCount', operator: '>=', value: 1 }],
+    action: { type: 'gather_priority', targetId: 'balanced_eco', priority: 60 },
+  },
+  {
+    id: 'def_patrol_home',
+    name: '防守型·家門口巡邏（不主動遠征）',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 3 },
+      { field: 'underAttack', operator: '==', value: 0 },
+      { field: 'enemyProximity', operator: '>', value: 26 },
+    ],
+    action: { type: 'defend_base', priority: 40 },
+  },
+];
+
+/** Easy AI: late aggression, high defend bias, slow age-up — good for learning. */
+export const EASY_AI_RULES: AiRule[] = [
+  {
+    id: 'easy_emergency_defend',
+    name: '簡單·緊急回防',
+    enabled: true,
+    conditions: [{ field: 'underAttack', operator: '==', value: 1 }],
+    action: { type: 'defend_base', priority: 100 },
+  },
+  {
+    id: 'easy_proximity_defend',
+    name: '簡單·近防',
+    enabled: true,
+    conditions: [{ field: 'enemyProximity', operator: '<=', value: 16 }],
+    action: { type: 'defend_base', priority: 96 },
+  },
+  {
+    id: 'easy_advance_age_2',
+    name: '簡單·時代 II（較慢）',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '<', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 7 },
+      { field: 'food', operator: '>=', value: 420 },
+      { field: 'gold', operator: '>=', value: 180 },
+      { field: 'gameTime', operator: '>=', value: 90 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_barracks', priority: 80 },
+  },
+  {
+    id: 'easy_advance_age_3',
+    name: '簡單·時代 III',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '==', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 9 },
+      { field: 'food', operator: '>=', value: 900 },
+      { field: 'gold', operator: '>=', value: 450 },
+      { field: 'gameTime', operator: '>=', value: 180 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_citadel', priority: 78 },
+  },
+  {
+    id: 'easy_train_worker',
+    name: '簡單·村民',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 50 },
+      { field: 'workerCount', operator: '<', value: 10 },
+    ],
+    action: { type: 'train_unit', targetId: 'villager', priority: 75 },
+  },
+  {
+    id: 'easy_train_melee',
+    name: '簡單·步兵',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 70 },
+      { field: 'armyCount', operator: '<', value: 10 },
+    ],
+    action: { type: 'train_unit', targetId: 'swordsman', priority: 50 },
+  },
+  {
+    id: 'easy_train_ranged',
+    name: '簡單·弓兵',
+    enabled: true,
+    conditions: [
+      { field: 'wood', operator: '>=', value: 50 },
+      { field: 'armyCount', operator: '<', value: 12 },
+    ],
+    action: { type: 'train_unit', targetId: 'longbowman', priority: 48 },
+  },
+  {
+    id: 'easy_attack_late',
+    name: '簡單·晚期才總攻',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 12 },
+      { field: 'age', operator: '>=', value: 2 },
+      { field: 'gameTime', operator: '>=', value: 240 },
+      { field: 'underAttack', operator: '==', value: 0 },
+    ],
+    action: { type: 'cluster_attack', priority: 70 },
+  },
+  {
+    id: 'easy_eco',
+    name: '簡單·經濟',
+    enabled: true,
+    conditions: [{ field: 'workerCount', operator: '>=', value: 1 }],
+    action: { type: 'gather_priority', targetId: 'balanced_eco', priority: 60 },
+  },
+  {
+    id: 'easy_patrol',
+    name: '簡單·家門口',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 3 },
+      { field: 'underAttack', operator: '==', value: 0 },
+    ],
+    action: { type: 'defend_base', priority: 42 },
+  },
+];
+
+/** Hard AI: early pressure, fast age, strong raids and siege. */
+export const HARD_AI_RULES: AiRule[] = [
+  {
+    id: 'hard_emergency_defend',
+    name: '困難·緊急回防',
+    enabled: true,
+    conditions: [{ field: 'underAttack', operator: '==', value: 1 }],
+    action: { type: 'defend_base', priority: 100 },
+  },
+  {
+    id: 'hard_proximity_defend',
+    name: '困難·領地警戒',
+    enabled: true,
+    conditions: [{ field: 'enemyProximity', operator: '<=', value: 22 }],
+    action: { type: 'defend_base', priority: 97 },
+  },
+  {
+    id: 'hard_advance_age_2',
+    name: '困難·快速時代 II',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '<', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 4 },
+      { field: 'food', operator: '>=', value: 280 },
+      { field: 'gold', operator: '>=', value: 120 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_barracks', priority: 96 },
+  },
+  {
+    id: 'hard_advance_age_3',
+    name: '困難·快速時代 III',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '==', value: 2 },
+      { field: 'workerCount', operator: '>=', value: 6 },
+      { field: 'food', operator: '>=', value: 550 },
+      { field: 'gold', operator: '>=', value: 280 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_citadel', priority: 95 },
+  },
+  {
+    id: 'hard_advance_age_4',
+    name: '困難·快速時代 IV',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '==', value: 3 },
+      { field: 'workerCount', operator: '>=', value: 7 },
+      { field: 'food', operator: '>=', value: 900 },
+      { field: 'gold', operator: '>=', value: 450 },
+    ],
+    action: { type: 'advance_age', targetId: 'landmark_arsenal', priority: 94 },
+  },
+  {
+    id: 'hard_train_worker',
+    name: '困難·高人口經濟',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 45 },
+      { field: 'workerCount', operator: '<', value: 16 },
+    ],
+    action: { type: 'train_unit', targetId: 'villager', priority: 82 },
+  },
+  {
+    id: 'hard_train_siege_ram',
+    name: '困難·衝車',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '>=', value: 2 },
+      { field: 'wood', operator: '>=', value: 110 },
+      { field: 'gold', operator: '>=', value: 45 },
+      { field: 'armyCount', operator: '>=', value: 2 },
+    ],
+    action: { type: 'train_unit', targetId: 'battering_ram', priority: 72 },
+  },
+  {
+    id: 'hard_train_siege_catapult',
+    name: '困難·投石',
+    enabled: true,
+    conditions: [
+      { field: 'age', operator: '>=', value: 3 },
+      { field: 'wood', operator: '>=', value: 150 },
+      { field: 'gold', operator: '>=', value: 70 },
+      { field: 'armyCount', operator: '>=', value: 3 },
+    ],
+    action: { type: 'train_unit', targetId: 'catapult', priority: 74 },
+  },
+  {
+    id: 'hard_train_army_melee',
+    name: '困難·步兵洪流',
+    enabled: true,
+    conditions: [
+      { field: 'food', operator: '>=', value: 55 },
+      { field: 'armyCount', operator: '<', value: 22 },
+    ],
+    action: { type: 'train_unit', targetId: 'swordsman', priority: 68 },
+  },
+  {
+    id: 'hard_train_army_ranged',
+    name: '困難·弓兵',
+    enabled: true,
+    conditions: [
+      { field: 'wood', operator: '>=', value: 40 },
+      { field: 'armyCount', operator: '<', value: 22 },
+    ],
+    action: { type: 'train_unit', targetId: 'longbowman', priority: 66 },
+  },
+  {
+    id: 'hard_early_pressure',
+    name: '困難·中期強攻',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 5 },
+      { field: 'age', operator: '>=', value: 2 },
+      { field: 'gameTime', operator: '>=', value: 90 },
+      { field: 'underAttack', operator: '==', value: 0 },
+    ],
+    action: { type: 'cluster_attack', priority: 92 },
+  },
+  {
+    id: 'hard_all_out',
+    name: '困難·兵力優勢總攻',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 8 },
+      { field: 'underAttack', operator: '==', value: 0 },
+    ],
+    action: { type: 'cluster_attack', priority: 90 },
+  },
+  {
+    id: 'hard_eco',
+    name: '困難·軍事經濟',
+    enabled: true,
+    conditions: [{ field: 'workerCount', operator: '>=', value: 6 }],
+    action: { type: 'gather_priority', targetId: 'military_eco', priority: 70 },
+  },
+  {
+    id: 'hard_patrol',
+    name: '困難·前壓列陣',
+    enabled: true,
+    conditions: [
+      { field: 'armyCount', operator: '>=', value: 3 },
+      { field: 'underAttack', operator: '==', value: 0 },
+      { field: 'gameTime', operator: '<', value: 90 },
+    ],
+    action: { type: 'patrol_mid', priority: 50 },
+  },
+];
+
+
+
+
 
 export const INITIAL_MODS: GameMod[] = [
   {

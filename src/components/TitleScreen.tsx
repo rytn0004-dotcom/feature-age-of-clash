@@ -53,6 +53,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       controller: 'ai',
       team: nextTeam,
       civilization: nextCiv,
+      aiPersonality: 'standard',
       ...palette,
     };
     onParticipantsChange([...participants, newSlot]);
@@ -122,6 +123,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
   const handleCivilizationChange = (id: string, civilization: CivilizationId) => {
     const next = participants.map((p) => (p.id === id ? { ...p, civilization } : p));
+    onParticipantsChange(next);
+  };
+
+  const handleAiPersonalityChange = (
+    id: string,
+    aiPersonality: 'easy' | 'standard' | 'hard' | 'defensive'
+  ) => {
+    const next = participants.map((p) => (p.id === id ? { ...p, aiPersonality } : p));
     onParticipantsChange(next);
   };
 
@@ -434,6 +443,26 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         </>
                       )}
                     </button>
+
+                    {p.controller === 'ai' && (
+                      <select
+                        aria-label={`${p.name} AI 風格`}
+                        value={p.aiPersonality || 'standard'}
+                        onChange={(e) =>
+                          handleAiPersonalityChange(
+                            p.id,
+                            e.target.value as 'easy' | 'standard' | 'hard' | 'defensive'
+                          )
+                        }
+                        className="px-1.5 py-1 bg-slate-800 border border-slate-700 text-sky-300 rounded-lg text-[10px] font-bold cursor-pointer focus:outline-none focus:border-sky-500 max-w-[8.5rem]"
+                        title="簡單：慢節奏少騷擾｜標準：均衡｜困難：快升時代強壓｜防守練習：幾乎不主動進攻"
+                      >
+                        <option value="easy">簡單 AI</option>
+                        <option value="standard">標準 AI</option>
+                        <option value="hard">困難 AI</option>
+                        <option value="defensive">防守練習</option>
+                      </select>
+                    )}
 
                     <select
                       aria-label={`${p.name} 隊伍選擇`}

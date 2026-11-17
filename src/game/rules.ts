@@ -759,6 +759,7 @@ export function createDefaultParticipants(): MatchParticipant[] {
       controller: 'ai',
       team: 2,
       civilization: 'anime',
+      aiPersonality: 'standard',
       ...DEFAULT_PARTICIPANT_PALETTE[1],
     },
   ];

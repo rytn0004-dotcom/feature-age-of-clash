@@ -23,6 +23,8 @@ export interface MatchParticipant {
   colorHex: number;
   colorCss: string;
   accentHex: number;
+  /** AI only: standard attacks; defensive practices eco+walls, rarely attacks */
+  aiPersonality?: 'easy' | 'standard' | 'hard' | 'defensive';
 }
 
 export interface TerrainBlockedRect {
@@ -312,6 +314,13 @@ export interface ResourceNode {
   z: number;
   amount: number;
   maxAmount: number;
+  /** Living hunt animals (山羌): HP while alive; carcass when animalHp <= 0 */
+  animalHp?: number;
+  animalMaxHp?: number;
+  animalAlive?: boolean;
+  /** Flee / wander velocity (world units per second) */
+  animalVx?: number;
+  animalVz?: number;
 }
 
 /** Neutral map objective: stand in the circle to capture; owner gains passive income + aura. */
