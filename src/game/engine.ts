@@ -2046,6 +2046,30 @@ export class RtsEngine {
     });
   }
 
+  private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string } {
+    switch (node.subtype || node.resourceType) {
+      case 'farm':
+        return { icon: '🌾', action: '耕作' };
+      case 'berry':
+        return { icon: '🫐', action: '採集漿果' };
+      case 'hunt':
+        return { icon: '🦌', action: '狩獵' };
+      case 'shore_fish':
+      case 'deep_fish':
+        return { icon: '🐟', action: '捕魚' };
+      case 'wood':
+        return { icon: '🪵', action: '伐木' };
+      case 'gold':
+        return { icon: '🪙', action: '採金' };
+      case 'stone':
+        return { icon: '🪨', action: '採石' };
+      case 'food':
+        return { icon: '🍎', action: '採集糧食' };
+      default:
+        return { icon: '📦', action: '採集資源' };
+    }
+  }
+
   public issueGatherOrder(nodeId: string, queue = false) {
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
