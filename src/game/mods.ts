@@ -1355,8 +1355,8 @@ export const HARD_AI_RULES: AiRule[] = [
     conditions: [
       { field: 'age', operator: '==', value: 3 },
       { field: 'workerCount', operator: '>=', value: 7 },
-      { field: 'food', operator: '>=', value: 1200 },
-      { field: 'gold', operator: '>=', value: 600 },
+      { field: 'food', operator: '>=', value: 2400 },
+      { field: 'gold', operator: '>=', value: 1200 },
     ],
     action: { type: 'advance_age', targetId: 'landmark_arsenal', priority: 94 },
   },
