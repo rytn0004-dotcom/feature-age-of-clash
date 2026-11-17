@@ -1002,6 +1002,22 @@ export class RtsEngine {
       this.contestedPoints.push(point);
       const mesh = createContestedShrineMesh(cp.label);
       mesh.position.set(cp.x, 0, cp.z);
+      // A separate arc makes capture progress readable from the normal RTS camera.
+      const progressArc = new THREE.Mesh(
+        new THREE.RingGeometry(cp.radius * 0.91, cp.radius, 64, 1, -Math.PI / 2, 0.001),
+        new THREE.MeshBasicMaterial({
+          color: 0x38bdf8,
+          transparent: true,
+          opacity: 0.95,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      );
+      progressArc.name = 'captureProgressArc';
+      progressArc.rotation.x = -Math.PI / 2;
+      progressArc.position.y = 0.14;
+      progressArc.userData.progressBucket = -1;
+      mesh.add(progressArc);
       this.scene.add(mesh);
       this.contestedMeshes.set(cp.id, mesh);
     });
@@ -4607,6 +4623,35 @@ export class RtsEngine {
         }
       } else if (point.holdTime < 12) {
         point.siegeSupplyActive = false;
+      }
+
+      // Update the visible 360-degree capture arc in 1% steps to avoid rebuilding
+      // its geometry on every simulation frame.
+      if (mesh) {
+        const arc = mesh.getObjectByName('captureProgressArc') as THREE.Mesh | undefined;
+        if (arc) {
+          const bucket = Math.max(0, Math.min(100, Math.round(point.captureProgress * 100)));
+          if (arc.userData.progressBucket !== bucket) {
+            const oldGeometry = arc.geometry;
+            arc.geometry = new THREE.RingGeometry(
+              point.radius * 0.91,
+              point.radius,
+              64,
+              1,
+              -Math.PI / 2,
+              Math.max(0.001, (Math.PI * 2 * bucket) / 100)
+            );
+            oldGeometry.dispose();
+            arc.userData.progressBucket = bucket;
+          }
+          const arcMaterial = arc.material as THREE.MeshBasicMaterial;
+          const progressFaction = contested ? null : point.capturingFaction || point.ownerFaction;
+          const progressParticipant = progressFaction && progressFaction !== 'neutral'
+            ? this.participants.find((p) => p.id === progressFaction)
+            : null;
+          arcMaterial.color.setHex(contested ? 0xfbbf24 : progressParticipant?.colorHex ?? 0x38bdf8);
+          arcMaterial.opacity = bucket > 0 ? 0.95 : 0.18;
+        }
       }
 
       // Sync 3D shrine banner with ownership
