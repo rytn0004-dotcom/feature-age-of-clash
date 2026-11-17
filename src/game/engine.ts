@@ -83,6 +83,7 @@ import {
   resolveStarRelicDelivery,
   starRelicChannelComplete,
   starRelicShouldFall,
+  STAR_RELIC_CHANNEL_SEC,
   STAR_RELIC_CARRY_SPEED,
   STAR_RELIC_OATH_GATHER,
   STAR_RELIC_OATH_SEC,
@@ -4536,8 +4537,11 @@ export class RtsEngine {
         if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
         if (u.unitDef.category !== 'worker' || u.unitDef.isNaval) continue;
         const d = getDistance(u.x, u.z, this.starRelicX, this.starRelicZ);
-        if (d <= STAR_RELIC_PICKUP_RANGE && (!best || d < best.d)) best = { id: u.id, d };
+        if (d <= STAR_RELIC_PICKUP_RANGE && (!best || d < best.d)) {
+          best = { id: u.id, d };
+        }
       }
+
       this.starRelicChannel = advanceStarRelicChannel(this.starRelicChannel, !!best, dt);
       if (best && starRelicChannelComplete(this.starRelicChannel)) {
         this.starRelicPhase = 'carried';
@@ -4549,7 +4553,8 @@ export class RtsEngine {
           this.addFloatingText(carrier.x, 2.2, carrier.z, '取得星誓', '#c4b5fd');
         }
       }
-      // Nudge a nearby idle worker toward the comet (all AI personalities except none)
+
+      // Send one available AI worker to investigate the relic.
       if (this.simTime % 4 < dt) {
         for (const p of this.participants) {
           if (p.controller !== 'ai' || p.aiPersonality === 'defensive') continue;
@@ -4559,10 +4564,13 @@ export class RtsEngine {
               u.hp > 0 &&
               u.unitDef.category === 'worker' &&
               !u.unitDef.isNaval &&
+              !u.garrisonedInBuildingId &&
               (u.state === 'idle' || u.currentActionText === '前往星誓')
           );
           if (!worker) continue;
-          if (getDistance(worker.x, worker.z, this.starRelicX, this.starRelicZ) < STAR_RELIC_PICKUP_RANGE) continue;
+          if (getDistance(worker.x, worker.z, this.starRelicX, this.starRelicZ) <= STAR_RELIC_PICKUP_RANGE) {
+            continue;
+          }
           worker.targetX = this.starRelicX;
           worker.targetZ = this.starRelicZ;
           worker.state = 'moving';
@@ -4587,16 +4595,15 @@ export class RtsEngine {
       } else {
         this.starRelicX = carrier.x;
         this.starRelicZ = carrier.z;
+
         const tc = this.buildings.find(
           (b) => b.faction === carrier.faction && b.buildingType === 'town_center' && b.hp > 0
         );
         const shrine = this.contestedPoints
-          .map((cp) => ({
-            cp,
-            d: getDistance(carrier.x, carrier.z, cp.x, cp.z),
-          }))
+          .map((cp) => ({ cp, d: getDistance(carrier.x, carrier.z, cp.x, cp.z) }))
           .filter((s) => s.d <= s.cp.radius + 0.4)
           .sort((a, b) => a.d - b.d)[0];
+
         const delivery = resolveStarRelicDelivery({
           carrierX: carrier.x,
           carrierZ: carrier.z,
@@ -4612,6 +4619,7 @@ export class RtsEngine {
               }
             : null,
         });
+
         if (delivery === 'shrine' && shrine) {
           shrine.cp.ownerFaction = carrier.faction;
           shrine.cp.capturingFaction = carrier.faction;
@@ -4620,6 +4628,7 @@ export class RtsEngine {
           shrine.cp.siegeSupplyActive = true;
           this.starRelicPhase = 'spent';
           this.starRelicCarrierId = null;
+          carrier.currentActionText = '';
           this.addFloatingText(shrine.cp.x, 3.2, shrine.cp.z, '星誓獻祭 · 祭壇立刻祝福', '#fbbf24');
           this.spawnShockwaveRing(shrine.cp.x, shrine.cp.z, 0xfbbf24, shrine.cp.radius);
         } else if (delivery === 'oath') {
@@ -4631,11 +4640,19 @@ export class RtsEngine {
           }
           this.starRelicPhase = 'spent';
           this.starRelicCarrierId = null;
+          carrier.currentActionText = '';
           this.addFloatingText(carrier.x, 2.6, carrier.z, '星誓成立 · 採集與行軍加速', '#c4b5fd');
           this.spawnShockwaveRing(carrier.x, carrier.z, 0xc4b5fd, 6);
-        if (this.starRelicPhase === 'carried') {
+        } else {
+          // AI carriers must receive a destination while the relic is still carried.
           const participant = this.participants.find((p) => p.id === carrier.faction);
-          if (participant?.controller === 'ai' && tc && (carrier.state === 'idle' || carrier.currentActionText === '捧著星誓')) {
+          if (
+            participant?.controller === 'ai' &&
+            tc &&
+            (carrier.state === 'idle' ||
+              carrier.currentActionText === '捧著星誓' ||
+              carrier.currentActionText === '獻祭星誓')
+          ) {
             const shrineGoal = this.contestedPoints
               .filter((cp) => cp.ownerFaction !== carrier.faction)
               .map((cp) => ({ cp, d: getDistance(carrier.x, carrier.z, cp.x, cp.z) }))
@@ -4643,7 +4660,7 @@ export class RtsEngine {
             const tcDist = getDistance(carrier.x, carrier.z, tc.x, tc.z);
             const goShrine =
               participant.aiPersonality === 'hard' &&
-              shrineGoal &&
+              !!shrineGoal &&
               shrineGoal.d < tcDist * 0.85;
             const goal = goShrine && shrineGoal ? shrineGoal.cp : tc;
             carrier.targetX = goal.x;
@@ -4660,7 +4677,10 @@ export class RtsEngine {
       const visible = this.starRelicPhase === 'ground' || this.starRelicPhase === 'carried';
       this.starRelicMesh.visible = visible;
       if (visible) {
-        const bob = this.starRelicPhase === 'carried' ? 2.1 : 1.35 + Math.sin(this.simTime * 3) * 0.18;
+        const bob =
+          this.starRelicPhase === 'carried'
+            ? 2.1
+            : 1.35 + Math.sin(this.simTime * 3) * 0.18;
         this.starRelicMesh.position.set(this.starRelicX, bob, this.starRelicZ);
         this.starRelicMesh.rotation.y = this.simTime * 1.4;
         const core = this.starRelicMesh.getObjectByName('relicCore') as THREE.Mesh | undefined;
@@ -4668,7 +4688,7 @@ export class RtsEngine {
         if (mat) {
           const ratio =
             this.starRelicPhase === 'ground'
-              ? Math.min(1, this.starRelicChannel / 5.5)
+              ? Math.min(1, this.starRelicChannel / STAR_RELIC_CHANNEL_SEC)
               : 1;
           mat.emissiveIntensity = 0.45 + ratio * 1.1;
         }
