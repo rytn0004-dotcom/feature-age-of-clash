@@ -1002,6 +1002,22 @@ export class RtsEngine {
       this.contestedPoints.push(point);
       const mesh = createContestedShrineMesh(cp.label);
       mesh.position.set(cp.x, 0, cp.z);
+      // A separate arc makes capture progress readable from the normal RTS camera.
+      const progressArc = new THREE.Mesh(
+        new THREE.RingGeometry(cp.radius * 0.91, cp.radius, 64, 1, -Math.PI / 2, 0.001),
+        new THREE.MeshBasicMaterial({
+          color: 0x38bdf8,
+          transparent: true,
+          opacity: 0.95,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      );
+      progressArc.name = 'captureProgressArc';
+      progressArc.rotation.x = -Math.PI / 2;
+      progressArc.position.y = 0.14;
+      progressArc.userData.progressBucket = -1;
+      mesh.add(progressArc);
       this.scene.add(mesh);
       this.contestedMeshes.set(cp.id, mesh);
     });
@@ -4348,9 +4364,15 @@ export class RtsEngine {
   /**
    * Living 山羌: flee from nearby units; carcass stays put for meat gather.
    */
+  /**
+   * Living 山羌: flee a fixed distance from the nearest nearby unit, then rest
+   * during a cooldown so a nearby army cannot make the animal flee forever.
+   */
   private updateWildAnimals(dt: number) {
-    const DETECT = 13;
+    const DETECT_DISTANCE = 12; // fixed trigger radius in world tiles
+    const FLEE_DISTANCE = 8; // each triggered escape covers a fixed distance
     const FLEE_SPEED = 5.2;
+    const FLEE_COOLDOWN = 6.0;
     const WANDER = 0.85;
 
     for (const node of this.resourceNodes) {
@@ -4361,6 +4383,8 @@ export class RtsEngine {
         node.animalAlive = true;
         node.animalVx = 0;
         node.animalVz = 0;
+        node.animalFleeCooldown = 0;
+        node.animalFleeRemaining = 0;
       }
 
       const mesh = this.nodeMeshes.get(node.id);
@@ -4373,24 +4397,36 @@ export class RtsEngine {
         continue;
       }
 
-      let nearest: { x: number; z: number; d: number } | null = null;
-      for (const u of this.units) {
-        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
-        if (u.unitDef.isNaval) continue;
-        const d = getDistance(node.x, node.z, u.x, u.z);
-        if (d < DETECT && (!nearest || d < nearest.d)) {
-          nearest = { x: u.x, z: u.z, d };
+      node.animalFleeCooldown = Math.max(0, (node.animalFleeCooldown || 0) - dt);
+      let fleeRemaining = Math.max(0, node.animalFleeRemaining || 0);
+
+      // Start a new escape only when the cooldown has expired.
+      if (fleeRemaining <= 0 && (node.animalFleeCooldown || 0) <= 0) {
+        let nearest: { x: number; z: number; d: number } | null = null;
+        for (const u of this.units) {
+          if (u.hp <= 0 || u.garrisonedInBuildingId || u.unitDef.isNaval) continue;
+          const d = getDistance(node.x, node.z, u.x, u.z);
+          if (d <= DETECT_DISTANCE && (!nearest || d < nearest.d)) {
+            nearest = { x: u.x, z: u.z, d };
+          }
+        }
+        if (nearest) {
+          const dx = node.x - nearest.x;
+          const dz = node.z - nearest.z;
+          const len = Math.hypot(dx, dz) || 1;
+          node.animalFleeDirX = dx / len;
+          node.animalFleeDirZ = dz / len;
+          fleeRemaining = FLEE_DISTANCE;
+          node.animalFleeCooldown = FLEE_COOLDOWN;
         }
       }
 
-      if (nearest) {
-        const dx = node.x - nearest.x;
-        const dz = node.z - nearest.z;
-        const len = Math.hypot(dx, dz) || 1;
-        const urgency = 1 + (1 - nearest.d / DETECT) * 0.7;
-        node.animalVx = (dx / len) * FLEE_SPEED * urgency;
-        node.animalVz = (dz / len) * FLEE_SPEED * urgency;
-      } else {
+      if (fleeRemaining > 0) {
+        const dirX = node.animalFleeDirX || 0;
+        const dirZ = node.animalFleeDirZ || 0;
+        node.animalVx = dirX * FLEE_SPEED;
+        node.animalVz = dirZ * FLEE_SPEED;
+      } else if ((node.animalFleeCooldown || 0) <= 0) {
         node.animalVx = (node.animalVx || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
         node.animalVz = (node.animalVz || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
         const sp = Math.hypot(node.animalVx || 0, node.animalVz || 0);
@@ -4398,6 +4434,10 @@ export class RtsEngine {
           node.animalVx = ((node.animalVx || 0) / sp) * 1.6;
           node.animalVz = ((node.animalVz || 0) / sp) * 1.6;
         }
+      } else {
+        // Rest during cooldown; do not re-trigger just because a unit remains nearby.
+        node.animalVx = (node.animalVx || 0) * Math.max(0, 1 - dt * 5);
+        node.animalVz = (node.animalVz || 0) * Math.max(0, 1 - dt * 5);
       }
 
       let nx = node.x + (node.animalVx || 0) * dt;
@@ -4405,6 +4445,7 @@ export class RtsEngine {
       nx = Math.max(-92, Math.min(92, nx));
       nz = Math.max(-92, Math.min(92, nz));
 
+      let blockedByTerrain = false;
       if (this.mapLayout) {
         const wet = isPointInTerrainObstacle(
           nx,
@@ -4414,28 +4455,38 @@ export class RtsEngine {
           this.mapLayout.bridges
         );
         if (wet) {
-          node.animalVx = -(node.animalVx || 0) * 0.5;
-          node.animalVz = -(node.animalVz || 0) * 0.5;
+          blockedByTerrain = true;
+          node.animalVx = 0;
+          node.animalVz = 0;
           nx = node.x;
           nz = node.z;
         }
       }
 
+      const moved = getDistance(node.x, node.z, nx, nz);
       node.x = nx;
       node.z = nz;
+      if (fleeRemaining > 0) {
+        // End an escape cleanly if terrain blocks its path; never leave a deer
+        // trapped in a permanent flee state at a shoreline or map boundary.
+        node.animalFleeRemaining = blockedByTerrain ? 0 : Math.max(0, fleeRemaining - moved);
+        if (node.animalFleeRemaining <= 0) {
+          node.animalVx = 0;
+          node.animalVz = 0;
+        }
+      } else {
+        node.animalFleeRemaining = 0;
+      }
 
       if (mesh) {
         mesh.position.x = node.x;
         mesh.position.z = node.z;
         const spd = Math.hypot(node.animalVx || 0, node.animalVz || 0);
-        if (spd > 0.4) {
-          mesh.rotation.y = Math.atan2(node.animalVx || 0, node.animalVz || 0);
-        }
+        if (spd > 0.4) mesh.rotation.y = Math.atan2(node.animalVx || 0, node.animalVz || 0);
         mesh.position.y = spd > 1.2 ? Math.abs(Math.sin(this.simTime * 10)) * 0.12 : 0;
       }
 
-
-      // Non-villager combat damage vs living 山羌 (still needs full 32 HP of real damage)
+      // Non-villager combat damage vs living 山羌.
       if (node.animalAlive) {
         for (const u of this.units) {
           if (u.hp <= 0 || u.unitDef.category === 'worker' || u.unitDef.isNaval) continue;
@@ -4451,12 +4502,15 @@ export class RtsEngine {
             const awayX = node.x - u.x;
             const awayZ = node.z - u.z;
             const al = Math.hypot(awayX, awayZ) || 1;
-            node.animalVx = (awayX / al) * 6.5;
-            node.animalVz = (awayZ / al) * 6.5;
+            node.animalFleeDirX = awayX / al;
+            node.animalFleeDirZ = awayZ / al;
+            node.animalFleeRemaining = Math.max(node.animalFleeRemaining || 0, FLEE_DISTANCE);
+            node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, FLEE_COOLDOWN);
             if (node.animalHp <= 0) {
               node.animalAlive = false;
               node.animalVx = 0;
               node.animalVz = 0;
+              node.animalFleeRemaining = 0;
               this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
               if (mesh) mesh.rotation.x = 0.55;
             }
@@ -4464,7 +4518,6 @@ export class RtsEngine {
           (u as any)._huntHitCd = cd;
         }
       }
-
     }
   }
 
@@ -4574,6 +4627,35 @@ export class RtsEngine {
         }
       } else if (point.holdTime < 12) {
         point.siegeSupplyActive = false;
+      }
+
+      // Update the visible 360-degree capture arc in 1% steps to avoid rebuilding
+      // its geometry on every simulation frame.
+      if (mesh) {
+        const arc = mesh.getObjectByName('captureProgressArc') as THREE.Mesh | undefined;
+        if (arc) {
+          const bucket = Math.max(0, Math.min(100, Math.round(point.captureProgress * 100)));
+          if (arc.userData.progressBucket !== bucket) {
+            const oldGeometry = arc.geometry;
+            arc.geometry = new THREE.RingGeometry(
+              point.radius * 0.91,
+              point.radius,
+              64,
+              1,
+              -Math.PI / 2,
+              Math.max(0.001, (Math.PI * 2 * bucket) / 100)
+            );
+            oldGeometry.dispose();
+            arc.userData.progressBucket = bucket;
+          }
+          const arcMaterial = arc.material as THREE.MeshBasicMaterial;
+          const progressFaction = contested ? null : point.capturingFaction || point.ownerFaction;
+          const progressParticipant = progressFaction && progressFaction !== 'neutral'
+            ? this.participants.find((p) => p.id === progressFaction)
+            : null;
+          arcMaterial.color.setHex(contested ? 0xfbbf24 : progressParticipant?.colorHex ?? 0x38bdf8);
+          arcMaterial.opacity = bucket > 0 ? 0.95 : 0.18;
+        }
       }
 
       // Sync 3D shrine banner with ownership
