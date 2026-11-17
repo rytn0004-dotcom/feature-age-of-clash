@@ -947,9 +947,11 @@ export const HUD: React.FC<HUDProps> = ({
                       : enemy
                       ? 'text-rose-300'
                       : 'text-amber-200';
+                    const shrineIcon = cp.shrineType === 'war' ? '⚔' : cp.shrineType === 'harvest' ? '🌾' : '⚒';
+                    const shrineRole = cp.shrineType === 'war' ? '戰意' : cp.shrineType === 'harvest' ? '豐饒' : '鍛造';
                     return (
                       <div key={cp.id} className="flex justify-between gap-2">
-                        <span className="truncate">◆ {cp.label}</span>
+                        <span className="truncate">{shrineIcon} {cp.label} · {shrineRole}</span>
                         <span className={col}>{tag}</span>
                       </div>
                     );
