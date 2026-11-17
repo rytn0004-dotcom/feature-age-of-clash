@@ -329,6 +329,11 @@ export interface ResourceNode {
   /** Flee / wander velocity (world units per second) */
   animalVx?: number;
   animalVz?: number;
+  /** Remaining fixed-distance escape and cooldown before another escape can trigger. */
+  animalFleeRemaining?: number;
+  animalFleeCooldown?: number;
+  animalFleeDirX?: number;
+  animalFleeDirZ?: number;
 }
 
 /** Neutral map objective: stand in the circle to capture; owner gains passive income + aura. */
