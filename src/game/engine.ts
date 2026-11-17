@@ -4445,6 +4445,7 @@ export class RtsEngine {
       nx = Math.max(-92, Math.min(92, nx));
       nz = Math.max(-92, Math.min(92, nz));
 
+      let blockedByTerrain = false;
       if (this.mapLayout) {
         const wet = isPointInTerrainObstacle(
           nx,
@@ -4454,8 +4455,9 @@ export class RtsEngine {
           this.mapLayout.bridges
         );
         if (wet) {
-          node.animalVx = -(node.animalVx || 0) * 0.5;
-          node.animalVz = -(node.animalVz || 0) * 0.5;
+          blockedByTerrain = true;
+          node.animalVx = 0;
+          node.animalVz = 0;
           nx = node.x;
           nz = node.z;
         }
@@ -4465,7 +4467,9 @@ export class RtsEngine {
       node.x = nx;
       node.z = nz;
       if (fleeRemaining > 0) {
-        node.animalFleeRemaining = Math.max(0, fleeRemaining - moved);
+        // End an escape cleanly if terrain blocks its path; never leave a deer
+        // trapped in a permanent flee state at a shoreline or map boundary.
+        node.animalFleeRemaining = blockedByTerrain ? 0 : Math.max(0, fleeRemaining - moved);
         if (node.animalFleeRemaining <= 0) {
           node.animalVx = 0;
           node.animalVz = 0;
