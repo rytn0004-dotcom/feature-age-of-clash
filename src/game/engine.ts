@@ -5764,7 +5764,7 @@ export class RtsEngine {
       const aiRes = this.getResourcesForFaction(aiId);
 
       const aiUnits = this.units.filter((u) => u.faction === aiId && u.hp > 0);
-      const aiNavalBoats = aiUnits.filter((u) => !!u.unitDef.isNaval || u.unitDefId === 'fishing_boat');
+      const aiNavalBoats = aiUnits.filter((u) => u.unitDef.category === 'worker' && (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat'));
       const aiWorkers = aiUnits.filter(
         (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'
       );
