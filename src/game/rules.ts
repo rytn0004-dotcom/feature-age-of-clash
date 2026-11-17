@@ -14,7 +14,26 @@ import {
   UnitDefinition,
   BuildingEntity,
   AgeLevel,
+  ShrineType,
 } from '../types/game';
+
+/**
+ * Per-second income from a captured strategic shrine.
+ * The three shrine identities deliberately trade food, timber, gold and stone.
+ */
+export function getShrineIncome(type: ShrineType, blessingActive: boolean): Resources {
+  if (type === 'harvest') {
+    return { food: blessingActive ? 3 : 2, wood: 2, gold: 0, stone: 0 };
+  }
+  if (type === 'forge') {
+    return { food: 0, wood: 0, gold: blessingActive ? 3 : 2, stone: blessingActive ? 3 : 2 };
+  }
+  return { food: 0, wood: blessingActive ? 2 : 1, gold: blessingActive ? 4 : 3, stone: 0 };
+}
+
+export function getShrineBlessingHoldTime(type: ShrineType): number {
+  return type === 'forge' ? 16 : type === 'war' ? 18 : 24;
+}
 
 /**
  * Checks if current resources can cover cost.
