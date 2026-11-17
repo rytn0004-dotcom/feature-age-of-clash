@@ -271,6 +271,11 @@ export interface UnitEntity extends EntityCommon {
   pathCooldown?: number;
   lastProgressCheckPos?: { x: number; z: number };
   stuckAccumulator?: number;
+  /** Continuous assault on the same building (sapping / sustained torching) */
+  siegeTargetId?: string;
+  siegeChannelTime?: number;
+  /** Naval transport cargo (unit ids loaded onto a transport boat) */
+  transportCargoIds?: string[];
 }
 
 export interface BuildingEntity extends EntityCommon {
@@ -296,6 +301,7 @@ export interface BuildingEntity extends EntityCommon {
   attackCooldown: number;
   hitFlashTimer?: number;
   garrisonedUnitIds?: string[];
+  lastAttackerFaction?: FactionId;
 }
 
 export interface ResourceNode {
@@ -307,6 +313,32 @@ export interface ResourceNode {
   amount: number;
   maxAmount: number;
 }
+
+/** Neutral map objective: stand in the circle to capture; owner gains passive income + aura. */
+export interface ContestedPoint {
+  id: string;
+  x: number;
+  z: number;
+  radius: number;
+  ownerFaction: FactionId | 'neutral';
+  captureProgress: number;
+  capturingFaction?: FactionId;
+  label: string;
+  /** Seconds continuously held by current owner — unlocks siege-supply buff */
+  holdTime: number;
+  /** Owner has secured long enough for army-wide anti-building supply */
+  siegeSupplyActive: boolean;
+}
+
+/** Medieval-inspired structure assault methods (no residual burn DoT). */
+export type BuildingAssaultMethod =
+  | 'torch'
+  | 'sap'
+  | 'arrow_chip'
+  | 'cavalry_harass'
+  | 'ram'
+  | 'blast'
+  | 'greek_fire';
 
 export interface Projectile {
   id: string;

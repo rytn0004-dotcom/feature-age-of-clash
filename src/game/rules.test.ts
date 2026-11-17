@@ -1263,3 +1263,37 @@ test('unit-rebalance-and-naval: villager 55/5/0.7 vs Age-1 infantry 1.6x/1.6x/2x
   );
 });
 
+
+
+test('medieval-assault: torch/sap channel, no burn DoT; greek fire profile', async () => {
+  const { getBuildingAssaultProfile, calculateBuildingDamage, getSiegeChannelMultiplier } = await import('./rules');
+  const { MEDIEVAL_UNITS, DEFAULT_BUILDINGS } = await import('./mods');
+  const sword = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
+  const ram = MEDIEVAL_UNITS.find((u) => u.id === 'battering_ram')!;
+  const archer = MEDIEVAL_UNITS.find((u) => u.id === 'longbowman')!;
+  const flame = MEDIEVAL_UNITS.find((u) => u.id === 'greek_fire_siphon');
+  const farm = { buildingDef: DEFAULT_BUILDINGS.farm, buildingType: 'farm' as const };
+  const castle = { buildingDef: DEFAULT_BUILDINGS.castle, buildingType: 'castle' as const };
+
+  const torch = getBuildingAssaultProfile({ unitDef: sword, unitDefId: 'swordsman' });
+  assert.equal(torch.method, 'torch');
+  assert.equal(torch.wantsContact, true);
+
+  const ramP = getBuildingAssaultProfile({ unitDef: ram, unitDefId: 'battering_ram' });
+  assert.equal(ramP.method, 'ram');
+
+  const arrow = getBuildingAssaultProfile({ unitDef: archer, unitDefId: 'longbowman' });
+  assert.equal(arrow.method, 'arrow_chip');
+
+  if (flame) {
+    const g = getBuildingAssaultProfile({ unitDef: flame, unitDefId: 'greek_fire_siphon' });
+    assert.equal(g.method, 'greek_fire');
+  }
+
+  assert.ok(getSiegeChannelMultiplier(14, 'torch') > 1.4);
+  assert.equal(getSiegeChannelMultiplier(0, 'torch'), 1);
+
+  const fresh = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 0 }, farm, 1, [], [], []);
+  const sapped = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 12 }, farm, 1, [], [], []);
+  assert.ok(sapped > fresh, 'sapping channel should increase torch damage');
+});

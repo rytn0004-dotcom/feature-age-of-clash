@@ -2596,6 +2596,79 @@ export function createRubbleDecalMesh(footprintSize: number): THREE.Group {
   return group;
 }
 
+
+/** Neutral contested shrine / banner — readable from mid-distance */
+export function createContestedShrineMesh(label = '爭奪點'): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'contestedShrine';
+  addContactShadow(group, 2.4);
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x78716c,
+    roughness: 0.88,
+    metalness: 0.08,
+  });
+  const goldMat = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24,
+    emissive: 0xb45309,
+    emissiveIntensity: 0.35,
+    roughness: 0.45,
+    metalness: 0.4,
+  });
+  const clothMat = new THREE.MeshStandardMaterial({
+    color: 0xa8a29e,
+    roughness: 0.75,
+  });
+
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 0.45, 8), stoneMat);
+  plinth.position.y = 0.22;
+  plinth.castShadow = true;
+  group.add(plinth);
+
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 2.2, 0.55), stoneMat);
+  pillar.position.y = 1.4;
+  pillar.castShadow = true;
+  group.add(pillar);
+
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.45, 4), goldMat);
+  cap.position.y = 2.7;
+  group.add(cap);
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.8, 6), stoneMat);
+  pole.position.set(0.85, 1.5, 0);
+  group.add(pole);
+
+  const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.1), clothMat);
+  banner.position.set(1.35, 2.1, 0);
+  banner.rotation.y = -0.4;
+  banner.name = 'shrineBanner';
+  group.add(banner);
+
+  // Capture ring (horizontal)
+  const ringGeo = new THREE.RingGeometry(9.5, 11.0, 48);
+  ringGeo.rotateX(-Math.PI / 2);
+  const ring = new THREE.Mesh(
+    ringGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xf8fafc,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  ring.position.y = 0.06;
+  ring.name = 'captureRing';
+  group.add(ring);
+
+  const badge = createBadgeSprite(label, '⚔️', '中立', 1, false, false, '爭奪中');
+  badge.position.y = 3.4;
+  badge.name = 'shrineBadge';
+  group.add(badge);
+
+  return group;
+}
+
 export function createBuildingMesh(
   type: BuildingType,
   faction: FactionId,
@@ -4016,10 +4089,38 @@ const horseLegUpperGeo = new THREE.CylinderGeometry(0.085, 0.055, 0.34, 8);
 const horseLegLowerGeo = new THREE.CylinderGeometry(0.052, 0.04, 0.28, 7);
 const horseHoofGeo = new THREE.CylinderGeometry(0.044, 0.054, 0.07, 8);
 
-export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THREE.Group {
+export interface UnitVisualContext {
+  age?: number;
+  researchedTechIds?: string[];
+  unitId?: string;
+}
+
+/** Map researched tech ids to silhouette upgrades (procedural accessories). */
+export function getUnitVisualFlags(ctx?: UnitVisualContext) {
+  const age = ctx?.age || 1;
+  const techs = ctx?.researchedTechIds || [];
+  const has = (id: string) => techs.includes(id);
+  return {
+    age,
+    plateArmor: has('med_plate_tempering') || has('fan_elder_bark') || has('ani_ki_awakening') || age >= 4,
+    forgedWeapons: has('med_forged_blades') || has('fan_arcane_resonance') || has('ani_chakra_flow') || age >= 3,
+    eliteTrim: age >= 3,
+    imperial: age >= 4,
+    siegeEngineers: has('shared_siege_engineers'),
+  };
+}
+
+export function createUnitMesh(
+  unitDef: UnitDefinition,
+  faction: FactionId,
+  visualCtx?: UnitVisualContext
+): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
   const s = unitDef.visual.scale || 1;
+  const unitId = visualCtx?.unitId || unitDef.id;
+  const flags = getUnitVisualFlags(visualCtx);
+
 
   addContactShadow(group, 0.72 * s);
 
@@ -4075,7 +4176,12 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
     cannon: '💣',
     golem: unitDef.category === 'siege' ? '🪨' : '🪵',
   };
-  const icon = roleIcons[unitDef.visual.modelType] || '⚔️';
+  const icon =
+    unitId === 'transport_boat'
+      ? '🚢'
+      : unitId === 'greek_fire_siphon'
+      ? '🔥'
+      : roleIcons[unitDef.visual.modelType] || '⚔️';
   const displayName = `${colors.labelPrefix || ''}${unitDef.name.split(' ')[0]}`;
   const badge = createBadgeSprite(
     displayName,
@@ -4839,72 +4945,143 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
     counterweight.position.set(0, -0.2, 0.44);
     rightArmPivot.add(armBeam, spoon, boulder, counterweight);
   } else if (mType === 'boat') {
-    // Sleek Wooden Offshore Fishing Vessel with Sail, Cabin & Lantern
-    bodyPivot.position.y = 0.08;
     const oakMat = sharedWoodScaffoldMat;
     const trimMat = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.45 });
-    const sailMat = new THREE.MeshStandardMaterial({
-      color: 0xf8fafc,
-      map: unitClothMaps.map,
-      side: THREE.DoubleSide,
-      roughness: 0.68,
-    });
-    const lanternMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+    const isTransport = unitId === 'transport_boat';
 
-    // Curved keel & hull
-    const hull = new THREE.Mesh(
-      makeLatheGeo([
-        [0.02, -0.92],
-        [0.34, -0.68],
-        [0.44, -0.1],
-        [0.42, 0.45],
-        [0.24, 0.85],
-        [0.02, 1.05],
-      ], 12),
-      oakMat
-    );
-    hull.rotation.x = Math.PI / 2;
-    hull.scale.set(1.0, 0.62, 1.0);
-    hull.position.set(0, 0.24, 0);
-    hull.castShadow = true;
-    animParts.hitMaterials.push(oakMat);
-    bodyPivot.add(hull);
+    if (isTransport) {
+      // Wide flat-bottom troop barge — distinct from fishing sailboat
+      bodyPivot.position.y = 0.06;
+      const bargeMat = new THREE.MeshStandardMaterial({
+        color: flags.imperial ? 0x57534e : flags.eliteTrim ? 0x78716c : 0x92400e,
+        roughness: 0.7,
+        metalness: 0.08,
+      });
+      animParts.hitMaterials.push(bargeMat);
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.32, 1.85), bargeMat);
+      hull.position.set(0, 0.28, 0);
+      hull.castShadow = true;
+      // Bow/stern taper blocks
+      const bow = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 0.35), bargeMat);
+      bow.position.set(0, 0.26, 0.95);
+      const stern = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 0.3), bargeMat);
+      stern.position.set(0, 0.26, -0.95);
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.06, 1.7), leatherMat);
+      deck.position.set(0, 0.46, 0);
+      bodyPivot.add(hull, bow, stern, deck);
 
-    // Gunwale trim & flat timber deck
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 1.28), leatherMat);
-    deck.position.set(0, 0.34, -0.02);
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.44), trimMat);
-    cabin.position.set(0, 0.52, -0.35);
-    cabin.castShadow = true;
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), goldTrimMat);
-    crate.position.set(0.1, 0.46, 0.32);
-    bodyPivot.add(deck, cabin, crate);
+      // Troop benches
+      [-0.28, 0.28].forEach((bx) => {
+        const bench = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 1.2), oakMat);
+        bench.position.set(bx, 0.54, 0);
+        bodyPivot.add(bench);
+      });
+      // Side shields / gunwales (faction color)
+      [-0.58, 0.58].forEach((sx, i) => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.28, 1.5), trimMat);
+        rail.position.set(sx, 0.58, 0);
+        bodyPivot.add(rail);
+        if (flags.eliteTrim || flags.plateArmor) {
+          const shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.34, 0.28), armorMat);
+          shield.position.set(sx * 1.05, 0.72, i === 0 ? -0.35 : 0.35);
+          bodyPivot.add(shield);
+        }
+      });
+      // Boarding ramp (front)
+      const ramp = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.05, 0.7), oakMat);
+      ramp.position.set(0, 0.38, 1.15);
+      ramp.rotation.x = -0.35;
+      bodyPivot.add(ramp);
+      // Short mast + signal flag (not a fishing sail)
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.1, 6), oakMat);
+      mast.position.set(0, 1.0, -0.4);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.28), trimMat);
+      flag.position.set(0.28, 1.45, -0.4);
+      bodyPivot.add(mast, flag);
+      if (flags.siegeEngineers || flags.imperial) {
+        const ironBand = new THREE.Mesh(
+          new THREE.TorusGeometry(0.55, 0.04, 6, 16),
+          new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7, roughness: 0.35 })
+        );
+        ironBand.rotation.x = Math.PI / 2;
+        ironBand.position.set(0, 0.42, 0);
+        bodyPivot.add(ironBand);
+      }
+      // Iconic oars on sides
+      rightArmPivot.position.set(0.7, 0.5, 0.2);
+      bodyPivot.add(rightArmPivot);
+      const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 1.1, 5), oakMat);
+      oar.rotation.z = Math.PI / 2.2;
+      rightArmPivot.add(oar);
+    } else {
+      // Fishing vessel — pointed hull, tall sail, lantern, net boom
+      bodyPivot.position.y = 0.08;
+      const sailMat = new THREE.MeshStandardMaterial({
+        color: flags.imperial ? 0xfef3c7 : 0xf8fafc,
+        map: unitClothMaps.map,
+        side: THREE.DoubleSide,
+        roughness: 0.68,
+      });
+      const lanternMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+      const hull = new THREE.Mesh(
+        makeLatheGeo(
+          [
+            [0.02, -0.92],
+            [0.34, -0.68],
+            [0.44, -0.1],
+            [0.42, 0.45],
+            [0.24, 0.85],
+            [0.02, 1.05],
+          ],
+          12
+        ),
+        oakMat
+      );
+      hull.rotation.x = Math.PI / 2;
+      hull.scale.set(flags.eliteTrim ? 1.08 : 1.0, 0.62, flags.eliteTrim ? 1.1 : 1.0);
+      hull.position.set(0, 0.24, 0);
+      hull.castShadow = true;
+      animParts.hitMaterials.push(oakMat);
+      bodyPivot.add(hull);
 
-    // Mast & Yardarm with billowing sail
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.55, 8), oakMat);
-    mast.position.set(0, 1.1, 0.06);
-    mast.castShadow = true;
-    const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), oakMat);
-    yard.rotation.z = Math.PI / 2;
-    yard.position.set(0, 1.66, 0.08);
-    const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.92, 4, 4), sailMat);
-    sail.position.set(0, 1.18, 0.14);
-    const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.02), trimMat);
-    emblem.position.set(0, 1.2, 0.155);
-    bodyPivot.add(mast, yard, sail, emblem);
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 1.28), leatherMat);
+      deck.position.set(0, 0.34, -0.02);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.44), trimMat);
+      cabin.position.set(0, 0.52, -0.35);
+      cabin.castShadow = true;
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), goldTrimMat);
+      crate.position.set(0.1, 0.46, 0.32);
+      bodyPivot.add(deck, cabin, crate);
 
-    // Bow lantern
-    const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), lanternMat);
-    lantern.position.set(0, 0.55, 0.96);
-    bodyPivot.add(lantern);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.55, 8), oakMat);
+      mast.position.set(0, 1.1, 0.06);
+      mast.castShadow = true;
+      const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), oakMat);
+      yard.rotation.z = Math.PI / 2;
+      yard.position.set(0, 1.66, 0.08);
+      const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.92, 4, 4), sailMat);
+      sail.position.set(0, 1.18, 0.14);
+      const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.02), trimMat);
+      emblem.position.set(0, 1.2, 0.155);
+      bodyPivot.add(mast, yard, sail, emblem);
 
-    // Fishing net boom articulated slightly via rightArmPivot while harvesting fish
-    rightArmPivot.position.set(-0.34, 0.42, 0.15);
-    bodyPivot.add(rightArmPivot);
-    const netPole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.85, 6), oakMat);
-    netPole.rotation.z = 0.55;
-    netPole.position.set(-0.22, 0.12, 0.18);
-    rightArmPivot.add(netPole);
+      const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), lanternMat);
+      lantern.position.set(0, 0.55, 0.96);
+      bodyPivot.add(lantern);
+
+      if (flags.forgedWeapons || flags.age >= 3) {
+        const netPile = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.05, 6, 10), leatherMat);
+        netPile.position.set(-0.2, 0.48, 0.4);
+        bodyPivot.add(netPile);
+      }
+
+      rightArmPivot.position.set(-0.34, 0.42, 0.15);
+      bodyPivot.add(rightArmPivot);
+      const netPole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.85, 6), oakMat);
+      netPole.rotation.z = 0.55;
+      netPole.position.set(-0.22, 0.12, 0.18);
+      rightArmPivot.add(netPole);
+    }
   } else {
     // Ancient Living Treant / Guardian Colossus
     const barkMat = new THREE.MeshStandardMaterial({
@@ -4961,7 +5138,72 @@ export function createUnitMesh(unitDef: UnitDefinition, faction: FactionId): THR
     });
   }
 
+
+  // --- Age / tech silhouette upgrades (shared accents) ---
+  if (flags.eliteTrim || flags.plateArmor || flags.forgedWeapons || flags.imperial) {
+    const accent = new THREE.MeshStandardMaterial({
+      color: flags.imperial ? 0xfbbf24 : flags.plateArmor ? 0xcbd5e1 : colors.primary,
+      metalness: flags.plateArmor ? 0.75 : 0.35,
+      roughness: 0.35,
+    });
+    if (mType === 'swordsman' || mType === 'knight' || mType === 'ninja' || mType === 'saiyan') {
+      if (flags.eliteTrim || flags.imperial) {
+        const plume = new THREE.Mesh(new THREE.ConeGeometry(0.06 * s, 0.28 * s, 5), accent);
+        plume.position.set(0, 1.22 * s, -0.02);
+        plume.name = 'agePlume';
+        bodyPivot.add(plume);
+      }
+      if (flags.plateArmor) {
+        const gorget = new THREE.Mesh(new THREE.TorusGeometry(0.16 * s, 0.035 * s, 6, 12), accent);
+        gorget.rotation.x = Math.PI / 2;
+        gorget.position.set(0, 0.62 * s, 0.05);
+        bodyPivot.add(gorget);
+      }
+      if (flags.forgedWeapons) {
+        const edgeGlow = new THREE.Mesh(
+          new THREE.BoxGeometry(0.04 * s, 0.5 * s, 0.04 * s),
+          new THREE.MeshBasicMaterial({ color: flags.imperial ? 0xfde68a : 0x93c5fd })
+        );
+        edgeGlow.position.set(0.42 * s, 0.35 * s, 0.15 * s);
+        edgeGlow.name = 'weaponGlow';
+        bodyPivot.add(edgeGlow);
+      }
+    }
+    if (mType === 'archer' && (flags.eliteTrim || flags.age >= 2)) {
+      const quiverCap = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * s, 0.09 * s, 0.12 * s, 6), accent);
+      quiverCap.position.set(-0.28 * s, 0.55 * s, -0.15 * s);
+      bodyPivot.add(quiverCap);
+    }
+    if ((mType === 'cannon' || mType === 'ram') && (flags.siegeEngineers || flags.imperial)) {
+      const plate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5 * s, 0.08 * s, 0.6 * s),
+        new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.3 })
+      );
+      plate.position.set(0, 0.55 * s, 0);
+      bodyPivot.add(plate);
+    }
+  }
+
+
+  // Unique unit silhouettes (always on)
+  if (unitId === 'greek_fire_siphon' && mType === 'cannon') {
+    const nozzle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07 * s, 0.13 * s, 0.6 * s, 8),
+      new THREE.MeshStandardMaterial({ color: 0xea580c, metalness: 0.55, roughness: 0.38 })
+    );
+    nozzle.rotation.z = Math.PI / 2;
+    nozzle.position.set(0.5 * s, 0.55 * s, 0.15 * s);
+    const tank = new THREE.Mesh(
+      new THREE.SphereGeometry(0.24 * s, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x44403c, metalness: 0.4, roughness: 0.5 })
+    );
+    tank.position.set(-0.2 * s, 0.48 * s, -0.12 * s);
+    bodyPivot.add(nozzle, tank);
+  }
+
   group.userData.animParts = animParts;
+  group.userData.visualFlags = flags;
+  group.userData.visualUnitId = unitId;
   group.scale.set(s, s, s);
   return group;
 }

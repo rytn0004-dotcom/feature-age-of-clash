@@ -65,7 +65,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     maxHp: 1100,
     cost: { food: 0, wood: 110, gold: 0, stone: 0 },
     buildTime: 16,
-    trainableUnits: ['fishing_boat'],
+    trainableUnits: ['fishing_boat', 'transport_boat'],
     buildingArmor: 7,
     maxGarrison: 0,
     size: 3.0,
@@ -363,6 +363,35 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
       scale: 1.05,
     },
   },
+
+  {
+    id: 'transport_boat',
+    name: '運兵船 (Transport)',
+    factionPack: 'medieval',
+    category: 'special',
+    isNaval: true,
+    description:
+      '載運陸上部隊渡河的平底船。靠近己方單位可登船，移動至對岸後卸載。本身幾乎無戰鬥力，需護衛。',
+    stats: {
+      maxHp: 160,
+      attack: 0,
+      buildingAttack: 0,
+      defense: 2,
+      rangedDefense: 1,
+      range: 1.5,
+      speed: 3.6,
+      attackRate: 1,
+      cost: { food: 0, wood: 100, gold: 20, stone: 0 },
+      trainTime: 18,
+      gatherSpeed: 0,
+      carryCapacity: 5,
+    },
+    visual: {
+      color: '#78716c',
+      modelType: 'boat',
+      scale: 1.25,
+    },
+  },
   {
     id: 'swordsman',
     name: '重裝劍士 (Man-at-Arms)',
@@ -542,6 +571,35 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
     },
     requiredAge: 4,
   },
+  {
+    id: 'greek_fire_siphon',
+    name: '猛火油噴射器 (Naphtha Siphon)',
+    factionPack: 'medieval',
+    category: 'siege',
+    description:
+      '【獨特攻城】中世紀攻城用的猛火油虹吸管：將沸油與樹脂混合物短距噴出。擅長掃除木造工事與密集駐防，對石造仍有直擊，但不留下殘火。',
+    stats: {
+      maxHp: 125,
+      attack: 16,
+      buildingAttack: 34,
+      ignoresBuildingArmor: true,
+      defense: 1,
+      rangedDefense: 4,
+      range: 5.2,
+      speed: 2.35,
+      attackRate: 0.5,
+      cost: { food: 0, wood: 110, gold: 85, stone: 35 },
+      trainTime: 26,
+      gatherSpeed: 0,
+      carryCapacity: 0,
+    },
+    visual: {
+      color: '#f97316',
+      modelType: 'cannon',
+      scale: 1.05,
+      projectileType: 'fireball',
+    },
+  },
 ];
 
 export const ANIME_UNITS: UnitDefinition[] = [
@@ -571,11 +629,11 @@ export const ANIME_UNITS: UnitDefinition[] = [
       projectileType: 'slash',
     },
     specialAbility: {
-      name: '千鳥突刺 (Chidori Rush)',
-      type: 'whirlwind',
-      cooldown: 10,
-      potency: 24,
-      description: '雷光瞬身斬擊，對目標造成爆發電擊傷害。',
+      name: '煙遁 (Smoke Veil)',
+      type: 'haste',
+      cooldown: 14,
+      potency: 1.4,
+      description: '釋放煙幕加速友軍，並短暫打斷附近敵軍對己方的攻擊鎖定。',
     },
   },
   {
@@ -704,7 +762,7 @@ export const FANTASY_UNITS: UnitDefinition[] = [
       type: 'heal',
       cooldown: 12,
       potency: 28,
-      description: '為自身及周圍5碼內的友軍恢復生命值。',
+      description: '治療友軍，並以藤蔓纏住附近敵軍雙足、短暫大幅緩速。',
     },
     requiredAge: 2,
   },
@@ -965,7 +1023,21 @@ export const DEFAULT_AI_RULES: AiRule[] = [
     action: { type: 'cluster_attack', priority: 82 },
   },
   {
-    id: 'ai_mid_patrol',
+    
+  {
+    id: 'ai_train_transport',
+    name: '渡河運兵 (有碼頭且軍隊成軍後訓練運兵船)',
+    condition: {
+      all: [
+        { field: 'wood', op: 'gte', value: 120 },
+        { field: 'armyCount', op: 'gte', value: 6 },
+        { field: 'gameTime', op: 'gte', value: 120 },
+        { field: 'age', op: 'gte', value: 2 },
+      ],
+    },
+    action: { type: 'train_unit', unitId: 'transport_boat', buildingType: 'dock', priority: 42 },
+  },
+id: 'ai_mid_patrol',
     name: '前線集結列陣 (部隊先行於基地前方會師警戒與防守)',
     enabled: true,
     conditions: [

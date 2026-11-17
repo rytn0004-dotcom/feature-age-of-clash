@@ -53,6 +53,7 @@ export interface MapLayoutResult {
   cliffDiscs: TerrainBlockedDisc[];
   bridges: TerrainPassableBridge[];
   resourceNodes: ResourceNode[];
+  contestedPoints: Array<{ id: string; x: number; z: number; radius: number; label: string }>;
 }
 
 function seededRandom(seed: number): () => number {
@@ -577,6 +578,46 @@ export function generateMapLayout(
     }
   });
 
+  // Neutral contested shrines — contest these to swing mid-game tempo
+  const contestedPoints: Array<{ id: string; x: number; z: number; radius: number; label: string }> = [];
+  const shrineCandidates: Array<{ x: number; z: number; label: string }> = [];
+  if (preset === 'river_valley') {
+    shrineCandidates.push(
+      { x: 0, z: 24, label: '河心古祭壇' },
+      { x: 0, z: -24, label: '渡口戰旗' },
+      { x: -58, z: -10, label: '西岸遺跡' },
+      { x: 58, z: 10, label: '東岸遺跡' }
+    );
+  } else if (preset === 'highland_basin') {
+    shrineCandidates.push(
+      { x: 0, z: 0, label: '盆地聖石' },
+      { x: -34, z: 34, label: '北脊烽火' },
+      { x: 34, z: -34, label: '南脊烽火' }
+    );
+  } else {
+    shrineCandidates.push(
+      { x: 0, z: 0, label: '雙湖中樞' },
+      { x: -30, z: 38, label: '北灣燈塔' },
+      { x: 30, z: -38, label: '南灣燈塔' }
+    );
+  }
+
+  let shrineIdx = 0;
+  for (const c of shrineCandidates) {
+    if (spawns.some((sp) => Math.hypot(sp.x - c.x, sp.z - c.z) < 26)) continue;
+    contestedPoints.push({
+      id: `shrine_${shrineIdx++}`,
+      x: c.x,
+      z: c.z,
+      radius: 11,
+      label: c.label,
+    });
+    if (contestedPoints.length >= 3) break;
+  }
+  if (contestedPoints.length === 0) {
+    contestedPoints.push({ id: 'shrine_0', x: 0, z: 20, radius: 11, label: '中立爭奪點' });
+  }
+
   return {
     preset,
     richness,
@@ -585,6 +626,7 @@ export function generateMapLayout(
     cliffDiscs,
     bridges,
     resourceNodes,
+    contestedPoints,
   };
 }
 

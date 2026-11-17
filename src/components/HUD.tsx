@@ -69,6 +69,9 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleSpeed,
 }) => {
   const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Long-lived offscreen buffers — avoid realloc on selection changes */
+  const minimapStaticRef = useRef<HTMLCanvasElement | null>(null);
+  const minimapDynRef = useRef<HTMLCanvasElement | null>(null);
   const [showAgeModal, setShowAgeModal] = useState(false);
   const [showHotkeysModal, setShowHotkeysModal] = useState(false);
   const [isHudCompact, setIsHudCompact] = useState(false);
@@ -168,8 +171,8 @@ export const HUD: React.FC<HUDProps> = ({
     if (!coords) return;
 
     (engine as any).cameraDesiredTarget = null;
-    engine.cameraTarget.x = Math.max(-84, Math.min(84, coords.worldX));
-    engine.cameraTarget.z = Math.max(-84, Math.min(84, coords.worldZ));
+    engine.cameraTarget.x = Math.max(-92, Math.min(92, coords.worldX));
+    engine.cameraTarget.z = Math.max(-92, Math.min(92, coords.worldZ));
     (engine as any).updateCameraPosition?.();
   };
 
@@ -206,202 +209,315 @@ export const HUD: React.FC<HUDProps> = ({
     }
   };
 
-  // Render Minimap
+  // Render Minimap — static terrain cache + throttled entity layer
   useEffect(() => {
     const canvas = minimapCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let animId: number;
-    const drawMinimap = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const mapSize = 200;
+    const worldHalf = 100;
+    const toMinimap = (x: number, z: number): [number, number] => [
+      ((x + worldHalf) / mapSize) * canvas.width,
+      ((z + worldHalf) / mapSize) * canvas.height,
+    ];
 
-      // Map bounds are -100 to 100
-      const mapSize = 200;
-      const toMinimap = (x: number, z: number) => {
-        const mx = ((x + 100) / mapSize) * canvas.width;
-        const my = ((z + 100) / mapSize) * canvas.height;
-        return [mx, my];
-      };
+    // Reuse long-lived offscreen buffers (resize only when display canvas size changes)
+    if (!minimapStaticRef.current) minimapStaticRef.current = document.createElement('canvas');
+    if (!minimapDynRef.current) minimapDynRef.current = document.createElement('canvas');
+    const staticCanvas = minimapStaticRef.current;
+    const dynCanvas = minimapDynRef.current;
+    if (staticCanvas.width !== canvas.width || staticCanvas.height !== canvas.height) {
+      staticCanvas.width = canvas.width;
+      staticCanvas.height = canvas.height;
+    }
+    if (dynCanvas.width !== canvas.width || dynCanvas.height !== canvas.height) {
+      dynCanvas.width = canvas.width;
+      dynCanvas.height = canvas.height;
+    }
+    const staticCtx = staticCanvas.getContext('2d');
+    if (!staticCtx) return;
 
-      // 1. Terrain base & map terrain features
+    let cachedLayoutRef: typeof engine.mapLayout | null = null;
+    let cachedPreset = '';
+    let staticDirty = true;
+
+    const rebuildStaticLayer = () => {
+      const w = staticCanvas.width;
+      const h = staticCanvas.height;
+      staticCtx.clearRect(0, 0, w, h);
+
       const presetTint =
         engine.mapPreset === 'highland_basin'
           ? '#3b4a1e'
           : engine.mapPreset === 'twin_lakes'
           ? '#1e3f24'
           : '#1c3412';
-      ctx.fillStyle = presetTint;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      staticCtx.fillStyle = presetTint;
+      staticCtx.fillRect(0, 0, w, h);
 
-      // Subtle tactical grid
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-      ctx.lineWidth = 1;
-      for (let i = 0; i < canvas.width; i += 40) {
-        ctx.beginPath();
-        ctx.moveTo(i, 0);
-        ctx.lineTo(i, canvas.height);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, i);
-        ctx.lineTo(canvas.width, i);
-        ctx.stroke();
+      // Grid once (cached)
+      staticCtx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+      staticCtx.lineWidth = 1;
+      for (let i = 0; i < w; i += 40) {
+        staticCtx.beginPath();
+        staticCtx.moveTo(i, 0);
+        staticCtx.lineTo(i, h);
+        staticCtx.stroke();
+        staticCtx.beginPath();
+        staticCtx.moveTo(0, i);
+        staticCtx.lineTo(w, i);
+        staticCtx.stroke();
       }
 
-      if (engine.mapLayout) {
-        // Water Rects (rivers as thick line segments)
-        ctx.strokeStyle = '#0284c7';
-        ctx.lineCap = 'round';
-        engine.mapLayout.waterRects.forEach((wr) => {
-          const [rx1, ry1] = toMinimap(wr.x1, wr.z1);
-          const [rx2, ry2] = toMinimap(wr.x2, wr.z2);
-          const widthUnits = wr.halfWidth ? wr.halfWidth * 2 : wr.kind === 'water' ? 19.6 : 5.2;
-          ctx.lineWidth = Math.max(4, (widthUnits / mapSize) * canvas.width);
-          ctx.beginPath();
-          ctx.moveTo(rx1, ry1);
-          ctx.lineTo(rx2, ry2);
-          ctx.stroke();
-        });
-        ctx.lineCap = 'butt';
+      const layout = engine.mapLayout;
+      if (!layout) return;
 
-        // Water Discs (lakes)
-        ctx.fillStyle = '#0284c7';
-        engine.mapLayout.waterDiscs.forEach((wd) => {
-          const [wx, wy] = toMinimap(wd.x, wd.z);
-          const wr = (wd.radius / mapSize) * canvas.width;
-          ctx.beginPath();
-          ctx.arc(wx, wy, wr, 0, Math.PI * 2);
-          ctx.fill();
-        });
+      staticCtx.strokeStyle = '#0284c7';
+      staticCtx.lineCap = 'round';
+      layout.waterRects.forEach((wr) => {
+        const [rx1, ry1] = toMinimap(wr.x1, wr.z1);
+        const [rx2, ry2] = toMinimap(wr.x2, wr.z2);
+        const widthUnits = wr.halfWidth ? wr.halfWidth * 2 : wr.kind === 'water' ? 19.6 : 5.2;
+        staticCtx.lineWidth = Math.max(4, (widthUnits / mapSize) * w);
+        staticCtx.beginPath();
+        staticCtx.moveTo(rx1, ry1);
+        staticCtx.lineTo(rx2, ry2);
+        staticCtx.stroke();
+      });
+      staticCtx.lineCap = 'butt';
 
-        // Passable Bridges & Fords
-        engine.mapLayout.bridges.forEach((br) => {
-          const [bx, by] = toMinimap(br.x, br.z);
-          const bw = Math.max(4, ((br.halfWidth * 2) / mapSize) * canvas.width);
-          const bl = Math.max(4, ((br.halfLength * 2) / mapSize) * canvas.width);
-          ctx.save();
-          ctx.translate(bx, by);
-          ctx.rotate(br.angle);
-          ctx.fillStyle = '#d6b482';
-          ctx.fillRect(-bw / 2, -bl / 2, bw, bl);
-          ctx.restore();
-        });
+      staticCtx.fillStyle = '#0284c7';
+      layout.waterDiscs.forEach((wd) => {
+        const [wx, wy] = toMinimap(wd.x, wd.z);
+        const wr = (wd.radius / mapSize) * w;
+        staticCtx.beginPath();
+        staticCtx.arc(wx, wy, wr, 0, Math.PI * 2);
+        staticCtx.fill();
+      });
 
-        // Highland Cliffs
-        ctx.fillStyle = '#475569';
-        engine.mapLayout.cliffDiscs.forEach((cd) => {
-          const [cx, cy] = toMinimap(cd.x, cd.z);
-          const cr = (cd.radius / mapSize) * canvas.width;
-          ctx.beginPath();
-          ctx.arc(cx, cy, cr, 0, Math.PI * 2);
-          ctx.fill();
-        });
-      }
+      layout.bridges.forEach((br) => {
+        const [bx, by] = toMinimap(br.x, br.z);
+        const bw = Math.max(4, ((br.halfWidth * 2) / mapSize) * w);
+        const bl = Math.max(4, ((br.halfLength * 2) / mapSize) * w);
+        staticCtx.save();
+        staticCtx.translate(bx, by);
+        staticCtx.rotate(br.angle);
+        staticCtx.fillStyle = '#d6b482';
+        staticCtx.fillRect(-bw / 2, -bl / 2, bw, bl);
+        staticCtx.restore();
+      });
 
-      // 2. Resource nodes with distinct shapes
+      staticCtx.fillStyle = '#57534e';
+      layout.cliffDiscs.forEach((cd) => {
+        const [cx, cy] = toMinimap(cd.x, cd.z);
+        const cr = (cd.radius / mapSize) * w;
+        staticCtx.beginPath();
+        staticCtx.arc(cx, cy, cr, 0, Math.PI * 2);
+        staticCtx.fill();
+      });
+    };
+
+    // Dynamic entity buffer (units/buildings/resources/objectives) — throttled
+    const dynCtx = dynCanvas.getContext('2d');
+    if (!dynCtx) return;
+
+    let lastDynDraw = 0;
+    const DYN_INTERVAL_MS = 66; // ~15 fps for entities
+
+    const drawDynamicLayer = () => {
+      const w = dynCanvas.width;
+      const h = dynCanvas.height;
+      dynCtx.clearRect(0, 0, w, h);
+
+      // Resources (skip empty)
       engine.resourceNodes.forEach((node) => {
         if (node.amount <= 0) return;
         const [mx, my] = toMinimap(node.x, node.z);
-
         if (node.resourceType === 'wood') {
-          ctx.fillStyle = '#15803d';
-          ctx.beginPath();
-          ctx.arc(mx, my, 2.7, 0, Math.PI * 2);
-          ctx.fill();
+          dynCtx.fillStyle = '#15803d';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.7, 0, Math.PI * 2);
+          dynCtx.fill();
         } else if (node.resourceType === 'gold') {
-          ctx.fillStyle = '#fbbf24';
-          ctx.strokeStyle = '#000000';
-          ctx.lineWidth = 1.1;
-          ctx.beginPath();
-          ctx.moveTo(mx, my - 4.2);
-          ctx.lineTo(mx + 4.2, my);
-          ctx.lineTo(mx, my + 4.2);
-          ctx.lineTo(mx - 4.2, my);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
+          dynCtx.fillStyle = '#fbbf24';
+          dynCtx.beginPath();
+          dynCtx.moveTo(mx, my - 4.2);
+          dynCtx.lineTo(mx + 4.2, my);
+          dynCtx.lineTo(mx, my + 4.2);
+          dynCtx.lineTo(mx - 4.2, my);
+          dynCtx.closePath();
+          dynCtx.fill();
         } else if (node.resourceType === 'stone') {
-          ctx.fillStyle = '#cbd5e1';
-          ctx.strokeStyle = '#0f172a';
-          ctx.lineWidth = 1;
-          ctx.fillRect(mx - 2.8, my - 2.8, 5.6, 5.6);
-          ctx.strokeRect(mx - 2.8, my - 2.8, 5.6, 5.6);
+          dynCtx.fillStyle = '#cbd5e1';
+          dynCtx.fillRect(mx - 2.8, my - 2.8, 5.6, 5.6);
         } else if (node.subtype === 'berry') {
-          ctx.fillStyle = '#fb7185';
-          ctx.beginPath();
-          ctx.arc(mx, my, 2.6, 0, Math.PI * 2);
-          ctx.fill();
+          dynCtx.fillStyle = '#fb7185';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.6, 0, Math.PI * 2);
+          dynCtx.fill();
         } else if (node.subtype === 'hunt') {
-          ctx.fillStyle = '#fdba74';
-          ctx.beginPath();
-          ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
-          ctx.fill();
+          dynCtx.fillStyle = '#fdba74';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
+          dynCtx.fill();
         } else if (node.subtype === 'shore_fish') {
-          ctx.fillStyle = '#38bdf8';
-          ctx.beginPath();
-          ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
-          ctx.fill();
+          dynCtx.fillStyle = '#38bdf8';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
+          dynCtx.fill();
         } else if (node.subtype === 'deep_fish') {
-          ctx.fillStyle = '#0284c7';
-          ctx.strokeStyle = '#bae6fd';
-          ctx.lineWidth = 0.9;
-          ctx.beginPath();
-          ctx.arc(mx, my, 2.9, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
+          dynCtx.fillStyle = '#0284c7';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.9, 0, Math.PI * 2);
+          dynCtx.fill();
+        } else {
+          // farm / generic food
+          dynCtx.fillStyle = '#a3e635';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 2.4, 0, Math.PI * 2);
+          dynCtx.fill();
         }
       });
 
-      // 3. Buildings with prominent multi-faction participant colors
+      // Contested points
+      if (engine.contestedPoints) {
+        engine.contestedPoints.forEach((cp) => {
+          const [mx, my] = toMinimap(cp.x, cp.z);
+          const owner = cp.ownerFaction;
+          let fill = '#e2e8f0';
+          let stroke = '#fbbf24';
+          if (owner !== 'neutral') {
+            const p = engine.getParticipant(owner);
+            fill = p?.colorCss || '#38bdf8';
+            stroke = cp.siegeSupplyActive ? '#fdba74' : '#ffffff';
+          }
+          const rr = Math.max(5, (cp.radius / mapSize) * w * 0.55);
+          dynCtx.strokeStyle = owner === 'neutral' ? 'rgba(251,191,36,0.45)' : stroke;
+          dynCtx.lineWidth = cp.siegeSupplyActive ? 2.4 : 1.2;
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, rr, 0, Math.PI * 2);
+          dynCtx.stroke();
+          if (cp.siegeSupplyActive) {
+            dynCtx.strokeStyle = 'rgba(251,191,36,0.35)';
+            dynCtx.lineWidth = 1;
+            dynCtx.beginPath();
+            dynCtx.arc(mx, my, rr + 2.5, 0, Math.PI * 2);
+            dynCtx.stroke();
+          }
+          dynCtx.fillStyle = fill;
+          dynCtx.strokeStyle = '#0f172a';
+          dynCtx.lineWidth = 1.2;
+          dynCtx.beginPath();
+          dynCtx.moveTo(mx, my - 5);
+          dynCtx.lineTo(mx + 5, my);
+          dynCtx.lineTo(mx, my + 5);
+          dynCtx.lineTo(mx - 5, my);
+          dynCtx.closePath();
+          dynCtx.fill();
+          dynCtx.stroke();
+          if (cp.captureProgress > 0.05 && cp.captureProgress < 1) {
+            dynCtx.strokeStyle = '#fbbf24';
+            dynCtx.lineWidth = 2;
+            dynCtx.beginPath();
+            dynCtx.arc(mx, my, 7, -Math.PI / 2, -Math.PI / 2 + cp.captureProgress * Math.PI * 2);
+            dynCtx.stroke();
+          }
+        });
+      }
+
+      // Buildings
       engine.buildings.forEach((bldg) => {
+        if (bldg.hp <= 0) return;
         const [mx, my] = toMinimap(bldg.x, bldg.z);
         const participant = engine.getParticipant(bldg.faction);
         const isFriendly = !engine.isHostileToPlayer(bldg);
         const isTC = bldg.buildingType === 'town_center';
-        const size = isTC ? 10 : 7;
-
-        ctx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
-        ctx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        ctx.lineWidth = isTC ? 2 : 1;
-        ctx.fillRect(mx - size / 2, my - size / 2, size, size);
-        ctx.strokeRect(mx - size / 2, my - size / 2, size, size);
-
-        // Highlight center dot
-        ctx.fillStyle = isFriendly ? '#e0f2fe' : '#fecaca';
-        ctx.fillRect(mx - 1.5, my - 1.5, 3, 3);
+        const size = isTC ? 10 : bldg.buildingType === 'dock' ? 8 : 7;
+        dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
+        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
+        dynCtx.lineWidth = isTC ? 2 : 1;
+        dynCtx.fillRect(mx - size / 2, my - size / 2, size, size);
+        dynCtx.strokeRect(mx - size / 2, my - size / 2, size, size);
       });
 
-      // 4. Units with multi-faction colors and high-contrast outlines (skip garrisoned units)
+      // Units
       engine.units.forEach((unit) => {
         if (unit.garrisonedInBuildingId) return;
         const [mx, my] = toMinimap(unit.x, unit.z);
         const participant = engine.getParticipant(unit.faction);
         const isFriendly = !engine.isHostileToPlayer(unit);
         const isSelected = engine.selectedUnitIds.includes(unit.id);
+        const isBoat =
+          !!unit.unitDef.isNaval ||
+          unit.unitDefId === 'fishing_boat' ||
+          unit.unitDefId === 'transport_boat';
+        const cargo = unit.transportCargoIds?.length || 0;
 
         if (isSelected) {
-          // Golden pulse ring around selected unit
-          ctx.strokeStyle = '#fbbf24';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(mx, my, 6, 0, Math.PI * 2);
-          ctx.stroke();
+          dynCtx.strokeStyle = '#fbbf24';
+          dynCtx.lineWidth = 2;
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, isBoat ? 8 : 6, 0, Math.PI * 2);
+          dynCtx.stroke();
         }
 
-        ctx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
-        ctx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(mx, my, 3.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+        dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
+        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
+        dynCtx.lineWidth = 1;
+        if (isBoat) {
+          dynCtx.beginPath();
+          dynCtx.ellipse(mx, my, 5.2, 3.2, 0, 0, Math.PI * 2);
+          dynCtx.fill();
+          dynCtx.stroke();
+          if (unit.unitDefId === 'transport_boat' && cargo > 0) {
+            dynCtx.fillStyle = '#fbbf24';
+            dynCtx.font = 'bold 8px sans-serif';
+            dynCtx.textAlign = 'center';
+            dynCtx.fillText(String(cargo), mx, my + 2.5);
+          }
+        } else {
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 3.8, 0, Math.PI * 2);
+          dynCtx.fill();
+          dynCtx.stroke();
+        }
       });
+    };
 
-      // 5. Selected Building Rally Point Marker on Minimap
-      if (selectedBuilding && selectedBuilding.rallyPoint) {
+    let animId = 0;
+    const drawMinimap = (now: number) => {
+      // Rebuild static only when map layout / preset changes
+      if (
+        staticDirty ||
+        engine.mapLayout !== cachedLayoutRef ||
+        engine.mapPreset !== cachedPreset
+      ) {
+        cachedLayoutRef = engine.mapLayout;
+        cachedPreset = engine.mapPreset || '';
+        rebuildStaticLayer();
+        staticDirty = false;
+        lastDynDraw = 0; // force entity refresh
+      }
+
+      if (now - lastDynDraw >= DYN_INTERVAL_MS) {
+        lastDynDraw = now;
+        drawDynamicLayer();
+      }
+
+      // Composite: static + dynamic (cheap blit)
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(staticCanvas, 0, 0);
+      ctx.drawImage(dynCanvas, 0, 0);
+
+      // Every frame: rally, alerts, camera (need smooth feedback)
+      if (selectedBuilding?.rallyPoint) {
         const [bx, by] = toMinimap(selectedBuilding.x, selectedBuilding.z);
-        const [rx, ry] = toMinimap(selectedBuilding.rallyPoint.x, selectedBuilding.rallyPoint.z);
+        const [rx, ry] = toMinimap(
+          selectedBuilding.rallyPoint.x,
+          selectedBuilding.rallyPoint.z
+        );
         ctx.strokeStyle = '#f59e0b';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 3]);
@@ -410,15 +526,13 @@ export const HUD: React.FC<HUDProps> = ({
         ctx.lineTo(rx, ry);
         ctx.stroke();
         ctx.setLineDash([]);
-
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
         ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // 6. Under Attack Minimap Radar Ping
-      if (engine.lastAttackAlert && engine.lastAttackAlert.active) {
+      if (engine.lastAttackAlert?.active) {
         const elapsed = (performance.now() - engine.lastAttackAlert.time) / 1000;
         if (elapsed < 5.0) {
           const [ax, ay] = toMinimap(engine.lastAttackAlert.x, engine.lastAttackAlert.z);
@@ -429,7 +543,6 @@ export const HUD: React.FC<HUDProps> = ({
           ctx.beginPath();
           ctx.arc(ax, ay, radius, 0, Math.PI * 2);
           ctx.stroke();
-
           ctx.fillStyle = '#ef4444';
           ctx.beginPath();
           ctx.arc(ax, ay, 4, 0, Math.PI * 2);
@@ -437,7 +550,6 @@ export const HUD: React.FC<HUDProps> = ({
         }
       }
 
-      // 6.5 Direct Minimap Move/Attack Order Ping
       if (engine.lastMinimapPing) {
         const elapsed = (performance.now() - engine.lastMinimapPing.time) / 1000;
         if (elapsed < 1.8) {
@@ -451,7 +563,6 @@ export const HUD: React.FC<HUDProps> = ({
           ctx.beginPath();
           ctx.arc(px, py, 3 + progress * 14, 0, Math.PI * 2);
           ctx.stroke();
-
           ctx.fillStyle = isAtk ? '#ef4444' : '#4ade80';
           ctx.beginPath();
           ctx.arc(px, py, 3, 0, Math.PI * 2);
@@ -459,15 +570,13 @@ export const HUD: React.FC<HUDProps> = ({
         }
       }
 
-      // 7. Camera Viewport Box with translucent fill
+      // Camera viewport (smooth every frame)
       const [camX, camY] = toMinimap(engine.cameraTarget.x, engine.cameraTarget.z);
       const zScale = engine.cameraZoom || 1;
       const boxW = ((32 * zScale) / mapSize) * canvas.width;
       const boxH = ((24 * zScale) / mapSize) * canvas.height;
-
       ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
       ctx.fillRect(camX - boxW / 2, camY - boxH / 2, boxW, boxH);
-
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1.8;
       ctx.strokeRect(camX - boxW / 2, camY - boxH / 2, boxW, boxH);
@@ -475,9 +584,26 @@ export const HUD: React.FC<HUDProps> = ({
       animId = requestAnimationFrame(drawMinimap);
     };
 
-    drawMinimap();
-    return () => cancelAnimationFrame(animId);
+    animId = requestAnimationFrame(drawMinimap);
+    return () => {
+      cancelAnimationFrame(animId);
+      // Keep offscreen buffers in refs across selection changes; release only when HUD unmounts.
+    };
   }, [engine, selectedBuilding]);
+
+  // Release minimap offscreen backing stores when HUD leaves the tree
+  useEffect(() => {
+    return () => {
+      if (minimapStaticRef.current) {
+        minimapStaticRef.current.width = 0;
+        minimapStaticRef.current.height = 0;
+      }
+      if (minimapDynRef.current) {
+        minimapDynRef.current.width = 0;
+        minimapDynRef.current.height = 0;
+      }
+    };
+  }, []);
 
   const isWorkerSelected = selectedUnits.some((u) => u.unitDef.category === 'worker');
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
@@ -797,6 +923,39 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
 
             <div className="relative w-32 h-32 md:w-36 md:h-36 bg-slate-900 border border-amber-600/70 rounded-lg overflow-hidden shadow-2xl shrink-0 touch-none">
+              
+              {/* Contested objectives status */}
+              {engine.contestedPoints && engine.contestedPoints.length > 0 && (
+                <div className="absolute bottom-full left-0 right-0 mb-1 px-1.5 py-1 rounded bg-slate-950/85 border border-slate-700 text-[9px] text-slate-300 space-y-0.5 pointer-events-none">
+                  {engine.contestedPoints.map((cp) => {
+                    const owned = cp.ownerFaction === engine.humanPlayerId;
+                    const enemy =
+                      cp.ownerFaction !== 'neutral' &&
+                      cp.ownerFaction !== engine.humanPlayerId;
+                    const tag = owned
+                      ? cp.siegeSupplyActive
+                        ? '補給中'
+                        : '己方'
+                      : enemy
+                      ? '敵方'
+                      : cp.captureProgress > 0.1
+                      ? `爭奪 ${Math.round(cp.captureProgress * 100)}%`
+                      : '中立';
+                    const col = owned
+                      ? 'text-sky-300'
+                      : enemy
+                      ? 'text-rose-300'
+                      : 'text-amber-200';
+                    return (
+                      <div key={cp.id} className="flex justify-between gap-2">
+                        <span className="truncate">◆ {cp.label}</span>
+                        <span className={col}>{tag}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <canvas
                 ref={minimapCanvasRef}
                 width={180}
@@ -1407,6 +1566,55 @@ export const HUD: React.FC<HUDProps> = ({
                           );
                         })()}
                       </div>
+
+
+                      {primary.unitDefId === 'transport_boat' && (
+                        <div className="text-[10px] text-sky-300">
+                          載員 {(primary.transportCargoIds?.length || 0)}/{primary.unitDef.stats.carryCapacity || 5}
+                          {(primary.transportCargoIds?.length || 0) > 0 ? ' · 可卸載' : ' · 點選陸軍再點此船登船'}
+                        </div>
+                      )}
+
+                      {primary.unitDefId === 'transport_boat' && (primary.transportCargoIds?.length || 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            engine.unloadTransport(primary);
+                            engine.onSelectionChange?.();
+                          }}
+                          className="mt-1 w-full text-[11px] py-1 rounded bg-sky-700 hover:bg-sky-600 text-white border border-sky-400/40"
+                        >
+                          卸載登陸 (U)
+                        </button>
+                      )}
+
+                      {/* Assault / objective status */}
+                      {(() => {
+                        const ch = primary.siegeChannelTime || 0;
+                        const digPct = Math.min(100, Math.round((ch / 12) * 100));
+                        const hasSupply = engine.contestedPoints?.some(
+                          (p) => p.ownerFaction === primary.faction && p.siegeSupplyActive
+                        );
+                        const ownedShrines = engine.contestedPoints?.filter(
+                          (p) => p.ownerFaction === engine.humanPlayerId
+                        ).length || 0;
+                        if (digPct < 8 && !hasSupply && ownedShrines === 0) return null;
+                        return (
+                          <div className="flex flex-wrap gap-1.5 text-[10px]">
+                            {digPct >= 8 && primary.unitDef.category !== 'siege' && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-200 border border-amber-700/40">
+                                掘進 {digPct}%
+                              </span>
+                            )}
+                            {hasSupply && (
+                              <span className="px-1.5 py-0.5 rounded bg-orange-900/50 text-orange-200 border border-orange-700/40">
+                                攻城補給
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {primary.unitDef.specialAbility && (
                         <div className="text-[10px] text-purple-300/90 leading-tight">
                           ✦ {primary.unitDef.specialAbility.description}

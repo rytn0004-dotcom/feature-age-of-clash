@@ -100,42 +100,165 @@ export function getEffectiveBuildingArmor(
   return baseArmor + ageBonus + techBonus;
 }
 
+
 /**
- * Separate anti-building damage profile: regular infantry/cavalry use torch/chip damage mitigated
- * by Building Armor, whereas dedicated Siege Engines & Treants ignore Building Armor.
+ * Medieval assault methods — NO residual burn DoT.
+ * Damage identity comes from role + sustained sapping channel + structure material.
+ * Greek-fire siphons use a dedicated short-range cone profile (handled in engine splash).
+ */
+export function getBuildingAssaultProfile(
+  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId'>
+): {
+  method: import('../types/game').BuildingAssaultMethod;
+  damageMultiplier: number;
+  floatLabel: string;
+  /** Prefer adjacent assault (torch / sap); engine may slow attack-move from range */
+  wantsContact: boolean;
+} {
+  const cat = attacker.unitDef.category;
+  const stats = attacker.unitDef.stats;
+  const id = attacker.unitDefId;
+
+  if (id === 'greek_fire_siphon') {
+    return {
+      method: 'greek_fire',
+      damageMultiplier: 1.05,
+      floatLabel: '',
+      wantsContact: false,
+    };
+  }
+
+  if (stats.ignoresBuildingArmor || cat === 'siege') {
+    if (id === 'fantasy_goblin_sapper' || id.includes('sapper')) {
+      return {
+        method: 'blast',
+        damageMultiplier: 1.05,
+        floatLabel: '',
+        wantsContact: true,
+      };
+    }
+    return {
+      method: 'ram',
+      damageMultiplier: 1,
+      floatLabel: '',
+      wantsContact: true,
+    };
+  }
+
+  if (cat === 'ranged' || cat === 'special') {
+    return {
+      method: 'arrow_chip',
+      damageMultiplier: 1,
+      floatLabel: '',
+      wantsContact: false,
+    };
+  }
+
+  if (cat === 'cavalry') {
+    return {
+      method: 'cavalry_harass',
+      damageMultiplier: 0.5,
+      floatLabel: '',
+      wantsContact: true,
+    };
+  }
+
+  if (cat === 'worker') {
+    return {
+      method: 'sap',
+      damageMultiplier: 0.75,
+      floatLabel: '',
+      wantsContact: true,
+    };
+  }
+
+  // Infantry: classic torch assault — burst identity, not DoT
+  return {
+    method: 'torch',
+    damageMultiplier: 0.9,
+    floatLabel: '',
+    wantsContact: true,
+  };
+}
+
+export function isWoodenBuilding(buildingType: string): boolean {
+  return (
+    buildingType === 'farm' ||
+    buildingType === 'lumber_camp' ||
+    buildingType === 'mining_camp' ||
+    buildingType === 'dock'
+  );
+}
+
+/**
+ * Sustained assault bonus: infantry/workers "sap" or torch the same structure.
+ * After ~8s continuous attack on one building, up to +55% anti-building damage.
+ */
+export function getSiegeChannelMultiplier(channelTime: number | undefined, method: string): number {
+  if (!channelTime || channelTime <= 0) return 1;
+  if (method !== 'torch' && method !== 'sap' && method !== 'blast') return 1;
+  // Cap so mass infantry cannot fully replace siege engines
+  const t = Math.min(12, channelTime);
+  return 1 + (t / 12) * 0.38;
+}
+
+/**
+ * Building damage — material, assault method, channeling, tech/landmarks.
+ * No residual fire DoT; greek-fire direct hits are front-loaded.
  */
 export function calculateBuildingDamage(
-  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId'>,
+  attacker: Pick<UnitEntity, 'unitDef' | 'unitDefId' | 'siegeChannelTime'>,
   building: Pick<BuildingEntity, 'buildingDef' | 'buildingType'>,
   defenderAge = 1,
   defenderTechIds: string[] = [],
   attackerTechIds: string[] = [],
-  attackerLandmarks: string[] = []
+  attackerLandmarks: string[] = [],
+  ownerHasSiegeSupply = false
 ): number {
   const stats = attacker.unitDef.stats;
-  const baseBuildingAtk =
-    stats.buildingAttack ??
-    (attacker.unitDef.category === 'siege'
-      ? stats.attack * 2.2
-      : attacker.unitDef.category === 'ranged'
-      ? Math.max(2, Math.round(stats.attack * 0.4))
-      : Math.max(3, Math.round(stats.attack * 0.65)));
+  const profile = getBuildingAssaultProfile(attacker);
+  const cat = attacker.unitDef.category;
 
-  let mult = 1;
-  if (attackerLandmarks.includes('landmark_arsenal')) {
-    mult *= 2.0;
+  let baseBuildingAtk =
+    stats.buildingAttack ??
+    (cat === 'siege'
+      ? stats.attack * 2.2
+      : cat === 'ranged' || cat === 'special'
+      ? Math.max(2, Math.round(stats.attack * 0.32))
+      : cat === 'cavalry'
+      ? Math.max(2, Math.round(stats.attack * 0.38))
+      : Math.max(3, Math.round(stats.attack * 0.52)));
+
+  if (profile.method === 'arrow_chip') {
+    baseBuildingAtk *= isWoodenBuilding(building.buildingType) ? 1.2 : 0.5;
   }
-  if (
-    attacker.unitDef.category !== 'siege' &&
-    attackerTechIds.includes('shared_siege_engineers')
-  ) {
-    // Non-siege units get a smaller +25% torch boost (siege units already received 1.45x on stats.buildingAttack)
-    mult *= 1.25;
+  if (profile.method === 'torch' || profile.method === 'sap') {
+    if (isWoodenBuilding(building.buildingType)) baseBuildingAtk *= 1.4;
   }
+  if (profile.method === 'greek_fire') {
+    // Naphtha excels vs timber/docks; solid but not a castle eraser
+    baseBuildingAtk *= isWoodenBuilding(building.buildingType) ? 1.55 : 1.05;
+  }
+
+  let mult = profile.damageMultiplier;
+  mult *= getSiegeChannelMultiplier(attacker.siegeChannelTime, profile.method);
+
+  if (attackerLandmarks.includes('landmark_arsenal')) mult *= 2.0;
+  if (cat !== 'siege' && attackerTechIds.includes('shared_siege_engineers')) mult *= 1.25;
+  // Contested shrine long-hold: army-wide siege supplies (oil, ladders, pavises)
+  if (ownerHasSiegeSupply && cat !== 'siege') mult *= 1.12;
 
   const effectiveAtk = baseBuildingAtk * mult;
-  if (stats.ignoresBuildingArmor || attacker.unitDef.category === 'siege') {
-    return Math.max(5, Math.round(effectiveAtk));
+
+  if (
+    stats.ignoresBuildingArmor ||
+    cat === 'siege' ||
+    profile.method === 'ram' ||
+    profile.method === 'blast' ||
+    profile.method === 'greek_fire'
+  ) {
+    const floor = profile.method === 'greek_fire' ? 6 : profile.method === 'blast' ? 4 : 5;
+    return Math.max(floor, Math.round(effectiveAtk));
   }
 
   const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
