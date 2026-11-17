@@ -11,6 +11,8 @@ import {
   getDistance,
   findClosestResourceNode,
   findClosestEnemy,
+  getShrineIncome,
+  getShrineBlessingHoldTime,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 
@@ -1336,4 +1338,20 @@ test('ai-progression: every personality waits for the real landmark cost and can
       assert.equal(gold?.value, cost.gold, `${rule.id} must wait for the actual gold cost`);
     }
   }
+});
+
+
+test('shrines: war, harvest and forge blessings have distinct economic identities', () => {
+  assert.deepEqual(getShrineIncome('war', false), { food: 0, wood: 1, gold: 3, stone: 0 });
+  assert.deepEqual(getShrineIncome('harvest', false), { food: 2, wood: 2, gold: 0, stone: 0 });
+  assert.deepEqual(getShrineIncome('forge', false), { food: 0, wood: 0, gold: 2, stone: 2 });
+  assert.deepEqual(getShrineIncome('harvest', true), { food: 3, wood: 2, gold: 0, stone: 0 });
+  assert.deepEqual(getShrineIncome('forge', true), { food: 0, wood: 0, gold: 3, stone: 3 });
+  assert.deepEqual(getShrineIncome('war', true), { food: 0, wood: 2, gold: 4, stone: 0 });
+});
+
+test('shrines: blessing activation rewards holding different shrine roles', () => {
+  assert.equal(getShrineBlessingHoldTime('forge'), 16);
+  assert.equal(getShrineBlessingHoldTime('war'), 18);
+  assert.equal(getShrineBlessingHoldTime('harvest'), 24);
 });
