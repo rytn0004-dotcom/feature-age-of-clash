@@ -1315,3 +1315,64 @@ export function computeStridePhaseDelta(
 }
 
 
+
+/** Star-oath comet: one relic per match, a choice between home buff and instant shrine claim. */
+export type StarRelicPhase = 'waiting' | 'ground' | 'carried' | 'spent';
+
+export const STAR_RELIC_FALL_AT = 72;
+export const STAR_RELIC_CHANNEL_SEC = 5.5;
+export const STAR_RELIC_PICKUP_RANGE = 2.15;
+export const STAR_RELIC_OATH_SEC = 75;
+export const STAR_RELIC_CARRY_SPEED = 0.78;
+export const STAR_RELIC_OATH_GATHER = 1.2;
+
+export function starRelicShouldFall(simTime: number, phase: StarRelicPhase): boolean {
+  return phase === 'waiting' && simTime >= STAR_RELIC_FALL_AT;
+}
+
+/** Channel builds while a worker stands on the comet; decays if they step away. */
+export function advanceStarRelicChannel(channel: number, inRange: boolean, dt: number): number {
+  if (dt <= 0) return channel;
+  if (!inRange) return Math.max(0, channel - dt * 1.6);
+  return channel + dt;
+}
+
+export function starRelicChannelComplete(channel: number): boolean {
+  return channel >= STAR_RELIC_CHANNEL_SEC;
+}
+
+/** Prefer a landing that is not inside any player's spawn courtyard. */
+export function pickStarRelicSite(
+  rand: () => number,
+  avoid: Array<{ x: number; z: number }>
+): { x: number; z: number } {
+  for (let i = 0; i < 28; i++) {
+    const x = (rand() - 0.5) * 110;
+    const z = (rand() - 0.5) * 110;
+    const clear = avoid.every((a) => Math.hypot(a.x - x, a.z - z) > 20);
+    if (clear) return { x, z };
+  }
+  return { x: 0, z: 8 };
+}
+
+export type StarRelicDelivery = 'oath' | 'shrine' | 'none';
+
+export function resolveStarRelicDelivery(opts: {
+  carrierX: number;
+  carrierZ: number;
+  townCenterX: number;
+  townCenterZ: number;
+  shrine?: { x: number; z: number; radius: number; ownerFaction: string; carrierFaction: string } | null;
+}): StarRelicDelivery {
+  if (
+    opts.shrine &&
+    opts.shrine.ownerFaction !== opts.shrine.carrierFaction &&
+    Math.hypot(opts.carrierX - opts.shrine.x, opts.carrierZ - opts.shrine.z) <= opts.shrine.radius + 0.4
+  ) {
+    return 'shrine';
+  }
+  if (Math.hypot(opts.carrierX - opts.townCenterX, opts.carrierZ - opts.townCenterZ) <= 4.2) {
+    return 'oath';
+  }
+  return 'none';
+}

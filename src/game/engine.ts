@@ -78,6 +78,15 @@ import {
   getDistance,
   getEffectiveBuildingArmor,
   getFoodGatherMultiplier,
+  advanceStarRelicChannel,
+  pickStarRelicSite,
+  resolveStarRelicDelivery,
+  starRelicChannelComplete,
+  starRelicShouldFall,
+  STAR_RELIC_CARRY_SPEED,
+  STAR_RELIC_OATH_GATHER,
+  STAR_RELIC_OATH_SEC,
+  STAR_RELIC_PICKUP_RANGE,
   getUnitVsUnitDamage,
   getShrineIncome,
   getShrineBlessingHoldTime,
@@ -171,6 +180,14 @@ export class RtsEngine {
   public buildings: BuildingEntity[] = [];
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
+  private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
+  private starRelicX = 0;
+  private starRelicZ = 0;
+  private starRelicChannel = 0;
+  private starRelicCarrierId: string | null = null;
+  private starRelicMesh: THREE.Group | null = null;
+  /** Faction id -> simTime when the star-oath buff expires */
+  private starOathUntil: Record<string, number> = {};
   public projectiles: Projectile[] = [];
   public floatingTexts: FloatingText[] = [];
   private contestedMeshes = new Map<string, THREE.Group>();
@@ -249,7 +266,7 @@ export class RtsEngine {
   // Tactical Event Alert State (Enemy spotted / Under attack / Resource depleted)
   public lastAttackAlert: { x: number; z: number; time: number; active: boolean } | null = null;
   public lastTacticalBroadcast: {
-    kind: 'enemy_spotted' | 'under_attack' | 'resource_depleted';
+    kind: 'enemy_spotted' | 'under_attack' | 'resource_depleted' | 'relic';
     message: string;
     x: number;
     z: number;
@@ -803,6 +820,14 @@ export class RtsEngine {
     this.buildings = [];
     this.resourceNodes = [];
     this.contestedPoints = [];
+    this.starRelicPhase = 'waiting';
+    this.starRelicChannel = 0;
+    this.starRelicCarrierId = null;
+    this.starOathUntil = {};
+    if (this.starRelicMesh) {
+      this.scene.remove(this.starRelicMesh);
+      this.starRelicMesh = null;
+    }
     this.contestedMeshes.forEach((mesh) => this.scene.remove(mesh));
     this.contestedMeshes.clear();
     this.contestedIncomeAcc.clear();
@@ -3014,6 +3039,7 @@ export class RtsEngine {
     this.updateBuildings(dt);
     this.updateWildAnimals(dt);
     this.updateContestedPoints(dt);
+    this.updateStarRelic(dt);
 
     // 4. Projectiles
     this.updateProjectiles(dt);
@@ -3519,7 +3545,8 @@ export class RtsEngine {
 
     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
     const rootSlow = (unit as any)._rootSlowUntil && (unit as any)._rootSlowUntil > this.simTime ? 0.55 : 1;
-    const speed = unit.unitDef.stats.speed * hasteMult * rootSlow;
+    const relicSlow = this.starRelicCarrierId === unit.id ? STAR_RELIC_CARRY_SPEED : 1;
+    const speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
     const dx = (activeTarget.x - unit.x) / distToWp;
     const dz = (activeTarget.z - unit.z) / distToWp;
     const stepLen = Math.min(distToWp, speed * dt);
@@ -3849,7 +3876,9 @@ export class RtsEngine {
 
       const baseGatherRate = unit.unitDef.stats.gatherSpeed || 2;
       const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
-      const gatherRate = baseGatherRate * subtypeMult;
+      const oathGather =
+        (this.starOathUntil[unit.faction] || 0) > this.simTime ? STAR_RELIC_OATH_GATHER : 1;
+      const gatherRate = baseGatherRate * subtypeMult * oathGather;
       const prevAmount = node.amount;
 
       // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
@@ -4470,6 +4499,205 @@ export class RtsEngine {
       }
 
     }
+  }
+
+
+  /**
+   * One comet per match. A worker channels it, then chooses:
+   * home town center = timed oath (faster gather + army haste),
+   * or an unowned shrine = instant capture and blessing.
+   */
+  private updateStarRelic(dt: number) {
+    if (this.starRelicPhase === 'spent' || this.gameState !== 'playing') return;
+
+    if (starRelicShouldFall(this.simTime, this.starRelicPhase)) {
+      const avoid = this.buildings
+        .filter((b) => b.buildingType === 'town_center')
+        .map((b) => ({ x: b.x, z: b.z }));
+      const site = pickStarRelicSite(Math.random, avoid);
+      this.starRelicX = site.x;
+      this.starRelicZ = site.z;
+      this.starRelicPhase = 'ground';
+      this.starRelicChannel = 0;
+      this.ensureStarRelicMesh();
+      this.addFloatingText(site.x, 3.4, site.z, '星誓彗星降臨', '#e0e7ff');
+      this.lastTacticalBroadcast = {
+        kind: 'relic',
+        message: '星誓彗星墜落。村民引導後：送回主堡得星誓，或送入未佔領祭壇立刻奪下祝福。',
+        x: site.x,
+        z: site.z,
+        time: performance.now(),
+      };
+    }
+
+    if (this.starRelicPhase === 'ground') {
+      let best: { id: string; d: number } | null = null;
+      for (const u of this.units) {
+        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
+        if (u.unitDef.category !== 'worker' || u.unitDef.isNaval) continue;
+        const d = getDistance(u.x, u.z, this.starRelicX, this.starRelicZ);
+        if (d <= STAR_RELIC_PICKUP_RANGE && (!best || d < best.d)) best = { id: u.id, d };
+      }
+      this.starRelicChannel = advanceStarRelicChannel(this.starRelicChannel, !!best, dt);
+      if (best && starRelicChannelComplete(this.starRelicChannel)) {
+        this.starRelicPhase = 'carried';
+        this.starRelicCarrierId = best.id;
+        this.starRelicChannel = 0;
+        const carrier = this.units.find((u) => u.id === best.id);
+        if (carrier) {
+          carrier.currentActionText = '捧著星誓';
+          this.addFloatingText(carrier.x, 2.2, carrier.z, '取得星誓', '#c4b5fd');
+        }
+      }
+      // Nudge a nearby idle worker toward the comet (all AI personalities except none)
+      if (this.simTime % 4 < dt) {
+        for (const p of this.participants) {
+          if (p.controller !== 'ai' || p.aiPersonality === 'defensive') continue;
+          const worker = this.units.find(
+            (u) =>
+              u.faction === p.id &&
+              u.hp > 0 &&
+              u.unitDef.category === 'worker' &&
+              !u.unitDef.isNaval &&
+              (u.state === 'idle' || u.currentActionText === '前往星誓')
+          );
+          if (!worker) continue;
+          if (getDistance(worker.x, worker.z, this.starRelicX, this.starRelicZ) < STAR_RELIC_PICKUP_RANGE) continue;
+          worker.targetX = this.starRelicX;
+          worker.targetZ = this.starRelicZ;
+          worker.state = 'moving';
+          worker.waypoints = undefined;
+          worker.currentActionText = '前往星誓';
+          break;
+        }
+      }
+    }
+
+    if (this.starRelicPhase === 'carried' && this.starRelicCarrierId) {
+      const carrier = this.units.find((u) => u.id === this.starRelicCarrierId);
+      if (!carrier || carrier.hp <= 0 || carrier.garrisonedInBuildingId) {
+        if (carrier) {
+          this.starRelicX = carrier.x;
+          this.starRelicZ = carrier.z;
+        }
+        this.starRelicPhase = 'ground';
+        this.starRelicCarrierId = null;
+        this.starRelicChannel = 0;
+        this.addFloatingText(this.starRelicX, 2.2, this.starRelicZ, '星誓墜落', '#a5b4fc');
+      } else {
+        this.starRelicX = carrier.x;
+        this.starRelicZ = carrier.z;
+        const tc = this.buildings.find(
+          (b) => b.faction === carrier.faction && b.buildingType === 'town_center' && b.hp > 0
+        );
+        const shrine = this.contestedPoints
+          .map((cp) => ({
+            cp,
+            d: getDistance(carrier.x, carrier.z, cp.x, cp.z),
+          }))
+          .filter((s) => s.d <= s.cp.radius + 0.4)
+          .sort((a, b) => a.d - b.d)[0];
+        const delivery = resolveStarRelicDelivery({
+          carrierX: carrier.x,
+          carrierZ: carrier.z,
+          townCenterX: tc?.x ?? 999,
+          townCenterZ: tc?.z ?? 999,
+          shrine: shrine
+            ? {
+                x: shrine.cp.x,
+                z: shrine.cp.z,
+                radius: shrine.cp.radius,
+                ownerFaction: shrine.cp.ownerFaction,
+                carrierFaction: carrier.faction,
+              }
+            : null,
+        });
+        if (delivery === 'shrine' && shrine) {
+          shrine.cp.ownerFaction = carrier.faction;
+          shrine.cp.capturingFaction = carrier.faction;
+          shrine.cp.captureProgress = 1;
+          shrine.cp.holdTime = 99;
+          shrine.cp.siegeSupplyActive = true;
+          this.starRelicPhase = 'spent';
+          this.starRelicCarrierId = null;
+          this.addFloatingText(shrine.cp.x, 3.2, shrine.cp.z, '星誓獻祭 · 祭壇立刻祝福', '#fbbf24');
+          this.spawnShockwaveRing(shrine.cp.x, shrine.cp.z, 0xfbbf24, shrine.cp.radius);
+        } else if (delivery === 'oath') {
+          this.starOathUntil[carrier.faction] = this.simTime + STAR_RELIC_OATH_SEC;
+          for (const u of this.units) {
+            if (u.faction === carrier.faction && u.hp > 0 && u.unitDef.category !== 'worker') {
+              u.buffSpeedUntil = Math.max(u.buffSpeedUntil || 0, this.simTime + STAR_RELIC_OATH_SEC);
+            }
+          }
+          this.starRelicPhase = 'spent';
+          this.starRelicCarrierId = null;
+          this.addFloatingText(carrier.x, 2.6, carrier.z, '星誓成立 · 採集與行軍加速', '#c4b5fd');
+          this.spawnShockwaveRing(carrier.x, carrier.z, 0xc4b5fd, 6);
+        if (this.starRelicPhase === 'carried') {
+          const participant = this.participants.find((p) => p.id === carrier.faction);
+          if (participant?.controller === 'ai' && tc && (carrier.state === 'idle' || carrier.currentActionText === '捧著星誓')) {
+            const shrineGoal = this.contestedPoints
+              .filter((cp) => cp.ownerFaction !== carrier.faction)
+              .map((cp) => ({ cp, d: getDistance(carrier.x, carrier.z, cp.x, cp.z) }))
+              .sort((a, b) => a.d - b.d)[0];
+            const tcDist = getDistance(carrier.x, carrier.z, tc.x, tc.z);
+            const goShrine =
+              participant.aiPersonality === 'hard' &&
+              shrineGoal &&
+              shrineGoal.d < tcDist * 0.85;
+            const goal = goShrine && shrineGoal ? shrineGoal.cp : tc;
+            carrier.targetX = goal.x;
+            carrier.targetZ = goal.z;
+            carrier.state = 'moving';
+            carrier.waypoints = undefined;
+            carrier.currentActionText = goShrine ? '獻祭星誓' : '捧著星誓';
+          }
+        }
+      }
+    }
+
+    if (this.starRelicMesh) {
+      const visible = this.starRelicPhase === 'ground' || this.starRelicPhase === 'carried';
+      this.starRelicMesh.visible = visible;
+      if (visible) {
+        const bob = this.starRelicPhase === 'carried' ? 2.1 : 1.35 + Math.sin(this.simTime * 3) * 0.18;
+        this.starRelicMesh.position.set(this.starRelicX, bob, this.starRelicZ);
+        this.starRelicMesh.rotation.y = this.simTime * 1.4;
+        const core = this.starRelicMesh.getObjectByName('relicCore') as THREE.Mesh | undefined;
+        const mat = core?.material as THREE.MeshStandardMaterial | undefined;
+        if (mat) {
+          const ratio =
+            this.starRelicPhase === 'ground'
+              ? Math.min(1, this.starRelicChannel / 5.5)
+              : 1;
+          mat.emissiveIntensity = 0.45 + ratio * 1.1;
+        }
+      }
+    }
+  }
+
+  private ensureStarRelicMesh() {
+    if (this.starRelicMesh) return;
+    const group = new THREE.Group();
+    const core = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.55, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0xe0e7ff,
+        emissive: 0x7c3aed,
+        emissiveIntensity: 0.8,
+        roughness: 0.25,
+        metalness: 0.4,
+      })
+    );
+    core.name = 'relicCore';
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.85, 0.05, 8, 20),
+      new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.85 })
+    );
+    ring.rotation.x = Math.PI / 2;
+    group.add(core, ring);
+    this.scene.add(group);
+    this.starRelicMesh = group;
   }
 
   private updateContestedPoints(dt: number) {

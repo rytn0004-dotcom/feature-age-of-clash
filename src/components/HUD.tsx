@@ -849,6 +849,8 @@ export const HUD: React.FC<HUDProps> = ({
               ? 'bg-red-600/95 border-red-300 text-white'
               : tb.kind === 'enemy_spotted'
               ? 'bg-amber-600/95 border-amber-200 text-slate-950'
+              : tb.kind === 'relic'
+              ? 'bg-violet-700/95 border-violet-200 text-white'
               : 'bg-sky-700/95 border-sky-300 text-white';
           const btnStyle =
             tb.kind === 'under_attack'

@@ -13,6 +13,13 @@ import {
   findClosestEnemy,
   getShrineIncome,
   getShrineBlessingHoldTime,
+  advanceStarRelicChannel,
+  pickStarRelicSite,
+  resolveStarRelicDelivery,
+  starRelicChannelComplete,
+  starRelicShouldFall,
+  STAR_RELIC_CHANNEL_SEC,
+  STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 
@@ -1354,4 +1361,57 @@ test('shrines: blessing activation rewards holding different shrine roles', () =
   assert.equal(getShrineBlessingHoldTime('forge'), 16);
   assert.equal(getShrineBlessingHoldTime('war'), 18);
   assert.equal(getShrineBlessingHoldTime('harvest'), 24);
+});
+
+
+test('star relic: falls once, channels only while a worker stands on it, and delivery is a choice', () => {
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT - 1, 'waiting'), false);
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT, 'waiting'), true);
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT + 20, 'ground'), false);
+
+  let channel = 0;
+  channel = advanceStarRelicChannel(channel, true, 3);
+  assert.equal(starRelicChannelComplete(channel), false);
+  channel = advanceStarRelicChannel(channel, false, 1);
+  assert.ok(channel < 3, 'stepping away should decay the channel');
+  channel = advanceStarRelicChannel(0, true, STAR_RELIC_CHANNEL_SEC);
+  assert.equal(starRelicChannelComplete(channel), true);
+
+  let n = 0;
+  const site = pickStarRelicSite(() => {
+    n += 1;
+    return (n * 0.37) % 1;
+  }, [{ x: 0, z: 0 }]);
+  assert.ok(Math.hypot(site.x, site.z) > 20, 'landing should avoid the spawn courtyard');
+
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 10,
+      carrierZ: 0,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: { x: 10, z: 0, radius: 6, ownerFaction: 'neutral', carrierFaction: 'player' },
+    }),
+    'shrine'
+  );
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 38,
+      carrierZ: 1,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: null,
+    }),
+    'oath'
+  );
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 0,
+      carrierZ: 0,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: { x: 20, z: 20, radius: 5, ownerFaction: 'player', carrierFaction: 'player' },
+    }),
+    'none'
+  );
 });
