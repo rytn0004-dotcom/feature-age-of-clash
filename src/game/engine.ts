@@ -6570,20 +6570,46 @@ export class RtsEngine {
       const nextAgeCost = nextAgeLandmark ? DEFAULT_BUILDINGS[nextAgeLandmark].cost : null;
       const reserveFood = nextAgeCost?.food || 0;
       const reserveGold = nextAgeCost?.gold || 0;
+      // Prefer military techs when pressured; eco when safe and workers are online.
+      const pressure = underAttack > 0 || (nearestEnemyDist > 0 && nearestEnemyDist < 32);
+      let bestTech: { bId: string; techId: string; score: number } | null = null;
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
         const techs = getAvailableTechsForBuilding(b.buildingType, aiCiv.id, researched, aiAge as AgeLevel);
-        const tech = techs.find((candidate) => {
+        for (const candidate of techs) {
           const afterFood = aiRes.food - candidate.cost.food;
           const afterGold = aiRes.gold - candidate.cost.gold;
-          return canAfford(aiRes, candidate.cost) &&
-            afterFood >= reserveFood &&
-            afterGold >= reserveGold;
-        });
-        if (tech) {
-          this.startResearch(b.id, tech.id);
-          break;
+          if (
+            !canAfford(aiRes, candidate.cost) ||
+            afterFood < reserveFood ||
+            afterGold < reserveGold
+          ) {
+            continue;
+          }
+          const isEco =
+            !!candidate.effect.gatherMultiplier ||
+            candidate.targetCategories?.includes('worker');
+          const isMil =
+            !isEco &&
+            (!!candidate.effect.attackBonus ||
+              !!candidate.effect.defenseBonus ||
+              !!candidate.effect.hpMultiplier ||
+              !!candidate.effect.rangeBonus ||
+              !!candidate.effect.siegeDamageMultiplier);
+          let score = candidate.requiredAge || 1;
+          if (pressure && isMil) score += 40;
+          if (!pressure && isEco) score += 25;
+          if (pressure && isEco) score -= 10;
+          if (personality === 'hard' && isMil) score += 8;
+          if (personality === 'easy' && isMil) score -= 5;
+          if (personality === 'defensive' && isMil && pressure) score += 15;
+          if (!bestTech || score > bestTech.score) {
+            bestTech = { bId: b.id, techId: candidate.id, score };
+          }
         }
+      }
+      if (bestTech) {
+        this.startResearch(bestTech.bId, bestTech.techId);
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
@@ -6605,6 +6631,38 @@ export class RtsEngine {
         this.stats.gameDuration >= 180 &&
         !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
         (aiRes.food < 2400 || aiRes.gold < 1200);
+
+
+      // Composition reaction: train counters against the nearest hostile army mix.
+      if (aiUnits.length < aiMaxPop && personality !== 'easy') {
+        const hostileArmy = this.units.filter(
+          (u) =>
+            u.hp > 0 &&
+            u.unitDef.category !== 'worker' &&
+            this.isHostile({ faction: aiId, team: aiTeam }, u)
+        );
+        const cav = hostileArmy.filter((u) => u.unitDef.category === 'cavalry').length;
+        const melee = hostileArmy.filter((u) => u.unitDef.category === 'melee').length;
+        const ranged = hostileArmy.filter((u) => u.unitDef.category === 'ranged').length;
+        const ownSpears = aiArmy.filter((u) => u.unitDefId === 'spearman').length;
+        const ownRanged = aiArmy.filter((u) => u.unitDef.category === 'ranged').length;
+        const ownCav = aiArmy.filter((u) => u.unitDef.category === 'cavalry').length;
+        let counterId: string | null = null;
+        if (cav >= 2 && ownSpears < Math.ceil(cav * 0.8)) {
+          counterId = 'spearman';
+        } else if (melee >= 3 && ownRanged < 2) {
+          counterId = aiCiv.starterRangedUnitId;
+        } else if (ranged >= 3 && ownCav < 2 && aiAge >= 2) {
+          counterId = aiCiv.starterMeleeUnitId === 'swordsman' ? 'scout' : aiCiv.starterMeleeUnitId;
+        }
+        if (
+          counterId &&
+          !(savingForAge2 || savingForAge3 || savingForAge4) &&
+          (underAttack > 0 || hostileArmy.length >= 3 || personality === 'hard')
+        ) {
+          this.resolveAiTrainRequest(aiId, aiCiv, counterId, aiBuildings);
+        }
+      }
 
       if (aiUnits.length < aiMaxPop) {
         const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
@@ -6656,6 +6714,31 @@ export class RtsEngine {
               e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
               e.targetEntityId = enemyTc.id;
               e.state = 'attacking';
+            }
+          }
+        }
+      }
+
+
+      // Idle army cleanup: don't park forever at TC when the map is open.
+      if (
+        personality !== 'defensive' &&
+        personality !== 'easy' &&
+        underAttack === 0 &&
+        aiArmy.length >= (personality === 'hard' ? 3 : 5) &&
+        this.stats.gameDuration > (personality === 'hard' ? 55 : 90)
+      ) {
+        const idleArmy = aiArmy.filter((u) => u.state === 'idle');
+        if (idleArmy.length >= 2) {
+          const stageX = anchorX * 0.55;
+          const stageZ = anchorZ * 0.55;
+          for (const unit of idleArmy) {
+            if (getDistance(unit.x, unit.z, anchorX, anchorZ) < 14) {
+              unit.targetX = stageX + (Math.random() - 0.5) * 6;
+              unit.targetZ = stageZ + (Math.random() - 0.5) * 6;
+              unit.attackMoveGoal = { x: stageX, z: stageZ };
+              unit.state = 'moving';
+              unit.currentActionText = '前壓待命';
             }
           }
         }

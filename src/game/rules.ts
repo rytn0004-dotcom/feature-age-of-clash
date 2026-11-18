@@ -72,7 +72,20 @@ export function addResources(a: Resources, b: Partial<Resources>): Resources {
 }
 
 /**
- * RTS damage calculation: minimum 1 damage, mitigation by defense.
+ * Armor mitigation: percentage reduction with soft cap.
+ * Each armor point ≈ 5% less damage, hard-capped at 55% so low-attack units
+ * never collapse to the flat-armor "always 1 damage" cliff.
+ */
+export const ARMOR_PCT_PER_POINT = 0.05;
+export const ARMOR_PCT_CAP = 0.55;
+
+export function getArmorDamageReduction(defense: number): number {
+  if (defense <= 0) return 0;
+  return Math.min(ARMOR_PCT_CAP, defense * ARMOR_PCT_PER_POINT);
+}
+
+/**
+ * RTS damage: minimum 1 after percentage armor mitigation.
  */
 export function calculateDamage(
   attackerAttack: number,
@@ -80,8 +93,10 @@ export function calculateDamage(
   damageMultiplier = 1
 ): number {
   const effectiveAtk = attackerAttack * damageMultiplier;
-  const raw = Math.max(1, effectiveAtk - defenderDefense);
-  return Math.round(raw);
+  if (effectiveAtk <= 0) return 1;
+  const reduction = getArmorDamageReduction(defenderDefense);
+  const raw = effectiveAtk * (1 - reduction);
+  return Math.max(1, Math.round(raw));
 }
 
 /**
@@ -141,7 +156,16 @@ export function getUnitVsUnitDamage(
         attacker.unitDefId || attacker.unitDef.id
       )
     : 1;
-  return calculateDamage(attackerAttack * counter, totalDef);
+  let dmg = calculateDamage(attackerAttack * counter, totalDef);
+  // Siege chassis: extra resilience to massed arrows after % armor
+  if (
+    isRangedProjectile &&
+    defender.unitDef.category === 'siege' &&
+    (defender.unitDef.stats.rangedDefense || 0) >= 3
+  ) {
+    dmg = Math.max(1, Math.round(dmg * 0.55));
+  }
+  return dmg;
 }
 
 /**
@@ -323,8 +347,7 @@ export function calculateBuildingDamage(
   }
 
   const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
-  const net = effectiveAtk - bArmor;
-  return Math.max(1, Math.round(net));
+  return calculateDamage(effectiveAtk, bArmor);
 }
 
 export function getBuildingMaxGarrison(

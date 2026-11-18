@@ -5,6 +5,7 @@ import {
   deductCost,
   addResources,
   calculateDamage,
+  getArmorDamageReduction,
   applyBalanceMultipliers,
   evaluateCondition,
   evaluateAiScript,
@@ -1469,4 +1470,15 @@ test('economy techs: shared gather bonuses are moderate so they do not erase map
   assert.ok(wheel);
   const guild = findTechDef('shared_guild_contracts');
   assert.ok(guild && guild.requiredAge === 3);
+});
+
+test('percentage armor: low attack still bites heavy armor; high armor never fully nullifies', () => {
+  assert.equal(getArmorDamageReduction(0), 0);
+  assert.ok(getArmorDamageReduction(4) > 0.15 && getArmorDamageReduction(4) < 0.25);
+  assert.equal(getArmorDamageReduction(20), 0.55); // capped
+  // Flat would deal 1; percentage should deal more than 1 from atk 6 vs def 5
+  assert.ok(calculateDamage(6, 5) >= 3);
+  assert.ok(calculateDamage(12, 5) > calculateDamage(6, 5));
+  // Zero armor unchanged
+  assert.equal(calculateDamage(10, 0), 10);
 });
