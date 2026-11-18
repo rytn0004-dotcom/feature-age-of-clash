@@ -75,6 +75,8 @@ export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType
       return 2.05;
     case 'dock':
       return 2.15;
+    case 'house':
+      return 1.65;
     case 'tower':
       return 1.65;
     case 'wall':

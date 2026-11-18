@@ -67,6 +67,8 @@ export interface UnitStats {
   trainTime: number; // seconds
   gatherSpeed: number; // for workers (resources per sec)
   carryCapacity: number;
+  bonusVsCategory?: Partial<Record<UnitCategory, number>>;
+  hpRegenPerSec?: number;
 }
 
 export interface UnitDefinition {
@@ -106,12 +108,12 @@ export type LandmarkType =
 
 export type BuildingType =
   | 'town_center'
+  | 'house'
   | 'barracks'
   | 'archery_range'
   | 'dock'
   | 'farm'
   | 'granary'
-  | 'market'
   | 'lumber_camp'
   | 'mining_camp'
   | 'wall'
@@ -128,11 +130,15 @@ export interface TechDefinition {
   buildingType: BuildingType;
   name: string;
   icon: string;
+  roleTag?: string;
   description: string;
   effectLabel: string;
   cost: Resources;
   researchTime: number;
   requiredAge?: AgeLevel;
+  prerequisiteTechId?: string;
+  exclusiveGroup?: string;
+  exclusiveLabel?: string;
   targetCategories?: UnitCategory[];
   effect: {
     attackBonus?: number;
@@ -140,7 +146,13 @@ export interface TechDefinition {
     rangedDefenseBonus?: number;
     hpMultiplier?: number;
     speedMultiplier?: number;
+    attackRateMultiplier?: number;
     gatherMultiplier?: number;
+    gatherByType?: Partial<Record<ResourceType, number>>;
+    carryCapacityBonus?: number;
+    trainTimeMultiplier?: number;
+    hpRegenPerSec?: number;
+    bonusVsCategory?: Partial<Record<UnitCategory, number>>;
     cooldownMultiplier?: number;
     rangeBonus?: number;
     buildingArmorBonus?: number;
@@ -330,6 +342,18 @@ export interface ResourceNode {
   /** Flee / wander velocity (world units per second) */
   animalVx?: number;
   animalVz?: number;
+  /** Simulation time until which active panic fleeing persists after losing sight of danger */
+  animalFleeUntil?: number;
+  /** Cooldown after sustained panic or clean escape before another jittery sprint */
+  animalFleeCooldown?: number;
+  /** Calm wander state machine timer & current target heading */
+  animalWanderTimer?: number;
+  animalWanderAngle?: number;
+  animalWanderMoving?: boolean;
+  /** Displacement-locked locomotion state for smooth quadrupedal animation */
+  animalYaw?: number;
+  animalMoveBlend?: number;
+  animalGaitPhase?: number;
 }
 
 /** Strategic shrine identity; each blessing supports a different army/economy plan. */
@@ -350,6 +374,10 @@ export interface ContestedPoint {
   holdTime: number;
   /** Owner has secured long enough for army-wide anti-building supply */
   siegeSupplyActive: boolean;
+  /** True whenever opposing teams/factions are simultaneously contesting inside the circle */
+  isContested?: boolean;
+  /** Active factions currently present inside the capture ring */
+  contestingFactions?: FactionId[];
 }
 
 /** Medieval-inspired structure assault methods (no residual burn DoT). */

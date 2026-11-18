@@ -5,7 +5,7 @@ import { sound } from '../game/audio';
 
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { isPlacementLocationValid } from '../game/collision';
-import { getBuildingMaxGarrison } from '../game/rules';
+import { getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
 
 interface GameCanvasProps {
   onEngineReady: (engine: RtsEngine) => void;
@@ -34,7 +34,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     cursorCss?: string;
     badgeText: string;
     tone: 'gather' | 'build' | 'attack' | 'rally' | 'select';
-    iconKind?: 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison';
+    iconKind?: 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison' | 'contested';
   } | null>(null);
 
   useEffect(() => {
@@ -156,12 +156,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           }
           engine.selectedBuildingId = null;
           engine.selectedNodeId = null;
+          engine.selectedContestedPointId = null;
           engine.inspectedEntity = null;
           sound.playSelect();
         } else {
           engine.selectedUnitIds = [];
           engine.selectedBuildingId = null;
           engine.selectedNodeId = null;
+          engine.selectedContestedPointId = null;
           engine.inspectedEntity = { type: 'unit', id: hit.unit.id, faction: hit.unit.faction };
           sound.playSelect();
         }
@@ -175,12 +177,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           engine.selectedBuildingId = hit.building.id;
           engine.selectedUnitIds = [];
           engine.selectedNodeId = null;
+          engine.selectedContestedPointId = null;
           engine.inspectedEntity = null;
           sound.playSelect();
         } else {
           engine.selectedBuildingId = null;
           engine.selectedUnitIds = [];
           engine.selectedNodeId = null;
+          engine.selectedContestedPointId = null;
           engine.inspectedEntity = { type: 'building', id: hit.building.id, faction: hit.building.faction };
           sound.playSelect();
         }
@@ -193,9 +197,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         engine.selectedNodeId = hit.resource.id;
         engine.selectedUnitIds = [];
         engine.selectedBuildingId = null;
+        engine.selectedContestedPointId = null;
         engine.inspectedEntity = null;
         sound.playSelect();
         engine.onSelectionChange?.();
+        return;
+      }
+
+      // 4. Check if clicked a contested shrine point
+      if (hit.hitType === 'contested' && hit.contested) {
+        engine.selectContestedPoint(hit.contested.id);
         return;
       }
 
@@ -203,6 +214,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       engine.selectedUnitIds = [];
       engine.selectedBuildingId = null;
       engine.selectedNodeId = null;
+      engine.selectedContestedPointId = null;
       engine.inspectedEntity = null;
       engine.onSelectionChange?.();
       return;
@@ -243,9 +255,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         engine.selectedUnitIds = selected;
       }
       engine.selectedBuildingId = null;
+      engine.selectedNodeId = null;
+      engine.selectedContestedPointId = null;
+      engine.inspectedEntity = null;
       sound.playSelect();
     } else if (!start.shiftKey) {
       engine.selectedUnitIds = [];
+      engine.selectedBuildingId = null;
+      engine.selectedNodeId = null;
+      engine.selectedContestedPointId = null;
+      engine.inspectedEntity = null;
     }
     engine.onSelectionChange?.();
   };
@@ -789,6 +808,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       return;
     }
 
+    if (hit.hitType === 'contested' && hit.contested) {
+      const cp = hit.contested;
+      const summary = getContestedShrineSummary(cp, engine.participants);
+      setHoverHint({
+        x: e.clientX,
+        y: e.clientY,
+        cursorClass: 'cursor-pointer',
+        badgeText: `檢視據點: ${cp.label} (${summary.statusLabel})`,
+        tone: summary.statusKind.startsWith('contested') ? 'attack' : 'select',
+        iconKind: 'contested',
+      });
+      return;
+    }
+
     if (selBldg) {
       setHoverHint({
         x: e.clientX,
@@ -882,6 +915,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         return <span className="text-sm leading-none">⚔️</span>;
       case 'rally':
         return <span className="text-sm leading-none">📍</span>;
+      case 'contested':
+        return <span className="text-sm leading-none">⛩️</span>;
       default:
         return <span className="text-sm leading-none">👆</span>;
     }

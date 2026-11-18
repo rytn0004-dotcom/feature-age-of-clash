@@ -25,6 +25,7 @@ import {
 import {
   DEFAULT_BUILDINGS,
   INITIAL_MODS,
+  SHARED_UNITS,
   DEFAULT_AI_RULES,
   DEFENSIVE_AI_RULES,
   EASY_AI_RULES,
@@ -32,6 +33,7 @@ import {
 } from './mods';
 import {
   applyCivilizationAndTechStats,
+  canResearchTech,
   canUnitGainXp,
   computeUnitXpGain,
   dampAngle,
@@ -42,7 +44,9 @@ import {
   getBuildableTypesForCiv,
   getCivilizationConfig,
   getLevelTitle,
+  getResourceGatherTechMultiplier,
   getTrainableUnitsForBuilding,
+  getTrainingTimeMultiplier,
 } from './civilizations';
 import {
   AGE_ADVANCE_HOTKEY,
@@ -70,6 +74,7 @@ import {
   createDefaultParticipants,
   deductCost,
   evaluateAiPlan,
+  evaluateAiTechChoice,
   findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
@@ -77,6 +82,7 @@ import {
   getBuildingMaxGarrison,
   getDistance,
   getEffectiveBuildingArmor,
+  getFactionPopulationStats,
   getFoodGatherMultiplier,
   advanceStarRelicChannel,
   pickStarRelicSite,
@@ -91,6 +97,10 @@ import {
   getUnitVsUnitDamage,
   getShrineIncome,
   getShrineBlessingHoldTime,
+  evaluateContestedPresence,
+  getContestedShrineSummary,
+  stepWildAnimalState,
+  triggerWildAnimalPanic,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -137,6 +147,7 @@ import {
   createUnitMesh,
   disposeBuildingVisualResources,
   registerFactionVisual,
+  DeerAnimParts,
   UnitAnimParts,
   updateBadgeSprite,
 } from './proceduralGraphics';
@@ -290,8 +301,10 @@ export class RtsEngine {
   public selectedUnitIds: string[] = [];
   public selectedBuildingId: string | null = null;
   public selectedNodeId: string | null = null;
+  public selectedContestedPointId: string | null = null;
   public inspectedEntity: { type: 'unit' | 'building'; id: string; faction: FactionId } | null = null;
   public showOverheadBadges = true;
+  private contestedUiRefreshAcc = 0;
 
   // Placement mode
   public placementBuildingType: BuildingType | null = null;
@@ -838,6 +851,7 @@ export class RtsEngine {
     this.selectedUnitIds = [];
     this.selectedBuildingId = null;
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     this.lastAttackAlert = null;
     this.lastTacticalBroadcast = null;
@@ -1028,15 +1042,18 @@ export class RtsEngine {
         shrineType,
         holdTime: 0,
         siegeSupplyActive: false,
+        isContested: false,
+        contestingFactions: [],
       };
       this.contestedPoints.push(point);
-      const mesh = createContestedShrineMesh(cp.label);
+      const mesh = createContestedShrineMesh(cp.label, shrineType);
       mesh.position.set(cp.x, 0, cp.z);
+      mesh.userData = { ...mesh.userData, type: 'contested', id: cp.id };
       this.scene.add(mesh);
       this.contestedMeshes.set(cp.id, mesh);
     });
 
-    // Phase C: Place starter Barracks, Farm & Initial Units around each TC cleanly avoiding all natural resource nodes
+    // Phase C: Place starter Farm & Initial Units (3 workers + 1 shared Scout) around each TC cleanly avoiding all natural resource nodes
     this.participants.forEach((p, idx) => {
       const sp = spawns[idx];
       const len = Math.hypot(sp.x, sp.z) || 1;
@@ -1046,22 +1063,18 @@ export class RtsEngine {
       const tanZ = inX;
 
       const civCfg = getCivilizationConfig(p.civilization);
-      const workerDef = this.findUnitDef(civCfg.workerUnitId) || fallbackWorker;
-      const starterCombatDef = this.findUnitDef(civCfg.starterMeleeUnitId) || fallbackWarrior;
-
-      const barracksSpot = findValidStarterSpot(sp.x + tanX * 10.5, sp.z + tanZ * 10.5, DEFAULT_BUILDINGS.barracks.size);
-      const barracks = this.addBuilding('barracks', p.id, barracksSpot.x, barracksSpot.z, true);
-      barracks.rallyPoint = { x: barracksSpot.x + inX * 6.5, z: barracksSpot.z + inZ * 6.5 };
+      const workerDef = this.findUnitDef(civCfg.workerUnitId, p.id) || fallbackWorker;
+      const scoutDef = this.findUnitDef('scout_rider', p.id) || SHARED_UNITS[0] || fallbackWarrior;
 
       const farmSpot = findValidStarterSpot(sp.x - tanX * 8.5, sp.z - tanZ * 8.5, DEFAULT_BUILDINGS.farm.size);
       const farmBldg = this.addBuilding('farm', p.id, farmSpot.x, farmSpot.z, true);
       this.addResourceNode(`food_${farmBldg.id}`, 'food', farmSpot.x, farmSpot.z, 2500, true, 'farm');
 
-      // Initial Civilization Units (3 unique workers + 1 signature guard)
+      // Initial Civilization Units (3 unique workers + 1 shared Scout Rider -> 4/8 pop)
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8 - tanX * 2, sp.z + inZ * 5.8 - tanZ * 2);
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8, sp.z + inZ * 5.8);
       this.addUnit(workerDef, p.id, sp.x + inX * 5.8 + tanX * 2, sp.z + inZ * 5.8 + tanZ * 2);
-      this.addUnit(starterCombatDef, p.id, sp.x + inX * 7.5 + tanX * 5.5, sp.z + inZ * 7.5 + tanZ * 5.5);
+      this.addUnit(scoutDef, p.id, sp.x + inX * 7.6 + tanX * 4.5, sp.z + inZ * 7.6 + tanZ * 4.5);
     });
 
     this.navGridDirty = true;
@@ -1101,33 +1114,43 @@ export class RtsEngine {
   }
 
   public findUnitDef(id: string, faction?: FactionId): UnitDefinition | undefined {
+    const resolveDef = (found: UnitDefinition, mult?: GameMod['balanceMultipliers']): UnitDefinition => {
+      const modStats = mult ? applyBalanceMultipliers(found.stats, mult) : { ...found.stats };
+      if (faction) {
+        const civ = this.getCivilizationForFaction(faction);
+        const techs = this.getResearchedTechs(faction);
+        const age = this.ageByFaction[faction] || 1;
+        const hasAura = this.hasUniqueBuildingAura(faction);
+        const progressed = applyCivilizationAndTechStats(modStats, found.category, civ, techs, age, hasAura);
+        return {
+          ...found,
+          stats: this.applyLandmarkPerksToStats(progressed, found.category, faction),
+        };
+      }
+      return {
+        ...found,
+        stats: modStats,
+      };
+    };
+
     for (const mod of this.activeMods) {
       if (!mod.enabled) continue;
       const found = mod.unitDefinitions.find((u) => u.id === id);
-      if (found) {
-        const modStats = applyBalanceMultipliers(found.stats, mod.balanceMultipliers);
-        if (faction) {
-          const civ = this.getCivilizationForFaction(faction);
-          const techs = this.getResearchedTechs(faction);
-          const age = this.ageByFaction[faction] || 1;
-          const hasAura = this.hasUniqueBuildingAura(faction);
-          const progressed = applyCivilizationAndTechStats(modStats, found.category, civ, techs, age, hasAura);
-          return {
-            ...found,
-            stats: this.applyLandmarkPerksToStats(progressed, found.category, faction),
-          };
-        }
-        return {
-          ...found,
-          stats: modStats,
-        };
-      }
+      if (found) return resolveDef(found, mod.balanceMultipliers);
     }
+
+    const shared = SHARED_UNITS.find((u) => u.id === id);
+    if (shared) return resolveDef(shared);
+
     return undefined;
   }
 
+  public getPopulationStats(faction: FactionId) {
+    return getFactionPopulationStats(faction, this.buildings, this.units);
+  }
+
   public getAvailableUnitDefs(faction: FactionId): UnitDefinition[] {
-    const list: UnitDefinition[] = [];
+    const list: UnitDefinition[] = [...SHARED_UNITS.map((u) => this.findUnitDef(u.id, faction)!).filter(Boolean)];
     const civ = this.getCivilizationForFaction(faction);
     const techs = this.getResearchedTechs(faction);
     const age = this.ageByFaction[faction] || 1;
@@ -1347,7 +1370,7 @@ export class RtsEngine {
       mesh.add(hitDisc);
     }
     mesh.position.set(x, 0, z);
-    mesh.userData = { type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
+    mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
 
@@ -1476,10 +1499,15 @@ export class RtsEngine {
     if (tech.buildingType !== bldg.buildingType) return false;
 
     const researched = this.getResearchedTechs(bldg.faction);
-    if (researched.includes(techId)) return false;
-
-    const age = this.ageByFaction[bldg.faction] || 1;
-    if (tech.requiredAge && age < tech.requiredAge) return false;
+    const age = (this.ageByFaction[bldg.faction] || 1) as AgeLevel;
+    const researchCheck = canResearchTech(tech, researched, age);
+    if (!researchCheck.ok) {
+      if (this.isHumanControlled(bldg.faction) && researchCheck.reason) {
+        sound.playInvalid();
+        this.addFloatingText(bldg.x, 3.0, bldg.z, `🔒 ${researchCheck.reason}`, '#f59e0b');
+      }
+      return false;
+    }
 
     const res = this.getResourcesForFaction(bldg.faction);
     if (!canAfford(res, tech.cost)) return false;
@@ -1506,30 +1534,17 @@ export class RtsEngine {
     }
 
     const cooldownMult = tech.effect.cooldownMultiplier || 1;
-    this.units.forEach((u) => {
-      if (u.faction !== faction || u.hp <= 0) return;
-      if (tech.targetCategories && !tech.targetCategories.includes(u.unitDef.category)) return;
+    if (cooldownMult !== 1) {
+      this.units.forEach((u) => {
+        if (u.faction !== faction || u.hp <= 0) return;
+        if (tech.targetCategories && !tech.targetCategories.includes(u.unitDef.category)) return;
+        if (u.unitDef.specialAbility) {
+          u.unitDef.specialAbility.cooldown = Math.max(3, Math.round(u.unitDef.specialAbility.cooldown * cooldownMult));
+        }
+      });
+    }
 
-      if (tech.effect.hpMultiplier) {
-        const oldMax = u.maxHp;
-        u.maxHp = Math.round(u.maxHp * tech.effect.hpMultiplier);
-        u.hp = Math.min(u.maxHp, u.hp + Math.max(0, u.maxHp - oldMax));
-      }
-      if (tech.effect.attackBonus) u.unitDef.stats.attack += tech.effect.attackBonus;
-      if (tech.effect.defenseBonus) u.unitDef.stats.defense += tech.effect.defenseBonus;
-      if (tech.effect.speedMultiplier) u.unitDef.stats.speed = +(u.unitDef.stats.speed * tech.effect.speedMultiplier).toFixed(2);
-      if (tech.effect.gatherMultiplier) u.unitDef.stats.gatherSpeed = +(u.unitDef.stats.gatherSpeed * tech.effect.gatherMultiplier).toFixed(2);
-      if (tech.effect.rangeBonus) u.unitDef.stats.range = +(u.unitDef.stats.range + tech.effect.rangeBonus).toFixed(2);
-      if (tech.effect.rangedDefenseBonus) {
-        u.unitDef.stats.rangedDefense = (u.unitDef.stats.rangedDefense || 0) + tech.effect.rangedDefenseBonus;
-      }
-      if (tech.effect.siegeDamageMultiplier && u.unitDef.stats.buildingAttack !== undefined) {
-        u.unitDef.stats.buildingAttack = Math.round(u.unitDef.stats.buildingAttack * tech.effect.siegeDamageMultiplier);
-      }
-      if (cooldownMult !== 1 && u.unitDef.specialAbility) {
-        u.unitDef.specialAbility.cooldown = Math.max(3, Math.round(u.unitDef.specialAbility.cooldown * cooldownMult));
-      }
-    });
+    this.refreshFactionUnitStats(faction);
 
     if (tech.effect.buildingHpMultiplier) {
       const bHpMult = tech.effect.buildingHpMultiplier;
@@ -1826,6 +1841,7 @@ export class RtsEngine {
     this.selectedUnitIds = [...ids];
     this.selectedBuildingId = null;
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     sound.playSelect();
 
@@ -1851,6 +1867,7 @@ export class RtsEngine {
     this.selectedUnitIds = military.map((u) => u.id);
     this.selectedBuildingId = null;
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     sound.playSelect();
     this.onSelectionChange?.();
@@ -1865,6 +1882,7 @@ export class RtsEngine {
     this.selectedUnitIds = matches.map((u) => u.id);
     this.selectedBuildingId = null;
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     sound.playSelect();
     this.onSelectionChange?.();
@@ -1881,6 +1899,7 @@ export class RtsEngine {
     this.selectedUnitIds = [worker.id];
     this.selectedBuildingId = null;
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     this.setCameraFocus(worker.x, worker.z);
     sound.playSelect();
@@ -1913,8 +1932,25 @@ export class RtsEngine {
     this.selectedBuildingId = target.id;
     this.selectedUnitIds = [];
     this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
     this.inspectedEntity = null;
     this.setCameraFocus(target.x, target.z);
+    sound.playSelect();
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  public selectContestedPoint(pointId: string, centerCamera = false): boolean {
+    const point = this.contestedPoints.find((p) => p.id === pointId);
+    if (!point) return false;
+    this.selectedContestedPointId = point.id;
+    this.selectedUnitIds = [];
+    this.selectedBuildingId = null;
+    this.selectedNodeId = null;
+    this.inspectedEntity = null;
+    if (centerCamera) {
+      this.setCameraFocus(point.x, point.z);
+    }
     sound.playSelect();
     this.onSelectionChange?.();
     return true;
@@ -2729,6 +2765,21 @@ export class RtsEngine {
       return false;
     }
 
+    const pop = this.getPopulationStats(bldg.faction);
+    if (pop.totalReserved >= pop.max) {
+      if (this.isHumanControlled(bldg.faction)) {
+        sound.playInvalid();
+        this.addFloatingText(
+          bldg.x,
+          3.1,
+          bldg.z,
+          `🏠 人口已達上限 (${pop.used}/${pop.max})！請建造「房屋」提升人口`,
+          '#f87171'
+        );
+      }
+      return false;
+    }
+
     const res = this.getResourcesForFaction(bldg.faction);
     if (!canAfford(res, def.stats.cost)) return false;
 
@@ -2986,12 +3037,6 @@ export class RtsEngine {
       if (canopy) {
         canopy.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
         canopy.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
-      } else {
-        const deerHead = nMesh.userData.deerHeadPivot as THREE.Object3D | undefined;
-        if (deerHead) {
-          const graze = Math.max(0, Math.sin(this.simTime * 1.1 + envIdx * 1.7));
-          deerHead.rotation.z = -graze * 0.45;
-        }
       }
       envIdx++;
     });
@@ -3321,12 +3366,15 @@ export class RtsEngine {
         }
       }
 
-      // Cooldowns & timers
+      // Cooldowns, timers & passive regeneration
       if (unit.attackCooldown > 0) unit.attackCooldown -= dt;
       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
       if (unit.hitFlashTimer && unit.hitFlashTimer > 0) unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - dt);
       if (unit.recoilTimer && unit.recoilTimer > 0) unit.recoilTimer = Math.max(0, unit.recoilTimer - dt);
+      if (unit.unitDef.stats.hpRegenPerSec && unit.hp < unit.maxHp) {
+        unit.hp = Math.min(unit.maxHp, unit.hp + unit.unitDef.stats.hpRegenPerSec * dt);
+      }
 
       // Garrisoned units are sheltered from enemy melee/ranged fire & regenerate HP slowly
       if (unit.garrisonedInBuildingId) {
@@ -3462,7 +3510,10 @@ export class RtsEngine {
               ram: '🐏',
               cannon: '💣',
             };
-            const icon = roleIcons[unit.unitDef.visual.modelType] || '⚔️';
+            const icon =
+              unit.unitDefId === 'scout_rider'
+                ? '🔭'
+                : roleIcons[unit.unitDef.visual.modelType] || '⚔️';
             const hostile = this.isHostileToPlayer(unit);
             const pName = this.getParticipant(unit.faction)?.name || '';
             const prefix = this.isHumanControlled(unit.faction)
@@ -3773,7 +3824,13 @@ export class RtsEngine {
               unit.currentActionText = `掘進 ${pct}%`;
             }
           } else {
-            dmg = getUnitVsUnitDamage(unit.unitDef.stats.attack, target as UnitEntity, false, this.simTime, unit);
+            dmg = getUnitVsUnitDamage(
+              unit.unitDef.stats.attack,
+              target as UnitEntity,
+              false,
+              this.simTime,
+              unit.unitDef.stats.bonusVsCategory
+            );
             this.spawnParticleBurst(target.x, 0.9, target.z, 'hit', 5);
             this.spawnParticleBurst(target.x, 1.0, target.z, 'spark', 3);
           }
@@ -3879,7 +3936,11 @@ export class RtsEngine {
       const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
       const oathGather =
         (this.starOathUntil[unit.faction] || 0) > this.simTime ? STAR_RELIC_OATH_GATHER : 1;
-      const gatherRate = baseGatherRate * subtypeMult * oathGather;
+      const resTechMult = getResourceGatherTechMultiplier(
+        this.getResearchedTechs(unit.faction),
+        node.resourceType
+      );
+      const gatherRate = baseGatherRate * subtypeMult * oathGather * resTechMult;
       const prevAmount = node.amount;
 
       // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
@@ -3898,20 +3959,21 @@ export class RtsEngine {
           node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
           hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
           this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
+          triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
         }
         (unit as any)._huntHitCd = hitCd;
-        const awayX = node.x - unit.x;
-        const awayZ = node.z - unit.z;
-        const al = Math.hypot(awayX, awayZ) || 1;
-        node.animalVx = (awayX / al) * 7.5;
-        node.animalVz = (awayZ / al) * 7.5;
         if (node.animalHp <= 0) {
           node.animalAlive = false;
           node.animalVx = 0;
           node.animalVz = 0;
+          node.animalFleeUntil = 0;
+          node.animalMoveBlend = 0;
           this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
           const nm = this.nodeMeshes.get(node.id);
-          if (nm) nm.rotation.x = 0.55;
+          if (nm) {
+            nm.position.y = 0;
+            nm.rotation.x = 0.55;
+          }
         }
       } else {
         const deltaGather = Math.min(node.amount, gatherRate * dt);
@@ -4380,29 +4442,66 @@ export class RtsEngine {
 
 
   /**
-   * Living 山羌: flee from nearby units; carcass stays put for meat gather.
+   * Living 山羌: obstacle-aware panic flee + calm graze cooldown + articulated quadrupedal gait.
+   * Locomotion bounce & limb swing are driven strictly by post-clamp horizontal displacement so
+   * blocked or cooling-down deer never hop in place.
    */
   private updateWildAnimals(dt: number) {
-    const DETECT = 13;
-    const FLEE_SPEED = 5.2;
-    const WANDER = 0.85;
+    const DETECT = 12.5;
+    let deerIdx = 0;
+
+    const isDeerBlocked = (cx: number, cz: number): boolean => {
+      if (Math.abs(cx) > 91 || Math.abs(cz) > 91) return true;
+      if (this.mapLayout) {
+        if (
+          isPointInTerrainObstacle(
+            cx,
+            cz,
+            this.mapLayout.waterRects,
+            this.mapLayout.waterDiscs,
+            this.mapLayout.bridges
+          )
+        ) {
+          return true;
+        }
+        for (const c of this.mapLayout.cliffDiscs) {
+          if (Math.hypot(cx - c.x, cz - c.z) <= c.radius + 0.75) return true;
+        }
+      }
+      for (const b of this.buildings) {
+        if (b.hp <= 0) continue;
+        const br = getBuildingCollisionRadius(b);
+        if (br > 0 && Math.hypot(cx - b.x, cz - b.z) <= br + 0.7) return true;
+      }
+      return false;
+    };
 
     for (const node of this.resourceNodes) {
       if (node.subtype !== 'hunt' || node.amount <= 0) continue;
+      deerIdx++;
       if (node.animalAlive === undefined) {
         node.animalMaxHp = 32;
         node.animalHp = 32;
         node.animalAlive = true;
         node.animalVx = 0;
         node.animalVz = 0;
+        node.animalYaw = (deerIdx * 1.9) % (Math.PI * 2);
       }
 
       const mesh = this.nodeMeshes.get(node.id);
       if (!node.animalAlive) {
         if (mesh) {
-          mesh.position.x = node.x;
-          mesh.position.z = node.z;
+          mesh.position.set(node.x, 0, node.z);
           mesh.rotation.x = 0.55;
+          const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
+          if (parts) {
+            parts.bodyPivot.position.y = 0.7;
+            parts.bodyPivot.rotation.z = 0;
+            parts.flLeg.rotation.z = -0.3;
+            parts.frLeg.rotation.z = -0.15;
+            parts.blLeg.rotation.z = 0.25;
+            parts.brLeg.rotation.z = 0.15;
+          }
         }
         continue;
       }
@@ -4417,57 +4516,62 @@ export class RtsEngine {
         }
       }
 
-      if (nearest) {
-        const dx = node.x - nearest.x;
-        const dz = node.z - nearest.z;
-        const len = Math.hypot(dx, dz) || 1;
-        const urgency = 1 + (1 - nearest.d / DETECT) * 0.7;
-        node.animalVx = (dx / len) * FLEE_SPEED * urgency;
-        node.animalVz = (dz / len) * FLEE_SPEED * urgency;
-      } else {
-        node.animalVx = (node.animalVx || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
-        node.animalVz = (node.animalVz || 0) * 0.92 + (Math.random() - 0.5) * WANDER * dt * 8;
-        const sp = Math.hypot(node.animalVx || 0, node.animalVz || 0);
-        if (sp > 1.6) {
-          node.animalVx = ((node.animalVx || 0) / sp) * 1.6;
-          node.animalVz = ((node.animalVz || 0) / sp) * 1.6;
-        }
-      }
-
-      let nx = node.x + (node.animalVx || 0) * dt;
-      let nz = node.z + (node.animalVz || 0) * dt;
-      nx = Math.max(-92, Math.min(92, nx));
-      nz = Math.max(-92, Math.min(92, nz));
-
-      if (this.mapLayout) {
-        const wet = isPointInTerrainObstacle(
-          nx,
-          nz,
-          this.mapLayout.waterRects,
-          this.mapLayout.waterDiscs,
-          this.mapLayout.bridges
-        );
-        if (wet) {
-          node.animalVx = -(node.animalVx || 0) * 0.5;
-          node.animalVz = -(node.animalVz || 0) * 0.5;
-          nx = node.x;
-          nz = node.z;
-        }
-      }
-
-      node.x = nx;
-      node.z = nz;
+      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isDeerBlocked);
 
       if (mesh) {
-        mesh.position.x = node.x;
-        mesh.position.z = node.z;
-        const spd = Math.hypot(node.animalVx || 0, node.animalVz || 0);
-        if (spd > 0.4) {
-          mesh.rotation.y = Math.atan2(node.animalVx || 0, node.animalVz || 0);
-        }
-        mesh.position.y = spd > 1.2 ? Math.abs(Math.sin(this.simTime * 10)) * 0.12 : 0;
-      }
+        mesh.position.set(node.x, step.hopY, node.z);
+        mesh.rotation.y = step.yaw;
+        mesh.rotation.x = 0;
 
+        const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
+        if (parts) {
+          const blend = step.moveBlend;
+          const isFast = step.actualSpeed >= 2.2;
+          const phase = step.gaitPhase;
+
+          if (blend > 0.02) {
+            if (isFast) {
+              // Bounding gallop: front pair and rear pair sweep together with natural phase offset
+              const frontSwing = Math.sin(phase) * 0.78 * blend;
+              const rearSwing = Math.sin(phase + 0.85) * 0.74 * blend;
+              parts.flLeg.rotation.z = frontSwing;
+              parts.frLeg.rotation.z = frontSwing * 0.88 + 0.08 * blend;
+              parts.blLeg.rotation.z = rearSwing;
+              parts.brLeg.rotation.z = rearSwing * 0.88 - 0.08 * blend;
+              parts.bodyPivot.rotation.z = Math.cos(phase) * 0.11 * blend;
+              parts.tailPivot.rotation.z = (0.48 + Math.sin(phase * 2) * 0.14) * blend;
+              parts.headPivot.rotation.z = 0.08 + Math.sin(phase) * 0.08 * blend;
+            } else {
+              // Calm diagonal walk/trot
+              const swing = Math.sin(phase) * 0.45 * blend;
+              parts.flLeg.rotation.z = swing;
+              parts.brLeg.rotation.z = swing;
+              parts.frLeg.rotation.z = -swing;
+              parts.blLeg.rotation.z = -swing;
+              parts.bodyPivot.rotation.z = Math.sin(phase * 2) * 0.025 * blend;
+              parts.tailPivot.rotation.z = 0.1 * blend;
+              parts.headPivot.rotation.z = 0.02;
+            }
+          } else {
+            // Smoothly return legs & body to grounded grazing stance
+            const settle = 1 - Math.exp(-10 * dt);
+            parts.flLeg.rotation.z += (0 - parts.flLeg.rotation.z) * settle;
+            parts.frLeg.rotation.z += (0 - parts.frLeg.rotation.z) * settle;
+            parts.blLeg.rotation.z += (0 - parts.blLeg.rotation.z) * settle;
+            parts.brLeg.rotation.z += (0 - parts.brLeg.rotation.z) * settle;
+            parts.bodyPivot.rotation.z += (0 - parts.bodyPivot.rotation.z) * settle;
+            parts.tailPivot.rotation.z += (0 - parts.tailPivot.rotation.z) * settle;
+
+            if (step.isGrazing) {
+              const graze = Math.max(0, Math.sin(this.simTime * 1.15 + deerIdx * 1.7));
+              const targetHead = -graze * 0.44;
+              parts.headPivot.rotation.z += (targetHead - parts.headPivot.rotation.z) * Math.min(1, dt * 5);
+            } else {
+              parts.headPivot.rotation.z += (0.06 - parts.headPivot.rotation.z) * settle;
+            }
+          }
+        }
+      }
 
       // Non-villager combat damage vs living 山羌 (still needs full 32 HP of real damage)
       if (node.animalAlive) {
@@ -4482,23 +4586,23 @@ export class RtsEngine {
             const dmg = Math.max(1, u.unitDef.stats.attack);
             node.animalHp = Math.max(0, (node.animalHp || 32) - dmg);
             cd = Math.max(0.5, 1 / Math.max(0.35, u.unitDef.stats.attackRate || 1));
-            const awayX = node.x - u.x;
-            const awayZ = node.z - u.z;
-            const al = Math.hypot(awayX, awayZ) || 1;
-            node.animalVx = (awayX / al) * 6.5;
-            node.animalVz = (awayZ / al) * 6.5;
+            triggerWildAnimalPanic(node, u.x, u.z, this.simTime, 2.5);
             if (node.animalHp <= 0) {
               node.animalAlive = false;
               node.animalVx = 0;
               node.animalVz = 0;
+              node.animalFleeUntil = 0;
+              node.animalMoveBlend = 0;
               this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
-              if (mesh) mesh.rotation.x = 0.55;
+              if (mesh) {
+                mesh.position.y = 0;
+                mesh.rotation.x = 0.55;
+              }
             }
           }
           (u as any)._huntHitCd = cd;
         }
       }
-
     }
   }
 
@@ -4721,8 +4825,12 @@ export class RtsEngine {
   }
 
   private updateContestedPoints(dt: number) {
+    let shouldNotifySelection = false;
+    this.contestedUiRefreshAcc += dt;
+
     for (const point of this.contestedPoints) {
       const counts = new Map<string, number>();
+      const presenceEntries: Array<{ faction: FactionId; team: number; weight: number }> = [];
       for (const u of this.units) {
         if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
         // Only military presence captures — workers cannot claim shrines alone
@@ -4733,29 +4841,30 @@ export class RtsEngine {
         // Siege engines count double (securing a shrine with artillery feels decisive)
         const weight = u.unitDef.category === 'siege' ? 2 : 1;
         counts.set(u.faction, (counts.get(u.faction) || 0) + weight);
+        const team = u.team ?? this.getParticipant(u.faction)?.team ?? 1;
+        presenceEntries.push({ faction: u.faction, team, weight });
       }
 
-      const present = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-      const leader = present.length > 0 ? present[0][0] : null;
-      const contested =
-        present.length >= 2 && present[0][1] === present[1][1];
+      const presence = evaluateContestedPresence(presenceEntries);
+      const prevOwner = point.ownerFaction;
+      const prevContested = !!point.isContested;
+      point.isContested = presence.isContested;
+      point.contestingFactions = presence.activeFactions;
 
-      const mesh = this.contestedMeshes.get(point.id);
-      const ring = mesh?.getObjectByName('captureRing') as THREE.Mesh | undefined;
-      const ringMat = ring?.material as THREE.MeshBasicMaterial | undefined;
+      const leader = presence.leader;
+      const contestedTie = presence.isTie;
 
-      if (!leader || contested) {
-        if (!leader) {
-          point.captureProgress = Math.max(0, point.captureProgress - dt * 0.1);
-          if (point.captureProgress <= 0.02) point.capturingFaction = undefined;
-        }
-        if (point.ownerFaction !== 'neutral' && !leader) {
-          // Unattended owned points slowly decay holdTime (supply can drop)
-          point.holdTime = Math.max(0, point.holdTime - dt * 0.35);
-        }
-        if (ringMat) {
-          ringMat.color.setHex(contested ? 0xfbbf24 : 0xe2e8f0);
-          ringMat.opacity = contested ? 0.58 : 0.32;
+      if (!leader || contestedTie) {
+        if (!leader && !contestedTie) {
+          if (point.ownerFaction === 'neutral') {
+            point.captureProgress = Math.max(0, point.captureProgress - dt * 0.1);
+            if (point.captureProgress <= 0.02) point.capturingFaction = undefined;
+          } else {
+            point.capturingFaction = point.ownerFaction;
+            point.captureProgress = Math.min(1, point.captureProgress + dt * 0.08);
+            // Unattended owned points slowly decay holdTime (blessing charge can drop)
+            point.holdTime = Math.max(0, point.holdTime - dt * 0.35);
+          }
         }
       } else {
         const weight = counts.get(leader) || 1;
@@ -4764,13 +4873,27 @@ export class RtsEngine {
           point.captureProgress = 1;
           point.capturingFaction = leader;
           point.holdTime += dt;
-        } else if (point.capturingFaction === leader) {
-          point.captureProgress = Math.min(1, point.captureProgress + rate * dt);
+        } else if (point.ownerFaction === 'neutral') {
+          if (point.capturingFaction === leader || !point.capturingFaction) {
+            point.capturingFaction = leader;
+            point.captureProgress = Math.min(1, point.captureProgress + rate * dt);
+          } else {
+            point.captureProgress = Math.max(0, point.captureProgress - rate * 1.25 * dt);
+            if (point.captureProgress <= 0.05) {
+              point.capturingFaction = leader;
+              point.captureProgress = 0;
+            }
+          }
         } else {
+          // Enemy draining an owned shrine down to neutral before claiming it
           point.captureProgress = Math.max(0, point.captureProgress - rate * 1.25 * dt);
           if (point.captureProgress <= 0.05) {
+            point.ownerFaction = 'neutral';
             point.capturingFaction = leader;
             point.captureProgress = 0;
+            point.holdTime = 0;
+            point.siegeSupplyActive = false;
+            this.addFloatingText(point.x, 2.5, point.z, '據點已中立化', '#f87171');
           }
         }
 
@@ -4780,7 +4903,6 @@ export class RtsEngine {
           point.captureProgress = 1;
           point.holdTime = 0;
           point.siegeSupplyActive = false;
-          const name = this.participants.find((p) => p.id === leader)?.name || leader;
           this.addFloatingText(point.x, 3.2, point.z, `佔領 ${point.label}`, '#fbbf24');
           this.spawnShockwaveRing(point.x, point.z, 0xfbbf24, point.radius * 0.9);
           this.lastMinimapPing = {
@@ -4821,13 +4943,6 @@ export class RtsEngine {
             this.addFloatingText(point.x, 2.5, point.z, '敵方失去據點', '#f87171');
           }
         }
-
-        if (ringMat) {
-          const ownerId = point.ownerFaction === 'neutral' ? leader : point.ownerFaction;
-          const ownerP = this.participants.find((p) => p.id === ownerId);
-          ringMat.color.setHex(ownerP?.colorHex ?? 0x38bdf8);
-          ringMat.opacity = 0.35 + point.captureProgress * 0.45;
-        }
       }
 
       // Long hold → Siege Supply (oil, ladders, mantlets): +18% non-siege building damage
@@ -4842,18 +4957,108 @@ export class RtsEngine {
         point.siegeSupplyActive = false;
       }
 
-      // Sync 3D shrine banner with ownership
+      // Sync persistent 3D shrine visuals (owner color + contested pulse + overhead badge)
+      const summary = getContestedShrineSummary(point, this.participants);
+      const mesh = this.contestedMeshes.get(point.id);
       if (mesh) {
         const banner = mesh.getObjectByName('shrineBanner') as THREE.Mesh | undefined;
-        const ownerP =
-          point.ownerFaction !== 'neutral'
-            ? this.participants.find((p) => p.id === point.ownerFaction)
-            : null;
         if (banner?.material && (banner.material as THREE.MeshStandardMaterial).color) {
-          (banner.material as THREE.MeshStandardMaterial).color.setHex(
-            ownerP?.colorHex ?? 0xa8a29e
-          );
+          (banner.material as THREE.MeshStandardMaterial).color.setHex(summary.ownerColorHex);
+          banner.rotation.y = -0.35 + Math.sin(this.simTime * 4.2) * 0.16;
         }
+
+        const crystal = mesh.getObjectByName('shrineCrystal') as THREE.Mesh | undefined;
+        if (crystal) {
+          crystal.rotation.y = this.simTime * (point.isContested ? 2.8 : 1.1);
+          crystal.position.y = 2.82 + Math.sin(this.simTime * 2.4) * 0.08;
+          const cMat = crystal.material as THREE.MeshStandardMaterial | undefined;
+          if (cMat) {
+            cMat.color.setHex(summary.isNeutral ? 0xfbbf24 : summary.ownerColorHex);
+            cMat.emissive.setHex(
+              point.isContested ? 0xdc2626 : summary.isNeutral ? 0xb45309 : summary.ownerColorHex
+            );
+            cMat.emissiveIntensity = point.isContested
+              ? 0.55 + Math.sin(this.simTime * 8) * 0.25
+              : point.siegeSupplyActive
+              ? 0.72
+              : 0.38;
+          }
+        }
+
+        const ownerRing = mesh.getObjectByName('ownerRing') as THREE.Mesh | undefined;
+        const ownerRingMat = ownerRing?.material as THREE.MeshBasicMaterial | undefined;
+        if (ownerRingMat) {
+          ownerRingMat.color.setHex(summary.ownerColorHex);
+          ownerRingMat.opacity = summary.isNeutral ? 0.34 : point.siegeSupplyActive ? 0.85 : 0.68;
+        }
+
+        const ring = mesh.getObjectByName('captureRing') as THREE.Mesh | undefined;
+        const ringMat = ring?.material as THREE.MeshBasicMaterial | undefined;
+        if (ringMat) {
+          if (point.isContested) {
+            const flash = 0.5 + 0.5 * Math.sin(this.simTime * 7.5);
+            ringMat.color.setHex(flash > 0.5 ? 0xf59e0b : 0xef4444);
+            ringMat.opacity = 0.5 + flash * 0.28;
+          } else if (summary.statusKind === 'capturing' && summary.capturingColorHex !== null) {
+            ringMat.color.setHex(summary.capturingColorHex);
+            ringMat.opacity = 0.38 + point.captureProgress * 0.42;
+          } else if (!summary.isNeutral) {
+            // Persistent faction color stays visible even when 0 units are standing inside!
+            ringMat.color.setHex(summary.ownerColorHex);
+            ringMat.opacity = point.siegeSupplyActive ? 0.62 : 0.46;
+          } else {
+            ringMat.color.setHex(0xe2e8f0);
+            ringMat.opacity = 0.28;
+          }
+        }
+
+        const contestedRing = mesh.getObjectByName('contestedRing') as THREE.Mesh | undefined;
+        const contestedMat = contestedRing?.material as THREE.MeshBasicMaterial | undefined;
+        if (contestedRing && contestedMat) {
+          if (point.isContested || summary.statusKind === 'capturing') {
+            contestedRing.visible = true;
+            const pulse = 0.5 + 0.5 * Math.sin(this.simTime * (point.isContested ? 8.5 : 4.0));
+            const s = point.isContested ? 0.98 + pulse * 0.05 : 0.88 + point.captureProgress * 0.14;
+            contestedRing.scale.set(s, 1, s);
+            contestedMat.color.setHex(
+              point.isContested ? 0xfbbf24 : (summary.capturingColorHex ?? 0x38bdf8)
+            );
+            contestedMat.opacity = point.isContested ? 0.35 + pulse * 0.42 : 0.28 + point.captureProgress * 0.35;
+          } else {
+            contestedRing.visible = false;
+          }
+        }
+
+        const badge = mesh.getObjectByName('shrineBadge') as THREE.Sprite | undefined;
+        if (badge) {
+          badge.visible = this.showOverheadBadges;
+          const badgeSig = `${summary.ownerName}|${summary.statusKind}|${summary.progressPct}|${summary.blessingPct}|${point.isContested ? 1 : 0}`;
+          if (mesh.userData._lastBadgeSig !== badgeSig) {
+            mesh.userData._lastBadgeSig = badgeSig;
+            const isHostileOwner =
+              point.ownerFaction !== 'neutral' &&
+              this.isHostileToPlayer({ faction: point.ownerFaction });
+            updateBadgeSprite(
+              badge,
+              point.label,
+              summary.shrineIcon,
+              summary.badgeValueText,
+              summary.badgeRatio,
+              isHostileOwner,
+              summary.isNeutral && !point.isContested,
+              summary.badgeActionText,
+              !!point.isContested
+            );
+          }
+        }
+      }
+
+      if (
+        prevOwner !== point.ownerFaction ||
+        prevContested !== !!point.isContested ||
+        (point.id === this.selectedContestedPointId && this.contestedUiRefreshAcc >= 0.25)
+      ) {
+        shouldNotifySelection = true;
       }
 
       // Income + local aura
@@ -4890,6 +5095,13 @@ export class RtsEngine {
           u.buffDefenseBonus = Math.max(u.buffDefenseBonus || 0, defenseAura);
         }
       }
+    }
+
+    if (shouldNotifySelection) {
+      this.contestedUiRefreshAcc = 0;
+      this.onSelectionChange?.();
+    } else if (this.contestedUiRefreshAcc >= 0.25) {
+      this.contestedUiRefreshAcc = 0;
     }
   }
 
@@ -5027,9 +5239,11 @@ export class RtsEngine {
             const shortName = `${prefix}${bldg.buildingDef.name.split(' ')[0]}`;
             const bIcons: Record<string, string> = {
               town_center: '🏛️',
+              house: '🏠',
               barracks: '⚔️',
               archery_range: '🏹',
               farm: '🌾',
+              granary: '🌾',
               lumber_camp: '🪵',
               mining_camp: '⛏️',
               dock: '⚓',
@@ -5118,13 +5332,7 @@ export class RtsEngine {
       // Passive Resource Generation & Civ Unique Building Effects
       if (bldg.buildingDef.producesResource) {
         const prod = bldg.buildingDef.producesResource;
-        let rate = prod.amountPerSec;
-        // Markets scale with Age — trade routes grow as the empire advances.
-        if (bldg.buildingType === 'market') {
-          const age = this.ageByFaction[bldg.faction] || 1;
-          rate *= 1 + Math.max(0, age - 1) * 0.2;
-        }
-        const delta = rate * dt;
+        const delta = prod.amountPerSec * dt;
         const resBag = this.getResourcesForFaction(bldg.faction);
         resBag[prod.type] += delta;
         if (bldg.buildingType === 'landmark_guildhall') {
@@ -5207,10 +5415,12 @@ export class RtsEngine {
         const currentUnitId = bldg.queue[0];
         const uDef = this.findUnitDef(currentUnitId, bldg.faction);
         if (uDef) {
-          const speed = speedBonusMult / uDef.stats.trainTime;
+          const trainTimeMult = getTrainingTimeMultiplier(this.getResearchedTechs(bldg.faction));
+          const speed = speedBonusMult / Math.max(2, uDef.stats.trainTime * trainTimeMult);
           bldg.queueProgress += speed * dt;
 
-          if (bldg.queueProgress >= 1) {
+          const pop = this.getPopulationStats(bldg.faction);
+          if (bldg.queueProgress >= 1 && pop.used < pop.max) {
             bldg.queue.shift();
             bldg.queueProgress = 0;
             // Spawn trained unit cleanly outside building collision perimeter (favoring rally point direction)
@@ -5424,7 +5634,7 @@ export class RtsEngine {
             target as UnitEntity,
             proj.type === 'arrow' || proj.type === 'slash',
             this.simTime,
-            attacker
+            attacker?.unitDef.stats.bonusVsCategory
           );
           this.spawnParticleBurst(
             target.x,
@@ -5541,6 +5751,21 @@ export class RtsEngine {
         }
         nodeRing.position.set(node.x, 0.03, node.z);
         nodeRing.visible = true;
+      }
+    }
+
+    // Show for currently selected contested shrine
+    if (this.selectedContestedPointId) {
+      const point = this.contestedPoints.find((p) => p.id === this.selectedContestedPointId);
+      if (point) {
+        let shrineRing = this.selectionRings.get('shrine_' + point.id);
+        if (!shrineRing) {
+          shrineRing = createSelectionRing(2.9);
+          this.scene.add(shrineRing);
+          this.selectionRings.set('shrine_' + point.id, shrineRing);
+        }
+        shrineRing.position.set(point.x, 0.05, point.z);
+        shrineRing.visible = true;
       }
     }
 
@@ -6095,9 +6320,8 @@ export class RtsEngine {
         }
       }
 
-      const aiMaxPop = aiBuildings
-        .filter((b) => b.isConstructed)
-        .reduce((acc, b) => acc + (b.buildingDef.populationProvided || 0), 10);
+      const aiPop = this.getPopulationStats(aiId);
+      const aiMaxPop = aiPop.max;
       const aiAge = this.ageByFaction[aiId] || 1;
 
       // Auto-trigger special abilities in combat for AI army units
@@ -6483,9 +6707,19 @@ export class RtsEngine {
 
       const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
       const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
+      const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
-        if (buildCmd?.type === 'advance_age' && aiAge < 4) {
+        if (needsHouse && aiRes.wood >= DEFAULT_BUILDINGS.house.cost.wood) {
+          this.tryAiConstructBuilding(
+            aiId,
+            'house',
+            aiActiveWorkers,
+            anchorX,
+            anchorZ,
+            toCenterAngle + Math.PI * 0.55 + (aiBuildings.length % 5) * 0.35
+          );
+        } else if (buildCmd?.type === 'advance_age' && aiAge < 4) {
           const lmByAge: Record<number, LandmarkType> = {
             1: (buildCmd.targetId as LandmarkType) || 'landmark_barracks',
             2: 'landmark_citadel',
@@ -6514,6 +6748,8 @@ export class RtsEngine {
           );
         } else if (buildCmd?.type === 'build' && buildCmd.targetId) {
           this.tryAiConstructBuilding(aiId, buildCmd.targetId as BuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
+        } else if (aiBarracksList.length === 0 && aiWorkers.length >= 4 && aiRes.wood >= 150 && this.stats.gameDuration > 10) {
+          this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
         } else if (!aiArcheryList.length && this.stats.gameDuration > 16) {
           this.tryAiConstructBuilding(aiId, 'archery_range', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.65);
         } else if (!aiUniqueBldg && this.stats.gameDuration > 24) {
@@ -6563,53 +6799,52 @@ export class RtsEngine {
         }
       }
 
-      // 4. Research only from surplus resources; never spend the next landmark's budget.
+      // 4. Context-aware counter-tech & economic research from surplus resources (never spend landmark reserve).
       const researched = this.getResearchedTechs(aiId);
       const nextAgeLandmark: LandmarkType | null =
         aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
       const nextAgeCost = nextAgeLandmark ? DEFAULT_BUILDINGS[nextAgeLandmark].cost : null;
       const reserveFood = nextAgeCost?.food || 0;
       const reserveGold = nextAgeCost?.gold || 0;
-      // Prefer military techs when pressured; eco when safe and workers are online.
-      const pressure = underAttack > 0 || (nearestEnemyDist > 0 && nearestEnemyDist < 32);
-      let bestTech: { bId: string; techId: string; score: number } | null = null;
+      const enemyComposition = {
+        melee: 0,
+        ranged: 0,
+        cavalry: 0,
+        siege: 0,
+        fortificationCount: 0,
+      };
+      for (const u of this.units) {
+        if (u.hp <= 0 || !this.isHostile({ faction: aiId, team: participant.team }, u)) continue;
+        if (u.unitDef.category === 'melee') enemyComposition.melee++;
+        else if (u.unitDef.category === 'ranged') enemyComposition.ranged++;
+        else if (u.unitDef.category === 'cavalry') enemyComposition.cavalry++;
+        else if (u.unitDef.category === 'siege') enemyComposition.siege++;
+      }
+      for (const eb of this.buildings) {
+        if (eb.hp <= 0 || !this.isHostile({ faction: aiId, team: participant.team }, eb)) continue;
+        if (eb.buildingType === 'tower' || eb.buildingType === 'castle' || eb.buildingType === 'wall') {
+          enemyComposition.fortificationCount++;
+        }
+      }
+      const techCandidates: Array<{ buildingId: string; tech: TechDefinition }> = [];
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
         const techs = getAvailableTechsForBuilding(b.buildingType, aiCiv.id, researched, aiAge as AgeLevel);
-        for (const candidate of techs) {
-          const afterFood = aiRes.food - candidate.cost.food;
-          const afterGold = aiRes.gold - candidate.cost.gold;
-          if (
-            !canAfford(aiRes, candidate.cost) ||
-            afterFood < reserveFood ||
-            afterGold < reserveGold
-          ) {
-            continue;
-          }
-          const isEco =
-            !!candidate.effect.gatherMultiplier ||
-            candidate.targetCategories?.includes('worker');
-          const isMil =
-            !isEco &&
-            (!!candidate.effect.attackBonus ||
-              !!candidate.effect.defenseBonus ||
-              !!candidate.effect.hpMultiplier ||
-              !!candidate.effect.rangeBonus ||
-              !!candidate.effect.siegeDamageMultiplier);
-          let score = candidate.requiredAge || 1;
-          if (pressure && isMil) score += 40;
-          if (!pressure && isEco) score += 25;
-          if (pressure && isEco) score -= 10;
-          if (personality === 'hard' && isMil) score += 8;
-          if (personality === 'easy' && isMil) score -= 5;
-          if (personality === 'defensive' && isMil && pressure) score += 15;
-          if (!bestTech || score > bestTech.score) {
-            bestTech = { bId: b.id, techId: candidate.id, score };
-          }
+        for (const tech of techs) {
+          techCandidates.push({ buildingId: b.id, tech });
         }
       }
-      if (bestTech) {
-        this.startResearch(bestTech.bId, bestTech.techId);
+      const chosenTech = evaluateAiTechChoice(techCandidates, {
+        resources: aiRes,
+        reserveFood,
+        reserveGold,
+        age: aiAge,
+        workerCount: aiWorkers.length,
+        aiPersonality: participant.aiPersonality,
+        enemyComposition,
+      });
+      if (chosenTech) {
+        this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
@@ -6632,39 +6867,7 @@ export class RtsEngine {
         !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
         (aiRes.food < 2400 || aiRes.gold < 1200);
 
-
-      // Composition reaction: train counters against the nearest hostile army mix.
-      if (aiUnits.length < aiMaxPop && personality !== 'easy') {
-        const hostileArmy = this.units.filter(
-          (u) =>
-            u.hp > 0 &&
-            u.unitDef.category !== 'worker' &&
-            this.isHostile({ faction: aiId, team: aiTeam }, u)
-        );
-        const cav = hostileArmy.filter((u) => u.unitDef.category === 'cavalry').length;
-        const melee = hostileArmy.filter((u) => u.unitDef.category === 'melee').length;
-        const ranged = hostileArmy.filter((u) => u.unitDef.category === 'ranged').length;
-        const ownSpears = aiArmy.filter((u) => u.unitDefId === 'spearman').length;
-        const ownRanged = aiArmy.filter((u) => u.unitDef.category === 'ranged').length;
-        const ownCav = aiArmy.filter((u) => u.unitDef.category === 'cavalry').length;
-        let counterId: string | null = null;
-        if (cav >= 2 && ownSpears < Math.ceil(cav * 0.8)) {
-          counterId = 'spearman';
-        } else if (melee >= 3 && ownRanged < 2) {
-          counterId = aiCiv.starterRangedUnitId;
-        } else if (ranged >= 3 && ownCav < 2 && aiAge >= 2) {
-          counterId = aiCiv.starterMeleeUnitId === 'swordsman' ? 'scout' : aiCiv.starterMeleeUnitId;
-        }
-        if (
-          counterId &&
-          !(savingForAge2 || savingForAge3 || savingForAge4) &&
-          (underAttack > 0 || hostileArmy.length >= 3 || personality === 'hard')
-        ) {
-          this.resolveAiTrainRequest(aiId, aiCiv, counterId, aiBuildings);
-        }
-      }
-
-      if (aiUnits.length < aiMaxPop) {
+      if (aiPop.totalReserved < aiMaxPop) {
         const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
         if (hasDeepFish && readyDock && aiNavalBoats.length < 2 && aiRes.wood >= 75) {
           this.trainUnit(readyDock.id, 'fishing_boat');
@@ -6714,31 +6917,6 @@ export class RtsEngine {
               e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
               e.targetEntityId = enemyTc.id;
               e.state = 'attacking';
-            }
-          }
-        }
-      }
-
-
-      // Idle army cleanup: don't park forever at TC when the map is open.
-      if (
-        personality !== 'defensive' &&
-        personality !== 'easy' &&
-        underAttack === 0 &&
-        aiArmy.length >= (personality === 'hard' ? 3 : 5) &&
-        this.stats.gameDuration > (personality === 'hard' ? 55 : 90)
-      ) {
-        const idleArmy = aiArmy.filter((u) => u.state === 'idle');
-        if (idleArmy.length >= 2) {
-          const stageX = anchorX * 0.55;
-          const stageZ = anchorZ * 0.55;
-          for (const unit of idleArmy) {
-            if (getDistance(unit.x, unit.z, anchorX, anchorZ) < 14) {
-              unit.targetX = stageX + (Math.random() - 0.5) * 6;
-              unit.targetZ = stageZ + (Math.random() - 0.5) * 6;
-              unit.attackMoveGoal = { x: stageX, z: stageZ };
-              unit.state = 'moving';
-              unit.currentActionText = '前壓待命';
             }
           }
         }
@@ -6967,7 +7145,8 @@ export class RtsEngine {
       const targetTag = (e.target as HTMLElement)?.tagName;
       const isTyping = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT';
       const hasOpenUiModal =
-        e.defaultPrevented || !!document.querySelector('[data-hotkeys-modal="true"], [data-age-modal="true"]');
+        e.defaultPrevented ||
+        !!document.querySelector('[data-hotkeys-modal="true"], [data-age-modal="true"], [data-tech-tree-modal="true"]');
 
       this.keysHeld.add(e.code);
       if (hasOpenUiModal) return;
@@ -7107,7 +7286,7 @@ export class RtsEngine {
         this.clearEdgeScroll();
         return;
       }
-      if (document.querySelector('[data-hotkeys-modal="true"], [data-age-modal="true"]')) {
+      if (document.querySelector('[data-hotkeys-modal="true"], [data-age-modal="true"], [data-tech-tree-modal="true"]')) {
         this.clearEdgeScroll();
         return;
       }
@@ -7117,7 +7296,13 @@ export class RtsEngine {
     const onWheel = (e: WheelEvent) => {
       if (this.gameState !== 'playing') return;
       const targetEl = e.target as HTMLElement | null;
-      if (targetEl?.closest('[data-hotkeys-modal="true"], [data-age-modal="true"], .overflow-y-auto')) return;
+      if (
+        targetEl?.closest(
+          '[data-hotkeys-modal="true"], [data-age-modal="true"], [data-tech-tree-modal="true"], .overflow-y-auto',
+        )
+      ) {
+        return;
+      }
       e.preventDefault();
       this.adjustCameraZoom(e.deltaY);
     };
@@ -7261,10 +7446,11 @@ export class RtsEngine {
   }
 
   public raycastInteractive(clientX: number, clientY: number): {
-    hitType: 'unit' | 'building' | 'resource' | 'terrain' | 'none';
+    hitType: 'unit' | 'building' | 'resource' | 'contested' | 'terrain' | 'none';
     unit?: UnitEntity;
     building?: BuildingEntity;
     resource?: ResourceNode;
+    contested?: ContestedPoint;
     point: THREE.Vector3 | null;
   } {
     const rect = this.container.getBoundingClientRect();
@@ -7285,6 +7471,7 @@ export class RtsEngine {
     this.unitMeshes.forEach((mesh) => candidateMeshes.push(mesh));
     this.buildingMeshes.forEach((mesh) => candidateMeshes.push(mesh));
     this.nodeMeshes.forEach((mesh) => candidateMeshes.push(mesh));
+    this.contestedMeshes.forEach((mesh) => candidateMeshes.push(mesh));
 
     const hits = this.raycaster.intersectObjects(candidateMeshes, true);
     for (const hit of hits) {
@@ -7311,6 +7498,10 @@ export class RtsEngine {
         if (uData && uData.type === 'resource') {
           const n = this.resourceNodes.find((node) => node.id === uData.id);
           if (n && n.amount > 0) return { hitType: 'resource', resource: n, point: hit.point };
+        }
+        if (uData && uData.type === 'contested') {
+          const cp = this.contestedPoints.find((point) => point.id === uData.id);
+          if (cp) return { hitType: 'contested', contested: cp, point: hit.point };
         }
         obj = obj.parent;
       }
@@ -7369,6 +7560,13 @@ export class RtsEngine {
             : 2.1;
         if (d < pickR) {
           return { hitType: 'resource', resource: n, point: groundPoint };
+        }
+      }
+
+      for (const cp of this.contestedPoints) {
+        const d = Math.hypot(cp.x - groundPoint.x, cp.z - groundPoint.z);
+        if (d < 2.8) {
+          return { hitType: 'contested', contested: cp, point: groundPoint };
         }
       }
 

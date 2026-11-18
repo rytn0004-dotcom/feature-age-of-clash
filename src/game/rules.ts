@@ -15,7 +15,11 @@ import {
   BuildingEntity,
   AgeLevel,
   ShrineType,
+  ContestedPoint,
+  TechDefinition,
+  UnitCategory,
 } from '../types/game';
+import { findTechDef } from './civilizations';
 
 /**
  * Per-second income from a captured strategic shrine.
@@ -72,20 +76,7 @@ export function addResources(a: Resources, b: Partial<Resources>): Resources {
 }
 
 /**
- * Armor mitigation: percentage reduction with soft cap.
- * Each armor point ≈ 5% less damage, hard-capped at 55% so low-attack units
- * never collapse to the flat-armor "always 1 damage" cliff.
- */
-export const ARMOR_PCT_PER_POINT = 0.05;
-export const ARMOR_PCT_CAP = 0.55;
-
-export function getArmorDamageReduction(defense: number): number {
-  if (defense <= 0) return 0;
-  return Math.min(ARMOR_PCT_CAP, defense * ARMOR_PCT_PER_POINT);
-}
-
-/**
- * RTS damage: minimum 1 after percentage armor mitigation.
+ * RTS damage calculation: minimum 1 damage, mitigation by defense.
  */
 export function calculateDamage(
   attackerAttack: number,
@@ -93,79 +84,29 @@ export function calculateDamage(
   damageMultiplier = 1
 ): number {
   const effectiveAtk = attackerAttack * damageMultiplier;
-  if (effectiveAtk <= 0) return 1;
-  const reduction = getArmorDamageReduction(defenderDefense);
-  const raw = effectiveAtk * (1 - reduction);
-  return Math.max(1, Math.round(raw));
+  const raw = Math.max(1, effectiveAtk - defenderDefense);
+  return Math.round(raw);
 }
 
 /**
- * Unit-vs-unit damage factoring in bonus ranged pierce defense (so battered siege rams resist arrow fire).
+ * Unit-vs-unit damage factoring in category counter bonuses (e.g. anti-cavalry pikes, anti-ranged flanking)
+ * and bonus ranged pierce defense (so battered siege rams & shieldwalls resist arrow fire).
  */
-
-/**
- * Rock-paper-scissors between army roles.
- * Soft multipliers keep fights readable without binary "immune" matchups.
- * Spearman (and similar anti-cav ids) get a hard tip against cavalry.
- */
-export function getCategoryCounterMultiplier(
-  attackerCategory: string,
-  defenderCategory: string,
-  attackerId?: string
-): number {
-  if (attackerId === 'spearman' && defenderCategory === 'cavalry') return 1.8;
-  if (attackerId === 'spearman' && defenderCategory === 'melee') return 0.9;
-  if (attackerId === 'scout' && (defenderCategory === 'worker' || defenderCategory === 'ranged')) return 1.25;
-  if (attackerId === 'war_galley' && defenderCategory === 'worker') return 1.35;
-
-  if (attackerCategory === 'siege' && defenderCategory !== 'siege') return 0.4;
-  if (defenderCategory === 'siege' && attackerCategory === 'melee') return 1.35;
-  if (defenderCategory === 'siege' && attackerCategory === 'ranged') return 0.75;
-
-  if (attackerCategory === 'cavalry' && defenderCategory === 'melee') return 1.28;
-  if (attackerCategory === 'cavalry' && defenderCategory === 'ranged') return 1.12;
-  if (attackerCategory === 'cavalry' && defenderCategory === 'worker') return 1.2;
-
-  if (attackerCategory === 'melee' && defenderCategory === 'ranged') return 1.18;
-  if (attackerCategory === 'melee' && defenderCategory === 'cavalry') return 0.72;
-
-  if (attackerCategory === 'ranged' && defenderCategory === 'cavalry') return 0.88;
-  if (attackerCategory === 'ranged' && defenderCategory === 'melee') return 0.92;
-  if (attackerCategory === 'ranged' && defenderCategory === 'worker') return 1.1;
-
-  return 1;
-}
-
 export function getUnitVsUnitDamage(
   attackerAttack: number,
   defender: Pick<UnitEntity, 'unitDef' | 'buffSpeedUntil' | 'buffDefenseBonus'>,
   isRangedProjectile = false,
   currentSimTime = 0,
-  attacker?: Pick<UnitEntity, 'unitDef' | 'unitDefId'>
+  attackerBonusVsCategory?: Partial<Record<UnitCategory, number>>
 ): number {
   const buffDef =
     defender.buffSpeedUntil && defender.buffSpeedUntil > currentSimTime
       ? defender.buffDefenseBonus || 0
       : 0;
   const pierceArmor = isRangedProjectile ? defender.unitDef.stats.rangedDefense || 0 : 0;
+  const counterBonus = attackerBonusVsCategory?.[defender.unitDef.category] || 0;
   const totalDef = (defender.unitDef.stats.defense || 0) + buffDef + pierceArmor;
-  const counter = attacker
-    ? getCategoryCounterMultiplier(
-        attacker.unitDef.category,
-        defender.unitDef.category,
-        attacker.unitDefId || attacker.unitDef.id
-      )
-    : 1;
-  let dmg = calculateDamage(attackerAttack * counter, totalDef);
-  // Siege chassis: extra resilience to massed arrows after % armor
-  if (
-    isRangedProjectile &&
-    defender.unitDef.category === 'siege' &&
-    (defender.unitDef.stats.rangedDefense || 0) >= 3
-  ) {
-    dmg = Math.max(1, Math.round(dmg * 0.55));
-  }
-  return dmg;
+  return calculateDamage(attackerAttack + counterBonus, totalDef);
 }
 
 /**
@@ -179,9 +120,12 @@ export function getEffectiveBuildingArmor(
   const baseArmor = building.buildingDef.buildingArmor ?? 5;
   const ageBonus = Math.max(0, defenderAge - 1) * 2;
   let techBonus = 0;
-  if (defenderTechIds.includes('shared_masonry')) techBonus += 4;
-  if (defenderTechIds.includes('shared_murder_holes')) techBonus += 3;
-  if (defenderTechIds.includes('shared_imperial_fortification')) techBonus += 6;
+  for (const tId of defenderTechIds) {
+    const tech = findTechDef(tId);
+    if (tech?.effect.buildingArmorBonus) {
+      techBonus += tech.effect.buildingArmorBonus;
+    }
+  }
   return baseArmor + ageBonus + techBonus;
 }
 
@@ -347,7 +291,8 @@ export function calculateBuildingDamage(
   }
 
   const bArmor = getEffectiveBuildingArmor(building, defenderAge, defenderTechIds);
-  return calculateDamage(effectiveAtk, bArmor);
+  const net = effectiveAtk - bArmor;
+  return Math.max(1, Math.round(net));
 }
 
 export function getBuildingMaxGarrison(
@@ -397,10 +342,18 @@ export function computeGarrisonDefenseProfile(
   const extraBolts = Math.min(6, Math.ceil(mannedCount / 2) + (mannedCount > 0 ? 1 : 0));
   const volleyCount = Math.max(1, baseBolts + extraBolts);
 
-  const arrowSlitsRangeBonus = defenderTechIds.includes('shared_arrow_slits') ? 2 : 0;
-  const arrowSlitsRateMult = defenderTechIds.includes('shared_arrow_slits') ? 1.25 : 1;
-  const murderHolesBonus =
-    mannedCount > 0 && defenderTechIds.includes('shared_murder_holes') ? 6 : 0;
+  let arrowSlitsRangeBonus = 0;
+  let arrowSlitsRateMult = 1;
+  let murderHolesBonus = 0;
+  for (const tId of defenderTechIds) {
+    const tech = findTechDef(tId);
+    if (!tech) continue;
+    if (tech.effect.towerRangeBonus) arrowSlitsRangeBonus += tech.effect.towerRangeBonus;
+    if (tech.effect.towerAttackRateMultiplier) arrowSlitsRateMult *= tech.effect.towerAttackRateMultiplier;
+    if (mannedCount > 0 && tech.effect.garrisonAttackBonus) {
+      murderHolesBonus += tech.effect.garrisonAttackBonus;
+    }
+  }
 
   const baseCooldown = isCastle ? 1.0 : 1.35;
   return {
@@ -1441,3 +1394,589 @@ export function resolveStarRelicDelivery(opts: {
   }
   return 'none';
 }
+
+// ------------------ CONTESTED SHRINE PRESENCE & SUMMARY ------------------
+
+export interface ShrinePresenceEvaluation {
+  leader: FactionId | null;
+  leaderWeight: number;
+  isTie: boolean;
+  isContested: boolean;
+  activeFactions: FactionId[];
+}
+
+/**
+ * Evaluates unit presence inside a contested shrine by team & faction weight.
+ * `isContested` is true whenever 2+ mutually opposing teams occupy the ring simultaneously,
+ * while `isTie` is true only when top rival teams have equal capture weight (halting progress).
+ */
+export function evaluateContestedPresence(
+  entries: Array<{ faction: FactionId; team: number; weight: number }>
+): ShrinePresenceEvaluation {
+  const active = entries.filter((e) => e.weight > 0);
+  if (active.length === 0) {
+    return {
+      leader: null,
+      leaderWeight: 0,
+      isTie: false,
+      isContested: false,
+      activeFactions: [],
+    };
+  }
+
+  const byFaction = new Map<FactionId, { faction: FactionId; team: number; weight: number }>();
+  const byTeam = new Map<number, number>();
+  for (const e of active) {
+    const prev = byFaction.get(e.faction);
+    if (prev) {
+      prev.weight += e.weight;
+    } else {
+      byFaction.set(e.faction, { ...e });
+    }
+    byTeam.set(e.team, (byTeam.get(e.team) || 0) + e.weight);
+  }
+
+  const sortedFactions = [...byFaction.values()].sort((a, b) => b.weight - a.weight);
+  const sortedTeams = [...byTeam.entries()].sort((a, b) => b[1] - a[1]);
+
+  const isContested = sortedTeams.length >= 2;
+  const isTie = sortedTeams.length >= 2 && sortedTeams[0][1] === sortedTeams[1][1];
+
+  return {
+    leader: isTie ? null : sortedFactions[0]?.faction ?? null,
+    leaderWeight: sortedFactions[0]?.weight ?? 0,
+    isTie,
+    isContested,
+    activeFactions: sortedFactions.map((f) => f.faction),
+  };
+}
+
+export interface ContestedShrineSummary {
+  shrineIcon: string;
+  shrineRole: string;
+  shrineBlessingName: string;
+  shrinePerkDesc: string;
+  isNeutral: boolean;
+  ownerName: string;
+  ownerColorHex: number;
+  ownerColorCss: string;
+  capturingName: string | null;
+  capturingColorHex: number | null;
+  capturingColorCss: string | null;
+  progressPct: number;
+  blessingThreshold: number;
+  blessingPct: number;
+  income: Resources;
+  statusKind: 'contested_tie' | 'contested_push' | 'capturing' | 'blessed' | 'owned' | 'neutral';
+  statusLabel: string;
+  badgeValueText: string;
+  badgeActionText: string;
+  badgeRatio: number;
+}
+
+export function getContestedShrineSummary(
+  point: ContestedPoint,
+  participants: Array<{ id: FactionId; name: string; colorHex: number; colorCss: string }>
+): ContestedShrineSummary {
+  const shrineIcon = point.shrineType === 'war' ? '⚔️' : point.shrineType === 'harvest' ? '🌾' : '⚒️';
+  const shrineRole =
+    point.shrineType === 'war' ? '戰意祭壇' : point.shrineType === 'harvest' ? '豐饒祭壇' : '鍛造祭壇';
+  const shrineBlessingName =
+    point.shrineType === 'war' ? '戰意祝福' : point.shrineType === 'harvest' ? '豐饒祝福' : '鍛造祝福';
+  const shrinePerkDesc =
+    point.shrineType === 'war'
+      ? '主產黃金與少量木材；持續佔領啟用軍備加速與戰陣防禦靈氣。'
+      : point.shrineType === 'harvest'
+      ? '持續產出糧食與木材；附近友軍村民與部隊獲得行軍加速。'
+      : '穩定提供黃金與石料；駐軍與附近部隊防禦力強化、加速鍛造祝福。';
+
+  const ownerP = point.ownerFaction !== 'neutral'
+    ? participants.find((p) => p.id === point.ownerFaction) ?? null
+    : null;
+  const capP = point.capturingFaction
+    ? participants.find((p) => p.id === point.capturingFaction) ?? null
+    : null;
+
+  const isNeutral = point.ownerFaction === 'neutral';
+  const ownerName = ownerP ? ownerP.name : '中立據點';
+  const ownerColorHex = ownerP ? ownerP.colorHex : 0xa8a29e;
+  const ownerColorCss = ownerP ? ownerP.colorCss : '#94a3b8';
+
+  const progressPct = Math.max(0, Math.min(100, Math.round((point.captureProgress || 0) * 100)));
+  const blessingThreshold = getShrineBlessingHoldTime(point.shrineType);
+  const blessingPct = point.siegeSupplyActive
+    ? 100
+    : Math.max(0, Math.min(100, Math.round(((point.holdTime || 0) / Math.max(1, blessingThreshold)) * 100)));
+  const income = getShrineIncome(point.shrineType, point.siegeSupplyActive);
+
+  let statusKind: ContestedShrineSummary['statusKind'] = 'neutral';
+  let statusLabel = '中立 · 待佔領';
+  let badgeValueText = '中立';
+  let badgeActionText = `${shrineRole} · 可佔領`;
+  let badgeRatio = progressPct / 100;
+
+  if (point.isContested && isNeutral) {
+    statusKind = 'contested_tie';
+    statusLabel = progressPct > 0 ? `雙方爭奪中 (${progressPct}%)` : '雙方爭奪對峙中';
+    badgeValueText = progressPct > 0 ? `爭奪 ${progressPct}%` : '爭奪中';
+    badgeActionText = '⚔️ 雙方交鋒爭奪中！';
+  } else if (point.isContested && !isNeutral) {
+    const isStall = !point.capturingFaction || point.capturingFaction === point.ownerFaction;
+    statusKind = isStall ? 'contested_tie' : 'contested_push';
+    statusLabel = capP && capP.id !== point.ownerFaction
+      ? `⚔️ ${capP.name} 搶奪中 (${progressPct}%)`
+      : '⚔️ 據點激戰防守中';
+    badgeValueText = `${ownerName} ${progressPct}%`;
+    badgeActionText = capP && capP.id !== point.ownerFaction
+      ? `⚔️ ${capP.name} 爭奪中`
+      : '⚔️ 雙方激戰爭奪中';
+  } else if (isNeutral && capP && progressPct > 2) {
+    statusKind = 'capturing';
+    statusLabel = `${capP.name} 佔領中 (${progressPct}%)`;
+    badgeValueText = `${progressPct}%`;
+    badgeActionText = `🚩 ${capP.name} 佔領中`;
+  } else if (!isNeutral && capP && capP.id !== point.ownerFaction && progressPct < 99) {
+    statusKind = 'capturing';
+    statusLabel = `${capP.name} 奪取中 (${progressPct}%)`;
+    badgeValueText = `${progressPct}%`;
+    badgeActionText = `🚩 ${capP.name} 奪取中`;
+  } else if (!isNeutral && point.siegeSupplyActive) {
+    statusKind = 'blessed';
+    statusLabel = `${ownerName} · ${shrineBlessingName}已啟動`;
+    badgeValueText = `${ownerName}`;
+    badgeActionText = `✨ ${shrineBlessingName}生效中`;
+    badgeRatio = 1;
+  } else if (!isNeutral) {
+    statusKind = 'owned';
+    statusLabel = `${ownerName} 佔領中 (祝福 ${blessingPct}%)`;
+    badgeValueText = `${ownerName}`;
+    badgeActionText = blessingPct > 5 ? `🛡️ 佔領 · 祝福 ${blessingPct}%` : `🚩 ${ownerName} 已佔領`;
+    badgeRatio = 1;
+  }
+
+  return {
+    shrineIcon,
+    shrineRole,
+    shrineBlessingName,
+    shrinePerkDesc,
+    isNeutral,
+    ownerName,
+    ownerColorHex,
+    ownerColorCss,
+    capturingName: capP ? capP.name : null,
+    capturingColorHex: capP ? capP.colorHex : null,
+    capturingColorCss: capP ? capP.colorCss : null,
+    progressPct,
+    blessingThreshold,
+    blessingPct,
+    income,
+    statusKind,
+    statusLabel,
+    badgeValueText,
+    badgeActionText,
+    badgeRatio,
+  };
+}
+
+// ------------------ WILD DEER (山羌) FLEEING & LOCOMOTION ------------------
+
+export function triggerWildAnimalPanic(
+  node: ResourceNode,
+  threatX: number,
+  threatZ: number,
+  simTime: number,
+  duration = 2.6
+): void {
+  if (!node.animalAlive) return;
+  node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + duration);
+  node.animalFleeCooldown = 0;
+  const dx = node.x - threatX;
+  const dz = node.z - threatZ;
+  const len = Math.hypot(dx, dz);
+  if (len > 0.001) {
+    node.animalWanderAngle = Math.atan2(dz, dx);
+  }
+}
+
+/**
+ * Samples candidate angles fanning around `preferredAngle` to pick an obstacle-free
+ * escape vector so deer smoothly steer along riverbanks/cliffs/buildings instead of bouncing in place.
+ */
+export function pickWildAnimalEscapeAngle(
+  x: number,
+  z: number,
+  preferredAngle: number,
+  isBlocked: (cx: number, cz: number) => boolean
+): number | null {
+  const offsets = [0, 0.55, -0.55, 1.1, -1.1, 1.65, -1.65, 2.25, -2.25, Math.PI];
+  for (const off of offsets) {
+    const ang = preferredAngle + off;
+    const tx1 = x + Math.cos(ang) * 1.4;
+    const tz1 = z + Math.sin(ang) * 1.4;
+    const tx2 = x + Math.cos(ang) * 2.9;
+    const tz2 = z + Math.sin(ang) * 2.9;
+    if (!isBlocked(tx1, tz1) && !isBlocked(tx2, tz2)) {
+      return ang;
+    }
+  }
+  for (const off of offsets) {
+    const ang = preferredAngle + off;
+    const tx1 = x + Math.cos(ang) * 1.15;
+    const tz1 = z + Math.sin(ang) * 1.15;
+    if (!isBlocked(tx1, tz1)) {
+      return ang;
+    }
+  }
+  return null;
+}
+
+export interface WildAnimalStepOutput {
+  distMoved: number;
+  actualSpeed: number;
+  isFleeing: boolean;
+  isGrazing: boolean;
+  yaw: number;
+  moveBlend: number;
+  gaitPhase: number;
+  hopY: number;
+}
+
+/**
+ * Updates wild animal (山羌) steering, flee cooldown, terrain obstacle avoidance,
+ * and computes displacement-locked animation parameters so blocked or cooling-down
+ * deer never jump in place.
+ */
+export function stepWildAnimalState(
+  node: ResourceNode,
+  nearestThreat: { x: number; z: number; d: number } | null,
+  simTime: number,
+  dt: number,
+  isBlocked: (cx: number, cz: number) => boolean,
+  rand: () => number = Math.random
+): WildAnimalStepOutput {
+  const DETECT_RANGE = 12.5;
+  const MAX_FLEE_SPEED = 5.4;
+  const MIN_FLEE_SPEED = 3.1;
+  const WANDER_SPEED = 1.05;
+  const prevX = node.x;
+  const prevZ = node.z;
+  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+
+  if (nearestThreat && nearestThreat.d < DETECT_RANGE) {
+    const canReact = (node.animalFleeCooldown || 0) <= simTime || nearestThreat.d < 6.0;
+    if (canReact) {
+      node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + 1.9);
+      node.animalFleeCooldown = 0;
+    }
+  }
+
+  const wasFleeing = (node.animalFleeUntil || 0) > simTime;
+  let isFleeing = wasFleeing;
+
+  if (isFleeing) {
+    const preferredAngle = nearestThreat
+      ? Math.atan2(node.z - nearestThreat.z, node.x - nearestThreat.x)
+      : node.animalWanderAngle ?? Math.atan2(node.animalVz || 0, node.animalVx || 1);
+
+    const escapeAngle = pickWildAnimalEscapeAngle(node.x, node.z, preferredAngle, isBlocked);
+    if (escapeAngle === null) {
+      node.animalVx = 0;
+      node.animalVz = 0;
+    } else {
+      node.animalWanderAngle = escapeAngle;
+      const urgency = nearestThreat
+        ? Math.max(0, Math.min(1, 1 - nearestThreat.d / DETECT_RANGE))
+        : 0.25;
+      const targetSpd = MIN_FLEE_SPEED + (MAX_FLEE_SPEED - MIN_FLEE_SPEED) * urgency;
+      const tvx = Math.cos(escapeAngle) * targetSpd;
+      const tvz = Math.sin(escapeAngle) * targetSpd;
+      const accel = 1 - Math.exp(-9 * clampedDt);
+      node.animalVx = (node.animalVx || 0) + (tvx - (node.animalVx || 0)) * accel;
+      node.animalVz = (node.animalVz || 0) + (tvz - (node.animalVz || 0)) * accel;
+    }
+  } else {
+    // Clean transition out of fleeing into calm grazing cooldown
+    if ((node.animalFleeUntil || 0) > 0 && (node.animalFleeUntil || 0) <= simTime) {
+      node.animalFleeUntil = 0;
+      node.animalFleeCooldown = simTime + 1.4;
+      node.animalWanderMoving = false;
+      node.animalWanderTimer = 2.2 + rand() * 2.2;
+    }
+
+    node.animalWanderTimer = (node.animalWanderTimer ?? (1.5 + rand() * 2.5)) - clampedDt;
+    if ((node.animalWanderTimer || 0) <= 0) {
+      const shouldWalk = rand() < 0.36;
+      node.animalWanderMoving = shouldWalk;
+      if (shouldWalk) {
+        const baseAng = (node.animalWanderAngle ?? rand() * Math.PI * 2) + (rand() - 0.5) * 1.8;
+        const clearAng = pickWildAnimalEscapeAngle(node.x, node.z, baseAng, isBlocked);
+        if (clearAng !== null) {
+          node.animalWanderAngle = clearAng;
+          node.animalWanderTimer = 1.6 + rand() * 1.4;
+        } else {
+          node.animalWanderMoving = false;
+          node.animalWanderTimer = 2.4 + rand() * 2.0;
+        }
+      } else {
+        node.animalWanderTimer = 2.6 + rand() * 2.8;
+      }
+    }
+
+    if (node.animalWanderMoving) {
+      const ang = node.animalWanderAngle ?? 0;
+      if (isBlocked(node.x + Math.cos(ang) * 1.35, node.z + Math.sin(ang) * 1.35)) {
+        const redirect = pickWildAnimalEscapeAngle(node.x, node.z, ang + 1.4, isBlocked);
+        if (redirect !== null) {
+          node.animalWanderAngle = redirect;
+        } else {
+          node.animalWanderMoving = false;
+        }
+      }
+    }
+
+    if (node.animalWanderMoving) {
+      const ang = node.animalWanderAngle ?? 0;
+      const tvx = Math.cos(ang) * WANDER_SPEED;
+      const tvz = Math.sin(ang) * WANDER_SPEED;
+      const blend = 1 - Math.exp(-5 * clampedDt);
+      node.animalVx = (node.animalVx || 0) + (tvx - (node.animalVx || 0)) * blend;
+      node.animalVz = (node.animalVz || 0) + (tvz - (node.animalVz || 0)) * blend;
+    } else {
+      const brake = Math.exp(-8 * clampedDt);
+      node.animalVx = (node.animalVx || 0) * brake;
+      node.animalVz = (node.animalVz || 0) * brake;
+      if (Math.hypot(node.animalVx, node.animalVz) < 0.05) {
+        node.animalVx = 0;
+        node.animalVz = 0;
+      }
+    }
+  }
+
+  let nx = Math.max(-91, Math.min(91, node.x + (node.animalVx || 0) * clampedDt));
+  let nz = Math.max(-91, Math.min(91, node.z + (node.animalVz || 0) * clampedDt));
+
+  if (isBlocked(nx, nz)) {
+    nx = prevX;
+    nz = prevZ;
+    node.animalVx = 0;
+    node.animalVz = 0;
+    isFleeing = false;
+  }
+
+  node.x = nx;
+  node.z = nz;
+
+  const dxMoved = nx - prevX;
+  const dzMoved = nz - prevZ;
+  const distMoved = Math.hypot(dxMoved, dzMoved);
+  const actualSpeed = distMoved / clampedDt;
+
+  // Update facing yaw strictly from actual ground translation (facing +X in local deer mesh => atan2(-dz, dx))
+  let yaw = node.animalYaw ?? 0;
+  if (distMoved > 0.002 && actualSpeed > 0.15) {
+    const targetYaw = Math.atan2(-dzMoved, dxMoved);
+    let diff = targetYaw - yaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    yaw += diff * (1 - Math.exp(-10 * clampedDt));
+  }
+  node.animalYaw = yaw;
+
+  const targetBlend = actualSpeed < 0.18 ? 0 : Math.min(1, actualSpeed / 4.8);
+  let moveBlend = (node.animalMoveBlend ?? 0) + (targetBlend - (node.animalMoveBlend ?? 0)) * (1 - Math.exp(-12 * clampedDt));
+  if (actualSpeed < 0.18 && moveBlend < 0.03) moveBlend = 0;
+  node.animalMoveBlend = moveBlend;
+
+  let gaitPhase = node.animalGaitPhase ?? 0;
+  if (distMoved > 0.0005) {
+    gaitPhase = (gaitPhase + distMoved * 2.8) % (Math.PI * 200);
+  }
+  node.animalGaitPhase = gaitPhase;
+
+  // Bounding lift ONLY occurs during genuine fast running translation — zero hop while grazing, wandering, blocked, or cooling down
+  const hopY =
+    actualSpeed >= 2.2 && moveBlend > 0.35
+      ? Math.max(0, Math.sin(gaitPhase)) * 0.11 * Math.min(1, (actualSpeed - 2.2) / 3.0)
+      : 0;
+
+  return {
+    distMoved,
+    actualSpeed,
+    isFleeing,
+    isGrazing: actualSpeed < 0.22 && !isFleeing,
+    yaw,
+    moveBlend,
+    gaitPhase,
+    hopY,
+  };
+}
+
+export interface AiTechCandidateInput {
+  buildingId: string;
+  tech: TechDefinition;
+}
+
+export interface AiTechDecisionContext {
+  resources: Resources;
+  reserveFood: number;
+  reserveGold: number;
+  age: number;
+  workerCount: number;
+  aiPersonality?: MatchParticipant['aiPersonality'];
+  enemyComposition: {
+    melee: number;
+    ranged: number;
+    cavalry: number;
+    siege: number;
+    fortificationCount: number;
+  };
+}
+
+/**
+ * Context-aware AI tech scoring so AI actively counter-researches enemy compositions,
+ * invests in early economic camps, and chooses mutually-exclusive doctrines matching its personality & matchup.
+ */
+export function evaluateAiTechChoice(
+  candidates: AiTechCandidateInput[],
+  ctx: AiTechDecisionContext
+): AiTechCandidateInput | null {
+  let best: AiTechCandidateInput | null = null;
+  let bestScore = -Infinity;
+
+  const { enemyComposition, aiPersonality } = ctx;
+  const isDefensiveAi = aiPersonality === 'defensive' || aiPersonality === 'easy';
+  const isAggressiveAi = aiPersonality === 'hard';
+
+  for (const cand of candidates) {
+    const { tech } = cand;
+    const afterFood = ctx.resources.food - (tech.cost.food || 0);
+    const afterGold = ctx.resources.gold - (tech.cost.gold || 0);
+    if (!canAfford(ctx.resources, tech.cost)) continue;
+    if (afterFood < ctx.reserveFood || afterGold < ctx.reserveGold) continue;
+
+    let score = 20;
+
+    // 1. Economic & logistics priority (strongest early, scales down when saturated)
+    const isEcoTech =
+      !!tech.effect.gatherMultiplier ||
+      !!tech.effect.gatherByType ||
+      !!tech.effect.carryCapacityBonus;
+    if (isEcoTech) {
+      score += ctx.age <= 2 ? 32 : 16;
+      if (ctx.workerCount >= 5) score += 8;
+    }
+
+    // 2. Reactive counterplay vs enemy army composition
+    if (enemyComposition.ranged >= 3) {
+      const threatBonus = Math.min(18, enemyComposition.ranged * 3);
+      if (tech.effect.rangedDefenseBonus) score += 36 + threatBonus;
+      if (tech.effect.bonusVsCategory?.ranged) score += 34 + threatBonus;
+    }
+    if (enemyComposition.cavalry >= 2) {
+      const threatBonus = Math.min(18, enemyComposition.cavalry * 4);
+      if (tech.effect.bonusVsCategory?.cavalry) score += 40 + threatBonus;
+    }
+    if (enemyComposition.melee >= 3) {
+      const threatBonus = Math.min(16, enemyComposition.melee * 3);
+      if (tech.effect.bonusVsCategory?.melee) score += 32 + threatBonus;
+      if (tech.effect.attackBonus) score += 12;
+      if (tech.effect.defenseBonus) score += 10;
+    }
+
+    // 3. Fortification & siege arms race
+    if (enemyComposition.fortificationCount >= 2) {
+      if (tech.effect.siegeDamageMultiplier) score += 34;
+    }
+    if (tech.effect.buildingArmorBonus || tech.effect.buildingHpMultiplier || tech.effect.towerRangeBonus) {
+      score += isDefensiveAi ? 30 : 10;
+    }
+
+    // 4. Mutually exclusive doctrine personality & tactical alignment
+    if (tech.exclusiveGroup) {
+      const isTurtleDoctrine =
+        tech.id === 'shared_doctrine_elite' ||
+        tech.id === 'med_doctrine_bastion' ||
+        tech.id === 'ani_doctrine_barrier' ||
+        tech.id === 'fan_doctrine_overgrowth';
+      const isTempoDoctrine =
+        tech.id === 'shared_doctrine_blitz' ||
+        tech.id === 'med_doctrine_crusade' ||
+        tech.id === 'ani_doctrine_assassination' ||
+        tech.id === 'fan_doctrine_cataclysm';
+
+      if (isTurtleDoctrine) {
+        score += isDefensiveAi ? 30 : enemyComposition.ranged >= 4 ? 14 : 6;
+      } else if (isTempoDoctrine) {
+        score += isAggressiveAi ? 30 : !isDefensiveAi ? 18 : 2;
+      }
+    }
+
+    // 5. General combat power & sustain
+    if (tech.effect.hpRegenPerSec) score += 18;
+    if (tech.effect.attackRateMultiplier) score += 16;
+    if (tech.effect.hpMultiplier) score += 14;
+    if (tech.effect.trainTimeMultiplier) score += isAggressiveAi ? 20 : 10;
+
+    // Slight cost-efficiency tie-breaker
+    const totalCost = (tech.cost.food || 0) + (tech.cost.wood || 0) + (tech.cost.gold || 0) + (tech.cost.stone || 0);
+    score -= totalCost * 0.015;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = cand;
+    }
+  }
+
+  return best;
+}
+
+export const INITIAL_POPULATION_CAP = 8;
+export const HOUSE_POPULATION_BONUS = 5;
+
+export interface FactionPopulationStats {
+  used: number;
+  queued: number;
+  totalReserved: number;
+  max: number;
+}
+
+/**
+ * Pure population calculator shared across simulation engine, AI planner, and HUD.
+ * Population capacity comes exclusively from constructed housing/citadel structures (Town Center = 8, House = +5, Castle = +10, Citadel = +20).
+ */
+export function getFactionPopulationStats(
+  faction: FactionId,
+  buildings: Array<{
+    faction: FactionId;
+    hp: number;
+    isConstructed: boolean;
+    buildingDef: { populationProvided?: number };
+    queue?: string[];
+  }>,
+  units: Array<{ faction: FactionId; hp: number }>
+): FactionPopulationStats {
+  let used = 0;
+  for (const u of units) {
+    if (u.faction === faction && u.hp > 0) used++;
+  }
+
+  let queued = 0;
+  let max = 0;
+  for (const b of buildings) {
+    if (b.faction !== faction || b.hp <= 0) continue;
+    if (b.queue && b.queue.length > 0) {
+      queued += b.queue.length;
+    }
+    if (b.isConstructed && b.buildingDef.populationProvided) {
+      max += b.buildingDef.populationProvided;
+    }
+  }
+
+  return {
+    used,
+    queued,
+    totalReserved: used + queued,
+    max,
+  };
+}
+

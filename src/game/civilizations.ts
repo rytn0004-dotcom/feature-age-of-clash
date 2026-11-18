@@ -2,6 +2,7 @@ import {
   AgeLevel,
   BuildingType,
   CivilizationId,
+  ResourceType,
   TechDefinition,
   UnitCategory,
   UnitStats,
@@ -46,13 +47,13 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     starterRangedUnitId: 'longbowman',
     uniqueBuildingType: 'armory_forge',
     buildableBuildings: [
+      'house',
       'barracks',
       'archery_range',
       'armory_forge',
       'dock',
       'farm',
       'granary',
-      'market',
       'lumber_camp',
       'mining_camp',
       'wall',
@@ -61,6 +62,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     ],
     buildingNames: {
       town_center: '帝國城堡中心',
+      house: '帝國民居',
       barracks: '鐵衛兵營',
       archery_range: '紫杉長弓營',
       dock: '帝國海軍碼頭',
@@ -69,9 +71,9 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       castle: '聖殿重裝要塞',
     },
     trainableByBuilding: {
-      town_center: ['villager'],
+      town_center: ['villager', 'scout_rider'],
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
-      barracks: ['swordsman', 'spearman', 'scout', 'knight', 'battering_ram', 'catapult'],
+      barracks: ['swordsman', 'knight', 'battering_ram', 'catapult'],
       archery_range: ['longbowman'],
       castle: ['knight', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
       landmark_barracks: ['swordsman', 'knight', 'battering_ram'],
@@ -97,13 +99,13 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     starterRangedUnitId: 'anime_ninja_assassin',
     uniqueBuildingType: 'spirit_shrine',
     buildableBuildings: [
+      'house',
       'barracks',
       'archery_range',
       'spirit_shrine',
       'dock',
       'farm',
       'granary',
-      'market',
       'lumber_camp',
       'mining_camp',
       'wall',
@@ -112,6 +114,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     ],
     buildingNames: {
       town_center: '宗家天守本陣',
+      house: '和風町屋',
       barracks: '忍術劍豪道場',
       archery_range: '氣功忍具修煉殿',
       dock: '蒼嵐漁港棧橋',
@@ -120,12 +123,12 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       castle: '蒼嵐大本營御殿',
     },
     trainableByBuilding: {
-      town_center: ['anime_spirit_harvester'],
+      town_center: ['anime_spirit_harvester', 'scout_rider'],
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
-      barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'spearman', 'scout', 'battering_ram'],
+      barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram'],
       archery_range: ['anime_ninja_assassin', 'anime_saiyan_brawler'],
       castle: ['anime_saiyan_brawler', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
-      landmark_barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'spearman', 'scout', 'battering_ram'],
+      landmark_barracks: ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram'],
       landmark_citadel: ['anime_saiyan_brawler', 'anime_ninja_assassin', 'catapult'],
       landmark_arsenal: ['anime_saiyan_brawler', 'catapult', 'bombard_cannon'],
     },
@@ -148,13 +151,13 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     starterRangedUnitId: 'fantasy_mage',
     uniqueBuildingType: 'mana_well',
     buildableBuildings: [
+      'house',
       'barracks',
       'archery_range',
       'mana_well',
       'dock',
       'farm',
       'granary',
-      'market',
       'lumber_camp',
       'mining_camp',
       'wall',
@@ -163,6 +166,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
     ],
     buildingNames: {
       town_center: '永恆生命聖樹',
+      house: '精靈樹屋',
       barracks: '古樹聖騎士林苑',
       archery_range: '奧術賢者秘塔',
       dock: '森靈港口棧道',
@@ -171,12 +175,12 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       castle: '森靈遠古聖堡',
     },
     trainableByBuilding: {
-      town_center: ['fantasy_goblin_sapper'],
+      town_center: ['fantasy_goblin_sapper', 'scout_rider'],
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
-      barracks: ['fantasy_paladin', 'fantasy_treant', 'spearman', 'scout', 'battering_ram'],
+      barracks: ['fantasy_paladin', 'fantasy_treant', 'battering_ram'],
       archery_range: ['fantasy_mage', 'fantasy_goblin_sapper'],
       castle: ['fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon', 'greek_fire_siphon'],
-      landmark_barracks: ['fantasy_paladin', 'fantasy_treant', 'spearman', 'scout', 'battering_ram'],
+      landmark_barracks: ['fantasy_paladin', 'fantasy_treant', 'battering_ram'],
       landmark_citadel: ['fantasy_treant', 'fantasy_mage', 'catapult'],
       landmark_arsenal: ['fantasy_mage', 'catapult', 'bombard_cannon'],
     },
@@ -193,14 +197,15 @@ export const CIVILIZATIONS: Record<CivilizationId, CivilizationConfig> = {
 };
 
 export const CIVILIZATION_TECHS: TechDefinition[] = [
-  // Medieval Techs
+  // ================= MEDIEVAL TECHS =================
   {
     id: 'med_war_tax',
     civId: 'medieval',
     buildingType: 'town_center',
     name: '皇室採礦特許狀',
     icon: '⛏️',
-    description: '改良採礦器具與手推車，大幅提高帝國後勤產能。',
+    roleTag: '經濟',
+    description: '改良採礦器具與皇室稅制激勵，全面提高帝國資源採集效率。',
     effectLabel: '採集速度 +25%',
     cost: { food: 75, wood: 0, gold: 50, stone: 0 },
     researchTime: 10,
@@ -213,6 +218,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'armory_forge',
     name: '精鋼鍛刃術',
     icon: '⚔️',
+    roleTag: '進攻',
     description: '高爐千錘百鍊打造精鋼武器，強化近戰與騎兵破甲威力。',
     effectLabel: '全軍攻擊 +4',
     cost: { food: 100, wood: 0, gold: 80, stone: 0 },
@@ -225,11 +231,45 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'armory_forge',
     name: '皇家板甲淬火',
     icon: '🛡️',
-    description: '雙層淬火鋼板甲保護士兵要害。',
+    roleTag: '防禦',
+    description: '雙層淬火鋼板甲保護士兵要害，顯著拉高正面碰撞承傷力。',
     effectLabel: '護甲 +3 · 生命 +15%',
     cost: { food: 120, wood: 0, gold: 100, stone: 40 },
     researchTime: 14,
     effect: { defenseBonus: 3, hpMultiplier: 1.15 },
+  },
+  {
+    id: 'med_doctrine_bastion',
+    civId: 'medieval',
+    buildingType: 'armory_forge',
+    name: '鋼鐵堡壘流派',
+    icon: '🏰',
+    roleTag: '互斥·城防',
+    exclusiveGroup: 'doctrine_med_forge',
+    exclusiveLabel: '工坊鍛造流派 (二選一)',
+    description: '【互斥流派】將全國鋼鐵優先鑄造城盾與重型壁壘，轉為鐵桶陣地持久戰。',
+    effectLabel: '城甲 +4 · 建築耐久 +18% · 近甲 +2',
+    cost: { food: 110, wood: 0, gold: 80, stone: 70 },
+    researchTime: 12,
+    requiredAge: 2,
+    effect: { buildingArmorBonus: 4, buildingHpMultiplier: 1.18, defenseBonus: 2 },
+  },
+  {
+    id: 'med_doctrine_crusade',
+    civId: 'medieval',
+    buildingType: 'armory_forge',
+    name: '聖殿遠征流派',
+    icon: '🐎',
+    roleTag: '互斥·突擊',
+    exclusiveGroup: 'doctrine_med_forge',
+    exclusiveLabel: '工坊鍛造流派 (二選一)',
+    description: '【互斥流派】放棄厚重守城工料，改為輕量化突擊武器，全面提升近戰與騎兵進攻節奏！',
+    effectLabel: '近騎攻速 +18% · 攻擊 +3 · 移速 +8%',
+    cost: { food: 110, wood: 0, gold: 110, stone: 0 },
+    researchTime: 12,
+    requiredAge: 2,
+    targetCategories: ['melee', 'cavalry'],
+    effect: { attackBonus: 3, attackRateMultiplier: 1.18, speedMultiplier: 1.08 },
   },
   {
     id: 'med_heavy_draw',
@@ -237,6 +277,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'archery_range',
     name: '紫杉長弓重弦',
     icon: '🏹',
+    roleTag: '射程',
     description: '強化弓臂張力與羽箭穿透力，延長有效射程。',
     effectLabel: '遠程射程 +2 · 攻擊 +3',
     cost: { food: 60, wood: 80, gold: 60, stone: 0 },
@@ -244,14 +285,45 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     targetCategories: ['ranged'],
     effect: { rangeBonus: 2, attackBonus: 3 },
   },
+  {
+    id: 'med_naphtha_pots',
+    civId: 'medieval',
+    buildingType: 'archery_range',
+    name: '猛火油彈配方',
+    icon: '🛢️',
+    roleTag: '攻城',
+    description: '【時代 III】為攻城器與遠程部隊配給瀝青猛火油罐，大幅加強對工事與木構建築破壞力。',
+    effectLabel: '攻城與遠程對建築 +30% · 攻擊 +2',
+    cost: { food: 0, wood: 100, gold: 90, stone: 40 },
+    researchTime: 11,
+    requiredAge: 3,
+    targetCategories: ['siege', 'ranged'],
+    effect: { siegeDamageMultiplier: 1.3, attackBonus: 2 },
+  },
+  {
+    id: 'med_crusader_charge',
+    civId: 'medieval',
+    buildingType: 'castle',
+    name: '聖殿重騎衝鋒鎧',
+    icon: '⚜️',
+    roleTag: '騎兵',
+    description: '【時代 III】為皇家騎士配備全套戰馬馬鎧與精鐵騎槍，大幅強化正面破陣能力。',
+    effectLabel: '騎兵攻擊 +4 · 生命 +15%',
+    cost: { food: 130, wood: 0, gold: 110, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['cavalry'],
+    effect: { attackBonus: 4, hpMultiplier: 1.15 },
+  },
 
-  // Anime Techs
+  // ================= ANIME TECHS =================
   {
     id: 'ani_shikigami_harvest',
     civId: 'anime',
     buildingType: 'town_center',
     name: '式神分身採集卷軸',
     icon: '📜',
+    roleTag: '經濟',
     description: '以靈符召喚協助分身，顯著提高式神採集效率。',
     effectLabel: '採集速度 +30%',
     cost: { food: 70, wood: 40, gold: 40, stone: 0 },
@@ -265,6 +337,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'spirit_shrine',
     name: '查克拉經絡流轉',
     icon: '🌀',
+    roleTag: '奧義',
     description: '精準控制靈壓與氣脈運行，加快所有奧義冷卻並提升殺傷。',
     effectLabel: '全軍攻擊 +4 · 技能冷卻 -25%',
     cost: { food: 90, wood: 40, gold: 90, stone: 0 },
@@ -277,11 +350,45 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'spirit_shrine',
     name: '雷光瞬身疾風步',
     icon: '⚡',
-    description: '將查克拉注入足底，全體忍軍爆發神速移動！',
+    roleTag: '機動',
+    description: '將查克拉注入足底，全體忍軍爆發神速移動與拉打走位！',
     effectLabel: '移動速度 +18%',
     cost: { food: 80, wood: 60, gold: 70, stone: 0 },
     researchTime: 11,
     effect: { speedMultiplier: 1.18 },
+  },
+  {
+    id: 'ani_doctrine_assassination',
+    civId: 'anime',
+    buildingType: 'spirit_shrine',
+    name: '暗部奇襲流派',
+    icon: '🗡️',
+    roleTag: '互斥·突襲',
+    exclusiveGroup: 'doctrine_ani_path',
+    exclusiveLabel: '忍道修煉流派 (二選一)',
+    description: '【互斥流派】精研暗殺術與切後排戰法，對敵方遠程射手與農民造成致命額外傷害！',
+    effectLabel: '攻擊 +4 · 對遠程 +4 / 對工人 +5 · 冷卻 -20%',
+    cost: { food: 90, wood: 50, gold: 100, stone: 0 },
+    researchTime: 11,
+    requiredAge: 2,
+    targetCategories: ['melee', 'ranged'],
+    effect: { attackBonus: 4, bonusVsCategory: { ranged: 4, worker: 5 }, cooldownMultiplier: 0.8 },
+  },
+  {
+    id: 'ani_doctrine_barrier',
+    civId: 'anime',
+    buildingType: 'spirit_shrine',
+    name: '木葉結界守護流',
+    icon: '⛩️',
+    roleTag: '互斥·結界',
+    exclusiveGroup: 'doctrine_ani_path',
+    exclusiveLabel: '忍道修煉流派 (二選一)',
+    description: '【互斥流派】張開靈脈結界覆蓋領地與防塔，獲得持續生命回復並大幅鞏固駐軍防線。',
+    effectLabel: '防塔射程 +2 · 駐軍傷 +4 · 全軍回血 +1.6/秒',
+    cost: { food: 90, wood: 90, gold: 60, stone: 0 },
+    researchTime: 11,
+    requiredAge: 2,
+    effect: { towerRangeBonus: 2, garrisonAttackBonus: 4, hpRegenPerSec: 1.6, buildingArmorBonus: 2 },
   },
   {
     id: 'ani_ki_awakening',
@@ -289,6 +396,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'barracks',
     name: '超賽靈壓覺醒',
     icon: '🔥',
+    roleTag: '強化',
     description: '突破戰士潛能極限，大幅增強黑刀劍豪與超戰士體魄與威力。',
     effectLabel: '生命 +22% · 攻擊 +5',
     cost: { food: 130, wood: 0, gold: 110, stone: 0 },
@@ -296,16 +404,47 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     targetCategories: ['melee', 'ranged'],
     effect: { hpMultiplier: 1.22, attackBonus: 5 },
   },
+  {
+    id: 'ani_shadow_kunai',
+    civId: 'anime',
+    buildingType: 'archery_range',
+    name: '影分身連彈手裏劍',
+    icon: '✴️',
+    roleTag: '攻速',
+    description: '【時代 II】忍者與氣彈戰士以多重分身同步投擲，大幅提升遠程火力頻率與射程。',
+    effectLabel: '遠程攻速 +22% · 射程 +1',
+    cost: { food: 85, wood: 65, gold: 60, stone: 0 },
+    researchTime: 10,
+    requiredAge: 2,
+    targetCategories: ['ranged'],
+    effect: { attackRateMultiplier: 1.22, rangeBonus: 1 },
+  },
+  {
+    id: 'ani_susanoo_armor',
+    civId: 'anime',
+    buildingType: 'castle',
+    name: '須佐靈氣外骨骼',
+    icon: '💠',
+    roleTag: '防護',
+    description: '【時代 III】以高密度查克拉凝聚具象化護鎧，彌補忍軍身板單薄的弱點。',
+    effectLabel: '近甲 +2 · 遠程抗箭 +2 · 生命 +12%',
+    cost: { food: 120, wood: 0, gold: 120, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['melee', 'ranged'],
+    effect: { defenseBonus: 2, rangedDefenseBonus: 2, hpMultiplier: 1.12 },
+  },
 
-  // Fantasy Techs
+  // ================= FANTASY TECHS =================
   {
     id: 'fan_goblin_alchemy',
     civId: 'fantasy',
     buildingType: 'town_center',
     name: '地精煉金爆破術',
     icon: '🧪',
+    roleTag: '經濟',
     description: '秘銀藥劑提升開採火力與工兵戰鬥潛力。',
-    effectLabel: '採集速度 +25% · 攻擊 +4',
+    effectLabel: '採集速度 +25% · 工人攻擊 +4',
     cost: { food: 65, wood: 30, gold: 45, stone: 0 },
     researchTime: 9,
     targetCategories: ['worker'],
@@ -317,6 +456,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'mana_well',
     name: '奧術魔力共鳴',
     icon: '🔮',
+    roleTag: '奧義',
     description: '將魔泉能量匯聚至法杖與聖典，提高法術輸出與技能循環。',
     effectLabel: '攻擊 +5 · 技能冷卻 -25%',
     cost: { food: 80, wood: 50, gold: 100, stone: 0 },
@@ -329,6 +469,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'mana_well',
     name: '遠古樹皮硬化',
     icon: '🌳',
+    roleTag: '防禦',
     description: '古樹聖靈祝福覆蓋全軍，顯著強化防禦與耐久度。',
     effectLabel: '護甲 +3 · 生命 +20%',
     cost: { food: 110, wood: 90, gold: 80, stone: 0 },
@@ -336,294 +477,336 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     effect: { defenseBonus: 3, hpMultiplier: 1.2 },
   },
   {
+    id: 'fan_doctrine_overgrowth',
+    civId: 'fantasy',
+    buildingType: 'mana_well',
+    name: '萬木共生再生流',
+    icon: '🌿',
+    roleTag: '互斥·再生',
+    exclusiveGroup: 'doctrine_fan_nature',
+    exclusiveLabel: '森靈聖典流派 (二選一)',
+    description: '【互斥流派】喚醒森靈大地脈動，賦予全軍強大野戰生命再生與建築韌性！',
+    effectLabel: '全軍回血 +2.2/秒 · 生命 +14% · 建築耐久 +15%',
+    cost: { food: 100, wood: 100, gold: 60, stone: 0 },
+    researchTime: 11,
+    requiredAge: 2,
+    effect: { hpRegenPerSec: 2.2, hpMultiplier: 1.14, buildingHpMultiplier: 1.15 },
+  },
+  {
+    id: 'fan_doctrine_cataclysm',
+    civId: 'fantasy',
+    buildingType: 'mana_well',
+    name: '烈焰災變奧術流',
+    icon: '☄️',
+    roleTag: '互斥·爆發',
+    exclusiveGroup: 'doctrine_fan_nature',
+    exclusiveLabel: '森靈聖典流派 (二選一)',
+    description: '【互斥流派】超載魔法泉源，大幅縮短隕石與聖光冷卻並強化軍團施法攻速！',
+    effectLabel: '攻速 +16% · 攻擊 +4 · 奧義冷卻 -20%',
+    cost: { food: 85, wood: 50, gold: 125, stone: 0 },
+    researchTime: 11,
+    requiredAge: 2,
+    targetCategories: ['melee', 'ranged'],
+    effect: { attackBonus: 4, attackRateMultiplier: 1.16, cooldownMultiplier: 0.8 },
+  },
+  {
     id: 'fan_sacred_bloom',
     civId: 'fantasy',
     buildingType: 'barracks',
     name: '生命甘露祝福',
     icon: '✨',
+    roleTag: '強化',
     description: '聖潔月光滋養聖騎士與古樹守衛的戰甲與步伐。',
     effectLabel: '生命 +15% · 移動速度 +12%',
     cost: { food: 100, wood: 60, gold: 70, stone: 0 },
     researchTime: 11,
     effect: { hpMultiplier: 1.15, speedMultiplier: 1.12 },
   },
+  {
+    id: 'fan_meteor_amplification',
+    civId: 'fantasy',
+    buildingType: 'archery_range',
+    name: '秘銀魔導聚能鏡',
+    icon: '🪄',
+    roleTag: '破甲',
+    description: '【時代 II】增幅法師火球射程並附加奧術灼燒破甲，有效壓制敵方重甲步兵陣線。',
+    effectLabel: '攻擊 +3 · 射程 +1.5 · 對步兵 +3',
+    cost: { food: 75, wood: 50, gold: 95, stone: 0 },
+    researchTime: 10,
+    requiredAge: 2,
+    targetCategories: ['ranged'],
+    effect: { attackBonus: 3, rangeBonus: 1.5, bonusVsCategory: { melee: 3 } },
+  },
+  {
+    id: 'fan_ancient_roots',
+    civId: 'fantasy',
+    buildingType: 'castle',
+    name: '千年根須破壁陣',
+    icon: '🪵',
+    roleTag: '破城',
+    description: '【時代 III】喚醒遠古樹精與攻城器的破城潛能，撕裂石砌城堡與箭塔防線。',
+    effectLabel: '近戰／攻城拆屋 +35% · 生命 +16%',
+    cost: { food: 110, wood: 130, gold: 70, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['melee', 'siege'],
+    effect: { siegeDamageMultiplier: 1.35, hpMultiplier: 1.16 },
+  },
 
-  // Shared Era II–IV Siege & Fortification Engineering Techs
+  // ================= SHARED ECONOMY & LOGISTICS TECHS =================
+  {
+    id: 'shared_wheelbarrow',
+    civId: 'shared',
+    buildingType: 'town_center',
+    name: '負重手推車',
+    icon: '🛒',
+    roleTag: '經濟',
+    description: '配備鐵軸手推車大幅提升單趟負重與往返腳程，減少卸貨時間浪費。',
+    effectLabel: '工人負重 +6 · 移速 +12%',
+    cost: { food: 50, wood: 30, gold: 0, stone: 0 },
+    researchTime: 10,
+    targetCategories: ['worker'],
+    effect: { carryCapacityBonus: 6, speedMultiplier: 1.12 },
+  },
   {
     id: 'shared_double_bit_axe',
     civId: 'shared',
     buildingType: 'lumber_camp',
-    name: '雙刃斧工法',
+    name: '雙刃伐木斧',
     icon: '🪓',
-    description: '【時代 II 經濟】改良伐木斧刃與輪伐節奏，全面提升木材採集效率。',
-    effectLabel: '村民採集速度 +12%',
-    cost: { food: 0, wood: 100, gold: 60, stone: 0 },
-    researchTime: 14,
-    requiredAge: 2,
+    roleTag: '伐木',
+    description: '鍛造雙刃長柄鋼斧，顯著加快森林採伐速度以支撐弓兵、農田與碼頭產線。',
+    effectLabel: '木材採集效率 +25%',
+    cost: { food: 45, wood: 0, gold: 25, stone: 0 },
+    researchTime: 9,
     targetCategories: ['worker'],
-    effect: { gatherMultiplier: 1.12 },
+    effect: { gatherByType: { wood: 1.25 } },
   },
   {
-    id: 'shared_gold_shaft',
+    id: 'shared_sawmill_gear',
     civId: 'shared',
-    buildingType: 'mining_camp',
-    name: '豎井開採術',
-    icon: '⛏️',
-    description: '【時代 II 經濟】加深礦道與支架，提升黃金與石料採集效率。',
-    effectLabel: '村民採集速度 +12%',
-    cost: { food: 0, wood: 80, gold: 0, stone: 100 },
-    researchTime: 14,
+    buildingType: 'lumber_camp',
+    name: '精工鋸木車床',
+    icon: '🪚',
+    roleTag: '進階伐木',
+    prerequisiteTechId: 'shared_double_bit_axe',
+    description: '【時代 II · 需雙刃斧】水力與齒輪鋸木機構大幅提升木材產能，並補強木質城防建材。',
+    effectLabel: '木材效率再 +25% · 城甲 +1',
+    cost: { food: 85, wood: 0, gold: 50, stone: 0 },
+    researchTime: 11,
     requiredAge: 2,
     targetCategories: ['worker'],
-    effect: { gatherMultiplier: 1.12 },
+    effect: { gatherByType: { wood: 1.25 }, buildingArmorBonus: 1 },
+  },
+  {
+    id: 'shared_prospecting_picks',
+    civId: 'shared',
+    buildingType: 'mining_camp',
+    name: '深脈鍛鐵礦鎬',
+    icon: '⚒️',
+    roleTag: '採礦',
+    description: '精鐵尖鎬與採礦燈具加速黃金與花崗石開採，加快時代晉升與城堡防線成型。',
+    effectLabel: '黃金與石料開採 +25%',
+    cost: { food: 55, wood: 25, gold: 0, stone: 0 },
+    researchTime: 9,
+    targetCategories: ['worker'],
+    effect: { gatherByType: { gold: 1.25, stone: 1.25 } },
+  },
+  {
+    id: 'shared_blast_furnace_mining',
+    civId: 'shared',
+    buildingType: 'mining_camp',
+    name: '深井爆破開採術',
+    icon: '🧨',
+    roleTag: '進階採礦',
+    prerequisiteTechId: 'shared_prospecting_picks',
+    description: '【時代 III · 需礦鎬】以火藥定向爆破開採深層礦脈，支撐後期高階兵種與火砲製造。',
+    effectLabel: '黃金 +25% · 石料開採 +30%',
+    cost: { food: 110, wood: 90, gold: 0, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['worker'],
+    effect: { gatherByType: { gold: 1.25, stone: 1.3 } },
   },
   {
     id: 'shared_crop_rotation',
     civId: 'shared',
     buildingType: 'granary',
-    name: '輪作與堆肥',
+    name: '三圃輪耕儲糧',
     icon: '🌾',
-    description: '【時代 II 經濟】農莊指導輪作休耕，農田與狩獵採集更豐足。',
-    effectLabel: '村民採集速度 +14%',
-    cost: { food: 120, wood: 90, gold: 0, stone: 0 },
-    researchTime: 14,
-    requiredAge: 2,
+    roleTag: '糧食',
+    description: '科學輪作與乾燥儲倉大幅提高農田、漿果與狩獵的糧食產出。',
+    effectLabel: '糧食採集效率 +25%',
+    cost: { food: 0, wood: 40, gold: 40, stone: 0 },
+    researchTime: 9,
     targetCategories: ['worker'],
-    effect: { gatherMultiplier: 1.14 },
+    effect: { gatherByType: { food: 1.25 } },
   },
   {
-    id: 'shared_wheelbarrow',
+    id: 'shared_preserved_rations',
     civId: 'shared',
-    buildingType: 'town_center',
-    name: '獨輪車與馱運',
-    icon: '🛒',
-    description: '【時代 II 經濟】改善負重工具，村民單次攜帶量與步行採集節奏更有效率。',
-    effectLabel: '採集速度 +10%',
-    cost: { food: 150, wood: 50, gold: 0, stone: 0 },
-    researchTime: 15,
+    buildingType: 'granary',
+    name: '軍糧醃漬補給',
+    icon: '🍖',
+    roleTag: '續戰',
+    prerequisiteTechId: 'shared_crop_rotation',
+    description: '【時代 II · 需輪耕】充沛的鹽漬肉乾與野戰乾糧讓前線部隊在拉鋸戰中持續回血！',
+    effectLabel: '全軍野戰回血 +1.4/秒 · 生命 +6%',
+    cost: { food: 80, wood: 0, gold: 70, stone: 0 },
+    researchTime: 11,
     requiredAge: 2,
-    targetCategories: ['worker'],
-    effect: { gatherMultiplier: 1.1 },
+    targetCategories: ['melee', 'ranged', 'cavalry'],
+    effect: { hpRegenPerSec: 1.4, hpMultiplier: 1.06 },
   },
   {
-    id: 'shared_guild_contracts',
+    id: 'shared_harpoon_nets',
     civId: 'shared',
-    buildingType: 'market',
-    name: '商會契約',
-    icon: '📜',
-    description: '【時代 III 經濟】簽訂長途商隊契約，市集與後勤產金更穩。',
-    effectLabel: '採集速度 +8%（支援商路）',
-    cost: { food: 0, wood: 120, gold: 80, stone: 40 },
-    researchTime: 16,
-    requiredAge: 3,
+    buildingType: 'dock',
+    name: '遠洋拖網魚叉',
+    icon: '🔱',
+    roleTag: '海產',
+    description: '強化遠洋漁船拖網與船艙容積，將深海魚群轉化為全場最強食物引擎！',
+    effectLabel: '捕魚／採糧 +25% · 船員負重 +5',
+    cost: { food: 0, wood: 45, gold: 45, stone: 0 },
+    researchTime: 9,
     targetCategories: ['worker'],
-    effect: { gatherMultiplier: 1.08 },
+    effect: { gatherByType: { food: 1.25 }, carryCapacityBonus: 5 },
+  },
+  {
+    id: 'shared_reinforced_keel',
+    civId: 'shared',
+    buildingType: 'dock',
+    name: '包銅龍骨艦隊',
+    icon: '⚓',
+    roleTag: '海戰',
+    description: '【時代 II】船體與遠程陣地包覆銅板抵禦箭雨，並提升遠程與水軍機動速度。',
+    effectLabel: '遠程抗箭 +2 · 移速 +8%',
+    cost: { food: 0, wood: 90, gold: 70, stone: 0 },
+    researchTime: 11,
+    requiredAge: 2,
+    targetCategories: ['ranged', 'special'],
+    effect: { rangedDefenseBonus: 2, speedMultiplier: 1.08 },
   },
 
-  // Shared military line — readable progression every Age
+  // ================= SHARED TACTICAL COUNTERPLAY TECHS =================
   {
-    id: 'shared_basic_training',
+    id: 'shared_shield_pavise',
     civId: 'shared',
     buildingType: 'barracks',
-    name: '基礎操練',
-    icon: '🪖',
-    description: '【時代 I 軍事】統一步伐與刺擊節奏，強化近戰步兵基礎殺傷。',
-    effectLabel: '近戰攻擊 +2',
-    cost: { food: 60, wood: 0, gold: 20, stone: 0 },
-    researchTime: 10,
-    requiredAge: 1,
-    targetCategories: ['melee'],
-    effect: { attackBonus: 2 },
-  },
-  {
-    id: 'shared_pike_drill',
-    civId: 'shared',
-    buildingType: 'barracks',
-    name: '槍陣教範',
-    icon: '🗡️',
-    description: '【時代 II 軍事】槍陣與盾牆訓練，近戰更耐打、更能頂住衝擊。',
-    effectLabel: '近戰護甲 +1 · 生命 +12%',
-    cost: { food: 100, wood: 40, gold: 40, stone: 0 },
-    researchTime: 12,
-    requiredAge: 2,
-    targetCategories: ['melee'],
-    effect: { defenseBonus: 1, hpMultiplier: 1.12 },
-  },
-  {
-    id: 'shared_champion_line',
-    civId: 'shared',
-    buildingType: 'barracks',
-    name: '精銳步戰教令',
-    icon: '⚔️',
-    description: '【時代 III 軍事】精銳步兵操典，提升近戰壓制力與推進速度。',
-    effectLabel: '近戰攻擊 +3 · 移動 +6%',
-    cost: { food: 140, wood: 0, gold: 90, stone: 0 },
-    researchTime: 14,
-    requiredAge: 3,
-    targetCategories: ['melee'],
-    effect: { attackBonus: 3, speedMultiplier: 1.06 },
-  },
-  {
-    id: 'shared_fletching',
-    civId: 'shared',
-    buildingType: 'archery_range',
-    name: '羽箭整形',
-    icon: '🪶',
-    description: '【時代 I 軍事】統一箭羽與箭桿，弓兵命中更狠。',
-    effectLabel: '遠程攻擊 +2',
-    cost: { food: 40, wood: 50, gold: 0, stone: 0 },
-    researchTime: 10,
-    requiredAge: 1,
-    targetCategories: ['ranged'],
-    effect: { attackBonus: 2 },
-  },
-  {
-    id: 'shared_bodkin',
-    civId: 'shared',
-    buildingType: 'archery_range',
-    name: '錐鏃穿甲箭',
-    icon: '🏹',
-    description: '【時代 II 軍事】細長穿甲鏃頭，遠程火力與射程同步提升。',
-    effectLabel: '遠程攻擊 +2 · 射程 +1',
-    cost: { food: 0, wood: 90, gold: 50, stone: 0 },
-    researchTime: 12,
-    requiredAge: 2,
-    targetCategories: ['ranged'],
-    effect: { attackBonus: 2, rangeBonus: 1 },
-  },
-  {
-    id: 'shared_thumb_ring',
-    civId: 'shared',
-    buildingType: 'archery_range',
-    name: '扳指連射術',
-    icon: '🎯',
-    description: '【時代 III 軍事】拇指扳指與呼吸節奏，弓兵射速與殺傷再升一階。',
-    effectLabel: '遠程攻擊 +3 · 射速 +12%',
-    cost: { food: 80, wood: 100, gold: 80, stone: 0 },
-    researchTime: 14,
-    requiredAge: 3,
-    targetCategories: ['ranged'],
-    effect: { attackBonus: 3, cooldownMultiplier: 0.88 },
-  },
-  {
-    id: 'shared_cavalry_bloodline',
-    civId: 'shared',
-    buildingType: 'barracks',
-    name: '血統與馬具',
-    icon: '🐴',
-    description: '【時代 II 軍事】選育戰馬與鞍具，騎兵更耐打、衝鋒更狠。',
-    effectLabel: '騎兵生命 +15% · 攻擊 +2',
-    cost: { food: 110, wood: 0, gold: 70, stone: 0 },
-    researchTime: 13,
-    requiredAge: 2,
-    targetCategories: ['cavalry'],
-    effect: { hpMultiplier: 1.15, attackBonus: 2 },
-  },
-  {
-    id: 'shared_cavalry_charge',
-    civId: 'shared',
-    buildingType: 'castle',
-    name: '重騎衝鋒教義',
-    icon: '🏇',
-    description: '【時代 III 軍事】重騎楔形衝鋒，騎兵攻擊與移速全面強化。',
-    effectLabel: '騎兵攻擊 +4 · 移動 +10%',
-    cost: { food: 150, wood: 0, gold: 120, stone: 0 },
-    researchTime: 15,
-    requiredAge: 3,
-    targetCategories: ['cavalry'],
-    effect: { attackBonus: 4, speedMultiplier: 1.1 },
-  },
-  {
-    id: 'shared_iron_casting',
-    civId: 'shared',
-    buildingType: 'barracks',
-    name: '生鐵鑄造',
-    icon: '🔥',
-    description: '【時代 III 軍事】統一兵刃鑄造標準，近戰與騎兵基礎火力上揚。',
-    effectLabel: '近戰與騎兵攻擊 +2',
-    cost: { food: 120, wood: 0, gold: 100, stone: 40 },
-    researchTime: 14,
-    requiredAge: 3,
-    targetCategories: ['melee', 'cavalry'],
-    effect: { attackBonus: 2 },
-  },
-  {
-    id: 'shared_scale_mail',
-    civId: 'shared',
-    buildingType: 'barracks',
-    name: '鱗甲與襯墊',
+    name: '大盾方陣防箭術',
     icon: '🛡️',
-    description: '【時代 II 軍事】量產鱗甲與內襯，步騎通用防護提升。',
-    effectLabel: '近戰與騎兵護甲 +2',
-    cost: { food: 80, wood: 0, gold: 60, stone: 50 },
-    researchTime: 12,
+    roleTag: '反遠程',
+    description: '【時代 II 反制】近戰步兵配備厚實大盾，專門克制敵方大量長弓手、忍者與法師的齊射！',
+    effectLabel: '近戰抗遠程箭傷 +3',
+    cost: { food: 75, wood: 60, gold: 25, stone: 0 },
+    researchTime: 10,
     requiredAge: 2,
-    targetCategories: ['melee', 'cavalry'],
-    effect: { defenseBonus: 2 },
+    targetCategories: ['melee'],
+    effect: { rangedDefenseBonus: 3 },
   },
   {
-    id: 'shared_padded_armor',
+    id: 'shared_pike_formation',
+    civId: 'shared',
+    buildingType: 'barracks',
+    name: '長槍拒馬陣列',
+    icon: '🔱',
+    roleTag: '反騎兵',
+    description: '【時代 II 反制】訓練步兵切換長槍與拒馬陣型，大幅重創突入陣線的敵方騎士！',
+    effectLabel: '近戰對騎兵傷害 +6 · 近甲 +1',
+    cost: { food: 80, wood: 65, gold: 0, stone: 0 },
+    researchTime: 10,
+    requiredAge: 2,
+    targetCategories: ['melee'],
+    effect: { bonusVsCategory: { cavalry: 6 }, defenseBonus: 1 },
+  },
+  {
+    id: 'shared_doctrine_blitz',
+    civId: 'shared',
+    buildingType: 'barracks',
+    name: '徵兵洪流教條',
+    icon: '🥁',
+    roleTag: '互斥·爆兵',
+    exclusiveGroup: 'doctrine_army_style',
+    exclusiveLabel: '軍團作戰路線 (二選一)',
+    description: '【時代 II 互斥路線】簡化徵募與行軍編制，極速暴兵搶佔據點並壓垮對手節奏！',
+    effectLabel: '全兵種訓練時間 -25% · 移速 +8%',
+    cost: { food: 90, wood: 0, gold: 70, stone: 0 },
+    researchTime: 10,
+    requiredAge: 2,
+    targetCategories: ['melee', 'ranged', 'cavalry'],
+    effect: { trainTimeMultiplier: 0.75, speedMultiplier: 1.08 },
+  },
+  {
+    id: 'shared_doctrine_elite',
+    civId: 'shared',
+    buildingType: 'barracks',
+    name: '精銳禁衛教條',
+    icon: '👑',
+    roleTag: '互斥·精銳',
+    exclusiveGroup: 'doctrine_army_style',
+    exclusiveLabel: '軍團作戰路線 (二選一)',
+    description: '【時代 II 互斥路線】嚴格操練精銳常備軍，以高額體魄與雙重護甲贏下正面決戰！',
+    effectLabel: '全兵種生命 +14% · 近遠護甲 +2/+1',
+    cost: { food: 100, wood: 0, gold: 90, stone: 30 },
+    researchTime: 12,
+    requiredAge: 2,
+    targetCategories: ['melee', 'ranged', 'cavalry'],
+    effect: { hpMultiplier: 1.14, defenseBonus: 2, rangedDefenseBonus: 1 },
+  },
+  {
+    id: 'shared_bodkin_arrows',
     civId: 'shared',
     buildingType: 'archery_range',
-    name: '弓兵護襯甲',
-    icon: '🥋',
-    description: '【時代 II 軍事】輕量護襯，遠程單位更能在對射中存活。',
-    effectLabel: '遠程護甲 +1 · 生命 +10%',
-    cost: { food: 70, wood: 60, gold: 40, stone: 0 },
-    researchTime: 12,
+    name: '破甲錐形箭簇',
+    icon: '🎯',
+    roleTag: '破重甲',
+    description: '【時代 II 反制】重鑄錐形穿甲箭頭，針對重甲步兵方陣進行精準穿透打擊！',
+    effectLabel: '遠程攻擊 +2 · 對步兵額外 +3',
+    cost: { food: 85, wood: 0, gold: 75, stone: 0 },
+    researchTime: 11,
     requiredAge: 2,
     targetCategories: ['ranged'],
-    effect: { defenseBonus: 1, hpMultiplier: 1.1 },
+    effect: { attackBonus: 2, bonusVsCategory: { melee: 3 } },
   },
   {
-    id: 'shared_ballistics',
+    id: 'shared_fire_arrows',
+    civId: 'shared',
+    buildingType: 'archery_range',
+    name: '火箭焚城齊射',
+    icon: '🔥',
+    roleTag: '焚城',
+    description: '【時代 III】箭矢綁附松脂引信，提升遠程攻速並可快速焚毀敵方箭塔與資源營地！',
+    effectLabel: '遠程攻速 +16% · 對建築火攻 +40%',
+    cost: { food: 0, wood: 90, gold: 95, stone: 0 },
+    researchTime: 12,
+    requiredAge: 3,
+    targetCategories: ['ranged'],
+    effect: { attackRateMultiplier: 1.16, siegeDamageMultiplier: 1.4 },
+  },
+  {
+    id: 'shared_flanking_spurs',
     civId: 'shared',
     buildingType: 'castle',
-    name: '彈道測算',
-    icon: '📐',
-    description: '【時代 III 軍事】測距與仰角教範，遠程與攻城投射更準更遠。',
-    effectLabel: '遠程與攻城射程 +1 · 攻擊 +2',
-    cost: { food: 0, wood: 130, gold: 100, stone: 0 },
-    researchTime: 14,
+    name: '側翼包抄馬刺',
+    icon: '🏇',
+    roleTag: '切後排',
+    description: '【時代 III 反制】騎兵加速繞後切入，對敵方弓兵、忍者與法師後排造成毀滅性追獵傷害！',
+    effectLabel: '騎兵移速 +14% · 對遠程 +5',
+    cost: { food: 120, wood: 0, gold: 90, stone: 0 },
+    researchTime: 12,
     requiredAge: 3,
-    targetCategories: ['ranged', 'siege'],
-    effect: { rangeBonus: 1, attackBonus: 2 },
-  },
-  {
-    id: 'shared_imperial_weapons',
-    civId: 'shared',
-    buildingType: 'castle',
-    name: '帝國兵器規格',
-    icon: '👑',
-    description: '【時代 IV 軍事】統一帝國兵工廠標準，全軍（非農民）攻擊與防護再升級。',
-    effectLabel: '軍事攻擊 +3 · 護甲 +1',
-    cost: { food: 200, wood: 100, gold: 150, stone: 80 },
-    researchTime: 18,
-    requiredAge: 4,
-    targetCategories: ['melee', 'ranged', 'cavalry', 'siege'],
-    effect: { attackBonus: 3, defenseBonus: 1 },
-  },
-  {
-    id: 'shared_conscription',
-    civId: 'shared',
-    buildingType: 'town_center',
-    name: '徵兵動員令',
-    icon: '📯',
-    description: '【時代 III 軍事】緊急動員體制，軍隊移動更快以回應多線戰場。',
-    effectLabel: '軍事移動 +8%',
-    cost: { food: 180, wood: 0, gold: 100, stone: 0 },
-    researchTime: 15,
-    requiredAge: 3,
-    targetCategories: ['melee', 'ranged', 'cavalry', 'siege'],
-    effect: { speedMultiplier: 1.08 },
+    targetCategories: ['cavalry'],
+    effect: { speedMultiplier: 1.14, bonusVsCategory: { ranged: 5 } },
   },
 
+  // ================= SHARED ERA II–IV SIEGE & FORTIFICATION TECHS =================
   {
     id: 'shared_masonry',
     civId: 'shared',
     buildingType: 'town_center',
     name: '磚石築城工事',
     icon: '🧱',
+    roleTag: '城防',
     description: '【時代 II 城防】強化所有建築磚石基底與防火塗層，使早期步兵更難徒手拆毀基地。',
     effectLabel: '建築城甲 +4 · 結構耐久 +20%',
     cost: { food: 80, wood: 110, gold: 0, stone: 60 },
@@ -637,6 +820,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'tower',
     name: '雙層箭垛射口',
     icon: '🏹',
+    roleTag: '塔防',
     description: '【時代 II 防線】改造箭塔與防禦建築射口，加快駐防齊射頻率並延伸防禦火網。',
     effectLabel: '防禦建築射程 +2 · 射速 +25%',
     cost: { food: 0, wood: 100, gold: 65, stone: 40 },
@@ -650,6 +834,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'tower',
     name: '滾油與落石孔',
     icon: '🔥',
+    roleTag: '塔防',
     description: '【時代 III 城防】於塔樓與要塞頂部增設近距熱油反制孔，強化駐防單位射擊殺傷與城甲。',
     effectLabel: '駐防齊射傷害 +6 · 城甲 +3',
     cost: { food: 90, wood: 120, gold: 80, stone: 90 },
@@ -663,6 +848,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'barracks',
     name: '攻城工兵學',
     icon: '⚙️',
+    roleTag: '攻城',
     description: '【時代 III 攻城】改良絞盤配重與黑火藥配方，讓投石機與衝車發揮毀滅性破城威力。',
     effectLabel: '對建築傷害 +45% · 攻城射程 +2',
     cost: { food: 110, wood: 140, gold: 120, stone: 0 },
@@ -677,6 +863,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     buildingType: 'castle',
     name: '帝王星堡築城術',
     icon: '🏰',
+    roleTag: '終極城防',
     description: '【時代 IV 終極工事】構築菱形星堡棱角牆體抵禦重砲轟擊，並為己方攻城器披覆防箭裝甲。',
     effectLabel: '建築城甲 +6 · 耐久 +30% · 攻城防箭 +4',
     cost: { food: 180, wood: 200, gold: 160, stone: 180 },
@@ -709,6 +896,63 @@ export function getTrainableUnitsForBuilding(
   return [...fallbackUnits];
 }
 
+export function findTechDef(techId: string): TechDefinition | undefined {
+  return CIVILIZATION_TECHS.find((t) => t.id === techId);
+}
+
+/**
+ * Returns the conflicting already-researched tech if `tech` belongs to an `exclusiveGroup`
+ * whose alternative branch has already been researched.
+ */
+export function isTechLockedByExclusion(
+  tech: TechDefinition,
+  researchedIds: string[]
+): TechDefinition | null {
+  if (!tech.exclusiveGroup) return null;
+  for (const rId of researchedIds) {
+    if (rId === tech.id) continue;
+    const other = findTechDef(rId);
+    if (other && other.exclusiveGroup === tech.exclusiveGroup) {
+      return other;
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns the missing prerequisite tech definition if `tech.prerequisiteTechId` is not yet researched.
+ */
+export function isTechMissingPrerequisite(
+  tech: TechDefinition,
+  researchedIds: string[]
+): TechDefinition | null {
+  if (!tech.prerequisiteTechId) return null;
+  if (researchedIds.includes(tech.prerequisiteTechId)) return null;
+  return findTechDef(tech.prerequisiteTechId) || null;
+}
+
+export function canResearchTech(
+  tech: TechDefinition,
+  researchedIds: string[] = [],
+  currentAge: AgeLevel = 1
+): { ok: boolean; reason?: string } {
+  if (researchedIds.includes(tech.id)) {
+    return { ok: false, reason: '已研發完成' };
+  }
+  if (tech.requiredAge && currentAge < tech.requiredAge) {
+    return { ok: false, reason: `需先晉升至時代 ${tech.requiredAge}` };
+  }
+  const conflict = isTechLockedByExclusion(tech, researchedIds);
+  if (conflict) {
+    return { ok: false, reason: `已選「${conflict.name}」(互斥路線)` };
+  }
+  const missingPrereq = isTechMissingPrerequisite(tech, researchedIds);
+  if (missingPrereq) {
+    return { ok: false, reason: `需先研發「${missingPrereq.name}」` };
+  }
+  return { ok: true };
+}
+
 export function getAvailableTechsForBuilding(
   bType: BuildingType,
   civId?: CivilizationId,
@@ -720,8 +964,7 @@ export function getAvailableTechsForBuilding(
     (tech) =>
       tech.buildingType === bType &&
       (tech.civId === resolvedCiv || tech.civId === 'shared') &&
-      (!tech.requiredAge || currentAge >= tech.requiredAge) &&
-      !researchedIds.includes(tech.id)
+      canResearchTech(tech, researchedIds, currentAge).ok
   );
 }
 
@@ -735,8 +978,37 @@ export function getAllTechsForBuilding(
   );
 }
 
-export function findTechDef(techId: string): TechDefinition | undefined {
-  return CIVILIZATION_TECHS.find((t) => t.id === techId);
+export function getAllTechsForCiv(civId?: CivilizationId): TechDefinition[] {
+  const resolvedCiv = getCivilizationConfig(civId).id;
+  return CIVILIZATION_TECHS.filter(
+    (tech) => tech.civId === resolvedCiv || tech.civId === 'shared'
+  );
+}
+
+export function getTrainingTimeMultiplier(researchedIds: string[]): number {
+  let mult = 1;
+  for (const tId of researchedIds) {
+    const t = findTechDef(tId);
+    if (t?.effect.trainTimeMultiplier) {
+      mult *= t.effect.trainTimeMultiplier;
+    }
+  }
+  return +Math.max(0.45, mult).toFixed(3);
+}
+
+export function getResourceGatherTechMultiplier(
+  researchedIds: string[],
+  resourceType: ResourceType
+): number {
+  let mult = 1;
+  for (const tId of researchedIds) {
+    const t = findTechDef(tId);
+    const byType = t?.effect.gatherByType?.[resourceType];
+    if (byType) {
+      mult *= byType;
+    }
+  }
+  return +mult.toFixed(3);
 }
 
 export const AGE_COMBAT_PROGRESSION: Record<
@@ -768,8 +1040,13 @@ export function applyCivilizationAndTechStats(
   let speed = baseStats.speed * (cfg.passiveBonuses.moveSpeedMultiplier || 1);
   let attackRate = baseStats.attackRate;
   let gatherSpeed = baseStats.gatherSpeed * (cfg.passiveBonuses.gatherRateMultiplier || 1);
+  let carryCapacity = baseStats.carryCapacity;
   let range = baseStats.range;
   let buildingAttack = baseStats.buildingAttack;
+  let hpRegenPerSec = baseStats.hpRegenPerSec || 0;
+  const bonusVsCategory: Partial<Record<UnitCategory, number>> = baseStats.bonusVsCategory
+    ? { ...baseStats.bonusVsCategory }
+    : {};
 
   // Progressive Age combat threat scaling for non-worker military units
   if (category !== 'worker') {
@@ -808,8 +1085,21 @@ export function applyCivilizationAndTechStats(
     if (tech.effect.defenseBonus) defense += tech.effect.defenseBonus;
     if (tech.effect.rangedDefenseBonus) rangedDefense += tech.effect.rangedDefenseBonus;
     if (tech.effect.speedMultiplier) speed *= tech.effect.speedMultiplier;
+    if (tech.effect.attackRateMultiplier) attackRate *= tech.effect.attackRateMultiplier;
     if (tech.effect.gatherMultiplier) gatherSpeed *= tech.effect.gatherMultiplier;
+    if (tech.effect.carryCapacityBonus && carryCapacity > 0) {
+      carryCapacity += tech.effect.carryCapacityBonus;
+    }
     if (tech.effect.rangeBonus) range += tech.effect.rangeBonus;
+    if (tech.effect.hpRegenPerSec) hpRegenPerSec += tech.effect.hpRegenPerSec;
+    if (tech.effect.bonusVsCategory) {
+      for (const [catKey, val] of Object.entries(tech.effect.bonusVsCategory)) {
+        const c = catKey as UnitCategory;
+        if (typeof val === 'number' && val !== 0) {
+          bonusVsCategory[c] = (bonusVsCategory[c] || 0) + val;
+        }
+      }
+    }
     if (tech.effect.siegeDamageMultiplier && buildingAttack !== undefined) {
       buildingAttack = Math.round(buildingAttack * tech.effect.siegeDamageMultiplier);
     }
@@ -825,7 +1115,10 @@ export function applyCivilizationAndTechStats(
     speed: +speed.toFixed(2),
     attackRate: +attackRate.toFixed(2),
     gatherSpeed: +gatherSpeed.toFixed(4),
+    carryCapacity,
     range: +range.toFixed(2),
+    hpRegenPerSec: hpRegenPerSec > 0 ? +hpRegenPerSec.toFixed(2) : undefined,
+    bonusVsCategory: Object.keys(bonusVsCategory).length > 0 ? bonusVsCategory : undefined,
   };
 }
 

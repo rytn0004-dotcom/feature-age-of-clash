@@ -5,7 +5,6 @@ import {
   deductCost,
   addResources,
   calculateDamage,
-  getArmorDamageReduction,
   applyBalanceMultipliers,
   evaluateCondition,
   evaluateAiScript,
@@ -21,7 +20,6 @@ import {
   starRelicShouldFall,
   STAR_RELIC_CHANNEL_SEC,
   STAR_RELIC_FALL_AT,
-  getCategoryCounterMultiplier,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 
@@ -424,9 +422,9 @@ test('civilizations: each civ has distinct workers, buildable structures, traini
   assert.ok(getBuildableTypesForCiv('fantasy').includes('mana_well'));
 
   // Building training rosters are tailored per civilization
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'spearman', 'scout', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'spearman', 'scout', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'spearman', 'scout', 'knight', 'battering_ram', 'catapult']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'knight', 'battering_ram', 'catapult']);
 
   // Tech research filtering and stat application
   const shrineTechs = getAvailableTechsForBuilding('spirit_shrine', 'anime', [], 1);
@@ -1418,67 +1416,334 @@ test('star relic: falls once, channels only while a worker stands on it, and del
   );
 });
 
-test('counters: spear tips cavalry, cavalry tips melee, siege is soft vs units', () => {
-  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry', 'spearman') > 1.5);
-  assert.ok(getCategoryCounterMultiplier('cavalry', 'melee') > 1.15);
-  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry') < 0.85);
-  assert.ok(getCategoryCounterMultiplier('siege', 'melee') < 0.5);
-  assert.equal(getCategoryCounterMultiplier('melee', 'melee'), 1);
+test('contested shrines: evaluates opposing teams, retains persistent owner summary when empty, and reports contested battles', async () => {
+  const { evaluateContestedPresence, getContestedShrineSummary } = await import('./rules');
+  const participants = [
+    { id: 'player' as const, name: '玩家', colorHex: 0x3b82f6, colorCss: '#3b82f6' },
+    { id: 'enemy' as const, name: '紅軍', colorHex: 0xef4444, colorCss: '#ef4444' },
+  ];
+
+  // 1. Tie between opposing teams halts leader & flags contested
+  const tie = evaluateContestedPresence([
+    { faction: 'player', team: 1, weight: 2 },
+    { faction: 'enemy', team: 2, weight: 2 },
+  ]);
+  assert.equal(tie.leader, null);
+  assert.equal(tie.isTie, true);
+  assert.equal(tie.isContested, true);
+
+  // 2. Unequal opposing clash still flags isContested while identifying stronger leader
+  const push = evaluateContestedPresence([
+    { faction: 'player', team: 1, weight: 3 },
+    { faction: 'enemy', team: 2, weight: 1 },
+  ]);
+  assert.equal(push.leader, 'player');
+  assert.equal(push.isTie, false);
+  assert.equal(push.isContested, true);
+
+  // 3. Owned shrine with zero present units retains persistent owner color & name
+  const ownedSummary = getContestedShrineSummary(
+    {
+      id: 'cp_north',
+      x: 0,
+      z: -30,
+      radius: 10,
+      ownerFaction: 'enemy',
+      captureProgress: 1,
+      label: '北嶺戰壇',
+      shrineType: 'war',
+      holdTime: 9,
+      siegeSupplyActive: false,
+      isContested: false,
+    },
+    participants
+  );
+  assert.equal(ownedSummary.isNeutral, false);
+  assert.equal(ownedSummary.ownerName, '紅軍');
+  assert.equal(ownedSummary.ownerColorHex, 0xef4444);
+  assert.equal(ownedSummary.statusKind, 'owned');
+
+  // 4. Contested clash reports battle status cleanly
+  const clashSummary = getContestedShrineSummary(
+    {
+      id: 'cp_north',
+      x: 0,
+      z: -30,
+      radius: 10,
+      ownerFaction: 'enemy',
+      captureProgress: 0.45,
+      capturingFaction: 'player',
+      label: '北嶺戰壇',
+      shrineType: 'war',
+      holdTime: 0,
+      siegeSupplyActive: false,
+      isContested: true,
+    },
+    participants
+  );
+  assert.equal(clashSummary.statusKind, 'contested_push');
+  assert.ok(clashSummary.badgeActionText.includes('爭奪'));
 });
 
-test('military techs: shared line covers melee/ranged/cavalry by age and stacks with filters', async () => {
-  const { getAvailableTechsForBuilding, findTechDef, applyCivilizationAndTechStats } = await import('./civilizations');
-  const age1Barracks = getAvailableTechsForBuilding('barracks', 'medieval', [], 1).map((t) => t.id);
-  assert.ok(age1Barracks.includes('shared_basic_training'));
-  assert.ok(!age1Barracks.includes('shared_champion_line'));
+test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when blocked or in cooldown, and bounds only when translating', async () => {
+  const { stepWildAnimalState, triggerWildAnimalPanic } = await import('./rules');
 
-  const age3Archery = getAvailableTechsForBuilding('archery_range', 'medieval', [], 3).map((t) => t.id);
-  assert.ok(age3Archery.includes('shared_thumb_ring'));
-  assert.ok(age3Archery.includes('shared_bodkin'));
+  // Deer standing with water blocking +X >= 1.0 (only -X/+Z/-Z are clear)
+  const deer: ResourceNode = {
+    id: 'deer_test',
+    resourceType: 'food',
+    subtype: 'hunt',
+    x: 0,
+    z: 0,
+    amount: 400,
+    maxAmount: 400,
+    animalHp: 32,
+    animalMaxHp: 32,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
 
-  const charge = findTechDef('shared_cavalry_charge');
-  assert.ok(charge);
-  assert.equal(charge!.requiredAge, 3);
+  // Threat approaches from -X (x = -4), trying to push deer toward blocked +X wall; steering should deflect along +/-Z
+  const isEastBlocked = (cx: number) => cx >= 1.0;
+  let t = 10;
+  for (let i = 0; i < 8; i++) {
+    t += 0.05;
+    stepWildAnimalState(deer, { x: -4, z: 0, d: 4 }, t, 0.05, isEastBlocked, () => 0.5);
+  }
+  assert.ok(deer.x < 1.0, 'Deer must steer clear of blocked +X bank');
+  assert.ok(Math.abs(deer.z) > 0.5, 'Deer should smoothly flank along open coastline instead of getting stuck');
 
-  const base = {
-    maxHp: 100,
-    attack: 10,
-    defense: 1,
-    range: 1.2,
-    speed: 3,
-    attackRate: 1,
+  // Completely boxed-in deer must NEVER jump in place (hopY === 0, zero actual speed)
+  const trappedDeer: ResourceNode = {
+    ...deer,
+    id: 'deer_trapped',
+    x: 0,
+    z: 0,
+    animalVx: 6,
+    animalVz: 0,
+  };
+  triggerWildAnimalPanic(trappedDeer, -2, 0, 20);
+  const trappedStep = stepWildAnimalState(
+    trappedDeer,
+    { x: -2, z: 0, d: 2 },
+    20.05,
+    0.05,
+    (cx, cz) => Math.hypot(cx, cz) > 0.2,
+    () => 0.5
+  );
+  assert.equal(trappedStep.actualSpeed, 0);
+  assert.equal(trappedStep.hopY, 0, 'Blocked deer must never bounce vertically in place');
+
+  // After threat disappears and flee cooldown finishes, deer settles calmly to graze with hopY === 0
+  const openDeer: ResourceNode = {
+    ...deer,
+    id: 'deer_open',
+    x: 0,
+    z: 0,
+    animalVx: 0,
+    animalVz: 0,
+  };
+  triggerWildAnimalPanic(openDeer, -3, 0, 30, 1.0);
+  let fleeStep = stepWildAnimalState(openDeer, { x: -3, z: 0, d: 3 }, 30.05, 0.05, () => false, () => 0.8);
+  for (let i = 1; i <= 4; i++) {
+    fleeStep = stepWildAnimalState(openDeer, { x: -3, z: 0, d: 3 }, 30.05 + i * 0.05, 0.05, () => false, () => 0.8);
+  }
+  assert.equal(fleeStep.isFleeing, true);
+  assert.ok(fleeStep.actualSpeed > 2.2 && fleeStep.hopY >= 0);
+
+  // Advance past flee timer -> enters calm flee cooldown with zero random hopping
+  let calmOut = fleeStep;
+  for (let i = 0; i < 30; i++) {
+    calmOut = stepWildAnimalState(openDeer, null, 31.2 + i * 0.05, 0.05, () => false, () => 0.9);
+  }
+  assert.equal(calmOut.isFleeing, false);
+  assert.equal(calmOut.hopY, 0, 'Calm/cooldown deer must never hop in place');
+  assert.equal(calmOut.isGrazing, true);
+});
+
+test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter damage, eco multipliers, and AI counter-picks', async () => {
+  const {
+    findTechDef,
+    canResearchTech,
+    isTechLockedByExclusion,
+    isTechMissingPrerequisite,
+    getAvailableTechsForBuilding,
+    getAllTechsForCiv,
+    getTrainingTimeMultiplier,
+    getResourceGatherTechMultiplier,
+    applyCivilizationAndTechStats,
+  } = await import('./civilizations');
+  const { evaluateAiTechChoice, getUnitVsUnitDamage, getEffectiveBuildingArmor } = await import('./rules');
+
+  // 1. Rich tech pool across all 3 civilizations and eco/military buildings
+  for (const civ of ['medieval', 'anime', 'fantasy'] as const) {
+    assert.ok(getAllTechsForCiv(civ).length >= 22, `${civ} should have expanded tech depth`);
+  }
+  assert.equal(getAvailableTechsForBuilding('lumber_camp', 'medieval', [], 1).length, 1);
+  assert.equal(getAvailableTechsForBuilding('mining_camp', 'medieval', [], 1).length, 1);
+  assert.equal(getAvailableTechsForBuilding('granary', 'medieval', [], 1).length, 1);
+  assert.equal(getAvailableTechsForBuilding('dock', 'medieval', [], 1).length, 1);
+
+  // 2. Prerequisite chain: Sawmill Gear requires Double Bit Axe even at Age 2
+  const sawmill = findTechDef('shared_sawmill_gear')!;
+  assert.equal(canResearchTech(sawmill, [], 2).ok, false);
+  assert.equal(isTechMissingPrerequisite(sawmill, [])?.id, 'shared_double_bit_axe');
+  assert.equal(canResearchTech(sawmill, ['shared_double_bit_axe'], 2).ok, true);
+
+  // 3. Mutually exclusive doctrines lock rival branches
+  const blitz = findTechDef('shared_doctrine_blitz')!;
+  const elite = findTechDef('shared_doctrine_elite')!;
+  assert.equal(canResearchTech(blitz, [], 2).ok, true);
+  assert.equal(canResearchTech(elite, ['shared_doctrine_blitz'], 2).ok, false);
+  assert.equal(isTechLockedByExclusion(elite, ['shared_doctrine_blitz'])?.id, 'shared_doctrine_blitz');
+  const barracksAge2Avail = getAvailableTechsForBuilding('barracks', 'medieval', ['shared_doctrine_blitz'], 2);
+  assert.ok(!barracksAge2Avail.some((t) => t.id === 'shared_doctrine_elite'));
+
+  // 4. Stat modifiers: carryCapacity, trainTime, gatherByType, regen, counter bonuses, and building armor
+  const workerBase = {
+    maxHp: 55,
+    attack: 5,
+    defense: 0,
+    range: 1.4,
+    speed: 3.1,
+    attackRate: 0.7,
     cost: { food: 50, wood: 0, gold: 0, stone: 0 },
-    trainTime: 10,
+    trainTime: 7,
+    gatherSpeed: 0.6,
+    carryCapacity: 15,
+  };
+  const upgradedWorker = applyCivilizationAndTechStats(workerBase, 'worker', 'medieval', ['shared_wheelbarrow']);
+  assert.equal(upgradedWorker.carryCapacity, 21);
+  assert.ok(upgradedWorker.speed > 3.4);
+
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz']), 0.75);
+  assert.equal(getResourceGatherTechMultiplier(['shared_double_bit_axe'], 'wood'), 1.25);
+  assert.equal(getResourceGatherTechMultiplier(['shared_double_bit_axe'], 'gold'), 1);
+
+  const meleeBase = {
+    ...workerBase,
+    maxHp: 88,
+    attack: 8,
+    defense: 1,
     gatherSpeed: 0,
     carryCapacity: 0,
   };
-  const melee = applyCivilizationAndTechStats(base, 'melee', 'medieval', ['shared_basic_training', 'shared_pike_drill'], 2);
-  assert.ok(melee.attack >= 12);
-  assert.ok(melee.maxHp > 100);
-  const ranged = applyCivilizationAndTechStats(base, 'ranged', 'medieval', ['shared_fletching', 'shared_bodkin'], 2);
-  assert.ok(ranged.attack >= 14);
-  assert.ok(ranged.range >= 1.2 + 1);
+  const counterMelee = applyCivilizationAndTechStats(
+    meleeBase,
+    'melee',
+    'medieval',
+    ['shared_shield_pavise', 'shared_pike_formation', 'shared_preserved_rations'],
+    2
+  );
+  assert.equal(counterMelee.rangedDefense, 3);
+  assert.equal(counterMelee.bonusVsCategory?.cavalry, 6);
+  assert.equal(counterMelee.hpRegenPerSec, 1.4);
+
+  const knightTarget = {
+    unitDef: {
+      id: 'knight',
+      name: 'Knight',
+      factionPack: 'medieval',
+      category: 'cavalry' as const,
+      description: '',
+      stats: { ...meleeBase, defense: 2 },
+      visual: { color: '#fff', modelType: 'knight' as const },
+    },
+  };
+  const archerTarget = {
+    unitDef: {
+      ...knightTarget.unitDef,
+      category: 'melee' as const,
+      stats: counterMelee,
+    },
+  };
+  // Pike melee gets +6 bonus vs cavalry (8+6 - 2 = 12 vs 8 - 2 = 6)
+  assert.equal(getUnitVsUnitDamage(8, knightTarget, false, 0, counterMelee.bonusVsCategory), 12);
+  assert.equal(getUnitVsUnitDamage(8, knightTarget, false, 0), 6);
+  // Shield Pavise melee absorbs +3 ranged arrow damage
+  assert.equal(getUnitVsUnitDamage(10, archerTarget, true, 0), 5);
+
+  // Dynamic building armor includes doctrine_bastion (+4)
+  const sampleTower = { buildingType: 'tower' as const, buildingDef: { buildingArmor: 11 } as any };
+  assert.equal(getEffectiveBuildingArmor(sampleTower, 2, ['med_doctrine_bastion']), 17);
+
+  // 5. AI reacts to enemy composition & personality
+  const pavise = findTechDef('shared_shield_pavise')!;
+  const axe = findTechDef('shared_double_bit_axe')!;
+  const pike = findTechDef('shared_pike_formation')!;
+  const bastion = findTechDef('med_doctrine_bastion')!;
+  const crusade = findTechDef('med_doctrine_crusade')!;
+
+  const vsArcherPick = evaluateAiTechChoice(
+    [
+      { buildingId: 'b1', tech: axe },
+      { buildingId: 'b2', tech: pavise },
+      { buildingId: 'b3', tech: pike },
+    ],
+    {
+      resources: { food: 500, wood: 500, gold: 500, stone: 500 },
+      reserveFood: 0,
+      reserveGold: 0,
+      age: 2,
+      workerCount: 8,
+      aiPersonality: 'standard',
+      enemyComposition: { melee: 1, ranged: 6, cavalry: 0, siege: 0, fortificationCount: 0 },
+    }
+  );
+  assert.equal(vsArcherPick?.tech.id, 'shared_shield_pavise');
+
+  const vsCavPick = evaluateAiTechChoice(
+    [
+      { buildingId: 'b1', tech: axe },
+      { buildingId: 'b2', tech: pavise },
+      { buildingId: 'b3', tech: pike },
+    ],
+    {
+      resources: { food: 500, wood: 500, gold: 500, stone: 500 },
+      reserveFood: 0,
+      reserveGold: 0,
+      age: 2,
+      workerCount: 8,
+      aiPersonality: 'standard',
+      enemyComposition: { melee: 1, ranged: 0, cavalry: 4, siege: 0, fortificationCount: 0 },
+    }
+  );
+  assert.equal(vsCavPick?.tech.id, 'shared_pike_formation');
+
+  const defDoctrine = evaluateAiTechChoice(
+    [
+      { buildingId: 'f1', tech: bastion },
+      { buildingId: 'f1', tech: crusade },
+    ],
+    {
+      resources: { food: 500, wood: 500, gold: 500, stone: 500 },
+      reserveFood: 0,
+      reserveGold: 0,
+      age: 2,
+      workerCount: 8,
+      aiPersonality: 'defensive',
+      enemyComposition: { melee: 2, ranged: 2, cavalry: 0, siege: 0, fortificationCount: 0 },
+    }
+  );
+  assert.equal(defDoctrine?.tech.id, 'med_doctrine_bastion');
+
+  const aggDoctrine = evaluateAiTechChoice(
+    [
+      { buildingId: 'f1', tech: bastion },
+      { buildingId: 'f1', tech: crusade },
+    ],
+    {
+      resources: { food: 500, wood: 500, gold: 500, stone: 500 },
+      reserveFood: 0,
+      reserveGold: 0,
+      age: 2,
+      workerCount: 8,
+      aiPersonality: 'hard',
+      enemyComposition: { melee: 2, ranged: 2, cavalry: 0, siege: 0, fortificationCount: 0 },
+    }
+  );
+  assert.equal(aggDoctrine?.tech.id, 'med_doctrine_crusade');
 });
 
-test('economy techs: shared gather bonuses are moderate so they do not erase map control', async () => {
-  const { findTechDef } = await import('./civilizations');
-  const axe = findTechDef('shared_double_bit_axe');
-  assert.ok(axe && axe.effect.gatherMultiplier! <= 1.15);
-  const crop = findTechDef('shared_crop_rotation');
-  assert.ok(crop && crop.effect.gatherMultiplier! <= 1.16);
-  const wheel = findTechDef('shared_wheelbarrow');
-  assert.ok(wheel);
-  const guild = findTechDef('shared_guild_contracts');
-  assert.ok(guild && guild.requiredAge === 3);
-});
 
-test('percentage armor: low attack still bites heavy armor; high armor never fully nullifies', () => {
-  assert.equal(getArmorDamageReduction(0), 0);
-  assert.ok(getArmorDamageReduction(4) > 0.15 && getArmorDamageReduction(4) < 0.25);
-  assert.equal(getArmorDamageReduction(20), 0.55); // capped
-  // Flat would deal 1; percentage should deal more than 1 from atk 6 vs def 5
-  assert.ok(calculateDamage(6, 5) >= 3);
-  assert.ok(calculateDamage(12, 5) > calculateDamage(6, 5));
-  // Zero armor unchanged
-  assert.equal(calculateDamage(10, 0), 10);
-});

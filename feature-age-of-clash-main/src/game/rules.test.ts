@@ -1,0 +1,1484 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  canAfford,
+  deductCost,
+  addResources,
+  calculateDamage,
+  getArmorDamageReduction,
+  applyBalanceMultipliers,
+  evaluateCondition,
+  evaluateAiScript,
+  getDistance,
+  findClosestResourceNode,
+  findClosestEnemy,
+  getShrineIncome,
+  getShrineBlessingHoldTime,
+  advanceStarRelicChannel,
+  pickStarRelicSite,
+  resolveStarRelicDelivery,
+  starRelicChannelComplete,
+  starRelicShouldFall,
+  STAR_RELIC_CHANNEL_SEC,
+  STAR_RELIC_FALL_AT,
+  getCategoryCounterMultiplier,
+} from './rules';
+import { AiRule, ResourceNode, EntityCommon } from '../types/game';
+
+test('economy: canAfford accurately checks resource amounts', () => {
+  const current = { food: 100, wood: 50, gold: 20, stone: 0 };
+  assert.equal(canAfford(current, { food: 50, wood: 20, gold: 0, stone: 0 }), true);
+  assert.equal(canAfford(current, { food: 100, wood: 50, gold: 20, stone: 0 }), true);
+  assert.equal(canAfford(current, { food: 120, wood: 50, gold: 20, stone: 0 }), false);
+  assert.equal(canAfford(current, { food: 50, wood: 20, gold: 50, stone: 0 }), false);
+});
+
+test('economy: deductCost and addResources compute correct balances', () => {
+  const current = { food: 100, wood: 50, gold: 30, stone: 10 };
+  const cost = { food: 40, wood: 25, gold: 0, stone: 5 };
+  const afterDeduct = deductCost(current, cost);
+  assert.deepEqual(afterDeduct, { food: 60, wood: 25, gold: 30, stone: 5 });
+
+  const afterAdd = addResources(afterDeduct, { food: 15, gold: 10 });
+  assert.deepEqual(afterAdd, { food: 75, wood: 25, gold: 40, stone: 5 });
+});
+
+test('combat: calculateDamage respects defense and minimum damage of 1', () => {
+  assert.equal(calculateDamage(15, 5), 10);
+  assert.equal(calculateDamage(10, 10), 1); // min damage floor
+  assert.equal(calculateDamage(5, 20), 1); // floor when defense exceeds attack
+  assert.equal(calculateDamage(20, 5, 1.5), 25); // with 1.5x multiplier: (30 - 5)
+});
+
+test('mods: applyBalanceMultipliers updates unit stats cleanly', () => {
+  const base = {
+    maxHp: 100,
+    attack: 10,
+    defense: 2,
+    range: 1.5,
+    speed: 4,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 20, stone: 0 },
+    trainTime: 12,
+    gatherSpeed: 2,
+    carryCapacity: 15,
+  };
+  const multipliers = {
+    gatherRate: 1.5,
+    unitHp: 1.2,
+    unitDamage: 2.0,
+    buildSpeed: 1.0,
+    moveSpeed: 1.25,
+  };
+  const boosted = applyBalanceMultipliers(base, multipliers);
+  assert.equal(boosted.maxHp, 120);
+  assert.equal(boosted.attack, 20);
+  assert.equal(boosted.speed, 5);
+  assert.equal(boosted.gatherSpeed, 3);
+});
+
+test('ai-script: evaluateCondition checks operators properly', () => {
+  const snapshot = {
+    food: 200,
+    wood: 80,
+    gold: 50,
+    stone: 0,
+    armyCount: 6,
+    workerCount: 5,
+    underAttack: 1,
+    enemyProximity: 15,
+    gameTime: 45,
+  };
+
+  assert.equal(evaluateCondition({ field: 'food', operator: '>=', value: 200 }, snapshot), true);
+  assert.equal(evaluateCondition({ field: 'food', operator: '<', value: 100 }, snapshot), false);
+  assert.equal(evaluateCondition({ field: 'underAttack', operator: '==', value: 1 }, snapshot), true);
+  assert.equal(evaluateCondition({ field: 'armyCount', operator: '>', value: 5 }, snapshot), true);
+});
+
+test('ai-script: evaluateAiScript triggers highest priority rule that matches', () => {
+  const rules: AiRule[] = [
+    {
+      id: 'rule_eco',
+      name: 'Train Villagers if food > 50',
+      enabled: true,
+      conditions: [{ field: 'food', operator: '>=', value: 50 }],
+      action: { type: 'train_unit', targetId: 'villager', priority: 10 },
+    },
+    {
+      id: 'rule_defend',
+      name: 'Defend if under attack',
+      enabled: true,
+      conditions: [{ field: 'underAttack', operator: '==', value: 1 }],
+      action: { type: 'retreat_to_base', priority: 90 },
+    },
+    {
+      id: 'rule_attack',
+      name: 'All out attack if army > 10',
+      enabled: true,
+      conditions: [{ field: 'armyCount', operator: '>=', value: 10 }],
+      action: { type: 'attack_player', priority: 50 },
+    },
+  ];
+
+  const underAttackSnapshot = {
+    food: 100,
+    wood: 100,
+    gold: 100,
+    stone: 0,
+    armyCount: 4,
+    workerCount: 5,
+    underAttack: 1,
+    enemyProximity: 10,
+    gameTime: 60,
+  };
+
+  const action = evaluateAiScript(rules, underAttackSnapshot);
+  assert.ok(action);
+  assert.equal(action.type, 'retreat_to_base');
+});
+
+test('spatial: getDistance, findClosestResourceNode and findClosestEnemy', () => {
+  assert.equal(getDistance(0, 0, 3, 4), 5);
+
+  const nodes: ResourceNode[] = [
+    { id: 'wood1', resourceType: 'wood', x: 10, z: 10, amount: 100, maxAmount: 100 },
+    { id: 'gold1', resourceType: 'gold', x: 3, z: 4, amount: 200, maxAmount: 200 },
+    { id: 'wood2', resourceType: 'wood', x: 2, z: 2, amount: 0, maxAmount: 100 }, // empty
+  ];
+
+  const closestAny = findClosestResourceNode(0, 0, nodes);
+  assert.equal(closestAny?.id, 'gold1');
+
+  const closestWood = findClosestResourceNode(0, 0, nodes, 'wood');
+  assert.equal(closestWood?.id, 'wood1');
+
+  const entities: EntityCommon[] = [
+    { id: 'ally1', faction: 'player', x: 1, z: 1, hp: 50, maxHp: 50 },
+    { id: 'enemy1', faction: 'enemy', x: 8, z: 6, hp: 40, maxHp: 40 },
+    { id: 'enemy2', faction: 'enemy', x: 20, z: 20, hp: 40, maxHp: 40 },
+    { id: 'deadEnemy', faction: 'enemy', x: 2, z: 2, hp: 0, maxHp: 40 },
+  ];
+
+  const enemy = findClosestEnemy(0, 0, 'player', entities);
+  assert.equal(enemy?.id, 'enemy1');
+});
+
+test('collision: resolveUnitBuildingCollisions pushes units out of solid building core while leaving auto-channel', async () => {
+  const { resolveUnitBuildingCollisions, getBuildingCollisionRadius, getUnitColliderRadius } = await import('./collision');
+  const dummyUnit = {
+    id: 'u1',
+    type: 'unit' as const,
+    faction: 'player' as const,
+    x: 0.1,
+    z: 0.1,
+    hp: 100,
+    maxHp: 100,
+    unitDefId: 'villager',
+    unitDef: {
+      id: 'villager',
+      name: '村民',
+      factionPack: 'medieval',
+      category: 'worker' as const,
+      description: '',
+      stats: { maxHp: 50, attack: 3, defense: 0, range: 1, speed: 3.5, attackRate: 1, cost: { food: 50, wood: 0, gold: 0, stone: 0 }, trainTime: 8, gatherSpeed: 3, carryCapacity: 15 },
+      visual: { color: '#fff', modelType: 'villager' as const },
+    },
+    state: 'idle' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+  };
+
+  const dummyBuilding = {
+    id: 'b1',
+    type: 'building' as const,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: 2000,
+    maxHp: 2000,
+    buildingType: 'town_center' as const,
+    buildingDef: {
+      id: 'town_center' as const,
+      name: '城鎮中心',
+      description: '',
+      maxHp: 2400,
+      cost: { food: 0, wood: 400, gold: 0, stone: 100 },
+      buildTime: 35,
+      trainableUnits: [],
+      size: 4.5,
+    },
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+  };
+
+  resolveUnitBuildingCollisions([dummyUnit], [dummyBuilding]);
+  const expectedMinDist = getBuildingCollisionRadius(dummyBuilding) + getUnitColliderRadius('worker');
+  const distAfter = Math.hypot(dummyUnit.x - dummyBuilding.x, dummyUnit.z - dummyBuilding.z);
+  assert.ok(
+    distAfter >= expectedMinDist - 0.01,
+    `Unit distance ${distAfter} should be pushed out beyond core radius ${expectedMinDist}`
+  );
+  // Farms should allow workers to walk onto plots cleanly
+  const farmBuilding = {
+    ...dummyBuilding,
+    id: 'farm1',
+    buildingType: 'farm' as const,
+    buildingDef: { ...dummyBuilding.buildingDef, id: 'farm' as const, size: 2.8 },
+  };
+  assert.equal(getBuildingCollisionRadius(farmBuilding), 0);
+});
+
+test('collision: isPlacementLocationValid allows flush buildings and blocks water/cliffs/overlaps', async () => {
+  const { isPlacementLocationValid } = await import('./collision');
+  const buildings = [
+    {
+      id: 'tc',
+      type: 'building' as const,
+      faction: 'player' as const,
+      x: 0,
+      z: 0,
+      hp: 1000,
+      maxHp: 1000,
+      buildingType: 'town_center' as const,
+      buildingDef: { id: 'town_center' as const, name: 'TC', description: '', maxHp: 2000, cost: { food: 0, wood: 0, gold: 0, stone: 0 }, buildTime: 20, trainableUnits: [], size: 4.5 },
+      isConstructed: true,
+      buildProgress: 1,
+      queue: [],
+      queueProgress: 0,
+      attackCooldown: 0,
+    },
+  ];
+  const nodes = [
+    { id: 'gold1', resourceType: 'gold' as const, x: 20, z: 20, amount: 1000, maxAmount: 1000 },
+  ];
+
+  // Directly on top of Town Center should be invalid
+  assert.equal(isPlacementLocationValid(1, 1, 3.5, buildings, nodes), false);
+  // Placed flush right next to TC (4.5 + 3.5 = 8.0 <= 8.2) MUST be valid because inset cores auto-leave a passage channel
+  assert.equal(isPlacementLocationValid(8.2, 0, 3.5, buildings, nodes), true);
+  // Overlapping TC footprint (7.5 < 4.5 + 3.5) should be invalid
+  assert.equal(isPlacementLocationValid(7.5, 0, 3.5, buildings, nodes), false);
+  // Directly on top of Gold Node should be invalid
+  assert.equal(isPlacementLocationValid(20.5, 20.5, 3.0, buildings, nodes), false);
+  // On water strip without bridge should be invalid; on bridge should be valid
+  const waterRects = [{ x1: -10, z1: 31, x2: 10, z2: 31, kind: 'water' as const }];
+  const bridges = [{ x: 0, z: 31, halfWidth: 2.5, halfLength: 5, angle: 0 }];
+  assert.equal(isPlacementLocationValid(6, 31, 1.5, buildings, nodes, false, waterRects, [], bridges), false);
+  // In clear space should be valid
+  assert.equal(isPlacementLocationValid(35, -20, 3.5, buildings, nodes), true);
+});
+
+test('pathfinding: flush buildings leave a passable corridor and units route over river bridges', async () => {
+  const { buildNavGrid, findPath } = await import('./pathfinding');
+  const makeBarracks = (id: string, x: number, z: number) => ({
+    id,
+    type: 'building' as const,
+    faction: 'enemy' as const,
+    x,
+    z,
+    hp: 1000,
+    maxHp: 1000,
+    buildingType: 'barracks' as const,
+    buildingDef: {
+      id: 'barracks' as const,
+      name: 'Barracks',
+      description: '',
+      maxHp: 1200,
+      cost: { food: 0, wood: 150, gold: 0, stone: 0 },
+      buildTime: 20,
+      trainableUnits: [],
+      size: 3.5,
+    },
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+  });
+
+  // Two barracks placed completely flush: centers at x=-3.6 and x=3.6 (dist = 7.2 >= 3.5+3.5)
+  const bLeft = makeBarracks('bL', -3.6, 0);
+  const bRight = makeBarracks('bR', 3.6, 0);
+  const gridFlush = buildNavGrid([bLeft, bRight], []);
+  const corridorPath = findPath(0, -10, 0, 10, gridFlush);
+  assert.ok(corridorPath.length >= 1, 'Expected valid path through auto-channel between flush buildings');
+  // Unit should pass cleanly between them (staying within |x| < 1.5 rather than walking all the way around |x| > 6)
+  assert.ok(
+    corridorPath.every((wp) => Math.abs(wp.x) < 1.5),
+    `Expected direct corridor route through gap, got ${JSON.stringify(corridorPath)}`
+  );
+
+  // Single blocking building should detour smoothly around perimeter
+  const gridSingle = buildNavGrid([makeBarracks('center', 0, 0)], []);
+  const detour = findPath(-10, 0, 10, 0, gridSingle);
+  assert.ok(detour.some((wp) => Math.abs(wp.z) >= 2.5), 'Expected detour around blocking building');
+
+  // River obstacle across z=0 (x=-104..104) with bridge at x=15 (width 6, spanning full river halfWidth=9.8)
+  const riverGrid = buildNavGrid([], [], {
+    rects: [{ x1: -104, z1: 0, x2: 104, z2: 0, kind: 'water', halfWidth: 9.8 }],
+    discs: [],
+    bridges: [{ x: 15, z: 0, halfWidth: 3.0, halfLength: 11.4, angle: 0 }],
+  });
+  const bridgePath = findPath(-5, -14, -5, 14, riverGrid);
+  assert.ok(
+    bridgePath.some((wp) => wp.x >= 11 && wp.x <= 19),
+    `Expected unit to route over river bridge at x=[12,18], got ${JSON.stringify(bridgePath)}`
+  );
+});
+
+test('mapGenerator: produces varied terrain features and abundant diverse resources', async () => {
+  const { generateMapLayout } = await import('./mapGenerator');
+  const spawns = [
+    { id: 'player', x: -30, z: -20 },
+    { id: 'ai1', x: 30, z: 20 },
+  ];
+
+  const river = generateMapLayout('river_valley', 'standard', spawns);
+  assert.ok(river.waterRects.length > 0 && river.bridges.length >= 2, 'River Valley should include river and crossings');
+
+  const highland = generateMapLayout('highland_basin', 'standard', spawns);
+  assert.ok(highland.cliffDiscs.length >= 4, 'Highland Basin should include rocky cliff outcrops');
+
+  const lakes = generateMapLayout('twin_lakes', 'abundant', spawns);
+  assert.ok(lakes.waterDiscs.length >= 2, 'Twin Lakes should include two lakes');
+
+  const riverAbundant = generateMapLayout('river_valley', 'abundant', spawns);
+  assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'berry'), 'Map should spawn berry bushes');
+  assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'hunt'), 'Map should spawn deer herds');
+  assert.ok(
+    riverAbundant.resourceNodes.filter((n) => n.resourceType === 'gold').length >= 6,
+    'Map should spawn multiple gold veins'
+  );
+  assert.ok(
+    riverAbundant.resourceNodes.length > river.resourceNodes.length,
+    'Abundant richness should spawn more resource nodes than standard'
+  );
+});
+
+test('controlGroups: supports assigning, appending, and pruning dead units', async () => {
+  const { createEmptyControlGroups, updateControlGroup, pruneControlGroups } = await import('./controlGroups');
+  let groups = createEmptyControlGroups();
+  groups = updateControlGroup(groups, 1, ['u1', 'u2'], false);
+  assert.deepEqual(groups[1], ['u1', 'u2']);
+
+  // Append u2 (duplicate) and u3
+  groups = updateControlGroup(groups, 1, ['u2', 'u3'], true);
+  assert.deepEqual(groups[1], ['u1', 'u2', 'u3']);
+
+  // Overwrite group 1
+  groups = updateControlGroup(groups, 1, ['u4'], false);
+  assert.deepEqual(groups[1], ['u4']);
+
+  // Prune dead units
+  groups = updateControlGroup(groups, 2, ['u1', 'u4'], false);
+  groups = pruneControlGroups(groups, new Set(['u4']));
+  assert.deepEqual(groups[2], ['u4']);
+});
+
+test('teams & spawns: distinct spawn positions and team-based hostility', async () => {
+  const { generateSpawnPositions, areHostile } = await import('./rules');
+  const spawns = generateSpawnPositions(6, 58);
+  assert.equal(spawns.length, 6);
+  for (let i = 0; i < spawns.length; i++) {
+    for (let j = i + 1; j < spawns.length; j++) {
+      const dist = Math.hypot(spawns[i].x - spawns[j].x, spawns[i].z - spawns[j].z);
+      assert.ok(dist > 40, `Spawn ${i} and ${j} too close: ${dist}`);
+    }
+  }
+
+  assert.equal(areHostile({ faction: 'slot_1', team: 1 }, { faction: 'slot_2', team: 1 }), false);
+  assert.equal(areHostile({ faction: 'slot_1', team: 1 }, { faction: 'slot_2', team: 2 }), true);
+  assert.equal(areHostile({ faction: 'slot_1', team: 1 }, { faction: 'neutral' }), false);
+});
+
+test('civilizations: each civ has distinct workers, buildable structures, training rosters, and tech upgrades', async () => {
+  const {
+    canUnitGainXp,
+    getCivilizationConfig,
+    getBuildableTypesForCiv,
+    getTrainableUnitsForBuilding,
+    getAvailableTechsForBuilding,
+    applyCivilizationAndTechStats,
+    computeUnitXpGain,
+    dampAngle,
+    dampScalar,
+  } = await import('./civilizations');
+
+  const med = getCivilizationConfig('medieval');
+  const ani = getCivilizationConfig('anime');
+  const fan = getCivilizationConfig('fantasy');
+
+  assert.equal(med.workerUnitId, 'villager');
+  assert.equal(ani.workerUnitId, 'anime_spirit_harvester');
+  assert.equal(fan.workerUnitId, 'fantasy_goblin_sapper');
+
+  assert.ok(getBuildableTypesForCiv('medieval').includes('armory_forge'));
+  assert.ok(!getBuildableTypesForCiv('medieval').includes('spirit_shrine'));
+  assert.ok(getBuildableTypesForCiv('anime').includes('spirit_shrine'));
+  assert.ok(getBuildableTypesForCiv('fantasy').includes('mana_well'));
+
+  // Building training rosters are tailored per civilization
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'spearman', 'scout', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'spearman', 'scout', 'battering_ram']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'spearman', 'scout', 'knight', 'battering_ram', 'catapult']);
+
+  // Tech research filtering and stat application
+  const shrineTechs = getAvailableTechsForBuilding('spirit_shrine', 'anime', [], 1);
+  assert.equal(shrineTechs.length, 2);
+  const afterOne = getAvailableTechsForBuilding('spirit_shrine', 'anime', ['ani_chakra_flow'], 1);
+  assert.equal(afterOne.length, 1);
+
+  const baseStats = {
+    maxHp: 100,
+    attack: 10,
+    defense: 2,
+    range: 1.5,
+    speed: 4,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 20, stone: 0 },
+    trainTime: 10,
+    gatherSpeed: 0,
+    carryCapacity: 0,
+  };
+  const upgraded = applyCivilizationAndTechStats(baseStats, 'melee', 'anime', ['ani_chakra_flow', 'ani_shunpo']);
+  assert.equal(upgraded.attack, 14);
+  assert.ok(upgraded.speed > 4.8);
+
+  // XP & Leveling progression (strictly exclusive to anime_saiyan_brawler)
+  assert.equal(canUnitGainXp('anime_saiyan_brawler', 'anime'), true);
+  assert.equal(canUnitGainXp('anime_katana_shinigami', 'anime'), false);
+  assert.equal(canUnitGainXp('anime_ninja_assassin', 'anime'), false);
+  assert.equal(canUnitGainXp('swordsman', 'medieval'), false);
+  assert.equal(canUnitGainXp('villager', 'medieval'), false);
+  assert.equal(canUnitGainXp('fantasy_paladin', 'fantasy'), false);
+
+  const xpRes = computeUnitXpGain(40, 1, 30);
+  assert.equal(xpRes.xp, 70);
+  assert.equal(xpRes.level, 2);
+  assert.equal(xpRes.levelsGained, 1);
+
+  // Shortest-arc damped angle handles wrap-around across PI/-PI without reverse spin
+  const nearPi = Math.PI - 0.1;
+  const acrossPi = -Math.PI + 0.1;
+  const stepped = dampAngle(nearPi, acrossPi, 10, 0.05);
+  // Stepping from +3.04 toward -3.04 via +0.2 rad shortest path should stay near PI (abs > 2.9)
+  assert.ok(Math.abs(stepped) > 2.9, `Expected shortest-arc wrap around PI, got ${stepped}`);
+
+  const damped = dampScalar(0, 10, 10, 0.1);
+  assert.ok(damped > 5 && damped < 10);
+});
+
+test('resources & map fairness: maxDistance cap and guaranteed starter resources for 4 spawns across all presets', async () => {
+  const { generateMapLayout } = await import('./mapGenerator');
+  const { generateSpawnPositions } = await import('./rules');
+
+  // maxDistance cap excludes far nodes
+  const farNodes: ResourceNode[] = [
+    { id: 'farGold', resourceType: 'gold', x: 40, z: 0, amount: 500, maxAmount: 500 },
+  ];
+  assert.equal(findClosestResourceNode(0, 0, farNodes, 'gold', 24), null);
+  assert.equal(findClosestResourceNode(0, 0, farNodes, 'gold', 45)?.id, 'farGold');
+
+  const spawns = generateSpawnPositions(4, 58).map((sp, i) => ({ id: `slot_${i + 1}`, x: sp.x, z: sp.z }));
+  for (const preset of ['river_valley', 'highland_basin', 'twin_lakes'] as const) {
+    const layout = generateMapLayout(preset, 'standard', spawns);
+    for (const sp of spawns) {
+      const hasGold = layout.resourceNodes.some(
+        (n) => n.resourceType === 'gold' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
+      );
+      const hasStone = layout.resourceNodes.some(
+        (n) => n.resourceType === 'stone' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
+      );
+      const hasWood = layout.resourceNodes.some(
+        (n) => n.resourceType === 'wood' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
+      );
+      const hasFood = layout.resourceNodes.some(
+        (n) => n.resourceType === 'food' && Math.hypot(n.x - sp.x, n.z - sp.z) <= 26
+      );
+      assert.ok(hasGold, `${preset} spawn ${sp.id} missing nearby gold`);
+      assert.ok(hasStone, `${preset} spawn ${sp.id} missing nearby stone`);
+      assert.ok(hasWood, `${preset} spawn ${sp.id} missing nearby wood`);
+      assert.ok(hasFood, `${preset} spawn ${sp.id} missing nearby food`);
+    }
+  }
+});
+
+test('hotkeys: worker build, training slots, and tech slots map cleanly without WASD collisions', async () => {
+  const {
+    BUILDING_HOTKEYS,
+    eventCodeToHotkeyLabel,
+    findBuildingTypeByHotkey,
+    findTrainingUnitByHotkey,
+    findTechIdByHotkey,
+  } = await import('./hotkeys');
+  const { getBuildableTypesForCiv } = await import('./civilizations');
+
+  const wasdReserved = new Set(['W', 'A', 'S', 'D', 'Q', 'F', 'X', 'H', 'B', 'I', 'M', 'P']);
+  Object.values(BUILDING_HOTKEYS).forEach((k) => {
+    assert.ok(k && !wasdReserved.has(k), `Building hotkey ${k} conflicts with camera/global keys`);
+  });
+
+  assert.equal(eventCodeToHotkeyLabel('KeyV'), 'V');
+  assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('medieval')), 'armory_forge');
+  assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('anime')), 'spirit_shrine');
+  assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('fantasy')), 'mana_well');
+  assert.equal(findBuildingTypeByHotkey('V', getBuildableTypesForCiv('medieval')), 'barracks');
+  assert.equal(findTrainingUnitByHotkey('C', ['swordsman', 'knight', 'catapult']), 'knight');
+  assert.equal(findTechIdByHotkey('R', ['tech_a', 'tech_b']), 'tech_a');
+  assert.equal(findTechIdByHotkey('T', ['tech_a', 'tech_b']), 'tech_b');
+});
+
+test('all-ai spectator: isAllAiMatch and resolveMatchOutcome handle zero-human multi-team AI battles', async () => {
+  const { isAllAiMatch, resolveMatchOutcome } = await import('./rules');
+  const allAiParticipants = [
+    { id: 'ai1', name: 'AI 1', controller: 'ai' as const, team: 1, colorHex: 0, colorCss: '#3b82f6', accentHex: 0 },
+    { id: 'ai2', name: 'AI 2', controller: 'ai' as const, team: 2, colorHex: 0, colorCss: '#ef4444', accentHex: 0 },
+    { id: 'ai3', name: 'AI 3', controller: 'ai' as const, team: 3, colorHex: 0, colorCss: '#10b981', accentHex: 0 },
+  ];
+  assert.equal(isAllAiMatch(allAiParticipants), true);
+
+  const mkBldg = (faction: string, team: number, hp = 1000) => ({
+    faction,
+    team,
+    hp,
+    buildingType: 'town_center' as const,
+  });
+
+  // Still 2 alive teams -> match continues
+  const midGame = resolveMatchOutcome(
+    allAiParticipants,
+    [],
+    [mkBldg('ai1', 1, 1000), mkBldg('ai2', 2, 0), mkBldg('ai3', 3, 900)]
+  );
+  assert.equal(midGame.isOver, false);
+
+  // Only team 3 survives -> victory for team 3
+  const endGame = resolveMatchOutcome(
+    allAiParticipants,
+    [],
+    [mkBldg('ai1', 1, 0), mkBldg('ai2', 2, 0), mkBldg('ai3', 3, 900)]
+  );
+  assert.equal(endGame.isOver, true);
+  assert.equal(endGame.winner?.team, 3);
+  assert.deepEqual(endGame.winner?.names, ['AI 3']);
+});
+
+test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeAiWorkerAllocation balances deficits', async () => {
+  const { evaluateAiPlan, computeAiWorkerAllocation } = await import('./rules');
+  const rules: AiRule[] = [
+    {
+      id: 'atk',
+      name: 'Cluster Attack',
+      enabled: true,
+      conditions: [{ field: 'armyCount', operator: '>=', value: 8 }],
+      action: { type: 'cluster_attack', priority: 85 },
+    },
+    {
+      id: 'worker',
+      name: 'Train Worker',
+      enabled: true,
+      conditions: [
+        { field: 'food', operator: '>=', value: 50 },
+        { field: 'workerCount', operator: '<', value: 12 },
+      ],
+      action: { type: 'train_unit', targetId: 'villager', priority: 75 },
+    },
+    {
+      id: 'army',
+      name: 'Train Swordsman',
+      enabled: true,
+      conditions: [{ field: 'food', operator: '>=', value: 70 }],
+      action: { type: 'train_unit', targetId: 'swordsman', priority: 65 },
+    },
+    {
+      id: 'age',
+      name: 'Advance Age',
+      enabled: true,
+      conditions: [
+        { field: 'food', operator: '>=', value: 400 },
+        { field: 'gold', operator: '>=', value: 200 },
+        { field: 'age', operator: '<', value: 2 },
+      ],
+      action: { type: 'advance_age', priority: 78 },
+    },
+    {
+      id: 'eco',
+      name: 'Gather Military Eco',
+      enabled: true,
+      conditions: [{ field: 'workerCount', operator: '>=', value: 6 }],
+      action: { type: 'gather_priority', targetId: 'military_eco', priority: 70 },
+    },
+  ];
+
+  const plan = evaluateAiPlan(rules, {
+    food: 450,
+    wood: 180,
+    gold: 230,
+    stone: 60,
+    armyCount: 9,
+    workerCount: 8,
+    underAttack: 0,
+    enemyProximity: 45,
+    gameTime: 95,
+    age: 1,
+  });
+
+  assert.equal(plan.combatAction?.type, 'cluster_attack');
+  assert.equal(plan.buildAction?.type, 'advance_age');
+  assert.equal(plan.gatherAction?.targetId, 'military_eco');
+  assert.deepEqual(
+    plan.trainActions.map((t) => t.targetId),
+    ['villager', 'swordsman']
+  );
+
+  // Worker allocation prioritizes food when starving
+  const starvedAlloc = computeAiWorkerAllocation(
+    { food: 30, wood: 250, gold: 180, stone: 100 },
+    8,
+    'balanced_eco',
+    1
+  );
+  assert.equal(starvedAlloc.food + starvedAlloc.wood + starvedAlloc.gold + starvedAlloc.stone, 8);
+  assert.ok(starvedAlloc.food >= 4, `Expected >=4 workers on food when starving, got ${JSON.stringify(starvedAlloc)}`);
+});
+
+test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
+  const { selectOptimalCombatTarget, selectClusterFocusTarget } = await import('./rules');
+
+  const mkUnit = (
+    id: string,
+    faction: string,
+    team: number,
+    category: 'melee' | 'ranged' | 'cavalry' | 'siege' | 'worker',
+    x: number,
+    z: number,
+    hp = 100,
+    maxHp = 100,
+    range = 1.5,
+    speed = 3.8
+  ) => ({
+    id,
+    type: 'unit' as const,
+    faction,
+    team,
+    x,
+    z,
+    hp,
+    maxHp,
+    unitDefId: category,
+    unitDef: {
+      id: category,
+      name: category,
+      factionPack: 'medieval',
+      category,
+      description: '',
+      stats: {
+        maxHp,
+        attack: 15,
+        defense: 2,
+        range,
+        speed,
+        attackRate: 1,
+        cost: { food: 50, wood: 0, gold: 0, stone: 0 },
+        trainTime: 10,
+        gatherSpeed: 0,
+        carryCapacity: 0,
+      },
+      visual: { color: '#fff', modelType: 'swordsman' as const },
+    },
+    state: 'idle' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+  });
+
+  const mkBldg = (id: string, faction: string, team: number, buildingType: 'farm' | 'tower', x: number, z: number) => ({
+    id,
+    type: 'building' as const,
+    faction,
+    team,
+    x,
+    z,
+    hp: 800,
+    maxHp: 800,
+    buildingType,
+    buildingDef: {
+      id: buildingType,
+      name: buildingType,
+      description: '',
+      maxHp: 800,
+      cost: { food: 0, wood: 100, gold: 0, stone: 0 },
+      buildTime: 15,
+      trainableUnits: [],
+      size: 2.5,
+    },
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+  });
+
+  // 1. Cavalry should flank enemy archer even when enemy swordsman is slightly closer
+  const knight = mkUnit('k1', 'ai1', 1, 'cavalry', 0, 0, 210, 210, 1.8, 5.6);
+  const enemyMelee = mkUnit('em1', 'ai2', 2, 'melee', 4, 0, 110, 110, 1.5, 3.8);
+  const enemyArcher = mkUnit('ea1', 'ai2', 2, 'ranged', 7, 0, 65, 65, 14, 3.4);
+  const cavPick = selectOptimalCombatTarget(knight, [enemyMelee, enemyArcher], [], [knight]);
+  assert.equal(cavPick?.id, 'ea1');
+
+  // 2. Siege catapult should prioritize enemy defensive Watch Tower over a skirmisher
+  const catapult = mkUnit('cat1', 'ai1', 1, 'siege', 0, 0, 160, 160, 18, 2.2);
+  const enemyTower = mkBldg('tw1', 'ai2', 2, 'tower', 12, 0);
+  const siegePick = selectOptimalCombatTarget(catapult, [enemyMelee], [enemyTower], [catapult]);
+  assert.equal(siegePick?.id, 'tw1');
+
+  // 3. Melee defender should attack enemy soldier threatening base instead of a closer Farm
+  const swordsman = mkUnit('sw1', 'ai1', 1, 'melee', 0, 0);
+  const enemyFarm = mkBldg('fm1', 'ai2', 2, 'farm', 3, 0);
+  const meleePick = selectOptimalCombatTarget(swordsman, [enemyMelee], [enemyFarm], [swordsman]);
+  assert.equal(meleePick?.id, 'em1');
+
+  // 4. Cluster focus-fire prioritizes wounded high-value enemy archer
+  const squad = [
+    mkUnit('a1', 'ai1', 1, 'ranged', 0, 0, 65, 65, 14, 3.4),
+    mkUnit('a2', 'ai1', 1, 'ranged', 1, 1, 65, 65, 14, 3.4),
+    mkUnit('s1', 'ai1', 1, 'melee', 2, 0, 110, 110, 1.5, 3.8),
+  ];
+  const woundedArcher = mkUnit('eaLow', 'ai2', 2, 'ranged', 8, 1, 20, 65, 14, 3.4);
+  const healthyMelee = mkUnit('emFull', 'ai2', 2, 'melee', 7, 0, 110, 110, 1.5, 3.8);
+  const clusterTarget = selectClusterFocusTarget(squad, [healthyMelee, woundedArcher], [enemyFarm]);
+  assert.equal(clusterTarget?.id, 'eaLow');
+});
+
+test('audio-locomotion-buildings: spatial gain, staged construction/damage visuals, and stride phase math', async () => {
+  const { computeSpatialAudioGain, computeBuildingVisualState, computeStridePhaseDelta } = await import('./rules');
+
+  // 1. Spatial audio attenuation
+  assert.equal(computeSpatialAudioGain(0, 42), 1);
+  assert.equal(computeSpatialAudioGain(42, 42), 0);
+  assert.equal(computeSpatialAudioGain(65, 42), 0);
+  assert.equal(computeSpatialAudioGain(-5, 42), 1);
+  const nearGain = computeSpatialAudioGain(10, 42);
+  const farGain = computeSpatialAudioGain(30, 42);
+  assert.ok(nearGain > farGain && farGain > 0, `Expected monotonic rolloff: near=${nearGain}, far=${farGain}`);
+
+  // 2. Staged building construction & progressive damage states
+  const stage1 = computeBuildingVisualState(false, 0.15, 180, 1200);
+  assert.equal(stage1.stage, 1);
+  assert.equal(stage1.showScaffold, true);
+  assert.ok(stage1.tier1Reveal > 0.4 && stage1.tier2Reveal === 0 && stage1.tier3Reveal === 0);
+  assert.equal(stage1.isSmoking, false);
+
+  const stage2 = computeBuildingVisualState(false, 0.5, 600, 1200);
+  assert.equal(stage2.stage, 2);
+  assert.equal(stage2.showScaffold, true);
+  assert.ok(stage2.tier2Reveal > 0.5 && stage2.tier3Reveal === 0);
+
+  const stage3 = computeBuildingVisualState(false, 0.85, 1020, 1200);
+  assert.equal(stage3.stage, 3);
+  assert.equal(stage3.showScaffold, true);
+  assert.ok(stage3.tier3Reveal > 0.5);
+
+  const healthyBuilt = computeBuildingVisualState(true, 1, 1200, 1200);
+  assert.equal(healthyBuilt.stage, 4);
+  assert.equal(healthyBuilt.showScaffold, false);
+  assert.equal(healthyBuilt.tier1Reveal, 1);
+  assert.equal(healthyBuilt.tier2Reveal, 1);
+  assert.equal(healthyBuilt.tier3Reveal, 1);
+  assert.equal(healthyBuilt.isSmoking, false);
+  assert.equal(healthyBuilt.isBurning, false);
+  assert.equal(healthyBuilt.sagTiltRad, 0);
+
+  const damagedSmoking = computeBuildingVisualState(true, 1, 720, 1200); // 60% HP
+  assert.equal(damagedSmoking.isSmoking, true);
+  assert.equal(damagedSmoking.isBurning, false);
+  assert.ok(damagedSmoking.damageSeverity > 0.1);
+
+  const criticalBurning = computeBuildingVisualState(true, 1, 300, 1200); // 25% HP
+  assert.equal(criticalBurning.isSmoking, true);
+  assert.equal(criticalBurning.isBurning, true);
+  assert.ok(criticalBurning.sagTiltRad > 0.01);
+
+  // 3. Distance-locked locomotion phase delta
+  assert.equal(computeStridePhaseDelta(0, 1, false), 0);
+  assert.equal(computeStridePhaseDelta(-1, 1, false), 0);
+  const footStep = computeStridePhaseDelta(0.115, 1, false); // 1/8 of 0.92m full cycle -> PI/4
+  assert.ok(Math.abs(footStep - Math.PI / 4) < 0.02, `Expected ~PI/4 rad for 1/8 foot cycle, got ${footStep}`);
+  const giantStep = computeStridePhaseDelta(0.115, 1.5, false);
+  assert.ok(giantStep < footStep, 'Larger unit scale should take slower angular cadence per meter');
+  const mountStep = computeStridePhaseDelta(0.115, 1, true);
+  assert.ok(mountStep < footStep, 'Mounted stride covers more ground per gait cycle');
+  assert.equal(computeStridePhaseDelta(100, 1, false), 1.15, 'Large teleports/jumps must clamp phase delta');
+});
+
+test('collision-tightening: resource hulls and special building radii prevent visual clipping while keeping flush paths', async () => {
+  const {
+    resolveUnitResourceCollisions,
+    getResourceColliderRadius,
+    getBuildingCollisionRadius,
+    getUnitColliderRadius,
+  } = await import('./collision');
+  const worker = {
+    id: 'w1',
+    type: 'unit' as const,
+    faction: 'player' as const,
+    x: 0.2,
+    z: 0.2,
+    hp: 65,
+    maxHp: 65,
+    unitDefId: 'villager',
+    unitDef: {
+      id: 'villager',
+      name: '村民',
+      factionPack: 'medieval',
+      category: 'worker' as const,
+      description: '',
+      stats: { maxHp: 65, attack: 4, defense: 0, range: 1, speed: 3.6, attackRate: 1, cost: { food: 50, wood: 0, gold: 0, stone: 0 }, trainTime: 8, gatherSpeed: 5, carryCapacity: 15 },
+      visual: { color: '#fff', modelType: 'villager' as const },
+    },
+    state: 'gathering' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+  };
+
+  const stoneNode = { id: 'st1', resourceType: 'stone' as const, x: 0, z: 0, amount: 800, maxAmount: 800 };
+  resolveUnitResourceCollisions([worker], [stoneNode]);
+  const stoneDist = Math.hypot(worker.x, worker.z);
+  const minClear = getResourceColliderRadius(stoneNode.resourceType, undefined) + getUnitColliderRadius('worker') * 0.45;
+  assert.ok(stoneDist >= minClear - 0.01, `Worker pushed outside stone quarry boundary (${stoneDist} >= ${minClear})`);
+
+  const berryNode = { id: 'br1', resourceType: 'food' as const, subtype: 'berry' as const, x: 10, z: 0, amount: 400, maxAmount: 400 };
+  assert.ok(getResourceColliderRadius(berryNode.resourceType, berryNode.subtype) >= 1.0, 'Berry bush keeps physical radius so units never stand inside bush foliage');
+
+  const barracks = {
+    id: 'bk1',
+    type: 'building' as const,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: 1400,
+    maxHp: 1400,
+    buildingType: 'barracks' as const,
+    buildingDef: { id: 'barracks' as const, name: 'Barracks', description: '', maxHp: 1400, cost: { food: 0, wood: 150, gold: 0, stone: 0 }, buildTime: 20, trainableUnits: [], size: 3.5 },
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+  };
+  assert.ok(getBuildingCollisionRadius(barracks) >= 2.65 && getBuildingCollisionRadius(barracks) < 3.5);
+});
+
+test('siege-and-garrison: anti-building armor blocks early soldiers while siege engines ignore armor, and garrison shelters & empowers buildings', async () => {
+  const {
+    getEffectiveBuildingArmor,
+    calculateBuildingDamage,
+    getUnitVsUnitDamage,
+    getBuildingMaxGarrison,
+    computeGarrisonDefenseProfile,
+  } = await import('./rules');
+  const { DEFAULT_BUILDINGS, MEDIEVAL_UNITS } = await import('./mods');
+  const { applyCivilizationAndTechStats } = await import('./civilizations');
+
+  const byId = (id: string) => {
+    const u = MEDIEVAL_UNITS.find((def) => def.id === id);
+    if (!u) throw new Error(`Missing unit def ${id}`);
+    return u;
+  };
+  const villagerDef = byId('villager');
+  const archerDef = byId('longbowman');
+  const swordsmanDef = byId('swordsman');
+  const ramDef = byId('battering_ram');
+  const cannonDef = byId('bombard_cannon');
+
+  const tc = {
+    id: 'tc1',
+    type: 'building' as const,
+    faction: 'enemy' as const,
+    team: 2,
+    x: 20,
+    z: 20,
+    hp: 3000,
+    maxHp: 3000,
+    buildingType: 'town_center' as const,
+    buildingDef: DEFAULT_BUILDINGS.town_center,
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+    garrisonedUnitIds: [] as string[],
+  };
+  const armory = { ...tc, id: 'arm1', buildingType: 'armory_forge' as const, buildingDef: DEFAULT_BUILDINGS.armory_forge };
+  const tower = { ...tc, id: 'tw1', buildingType: 'tower' as const, buildingDef: DEFAULT_BUILDINGS.tower };
+
+  // 1. Garrison capacities: Special buildings hold more (14) than TC (10) and Watch Tower (5)
+  assert.equal(getBuildingMaxGarrison(armory), 14);
+  assert.equal(getBuildingMaxGarrison(tc), 10);
+  assert.equal(getBuildingMaxGarrison(tower), 5);
+
+  // 2. Town Center starts unmanned with 0 defensive shots, then fires scaled volleys when garrisoned
+  const unmannedTcDef = computeGarrisonDefenseProfile(tc, [], []);
+  assert.equal(unmannedTcDef.volleyCount, 0);
+  assert.equal(unmannedTcDef.damagePerBolt, 0);
+
+  const mkUnitEnt = (id: string, def: typeof villagerDef, garrisonedIn?: string) => ({
+    id,
+    type: 'unit' as const,
+    faction: 'enemy' as const,
+    team: 2,
+    x: 20,
+    z: 20,
+    hp: def.stats.maxHp,
+    maxHp: def.stats.maxHp,
+    unitDefId: def.id,
+    unitDef: def,
+    state: 'idle' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+    garrisonedInBuildingId: garrisonedIn,
+  });
+
+  const defenders = [
+    mkUnitEnt('d1', archerDef, 'tc1'),
+    mkUnitEnt('d2', archerDef, 'tc1'),
+    mkUnitEnt('d3', villagerDef, 'tc1'),
+    mkUnitEnt('d4', villagerDef, 'tc1'),
+  ];
+  tc.garrisonedUnitIds = defenders.map((d) => d.id);
+  const mannedTcDef = computeGarrisonDefenseProfile(tc, defenders, ['shared_arrow_slits', 'shared_murder_holes']);
+  assert.ok(mannedTcDef.volleyCount >= 2 && mannedTcDef.damagePerBolt >= 15, 'Manned Town Center gains multi-arrow volley fire');
+
+  // 3. Garrisoned units must NOT be targetable by enemy units
+  assert.equal(findClosestEnemy(18, 18, 'player', defenders), null);
+
+  // 4. Separate anti-building attack & armor balance:
+  const tcAge3Armor = getEffectiveBuildingArmor(tc, 3, ['shared_masonry']);
+  assert.ok(tcAge3Armor >= 12);
+  const swordsmanUnit = mkUnitEnt('sw1', swordsmanDef);
+  const swordVsTcDmg = calculateBuildingDamage(swordsmanUnit, tc, 3, ['shared_masonry']);
+  assert.ok(swordVsTcDmg <= 3, `Early soldier torch damage (${swordVsTcDmg}) should be strongly mitigated by Masonry TC`);
+
+  // Battering Ram ignores building armor + has high rangedDefense vs arrows
+  const ramUnit = mkUnitEnt('ram1', ramDef);
+  const ramVsTcDmg = calculateBuildingDamage(ramUnit, tc, 3, ['shared_masonry']);
+  assert.ok(ramVsTcDmg >= 90, `Battering ram (${ramVsTcDmg}) should crush building armor`);
+  const ramUpgradedStats = applyCivilizationAndTechStats(ramDef.stats, 'siege', 'medieval', ['shared_siege_engineers']);
+  assert.ok(ramUpgradedStats.buildingAttack! > ramDef.stats.buildingAttack!);
+
+  const arrowVsRam = getUnitVsUnitDamage(archerDef.stats.attack, ramUnit, true);
+  assert.ok(arrowVsRam <= 2, `Battering ram arrow resistance should blunt archers (${arrowVsRam})`);
+
+  const cannonUnit = mkUnitEnt('can1', cannonDef);
+  const cannonVsTcDmg = calculateBuildingDamage(cannonUnit, tc, 3, ['shared_masonry']);
+  assert.ok(cannonVsTcDmg >= 200, `Imperial bombard cannon (${cannonVsTcDmg}) should devastate fortified structures`);
+});
+
+test('economy-and-early-defense: 35/60s base gather rate, carry 15, Age I wall & tower unlock, and building combat stats inspection', async () => {
+  const { getBuildingCombatStats, calculateBuildingDamage } = await import('./rules');
+  const { isPlacementLocationValid } = await import('./collision');
+  const { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
+  const { getBuildableTypesForCiv } = await import('./civilizations');
+
+  const villager = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
+  const spiritWorker = ANIME_UNITS.find((u) => u.id === 'anime_spirit_harvester')!;
+  const goblinWorker = FANTASY_UNITS.find((u) => u.id === 'fantasy_goblin_sapper')!;
+  const swordsman = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
+
+  // 1. Gather rate ~35 resources per 60s (0.583/s) & carryCapacity 15
+  assert.ok(Math.abs(villager.stats.gatherSpeed - 35 / 60) < 0.01, `Expected ~0.583 gatherSpeed, got ${villager.stats.gatherSpeed}`);
+  assert.equal(villager.stats.carryCapacity, 15);
+  assert.equal(spiritWorker.stats.carryCapacity, 15);
+  assert.equal(goblinWorker.stats.carryCapacity, 15);
+
+  // 2. Age I unlocks both Wall and Watch Tower across all civilizations
+  assert.equal(DEFAULT_BUILDINGS.wall.requiredAge, 1);
+  assert.equal(DEFAULT_BUILDINGS.tower.requiredAge, 1);
+  assert.ok(getBuildableTypesForCiv('medieval').includes('wall'));
+  assert.ok(getBuildableTypesForCiv('anime').includes('wall'));
+  assert.ok(getBuildableTypesForCiv('fantasy').includes('wall'));
+
+  // 3. Regular early infantry only chips Age I walls/towers, requiring siege engines
+  const wallBldg = {
+    id: 'w1',
+    type: 'building' as const,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.wall.maxHp,
+    maxHp: DEFAULT_BUILDINGS.wall.maxHp,
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    isConstructed: true,
+    buildProgress: 1,
+    queue: [],
+    queueProgress: 0,
+    attackCooldown: 0,
+    garrisonedUnitIds: [] as string[],
+  };
+  const towerBldg = {
+    ...wallBldg,
+    id: 'tw_inspect',
+    x: 8,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.tower.maxHp,
+    maxHp: DEFAULT_BUILDINGS.tower.maxHp,
+    buildingType: 'tower' as const,
+    buildingDef: DEFAULT_BUILDINGS.tower,
+  };
+  const tcBldg = {
+    ...wallBldg,
+    id: 'tc_inspect',
+    x: -10,
+    z: 0,
+    hp: DEFAULT_BUILDINGS.town_center.maxHp,
+    maxHp: DEFAULT_BUILDINGS.town_center.maxHp,
+    buildingType: 'town_center' as const,
+    buildingDef: DEFAULT_BUILDINGS.town_center,
+  };
+
+  const swEnt = {
+    id: 'sw_chip',
+    type: 'unit' as const,
+    faction: 'enemy' as const,
+    x: 1,
+    z: 0,
+    hp: swordsman.stats.maxHp,
+    maxHp: swordsman.stats.maxHp,
+    unitDefId: swordsman.id,
+    unitDef: swordsman,
+    state: 'attacking' as const,
+    attackCooldown: 0,
+    abilityCooldown: 0,
+    velocity: { x: 0, z: 0 },
+    kills: 0,
+  };
+  assert.equal(calculateBuildingDamage(swEnt, wallBldg, 1, []), 1);
+  assert.equal(calculateBuildingDamage(swEnt, towerBldg, 1, []), 1);
+
+  // 4. Wall segments can chain tightly edge-to-edge while non-walls maintain clearance
+  assert.equal(isPlacementLocationValid(2.35, 0, DEFAULT_BUILDINGS.wall.size, [wallBldg], [], true), true);
+  assert.equal(isPlacementLocationValid(2.35, 0, DEFAULT_BUILDINGS.barracks.size, [wallBldg], [], false), false);
+
+  // 5. Building combat stats inspection accuracy
+  const wallStats = getBuildingCombatStats(wallBldg, [], 1, []);
+  assert.equal(wallStats.attackDamage, 0);
+  assert.equal(wallStats.buildingArmor, DEFAULT_BUILDINGS.wall.buildingArmor);
+  assert.ok(wallStats.attackMethod.includes('堅壁'));
+
+  const towerStats = getBuildingCombatStats(towerBldg, [], 1, ['shared_arrow_slits']);
+  assert.ok(towerStats.attackDamage >= 15);
+  assert.equal(DEFAULT_BUILDINGS.tower.maxHp, 700);
+  assert.ok((DEFAULT_BUILDINGS.tower.range || 0) <= 13);
+  assert.ok((DEFAULT_BUILDINGS.town_center.range || 0) > (DEFAULT_BUILDINGS.tower.range || 0));
+  assert.ok(towerStats.range >= (DEFAULT_BUILDINGS.tower.range || 13) + 2);
+  assert.ok(towerStats.attackType.includes('穿刺'));
+
+  const tcUnmannedStats = getBuildingCombatStats(tcBldg, [], 1, []);
+  assert.equal(tcUnmannedStats.volleyCount, 0);
+  assert.equal(tcUnmannedStats.range, DEFAULT_BUILDINGS.town_center.range);
+  assert.ok(tcUnmannedStats.buildingArmor >= 13);
+});
+
+test('map-resource-clearance-and-food-priority: zero nodes in base, closest gold/stone outside TC, and food speed deep_fish > shore_fish > hunt > berry = farm', async () => {
+  const { generateMapLayout } = await import('./mapGenerator');
+  const { generateSpawnPositions, getFoodGatherMultiplier, getFoodSourcePriority, findBestFoodResourceNode } = await import('./rules');
+  const { isPointInTerrainObstacle, isPointOnBridge } = await import('./collision');
+
+  // 1. Exact food speed & priority ordering
+  const deepRate = getFoodGatherMultiplier('deep_fish');
+  const shoreRate = getFoodGatherMultiplier('shore_fish');
+  const huntRate = getFoodGatherMultiplier('hunt');
+  const berryRate = getFoodGatherMultiplier('berry');
+  const farmRate = getFoodGatherMultiplier('farm');
+  assert.ok(deepRate > shoreRate, `Expected deep_fish (${deepRate}) > shore_fish (${shoreRate})`);
+  assert.ok(shoreRate > huntRate, `Expected shore_fish (${shoreRate}) > hunt (${huntRate})`);
+  assert.ok(huntRate > berryRate, `Expected hunt (${huntRate}) > berry (${berryRate})`);
+  assert.equal(berryRate, farmRate, `Expected berry (${berryRate}) === farm (${farmRate})`);
+
+  assert.ok(
+    getFoodSourcePriority('deep_fish') > getFoodSourcePriority('shore_fish') &&
+      getFoodSourcePriority('shore_fish') > getFoodSourcePriority('hunt') &&
+      getFoodSourcePriority('hunt') > getFoodSourcePriority('berry') &&
+      getFoodSourcePriority('berry') === getFoodSourcePriority('farm')
+  );
+
+  // 2. Priority selection beats closer lower-tier food sources cleanly
+  const sampleFoodNodes: ResourceNode[] = [
+    { id: 'farm1', resourceType: 'food', subtype: 'farm', x: 3, z: 0, amount: 2500, maxAmount: 2500 },
+    { id: 'berry1', resourceType: 'food', subtype: 'berry', x: 5, z: 0, amount: 350, maxAmount: 350 },
+    { id: 'hunt1', resourceType: 'food', subtype: 'hunt', x: 9, z: 0, amount: 400, maxAmount: 400 },
+    { id: 'shore1', resourceType: 'food', subtype: 'shore_fish', x: 14, z: 0, amount: 450, maxAmount: 450 },
+    { id: 'deep1', resourceType: 'food', subtype: 'deep_fish', x: 18, z: 0, amount: 650, maxAmount: 650 },
+  ];
+  // Land gatherers skip offshore deep_fish by default; naval fishing boats pick deep_fish first
+  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36)?.id, 'shore1');
+  assert.equal(findBestFoodResourceNode(0, 0, sampleFoodNodes, 36, true, true)?.id, 'deep1');
+  assert.equal(
+    findBestFoodResourceNode(0, 0, sampleFoodNodes.filter((n) => n.subtype !== 'deep_fish' && n.subtype !== 'shore_fish'), 36)?.id,
+    'hunt1'
+  );
+
+  // 3. Seeded layout invariants: enlarged map, no roads, zero nodes in base, closest gold/stone strictly outside TC range
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+  const { isOffshoreDeepWater } = await import('./collision');
+  const tcRange = DEFAULT_BUILDINGS.town_center.range || 15;
+  assert.equal(tcRange, 15);
+  assert.equal(DEFAULT_BUILDINGS.tower.range, 12);
+
+  const seeds = [101, 777, 2026, 4242, 9999];
+  const presets = ['river_valley', 'highland_basin', 'twin_lakes'] as const;
+  for (const preset of presets) {
+    for (const playerCount of [2, 3, 4, 6]) {
+      const spawns = generateSpawnPositions(playerCount, 58).map((sp, i) => ({
+        id: `slot_${i + 1}`,
+        x: sp.x,
+        z: sp.z,
+      }));
+      for (const seed of seeds) {
+        const layout = generateMapLayout(preset, 'standard', spawns, seed);
+        assert.equal((layout as any).roads, undefined, 'MapLayout should not generate any roads');
+
+        for (const sp of spawns) {
+          for (const node of layout.resourceNodes) {
+            const distToTc = Math.hypot(node.x - sp.x, node.z - sp.z);
+            assert.ok(
+              distToTc >= 9.0,
+              `${preset} (${playerCount}p seed=${seed}) node ${node.id} spawned too close to TC ${sp.id}: dist=${distToTc.toFixed(2)}`
+            );
+          }
+
+          const goldDists = layout.resourceNodes
+            .filter((n) => n.resourceType === 'gold')
+            .map((n) => Math.hypot(n.x - sp.x, n.z - sp.z))
+            .sort((a, b) => a - b);
+          const stoneDists = layout.resourceNodes
+            .filter((n) => n.resourceType === 'stone')
+            .map((n) => Math.hypot(n.x - sp.x, n.z - sp.z))
+            .sort((a, b) => a - b);
+
+          assert.ok(
+            goldDists.length > 0 && goldDists[0] > tcRange + 0.5 && goldDists[0] <= 22.0,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest gold at ${goldDists[0]?.toFixed(2)}, expected (${tcRange + 0.5}, 22.0]`
+          );
+          assert.ok(
+            stoneDists.length > 0 && stoneDists[0] > tcRange + 0.5 && stoneDists[0] <= 22.0,
+            `${preset} (${playerCount}p seed=${seed}) ${sp.id} closest stone at ${stoneDists[0]?.toFixed(2)}, expected (${tcRange + 0.5}, 22.0]`
+          );
+        }
+
+        if (preset === 'river_valley' || preset === 'twin_lakes') {
+          const shoreFish = layout.resourceNodes.filter((n) => n.subtype === 'shore_fish');
+          const deepFish = layout.resourceNodes.filter((n) => n.subtype === 'deep_fish');
+          assert.ok(shoreFish.length >= 4, `${preset} should spawn shore_fish nodes`);
+          assert.ok(deepFish.length >= 2, `${preset} should spawn deep_fish nodes`);
+          for (const fn of [...shoreFish, ...deepFish]) {
+            assert.equal(
+              isPointInTerrainObstacle(fn.x, fn.z, layout.waterRects, layout.waterDiscs, []),
+              true,
+              `${preset} fish ${fn.id} must be inside water`
+            );
+            assert.equal(
+              isPointOnBridge(fn.x, fn.z, layout.bridges),
+              false,
+              `${preset} fish ${fn.id} must not overlap bridges`
+            );
+          }
+          for (const df of deepFish) {
+            assert.equal(
+              isOffshoreDeepWater(df.x, df.z, layout.waterRects, layout.waterDiscs, layout.bridges, 5.5),
+              true,
+              `${preset} deep_fish ${df.id} must stay strictly offshore (>=5.5m from dry land)`
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+test('unit-rebalance-and-naval: villager 55/5/0.7 vs Age-1 infantry 1.6x/1.6x/2x, Age/unique scaling, and dock/fishing_boat constraints', async () => {
+  const { canUnitGatherNode } = await import('./rules');
+  const { MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, DEFAULT_BUILDINGS } = await import('./mods');
+  const { applyCivilizationAndTechStats, getBuildableTypesForCiv } = await import('./civilizations');
+  const { canPlaceDockLocation, isPlacementLocationValid } = await import('./collision');
+
+  const villager = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
+  const swordsman = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
+  const boat = MEDIEVAL_UNITS.find((u) => u.id === 'fishing_boat')!;
+
+  // 1. Exact baseline villager vs Age I infantry ratios
+  assert.equal(villager.stats.maxHp, 55);
+  assert.equal(villager.stats.attack, 5);
+  assert.equal(villager.stats.attackRate, 0.7);
+  assert.equal(villager.stats.defense, 0);
+
+  assert.equal(swordsman.stats.maxHp, 88); // 55 * 1.6
+  assert.equal(swordsman.stats.attack, 8); // 5 * 1.6
+  assert.equal(swordsman.stats.attackRate, 1.4); // 0.7 * 2
+  assert.equal(swordsman.stats.defense, 1);
+
+  // All Age I combat units keep low base defense (0..2) so early fights stay decisive without unkillable walls
+  for (const def of [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS]) {
+    if ((!def.requiredAge || def.requiredAge === 1) && def.category !== 'siege') {
+      assert.ok(def.stats.defense <= 2, `${def.id} Age 1 base defense ${def.stats.defense} exceeds <= 2`);
+    }
+  }
+
+  // 2. Age progression (I->IV) and Special Building Aura progressively scale unit threat
+  const age1 = applyCivilizationAndTechStats(swordsman.stats, 'melee', 'medieval', [], 1, false);
+  const age4WithAura = applyCivilizationAndTechStats(swordsman.stats, 'melee', 'medieval', [], 4, true);
+  assert.ok(age4WithAura.maxHp > age1.maxHp * 1.35, 'Age IV + Unique Aura should substantially boost unit HP');
+  assert.ok(age4WithAura.attack > age1.attack + 5, 'Age IV + Unique Aura should substantially boost unit ATK');
+  assert.ok(age4WithAura.defense >= age1.defense + 3, 'Age IV + Unique Aura should scale armor (+2 Age IV +1 Forge Aura)');
+
+  // 3. Gather permissions: villagers blocked from deep_fish; fishing_boat restricted to water fish nodes
+  const deepNode = { resourceType: 'food' as const, subtype: 'deep_fish' as const };
+  const shoreNode = { resourceType: 'food' as const, subtype: 'shore_fish' as const };
+  const woodNode = { resourceType: 'wood' as const, subtype: 'wood' as const };
+  assert.equal(canUnitGatherNode(villager, deepNode), false);
+  assert.equal(canUnitGatherNode(villager, shoreNode), true);
+  assert.equal(canUnitGatherNode(villager, woodNode), true);
+  assert.equal(canUnitGatherNode(boat, deepNode), true);
+  assert.equal(canUnitGatherNode(boat, shoreNode), true);
+  assert.equal(canUnitGatherNode(boat, woodNode), false);
+
+  // 4. Dock availability and shoreline-only placement
+  assert.ok(getBuildableTypesForCiv('medieval').includes('dock'));
+  assert.ok(getBuildableTypesForCiv('anime').includes('dock'));
+  assert.ok(getBuildableTypesForCiv('fantasy').includes('dock'));
+  assert.ok(DEFAULT_BUILDINGS.dock.trainableUnits.includes('fishing_boat'));
+
+  const riverRects = [{ x1: -80, z1: 0, x2: 80, z2: 0, kind: 'water' as const, halfWidth: 10 }];
+  // Water boundary is z=±10. Shoreline spot z=11 (sd = +1.0 within [-2.6, 3.2]) is valid; z=30 inland is invalid
+  assert.equal(canPlaceDockLocation(0, 11, DEFAULT_BUILDINGS.dock.size, [], [], riverRects, [], []), true);
+  assert.equal(canPlaceDockLocation(0, 30, DEFAULT_BUILDINGS.dock.size, [], [], riverRects, [], []), false);
+  assert.equal(
+    isPlacementLocationValid(0, 30, DEFAULT_BUILDINGS.dock.size, [], [], false, riverRects, [], [], 'dock'),
+    false
+  );
+  assert.equal(
+    isPlacementLocationValid(0, 11, DEFAULT_BUILDINGS.dock.size, [], [], false, riverRects, [], [], 'dock'),
+    true
+  );
+});
+
+
+
+test('medieval-assault: torch/sap channel, no burn DoT; greek fire profile', async () => {
+  const { getBuildingAssaultProfile, calculateBuildingDamage, getSiegeChannelMultiplier } = await import('./rules');
+  const { MEDIEVAL_UNITS, DEFAULT_BUILDINGS } = await import('./mods');
+  const sword = MEDIEVAL_UNITS.find((u) => u.id === 'swordsman')!;
+  const ram = MEDIEVAL_UNITS.find((u) => u.id === 'battering_ram')!;
+  const archer = MEDIEVAL_UNITS.find((u) => u.id === 'longbowman')!;
+  const flame = MEDIEVAL_UNITS.find((u) => u.id === 'greek_fire_siphon');
+  const farm = { buildingDef: DEFAULT_BUILDINGS.farm, buildingType: 'farm' as const };
+  const castle = { buildingDef: DEFAULT_BUILDINGS.castle, buildingType: 'castle' as const };
+
+  const torch = getBuildingAssaultProfile({ unitDef: sword, unitDefId: 'swordsman' });
+  assert.equal(torch.method, 'torch');
+  assert.equal(torch.wantsContact, true);
+
+  const ramP = getBuildingAssaultProfile({ unitDef: ram, unitDefId: 'battering_ram' });
+  assert.equal(ramP.method, 'ram');
+
+  const arrow = getBuildingAssaultProfile({ unitDef: archer, unitDefId: 'longbowman' });
+  assert.equal(arrow.method, 'arrow_chip');
+
+  if (flame) {
+    const g = getBuildingAssaultProfile({ unitDef: flame, unitDefId: 'greek_fire_siphon' });
+    assert.equal(g.method, 'greek_fire');
+  }
+
+  assert.ok(getSiegeChannelMultiplier(14, 'torch') > 1.4);
+  assert.equal(getSiegeChannelMultiplier(0, 'torch'), 1);
+
+  const fresh = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 0 }, farm, 1, [], [], []);
+  const sapped = calculateBuildingDamage({ unitDef: sword, unitDefId: 'swordsman', siegeChannelTime: 12 }, farm, 1, [], [], []);
+  assert.ok(sapped > fresh, 'sapping channel should increase torch damage');
+});
+
+
+test('ai-progression: every personality waits for the real landmark cost and can reach Age IV', async () => {
+  const {
+    DEFAULT_BUILDINGS,
+    DEFAULT_AI_RULES,
+    DEFENSIVE_AI_RULES,
+    EASY_AI_RULES,
+    HARD_AI_RULES,
+  } = await import('./mods');
+
+  const personalities = [
+    DEFAULT_AI_RULES,
+    DEFENSIVE_AI_RULES,
+    EASY_AI_RULES,
+    HARD_AI_RULES,
+  ];
+  const ageRules = [
+    ['landmark_barracks', 2],
+    ['landmark_citadel', 3],
+    ['landmark_arsenal', 4],
+  ] as const;
+
+  for (const rules of personalities) {
+    for (const [landmarkId, targetAge] of ageRules) {
+      const rule = rules.find((candidate) =>
+        candidate.action.type === 'advance_age' &&
+        candidate.action.targetId === landmarkId
+      );
+      assert.ok(rule, `Missing Age ${targetAge} rule for ${landmarkId}`);
+      const food = rule.conditions.find((condition) => condition.field === 'food');
+      const gold = rule.conditions.find((condition) => condition.field === 'gold');
+      const cost = DEFAULT_BUILDINGS[landmarkId].cost;
+      assert.equal(food?.operator, '>=');
+      assert.equal(gold?.operator, '>=');
+      assert.equal(food?.value, cost.food, `${rule.id} must wait for the actual food cost`);
+      assert.equal(gold?.value, cost.gold, `${rule.id} must wait for the actual gold cost`);
+    }
+  }
+});
+
+
+test('shrines: war, harvest and forge blessings have distinct economic identities', () => {
+  assert.deepEqual(getShrineIncome('war', false), { food: 0, wood: 1, gold: 3, stone: 0 });
+  assert.deepEqual(getShrineIncome('harvest', false), { food: 2, wood: 2, gold: 0, stone: 0 });
+  assert.deepEqual(getShrineIncome('forge', false), { food: 0, wood: 0, gold: 2, stone: 2 });
+  assert.deepEqual(getShrineIncome('harvest', true), { food: 3, wood: 2, gold: 0, stone: 0 });
+  assert.deepEqual(getShrineIncome('forge', true), { food: 0, wood: 0, gold: 3, stone: 3 });
+  assert.deepEqual(getShrineIncome('war', true), { food: 0, wood: 2, gold: 4, stone: 0 });
+});
+
+test('shrines: blessing activation rewards holding different shrine roles', () => {
+  assert.equal(getShrineBlessingHoldTime('forge'), 16);
+  assert.equal(getShrineBlessingHoldTime('war'), 18);
+  assert.equal(getShrineBlessingHoldTime('harvest'), 24);
+});
+
+
+test('star relic: falls once, channels only while a worker stands on it, and delivery is a choice', () => {
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT - 1, 'waiting'), false);
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT, 'waiting'), true);
+  assert.equal(starRelicShouldFall(STAR_RELIC_FALL_AT + 20, 'ground'), false);
+
+  let channel = 0;
+  channel = advanceStarRelicChannel(channel, true, 3);
+  assert.equal(starRelicChannelComplete(channel), false);
+  channel = advanceStarRelicChannel(channel, false, 1);
+  assert.ok(channel < 3, 'stepping away should decay the channel');
+  channel = advanceStarRelicChannel(0, true, STAR_RELIC_CHANNEL_SEC);
+  assert.equal(starRelicChannelComplete(channel), true);
+
+  let n = 0;
+  const site = pickStarRelicSite(() => {
+    n += 1;
+    return (n * 0.37) % 1;
+  }, [{ x: 0, z: 0 }]);
+  assert.ok(Math.hypot(site.x, site.z) > 20, 'landing should avoid the spawn courtyard');
+
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 10,
+      carrierZ: 0,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: { x: 10, z: 0, radius: 6, ownerFaction: 'neutral', carrierFaction: 'player' },
+    }),
+    'shrine'
+  );
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 38,
+      carrierZ: 1,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: null,
+    }),
+    'oath'
+  );
+  assert.equal(
+    resolveStarRelicDelivery({
+      carrierX: 0,
+      carrierZ: 0,
+      townCenterX: 40,
+      townCenterZ: 0,
+      shrine: { x: 20, z: 20, radius: 5, ownerFaction: 'player', carrierFaction: 'player' },
+    }),
+    'none'
+  );
+});
+
+test('counters: spear tips cavalry, cavalry tips melee, siege is soft vs units', () => {
+  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry', 'spearman') > 1.5);
+  assert.ok(getCategoryCounterMultiplier('cavalry', 'melee') > 1.15);
+  assert.ok(getCategoryCounterMultiplier('melee', 'cavalry') < 0.85);
+  assert.ok(getCategoryCounterMultiplier('siege', 'melee') < 0.5);
+  assert.equal(getCategoryCounterMultiplier('melee', 'melee'), 1);
+});
+
+test('military techs: shared line covers melee/ranged/cavalry by age and stacks with filters', async () => {
+  const { getAvailableTechsForBuilding, findTechDef, applyCivilizationAndTechStats } = await import('./civilizations');
+  const age1Barracks = getAvailableTechsForBuilding('barracks', 'medieval', [], 1).map((t) => t.id);
+  assert.ok(age1Barracks.includes('shared_basic_training'));
+  assert.ok(!age1Barracks.includes('shared_champion_line'));
+
+  const age3Archery = getAvailableTechsForBuilding('archery_range', 'medieval', [], 3).map((t) => t.id);
+  assert.ok(age3Archery.includes('shared_thumb_ring'));
+  assert.ok(age3Archery.includes('shared_bodkin'));
+
+  const charge = findTechDef('shared_cavalry_charge');
+  assert.ok(charge);
+  assert.equal(charge!.requiredAge, 3);
+
+  const base = {
+    maxHp: 100,
+    attack: 10,
+    defense: 1,
+    range: 1.2,
+    speed: 3,
+    attackRate: 1,
+    cost: { food: 50, wood: 0, gold: 0, stone: 0 },
+    trainTime: 10,
+    gatherSpeed: 0,
+    carryCapacity: 0,
+  };
+  const melee = applyCivilizationAndTechStats(base, 'melee', 'medieval', ['shared_basic_training', 'shared_pike_drill'], 2);
+  assert.ok(melee.attack >= 12);
+  assert.ok(melee.maxHp > 100);
+  const ranged = applyCivilizationAndTechStats(base, 'ranged', 'medieval', ['shared_fletching', 'shared_bodkin'], 2);
+  assert.ok(ranged.attack >= 14);
+  assert.ok(ranged.range >= 1.2 + 1);
+});
+
+test('economy techs: shared gather bonuses are moderate so they do not erase map control', async () => {
+  const { findTechDef } = await import('./civilizations');
+  const axe = findTechDef('shared_double_bit_axe');
+  assert.ok(axe && axe.effect.gatherMultiplier! <= 1.15);
+  const crop = findTechDef('shared_crop_rotation');
+  assert.ok(crop && crop.effect.gatherMultiplier! <= 1.16);
+  const wheel = findTechDef('shared_wheelbarrow');
+  assert.ok(wheel);
+  const guild = findTechDef('shared_guild_contracts');
+  assert.ok(guild && guild.requiredAge === 3);
+});
+
+test('percentage armor: low attack still bites heavy armor; high armor never fully nullifies', () => {
+  assert.equal(getArmorDamageReduction(0), 0);
+  assert.ok(getArmorDamageReduction(4) > 0.15 && getArmorDamageReduction(4) < 0.25);
+  assert.equal(getArmorDamageReduction(20), 0.55); // capped
+  // Flat would deal 1; percentage should deal more than 1 from atk 6 vs def 5
+  assert.ok(calculateDamage(6, 5) >= 3);
+  assert.ok(calculateDamage(12, 5) > calculateDamage(6, 5));
+  // Zero armor unchanged
+  assert.equal(calculateDamage(10, 0), 10);
+});

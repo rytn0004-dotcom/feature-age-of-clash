@@ -20,24 +20,31 @@ import {
   Minimize2,
   Maximize2,
   Keyboard,
+  FlaskConical,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
-import { BuildingType, LandmarkType } from '../types/game';
+import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import {
   canAfford,
   getBuildingCombatStats,
   getBuildingMaxGarrison,
+  getContestedShrineSummary,
   getEffectiveBuildingArmor,
+  getFactionPopulationStats,
 } from '../game/rules';
 import {
+  canResearchTech,
   canUnitGainXp,
   findTechDef,
   getAllTechsForBuilding,
+  getAllTechsForCiv,
   getBuildableTypesForCiv,
   getCivilizationConfig,
   getLevelTitle,
   getXpThresholdForLevel,
+  isTechLockedByExclusion,
+  isTechMissingPrerequisite,
   XP_ELIGIBLE_UNIT_ID,
 } from '../game/civilizations';
 import {
@@ -74,6 +81,8 @@ export const HUD: React.FC<HUDProps> = ({
   const minimapDynRef = useRef<HTMLCanvasElement | null>(null);
   const [showAgeModal, setShowAgeModal] = useState(false);
   const [showHotkeysModal, setShowHotkeysModal] = useState(false);
+  const [showTechTreeModal, setShowTechTreeModal] = useState(false);
+  const [techTreeFilter, setTechTreeFilter] = useState<'all' | 'eco' | 'counter' | 'doctrine' | 'fortify'>('all');
   const [isHudCompact, setIsHudCompact] = useState(false);
 
   useEffect(() => {
@@ -84,18 +93,19 @@ export const HUD: React.FC<HUDProps> = ({
   }, [engine]);
 
   useEffect(() => {
-    if (!showHotkeysModal && !showAgeModal) return;
+    if (!showHotkeysModal && !showAgeModal && !showTechTreeModal) return;
     const onModalKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
         setShowHotkeysModal(false);
         setShowAgeModal(false);
+        setShowTechTreeModal(false);
       }
     };
     window.addEventListener('keydown', onModalKeyDown, true);
     return () => window.removeEventListener('keydown', onModalKeyDown, true);
-  }, [showHotkeysModal, showAgeModal]);
+  }, [showHotkeysModal, showAgeModal, showTechTreeModal]);
 
   const NEXT_AGE_INFO: Record<
     number,
@@ -138,6 +148,10 @@ export const HUD: React.FC<HUDProps> = ({
     ? engine.resourceNodes.find((n) => n.id === engine.selectedNodeId)
     : null;
 
+  const selectedContestedPoint = engine.selectedContestedPointId
+    ? engine.contestedPoints?.find((cp) => cp.id === engine.selectedContestedPointId) ?? null
+    : null;
+
   const isSpectator = engine.isSpectatorMode;
   const observedFactionId = engine.getObservedFactionId();
   const observedParticipant = engine.getParticipant(observedFactionId);
@@ -145,11 +159,9 @@ export const HUD: React.FC<HUDProps> = ({
   const observedRes = engine.getResourcesForFaction(observedFactionId);
 
   const playerUnits = engine.units.filter((u) => engine.isHumanControlled(u.faction));
-  const observedUnits = engine.units.filter((u) => u.faction === observedFactionId && u.hp > 0);
-  const observedPop = observedUnits.length;
-  const observedMaxPop = engine.buildings
-    .filter((b) => b.faction === observedFactionId && b.isConstructed)
-    .reduce((acc, b) => acc + (b.buildingDef.populationProvided || 0), 10);
+  const observedPopStats = getFactionPopulationStats(observedFactionId, engine.buildings, engine.units);
+  const observedPop = observedPopStats.used;
+  const observedMaxPop = observedPopStats.max;
 
   const isMinimapDraggingRef = useRef(false);
   const lastGroupClickRef = useRef<{ num: number; time: number }>({ num: 0, time: 0 });
@@ -383,32 +395,53 @@ export const HUD: React.FC<HUDProps> = ({
 
       // Contested points
       if (engine.contestedPoints) {
+        const nowPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.01);
         engine.contestedPoints.forEach((cp) => {
           const [mx, my] = toMinimap(cp.x, cp.z);
-          const owner = cp.ownerFaction;
-          let fill = '#e2e8f0';
-          let stroke = '#fbbf24';
-          if (owner !== 'neutral') {
-            const p = engine.getParticipant(owner);
-            fill = p?.colorCss || '#38bdf8';
-            stroke = cp.siegeSupplyActive ? '#fdba74' : '#ffffff';
-          }
+          const summary = getContestedShrineSummary(cp, engine.participants);
+          const ownerColor = summary.isNeutral ? '#94a3b8' : summary.ownerColorCss;
+          const isSelected = engine.selectedContestedPointId === cp.id;
           const rr = Math.max(5, (cp.radius / mapSize) * w * 0.55);
-          dynCtx.strokeStyle = owner === 'neutral' ? 'rgba(251,191,36,0.45)' : stroke;
-          dynCtx.lineWidth = cp.siegeSupplyActive ? 2.4 : 1.2;
+
+          // Persistent owner / neutral capture radius ring
+          dynCtx.strokeStyle = summary.isNeutral
+            ? 'rgba(148,163,184,0.5)'
+            : ownerColor;
+          dynCtx.lineWidth = cp.siegeSupplyActive ? 2.4 : 1.5;
           dynCtx.beginPath();
           dynCtx.arc(mx, my, rr, 0, Math.PI * 2);
           dynCtx.stroke();
+
           if (cp.siegeSupplyActive) {
-            dynCtx.strokeStyle = 'rgba(251,191,36,0.35)';
-            dynCtx.lineWidth = 1;
+            dynCtx.strokeStyle = 'rgba(251,191,36,0.45)';
+            dynCtx.lineWidth = 1.2;
             dynCtx.beginPath();
-            dynCtx.arc(mx, my, rr + 2.5, 0, Math.PI * 2);
+            dynCtx.arc(mx, my, rr + 2.4, 0, Math.PI * 2);
             dynCtx.stroke();
           }
-          dynCtx.fillStyle = fill;
-          dynCtx.strokeStyle = '#0f172a';
-          dynCtx.lineWidth = 1.2;
+
+          // Animated contested warning halo when two opposing teams clash here
+          if (cp.isContested) {
+            dynCtx.strokeStyle = nowPulse > 0.5 ? '#ef4444' : '#fbbf24';
+            dynCtx.lineWidth = 2.2;
+            dynCtx.beginPath();
+            dynCtx.arc(mx, my, rr + 2.8 + nowPulse * 2.2, 0, Math.PI * 2);
+            dynCtx.stroke();
+          }
+
+          // Selection ring on minimap
+          if (isSelected) {
+            dynCtx.strokeStyle = '#ffffff';
+            dynCtx.lineWidth = 2;
+            dynCtx.beginPath();
+            dynCtx.arc(mx, my, rr + 4.2, 0, Math.PI * 2);
+            dynCtx.stroke();
+          }
+
+          // Shrine diamond colored by persistent owner
+          dynCtx.fillStyle = ownerColor;
+          dynCtx.strokeStyle = isSelected ? '#ffffff' : '#0f172a';
+          dynCtx.lineWidth = isSelected ? 1.8 : 1.2;
           dynCtx.beginPath();
           dynCtx.moveTo(mx, my - 5);
           dynCtx.lineTo(mx + 5, my);
@@ -417,11 +450,13 @@ export const HUD: React.FC<HUDProps> = ({
           dynCtx.closePath();
           dynCtx.fill();
           dynCtx.stroke();
-          if (cp.captureProgress > 0.05 && cp.captureProgress < 1) {
-            dynCtx.strokeStyle = '#fbbf24';
-            dynCtx.lineWidth = 2;
+
+          // Capture progress arc
+          if ((cp.captureProgress > 0.03 && cp.captureProgress < 0.995) || cp.isContested) {
+            dynCtx.strokeStyle = summary.capturingColorCss || (cp.isContested ? '#ef4444' : '#fbbf24');
+            dynCtx.lineWidth = 2.2;
             dynCtx.beginPath();
-            dynCtx.arc(mx, my, 7, -Math.PI / 2, -Math.PI / 2 + cp.captureProgress * Math.PI * 2);
+            dynCtx.arc(mx, my, 7.5, -Math.PI / 2, -Math.PI / 2 + Math.max(0.05, cp.captureProgress) * Math.PI * 2);
             dynCtx.stroke();
           }
         });
@@ -609,15 +644,15 @@ export const HUD: React.FC<HUDProps> = ({
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
   const humanCiv = getCivilizationConfig(humanCivId);
   const researchedTechs = engine.getResearchedTechs(observedFactionId);
+  const allCivTechs = getAllTechsForCiv(humanCivId);
   const buildableTypes = getBuildableTypesForCiv(humanCivId);
   const compactBuildTypes: BuildingType[] = [
+    'house',
     humanCiv.uniqueBuildingType,
     'barracks',
     'wall',
     'tower',
     'farm',
-    'granary',
-    'market',
   ];
 
   return (
@@ -678,10 +713,32 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
 
           {/* Population */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/92 border border-blue-500/30 rounded-lg shadow shrink-0 whitespace-nowrap">
-            <Users className="w-3.5 h-3.5 text-blue-400" />
+          <div
+            data-population-badge="true"
+            className={`flex items-center gap-1 px-2 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap ${
+              observedPop >= observedMaxPop
+                ? 'border-rose-500/70'
+                : observedPopStats.totalReserved >= observedMaxPop
+                ? 'border-amber-400/70'
+                : 'border-blue-500/30'
+            }`}
+            title={
+              observedPopStats.totalReserved >= observedMaxPop
+                ? '人口已達上限！請選取村民建造「房屋」(快捷鍵 E) 提升 +5 人口上限'
+                : '目前人口 / 人口上限（建造房屋可 +5 人口）'
+            }
+          >
+            <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
             <span className="text-[11px] font-bold text-slate-300">人口</span>
-            <span className="text-xs font-extrabold text-blue-300 tabular-nums">
+            <span
+              className={`text-xs font-extrabold tabular-nums ${
+                observedPop >= observedMaxPop
+                  ? 'text-rose-400'
+                  : observedPopStats.totalReserved >= observedMaxPop
+                  ? 'text-amber-300'
+                  : 'text-blue-300'
+              }`}
+            >
               {observedPop}/{observedMaxPop}
             </span>
           </div>
@@ -706,17 +763,21 @@ export const HUD: React.FC<HUDProps> = ({
             )}
           </div>
 
-          {/* Civilization & Tech Summary Badge */}
-          <div
+          {/* Civilization & Interactive Tech Tree Summary Button */}
+          <button
+            type="button"
             data-civ-badge="true"
-            className="flex items-center gap-1.5 px-2 py-1 bg-slate-900/92 border border-cyan-500/40 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={humanCiv.progressionSummary}
+            data-open-tech-tree="true"
+            onClick={() => setShowTechTreeModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/92 hover:bg-slate-800 border border-cyan-500/50 hover:border-cyan-400 rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors"
+            title={`${humanCiv.progressionSummary}（點擊檢視文明科技博弈總覽與互斥路線）`}
           >
             <span className="text-xs">{humanCiv.icon}</span>
+            <FlaskConical className="w-3.5 h-3.5 text-cyan-300" />
             <span className="text-[11px] font-extrabold text-white">
-              {humanCiv.shortName} · <span className="text-cyan-300">科技 {researchedTechs.length}/4</span>
+              {humanCiv.shortName} · <span className="text-cyan-300 tabular-nums">科技 {researchedTechs.length}/{allCivTechs.length}</span>
             </span>
-          </div>
+          </button>
 
           {/* Idle Villagers Fast Access */}
           {!isSpectator && (() => {
@@ -787,6 +848,13 @@ export const HUD: React.FC<HUDProps> = ({
                 if (m) {
                   const bBadge = m.getObjectByName('bldgBadge');
                   if (bBadge) bBadge.visible = engine.showOverheadBadges;
+                }
+              });
+              engine.contestedPoints.forEach((cp) => {
+                const m = (engine as any).contestedMeshes.get(cp.id);
+                if (m) {
+                  const sBadge = m.getObjectByName('shrineBadge');
+                  if (sBadge) sBadge.visible = engine.showOverheadBadges;
                 }
               });
               (engine as any).onStateChange?.();
@@ -909,8 +977,66 @@ export const HUD: React.FC<HUDProps> = ({
       {/* ================= BOTTOM UNIFIED COMMAND DOCK ================= */}
       <footer className="p-2 md:p-3 bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent pointer-events-none">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-end gap-2.5 pointer-events-none">
-          {/* 1. Minimap with Legend and Mouse Dragging */}
-          <div className="flex flex-col gap-1 shrink-0 pointer-events-auto">
+          {/* 1. Minimap with Contested Objectives, Legend and Mouse Dragging */}
+          <div className="flex flex-col gap-1 shrink-0 pointer-events-auto w-32 md:w-36">
+            {/* Contested objectives status (clickable to focus & inspect) */}
+            {engine.contestedPoints && engine.contestedPoints.length > 0 && (
+              <div className="px-1 py-1 rounded bg-slate-950/92 border border-slate-700 text-[9px] text-slate-300 space-y-0.5 shadow-lg">
+                {engine.contestedPoints.map((cp) => {
+                  const summary = getContestedShrineSummary(cp, engine.participants);
+                  const isSelected = engine.selectedContestedPointId === cp.id;
+                  const tag = cp.isContested
+                    ? `⚔️ 爭奪 ${summary.progressPct}%`
+                    : summary.statusKind === 'capturing'
+                    ? `🚩 ${summary.progressPct}%`
+                    : summary.statusKind === 'blessed'
+                    ? `✨ ${summary.ownerName}`
+                    : summary.statusKind === 'owned'
+                    ? summary.ownerName
+                    : '中立';
+                  return (
+                    <button
+                      key={cp.id}
+                      type="button"
+                      data-shrine-pill={cp.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        engine.selectContestedPoint(cp.id, true);
+                      }}
+                      className={`w-full flex items-center justify-between gap-1.5 px-1.5 py-0.5 rounded border text-left transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'border-amber-400 bg-slate-800/95 text-white'
+                          : cp.isContested
+                          ? 'border-red-500/70 bg-red-950/60 hover:bg-red-900/60 text-amber-100'
+                          : 'border-transparent hover:border-slate-600 hover:bg-slate-800/80'
+                      }`}
+                      title={`點擊聚焦並檢視 ${cp.label} (${summary.statusLabel})`}
+                    >
+                      <span className="flex items-center gap-1 truncate">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0 border border-white/50"
+                          style={{ backgroundColor: summary.ownerColorCss }}
+                        />
+                        <span className="truncate">{summary.shrineIcon} {cp.label}</span>
+                      </span>
+                      <span
+                        className={`shrink-0 font-bold ${cp.isContested ? 'text-amber-300 animate-pulse' : ''}`}
+                        style={
+                          !cp.isContested && !summary.isNeutral
+                            ? { color: summary.ownerColorCss }
+                            : !cp.isContested && summary.capturingColorCss && summary.progressPct > 2
+                            ? { color: summary.capturingColorCss }
+                            : undefined
+                        }
+                      >
+                        {tag}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Minimap Legend */}
             <div className="flex items-center justify-between px-1.5 py-0.5 bg-slate-900/95 border border-slate-800 rounded text-[9px] text-slate-300 font-bold shadow">
               {isSpectator ? (
@@ -927,41 +1053,6 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
 
             <div className="relative w-32 h-32 md:w-36 md:h-36 bg-slate-900 border border-amber-600/70 rounded-lg overflow-hidden shadow-2xl shrink-0 touch-none">
-              
-              {/* Contested objectives status */}
-              {engine.contestedPoints && engine.contestedPoints.length > 0 && (
-                <div className="absolute bottom-full left-0 right-0 mb-1 px-1.5 py-1 rounded bg-slate-950/85 border border-slate-700 text-[9px] text-slate-300 space-y-0.5 pointer-events-none">
-                  {engine.contestedPoints.map((cp) => {
-                    const owned = cp.ownerFaction === engine.humanPlayerId;
-                    const enemy =
-                      cp.ownerFaction !== 'neutral' &&
-                      cp.ownerFaction !== engine.humanPlayerId;
-                    const tag = owned
-                      ? cp.siegeSupplyActive
-                        ? '補給中'
-                        : '己方'
-                      : enemy
-                      ? '敵方'
-                      : cp.captureProgress > 0.1
-                      ? `爭奪 ${Math.round(cp.captureProgress * 100)}%`
-                      : '中立';
-                    const col = owned
-                      ? 'text-sky-300'
-                      : enemy
-                      ? 'text-rose-300'
-                      : 'text-amber-200';
-                    const shrineIcon = cp.shrineType === 'war' ? '⚔' : cp.shrineType === 'harvest' ? '🌾' : '⚒';
-                    const shrineRole = cp.shrineType === 'war' ? '戰意' : cp.shrineType === 'harvest' ? '豐饒' : '鍛造';
-                    return (
-                      <div key={cp.id} className="flex justify-between gap-2">
-                        <span className="truncate">{shrineIcon} {cp.label} · {shrineRole}</span>
-                        <span className={col}>{tag}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               <canvas
                 ref={minimapCanvasRef}
                 width={180}
@@ -1270,7 +1361,35 @@ export const HUD: React.FC<HUDProps> = ({
                     <span className="text-xs text-amber-300 font-mono font-bold">{Math.round(selectedNode.amount)}/{selectedNode.maxAmount}</span>
                   </div>
                 )}
-                {!selectedUnits.length && !selectedBuilding && !selectedNode && (
+                {!selectedUnits.length && !selectedBuilding && !selectedNode && selectedContestedPoint && (() => {
+                  const summary = getContestedShrineSummary(selectedContestedPoint, engine.participants);
+                  return (
+                    <div data-shrine-inspector="true" className="flex items-center gap-3 w-full">
+                      <span className="text-sm shrink-0">{summary.shrineIcon}</span>
+                      <span className="text-xs font-bold text-white truncate">{selectedContestedPoint.label}</span>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-white/25 font-bold flex items-center gap-1 shrink-0"
+                        style={{ backgroundColor: `${summary.ownerColorCss}30`, color: summary.isNeutral ? '#cbd5e1' : '#ffffff' }}
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: summary.ownerColorCss }} />
+                        {summary.ownerName}
+                      </span>
+                      <div className="w-24 h-2 bg-slate-800 rounded-full overflow-hidden shrink-0">
+                        <div
+                          className="h-full transition-all"
+                          style={{
+                            width: `${summary.progressPct}%`,
+                            backgroundColor: summary.capturingColorCss || summary.ownerColorCss,
+                          }}
+                        />
+                      </div>
+                      <span className={`text-[11px] font-mono font-bold shrink-0 ${selectedContestedPoint.isContested ? 'text-amber-300 animate-pulse' : 'text-slate-200'}`}>
+                        {selectedContestedPoint.isContested ? `⚔️ 爭奪 ${summary.progressPct}%` : `${summary.progressPct}%`}
+                      </span>
+                    </div>
+                  );
+                })()}
+                {!selectedUnits.length && !selectedBuilding && !selectedNode && !selectedContestedPoint && (
                   <div className="text-xs text-slate-400 flex items-center gap-2">
                     <span>🔍 極簡模式：點擊戰場單位或建築即可顯示控制項</span>
                   </div>
@@ -1435,6 +1554,36 @@ export const HUD: React.FC<HUDProps> = ({
                       <span>速: {primary.unitDef.stats.speed}</span>
                     </div>
                   </div>
+
+                  {(primary.unitDef.stats.hpRegenPerSec || primary.unitDef.stats.bonusVsCategory) && (
+                    <div className="flex flex-wrap gap-1.5 pt-0.5 text-[10px]">
+                      {primary.unitDef.stats.hpRegenPerSec && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-bold">
+                          🌿 再生 +{primary.unitDef.stats.hpRegenPerSec}/秒
+                        </span>
+                      )}
+                      {primary.unitDef.stats.bonusVsCategory?.cavalry && (
+                        <span className="px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-500/40 font-bold">
+                          🔱 對騎兵 +{primary.unitDef.stats.bonusVsCategory.cavalry}
+                        </span>
+                      )}
+                      {primary.unitDef.stats.bonusVsCategory?.ranged && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-500/40 font-bold">
+                          🗡️ 對遠程 +{primary.unitDef.stats.bonusVsCategory.ranged}
+                        </span>
+                      )}
+                      {primary.unitDef.stats.bonusVsCategory?.melee && (
+                        <span className="px-1.5 py-0.5 rounded bg-orange-950/70 text-orange-300 border border-orange-500/40 font-bold">
+                          🎯 對步兵 +{primary.unitDef.stats.bonusVsCategory.melee}
+                        </span>
+                      )}
+                      {primary.unitDef.stats.bonusVsCategory?.worker && (
+                        <span className="px-1.5 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-500/40 font-bold">
+                          ⚔️ 對工人 +{primary.unitDef.stats.bonusVsCategory.worker}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Worker Construction Actions or Military Abilities */}
@@ -1707,6 +1856,7 @@ export const HUD: React.FC<HUDProps> = ({
                       <span className="text-slate-400">🛡️ 防禦／城甲</span>
                       <span className="font-mono font-bold text-sky-300">
                         城甲 {bCombatStats.buildingArmor}
+                        {selectedBuilding.buildingDef.populationProvided ? ` · 🏠+${selectedBuilding.buildingDef.populationProvided}` : ''}
                       </span>
                     </div>
                   </div>
@@ -1899,10 +2049,23 @@ export const HUD: React.FC<HUDProps> = ({
                   (selectedBuilding.buildingDef.trainableUnits.length > 0 ||
                     bldgTechs.length > 0 ||
                     selectedBuilding.buildingDef.civExclusive) && (
-                  <div className="border-t md:border-t-0 md:border-l border-slate-800 md:pl-3 flex flex-col gap-2 max-w-md">
-                    {selectedBuilding.buildingDef.trainableUnits.length > 0 && (
+                  <div className={`border-t md:border-t-0 md:border-l border-slate-800 md:pl-3 flex flex-col gap-2 ${bldgTechs.length > 3 ? 'max-w-xl' : 'max-w-md'}`}>
+                    {selectedBuilding.buildingDef.trainableUnits.length > 0 && (() => {
+                      const bPopStats = getFactionPopulationStats(selectedBuilding.faction, engine.buildings, engine.units);
+                      const isBldgPopFull = bPopStats.totalReserved >= bPopStats.max;
+                      return (
                       <div>
-                        <div className="text-[11px] font-bold text-amber-400 mb-1">訓練文明部隊</div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-[11px] font-bold text-amber-400">訓練文明部隊</span>
+                          {isBldgPopFull && (
+                            <span
+                              data-pop-full-warning="true"
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/60"
+                            >
+                              🏠 人口已滿 ({bPopStats.totalReserved}/{bPopStats.max}) · 請建房屋 (+5)
+                            </span>
+                          )}
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                           {selectedBuilding.buildingDef.trainableUnits.map((uId, uIdx) => {
                             const uDef = engine.findUnitDef(uId, selectedBuilding.faction);
@@ -1920,11 +2083,13 @@ export const HUD: React.FC<HUDProps> = ({
                                 className={`flex flex-col items-start px-2 py-1 rounded border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
                                   ageLocked
                                     ? 'bg-slate-900/80 border-slate-800 text-slate-400'
+                                    : isBldgPopFull
+                                    ? 'bg-rose-950/45 hover:bg-rose-900/60 border-rose-500/60 text-rose-100'
                                     : isXpHero
                                     ? 'bg-amber-950/60 hover:bg-amber-900/70 border-amber-400/70 text-amber-100'
                                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/80 text-slate-200'
                                 }`}
-                                title={`${uDef.name}${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''} - ${uDef.description}`}
+                                title={`${uDef.name}${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
                               >
                                 <span className="font-bold text-white text-[11px] flex items-center gap-1">
                                   {trainHotkey && !ageLocked && (
@@ -1936,6 +2101,11 @@ export const HUD: React.FC<HUDProps> = ({
                                   {ageLocked && (
                                     <span className="text-[9px] px-1 rounded bg-red-950 text-red-300 border border-red-500/40">
                                       🔒時代{uDef.requiredAge}
+                                    </span>
+                                  )}
+                                  {!ageLocked && isBldgPopFull && (
+                                    <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-300 border border-rose-500/40">
+                                      🏠人口滿
                                     </span>
                                   )}
                                   {isXpHero && !ageLocked && (
@@ -1954,24 +2124,38 @@ export const HUD: React.FC<HUDProps> = ({
                           })}
                         </div>
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {bldgTechs.length > 0 && (
                       <div>
-                        <div className="text-[11px] font-bold text-cyan-300 mb-1">🔬 文明科技養成</div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-[11px] font-bold text-cyan-300">🔬 文明科技與戰術抉擇</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowTechTreeModal(true)}
+                            className="text-[10px] text-cyan-300/90 hover:text-cyan-200 underline cursor-pointer"
+                          >
+                            科技總覽 ➔
+                          </button>
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                           {bldgTechs.map((tech, tIdx) => {
                             const isDone = bldgResearched.includes(tech.id);
                             const isActive = selectedBuilding.activeTechId === tech.id;
-                            const ageLocked = !!(tech.requiredAge && engine.playerAge < tech.requiredAge);
+                            const exclusionConflict = !isDone ? isTechLockedByExclusion(tech, bldgResearched) : null;
+                            const missingPrereq = !isDone && !exclusionConflict ? isTechMissingPrerequisite(tech, bldgResearched) : null;
+                            const ageLocked = !!(tech.requiredAge && bFactionAge < tech.requiredAge);
+                            const checkRes = canResearchTech(tech, bldgResearched, bFactionAge as 1 | 2 | 3 | 4);
                             const affordable = canAfford(engine.playerResources, tech.cost);
-                            const disabled = isDone || !!selectedBuilding.activeTechId || ageLocked || !affordable;
+                            const disabled = isSpectator || isDone || !!selectedBuilding.activeTechId || !checkRes.ok || !affordable;
                             const techHotkey = TECH_SLOT_HOTKEYS[tIdx];
 
                             return (
                               <button
                                 key={tech.id}
                                 data-tech-id={tech.id}
+                                data-tech-excluded={exclusionConflict ? 'true' : 'false'}
                                 disabled={disabled}
                                 onClick={() => engine.startResearch(selectedBuilding.id, tech.id)}
                                 className={`flex flex-col items-start px-2 py-1 rounded border text-left transition-colors ${
@@ -1979,26 +2163,45 @@ export const HUD: React.FC<HUDProps> = ({
                                     ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200 cursor-default'
                                     : isActive
                                     ? 'bg-cyan-950/80 border-cyan-400 text-cyan-200 cursor-wait'
+                                    : exclusionConflict
+                                    ? 'bg-rose-950/40 border-rose-800/60 text-rose-300/70 opacity-65 cursor-not-allowed line-through'
                                     : disabled
-                                    ? 'bg-slate-900/80 border-slate-800 text-slate-500 opacity-60 cursor-not-allowed'
+                                    ? 'bg-slate-900/80 border-slate-800 text-slate-500 opacity-65 cursor-not-allowed'
+                                    : tech.exclusiveGroup
+                                    ? 'bg-indigo-950/75 hover:bg-indigo-900/80 border-amber-400/70 text-white cursor-pointer'
                                     : 'bg-slate-800 hover:bg-slate-700 border-cyan-500/50 text-white cursor-pointer'
                                 }`}
-                                title={`${tech.name}${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})`}
+                                title={`${tech.name}${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})${!checkRes.ok && checkRes.reason ? ` [${checkRes.reason}]` : ''}`}
                               >
-                                <span className="text-[11px] font-bold flex items-center gap-1">
-                                  {techHotkey && !isDone && (
+                                <span className="text-[11px] font-bold flex items-center gap-1 flex-wrap">
+                                  {techHotkey && !isDone && !exclusionConflict && (
                                     <span className="text-[9px] font-mono px-1 rounded bg-slate-950/85 text-cyan-300 border border-slate-700">
                                       {techHotkey}
                                     </span>
                                   )}
                                   <span>{tech.icon}</span>
                                   <span>{tech.name}</span>
+                                  {tech.roleTag && !isDone && !exclusionConflict && (
+                                    <span
+                                      className={`text-[9px] px-1 rounded border ${
+                                        tech.exclusiveGroup
+                                          ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
+                                          : 'bg-slate-950/70 text-cyan-200 border-slate-700'
+                                      }`}
+                                    >
+                                      {tech.roleTag}
+                                    </span>
+                                  )}
                                   {isDone && <span className="text-[10px] text-emerald-400">✅</span>}
                                   {isActive && <span className="text-[10px] text-cyan-300">⏳</span>}
-                                  {ageLocked && !isDone && <span className="text-[10px] text-red-400">🔒時代{tech.requiredAge}</span>}
+                                  {exclusionConflict && <span className="text-[9px] text-rose-400 no-underline">⛔互斥</span>}
+                                  {!exclusionConflict && ageLocked && !isDone && <span className="text-[9px] text-red-400">🔒時代{tech.requiredAge}</span>}
+                                  {!exclusionConflict && !ageLocked && missingPrereq && !isDone && (
+                                    <span className="text-[9px] text-amber-300">🔒需{missingPrereq.name.slice(0, 4)}</span>
+                                  )}
                                 </span>
                                 <span className="text-[9px] text-cyan-300 font-semibold">{tech.effectLabel}</span>
-                                {!isDone && (
+                                {!isDone && !exclusionConflict && (
                                   <span className="text-[9px] text-amber-400 font-mono">
                                     {tech.cost.food ? `${tech.cost.food}F ` : ''}
                                     {tech.cost.wood ? `${tech.cost.wood}W ` : ''}
@@ -2112,8 +2315,191 @@ export const HUD: React.FC<HUDProps> = ({
               </div>
             )}
 
+            {/* If a Contested Shrine Point is selected */}
+            {!selectedUnits.length && !selectedBuilding && !selectedNode && selectedContestedPoint && (() => {
+              const cp = selectedContestedPoint;
+              const summary = getContestedShrineSummary(cp, engine.participants);
+              const barColor = summary.capturingColorCss || (cp.isContested ? '#ef4444' : summary.ownerColorCss);
+              const contestingList = (cp.contestingFactions || [])
+                .map((fid) => engine.getParticipant(fid))
+                .filter((p): p is NonNullable<typeof p> => !!p);
+              return (
+                <div
+                  data-shrine-inspector="true"
+                  className={`flex flex-col md:flex-row items-stretch gap-3 h-full p-1.5 border rounded-lg ${
+                    cp.isContested
+                      ? 'border-red-500/60 bg-red-950/20'
+                      : 'border-amber-500/35 bg-slate-950/50'
+                  }`}
+                >
+                  {/* Shrine Icon & Header */}
+                  <div className="flex md:flex-col items-center justify-center gap-2 px-2 shrink-0">
+                    <div
+                      className="w-12 h-12 rounded-xl border-2 flex items-center justify-center text-2xl shadow-lg"
+                      style={{
+                        borderColor: summary.ownerColorCss,
+                        backgroundColor: `${summary.ownerColorCss}22`,
+                      }}
+                    >
+                      {summary.shrineIcon}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => engine.setCameraFocus(cp.x, cp.z)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-amber-300 cursor-pointer whitespace-nowrap"
+                    >
+                      📍 定位據點
+                    </button>
+                  </div>
+
+                  {/* Main Telemetry */}
+                  <div className="flex-1 space-y-1.5 min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-white text-sm">{cp.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-200 border border-slate-700 font-bold">
+                          {summary.shrineRole}
+                        </span>
+                        {/* Persistent Owner Tag */}
+                        <span
+                          data-shrine-owner={cp.ownerFaction}
+                          className="text-[11px] px-2 py-0.5 rounded-full border font-extrabold flex items-center gap-1.5"
+                          style={{
+                            borderColor: summary.ownerColorCss,
+                            backgroundColor: `${summary.ownerColorCss}28`,
+                            color: summary.isNeutral ? '#e2e8f0' : '#ffffff',
+                          }}
+                        >
+                          <span
+                            className="w-2.5 h-2.5 rounded-full border border-white/70 shrink-0"
+                            style={{ backgroundColor: summary.ownerColorCss }}
+                          />
+                          <span>目前佔領者：{summary.ownerName}</span>
+                        </span>
+                      </div>
+
+                      {/* Contested / Status Tag */}
+                      <span
+                        data-shrine-contested={cp.isContested ? 'true' : 'false'}
+                        className={`text-[11px] px-2.5 py-0.5 rounded-full font-black border shrink-0 ${
+                          cp.isContested
+                            ? 'bg-red-600/85 border-amber-300 text-white animate-pulse'
+                            : summary.statusKind === 'capturing'
+                            ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                            : summary.statusKind === 'blessed'
+                            ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
+                            : 'bg-slate-800 border-slate-700 text-slate-200'
+                        }`}
+                      >
+                        {summary.statusLabel}
+                      </span>
+                    </div>
+
+                    {/* Progress Bars Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Capture Progress */}
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-300 font-bold flex items-center gap-1">
+                            <span>🚩 佔領進度</span>
+                            {summary.capturingName && (
+                              <span
+                                className="px-1.5 py-0 rounded text-[10px] font-extrabold border border-white/20"
+                                style={{
+                                  backgroundColor: `${summary.capturingColorCss}30`,
+                                  color: '#ffffff',
+                                }}
+                              >
+                                {summary.capturingName}
+                              </span>
+                            )}
+                          </span>
+                          <span data-shrine-progress={summary.progressPct} className="font-mono font-black text-amber-300">
+                            {summary.progressPct}%
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/70">
+                          <div
+                            className="h-full transition-all"
+                            style={{
+                              width: `${summary.progressPct}%`,
+                              backgroundColor: barColor,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Blessing Hold Progress */}
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-300 font-bold">
+                            ✨ {summary.shrineBlessingName}
+                          </span>
+                          <span className="font-mono font-bold text-cyan-300">
+                            {cp.siegeSupplyActive
+                              ? '已啟動 (100%)'
+                              : `${Math.round(cp.holdTime || 0)}s / ${summary.blessingThreshold}s (${summary.blessingPct}%)`}
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/70">
+                          <div
+                            className={`h-full transition-all ${cp.siegeSupplyActive ? 'bg-amber-400' : 'bg-cyan-400'}`}
+                            style={{ width: `${summary.blessingPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Income, Active Forces & Perk Description */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-slate-400 font-bold">每秒產出:</span>
+                        {summary.income.food > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-950/70 border border-amber-500/40 text-amber-300 font-mono font-bold">
+                            🌾+{summary.income.food}
+                          </span>
+                        )}
+                        {summary.income.wood > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 font-mono font-bold">
+                            🪵+{summary.income.wood}
+                          </span>
+                        )}
+                        {summary.income.gold > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-yellow-950/70 border border-yellow-500/40 text-yellow-300 font-mono font-bold">
+                            🪙+{summary.income.gold}
+                          </span>
+                        )}
+                        {summary.income.stone > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-200 font-mono font-bold">
+                            🪨+{summary.income.stone}
+                          </span>
+                        )}
+                        {contestingList.length > 0 && (
+                          <span className="ml-1 flex items-center gap-1 text-slate-300">
+                            <span className="text-slate-400">區內勢力:</span>
+                            {contestingList.map((p) => (
+                              <span
+                                key={p.id}
+                                className="px-1.5 py-0.5 rounded border border-white/25 text-[10px] font-bold"
+                                style={{ backgroundColor: `${p.colorCss}35`, color: '#ffffff' }}
+                              >
+                                {p.name}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 truncate max-w-md" title={summary.shrinePerkDesc}>
+                        ✦ {summary.shrinePerkDesc}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* If an Enemy / AI Entity is inspected (strictly read-only intel) */}
-            {!selectedUnits.length && !selectedBuilding && !selectedNode && engine.inspectedEntity && (() => {
+            {!selectedUnits.length && !selectedBuilding && !selectedNode && !selectedContestedPoint && engine.inspectedEntity && (() => {
               const { type, id } = engine.inspectedEntity;
               const enemyUnit = type === 'unit' ? engine.units.find((u) => u.id === id) : null;
               const enemyBldg = type === 'building' ? engine.buildings.find((b) => b.id === id) : null;
@@ -2301,7 +2687,7 @@ export const HUD: React.FC<HUDProps> = ({
             })()}
 
             {/* When nothing is selected and no enemy is inspected */}
-            {!selectedUnits.length && !selectedBuilding && !selectedNode && !engine.inspectedEntity && (
+            {!selectedUnits.length && !selectedBuilding && !selectedNode && !selectedContestedPoint && !engine.inspectedEntity && (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs">
                 {isSpectator
                   ? '👁️ 全 AI 觀戰模式：點擊上方勢力切換追蹤視角，或左鍵點擊戰場任一單位／建築檢視即時戰況。'
@@ -2476,6 +2862,271 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
       )}
+
+      {/* ================= STRATEGIC TECH TREE & DOCTRINE MODAL ================= */}
+      {showTechTreeModal && (() => {
+        const matchesFilter = (t: TechDefinition): boolean => {
+          if (techTreeFilter === 'all') return true;
+          if (techTreeFilter === 'doctrine') return !!t.exclusiveGroup;
+          if (techTreeFilter === 'eco') {
+            return (
+              t.buildingType === 'lumber_camp' ||
+              t.buildingType === 'mining_camp' ||
+              t.buildingType === 'granary' ||
+              t.buildingType === 'dock' ||
+              !!t.effect.gatherMultiplier ||
+              !!t.effect.gatherByType ||
+              !!t.effect.carryCapacityBonus
+            );
+          }
+          if (techTreeFilter === 'counter') {
+            return (
+              !!t.effect.bonusVsCategory ||
+              !!t.effect.rangedDefenseBonus ||
+              !!t.effect.attackRateMultiplier ||
+              t.id === 'shared_shield_pavise' ||
+              t.id === 'shared_pike_formation' ||
+              t.id === 'shared_bodkin_arrows' ||
+              t.id === 'shared_flanking_spurs'
+            );
+          }
+          return (
+            !!t.effect.buildingArmorBonus ||
+            !!t.effect.buildingHpMultiplier ||
+            !!t.effect.siegeDamageMultiplier ||
+            !!t.effect.towerRangeBonus ||
+            !!t.effect.garrisonAttackBonus
+          );
+        };
+
+        const filteredTechs = allCivTechs.filter(matchesFilter);
+        const eraGroups: Array<{ age: 1 | 2 | 3 | 4; label: string; techs: TechDefinition[] }> = ([1, 2, 3, 4] as const)
+          .map((age) => ({
+            age,
+            label:
+              age === 1
+                ? '時代 I · 黑暗開局與資源營地'
+                : age === 2
+                ? '時代 II · 封建反制與流派抉擇'
+                : age === 3
+                ? '時代 III · 城堡破陣與攻城決戰'
+                : '時代 IV · 帝王終極要塞',
+            techs: filteredTechs.filter((t) => (t.requiredAge || 1) === age),
+          }))
+          .filter((g) => g.techs.length > 0);
+
+        const factionIdleBuildingsByType = new Map<BuildingType, string>();
+        for (const b of engine.buildings) {
+          if (
+            b.faction === observedFactionId &&
+            b.hp > 0 &&
+            b.isConstructed &&
+            !b.activeTechId &&
+            !factionIdleBuildingsByType.has(b.buildingType)
+          ) {
+            factionIdleBuildingsByType.set(b.buildingType, b.id);
+          }
+        }
+        const activeTechIds = new Set(
+          engine.buildings
+            .filter((b) => b.faction === observedFactionId && b.hp > 0 && b.activeTechId)
+            .map((b) => b.activeTechId as string)
+        );
+
+        return (
+          <div
+            data-tech-tree-modal="true"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 pointer-events-auto"
+            onClick={() => setShowTechTreeModal(false)}
+          >
+            <div
+              className="w-full max-w-5xl max-h-[86vh] flex flex-col bg-slate-950 border-2 border-cyan-500/55 rounded-2xl shadow-2xl text-white overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-800 bg-slate-900/90">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl">{humanCiv.icon}</span>
+                  <div>
+                    <h2 className="text-base font-black text-cyan-300 flex items-center gap-2">
+                      <span>{humanCiv.name} · 戰略科技樹與博弈路線</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-500/40 text-cyan-200 font-mono">
+                        已研發 {researchedTechs.length}/{allCivTechs.length}
+                      </span>
+                    </h2>
+                    <p className="text-[11px] text-slate-400">
+                      針對敵方兵種配置研發反制科技（抗箭方陣 / 反騎長槍 / 破甲箭 / 切後排馬刺），並於「互斥流派」作出不可逆的戰略抉擇！
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTechTreeModal(false)}
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+                  aria-label="關閉科技樹總覽"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5 px-5 py-2.5 border-b border-slate-800/80 bg-slate-900/50">
+                {(
+                  [
+                    { id: 'all', label: `全部科技 (${allCivTechs.length})` },
+                    { id: 'eco', label: '⛏️ 經濟後勤' },
+                    { id: 'counter', label: '⚔️ 兵種克制' },
+                    { id: 'doctrine', label: '⚖️ 互斥抉擇' },
+                    { id: 'fortify', label: '🏰 城防攻城' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    data-tech-filter={tab.id}
+                    onClick={() => setTechTreeFilter(tab.id)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                      techTreeFilter === tab.id
+                        ? 'bg-cyan-600 border-cyan-300 text-white shadow'
+                        : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Scrollable Tech Grid by Era */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {eraGroups.map((group) => (
+                  <div key={group.age} className="space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                      <span className="text-xs font-black tracking-wide text-amber-300">{group.label}</span>
+                      {observedAge < group.age && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-red-950/70 border border-red-500/40 text-red-300 font-bold">
+                          🔒 需先晉升時代 {group.age}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {group.techs.map((tech) => {
+                        const isDone = researchedTechs.includes(tech.id);
+                        const isActive = activeTechIds.has(tech.id);
+                        const conflict = !isDone ? isTechLockedByExclusion(tech, researchedTechs) : null;
+                        const prereq = !isDone && !conflict ? isTechMissingPrerequisite(tech, researchedTechs) : null;
+                        const ageLocked = !!(tech.requiredAge && observedAge < tech.requiredAge);
+                        const checkRes = canResearchTech(tech, researchedTechs, observedAge as 1 | 2 | 3 | 4);
+                        const idleBldgId = factionIdleBuildingsByType.get(tech.buildingType);
+                        const affordable = canAfford(engine.playerResources, tech.cost);
+                        const bldgLabel = DEFAULT_BUILDINGS[tech.buildingType]?.name.split(' ')[0] || tech.buildingType;
+
+                        return (
+                          <div
+                            key={tech.id}
+                            data-modal-tech-id={tech.id}
+                            className={`flex flex-col justify-between p-3 rounded-xl border transition-all ${
+                              isDone
+                                ? 'bg-emerald-950/45 border-emerald-500/60'
+                                : isActive
+                                ? 'bg-cyan-950/60 border-cyan-400'
+                                : conflict
+                                ? 'bg-rose-950/30 border-rose-800/50 opacity-65'
+                                : tech.exclusiveGroup
+                                ? 'bg-indigo-950/40 border-amber-400/55'
+                                : 'bg-slate-900/90 border-slate-800'
+                            }`}
+                          >
+                            <div className="space-y-1.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-base">{tech.icon}</span>
+                                  <span className={`text-xs font-black ${conflict ? 'line-through text-rose-300/80' : 'text-white'}`}>
+                                    {tech.name}
+                                  </span>
+                                </div>
+                                {tech.roleTag && (
+                                  <span
+                                    className={`text-[10px] px-1.5 py-0.5 rounded border font-bold shrink-0 ${
+                                      tech.exclusiveGroup
+                                        ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
+                                        : 'bg-slate-950 border-slate-700 text-cyan-300'
+                                    }`}
+                                  >
+                                    {tech.roleTag}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-[11px] font-bold text-cyan-300">{tech.effectLabel}</div>
+                              <p className="text-[10px] text-slate-300 leading-relaxed">{tech.description}</p>
+                              {tech.exclusiveLabel && (
+                                <div className="text-[10px] text-amber-300 font-bold">
+                                  ⚖️ {tech.exclusiveLabel}
+                                </div>
+                              )}
+                              {prereq && (
+                                <div className="text-[10px] text-amber-300/90">
+                                  🔗 前置需求：{prereq.name}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[10px]">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-slate-300">
+                                  🏛️ {bldgLabel}
+                                </span>
+                                {!isDone && !conflict && (
+                                  <span className="font-mono text-amber-400 font-bold">
+                                    {tech.cost.food ? `${tech.cost.food}F ` : ''}
+                                    {tech.cost.wood ? `${tech.cost.wood}W ` : ''}
+                                    {tech.cost.gold ? `${tech.cost.gold}G ` : ''}
+                                    {tech.cost.stone ? `${tech.cost.stone}S` : ''}
+                                  </span>
+                                )}
+                              </div>
+
+                              {isDone ? (
+                                <span className="text-emerald-400 font-black">✅ 已完成</span>
+                              ) : isActive ? (
+                                <span className="text-cyan-300 font-black">⏳ 研發中</span>
+                              ) : conflict ? (
+                                <span className="text-rose-400 font-bold">⛔ 互斥鎖定</span>
+                              ) : ageLocked ? (
+                                <span className="text-red-400 font-bold">🔒 時代{tech.requiredAge}</span>
+                              ) : prereq ? (
+                                <span className="text-amber-300 font-bold">🔒 待解鎖</span>
+                              ) : !isSpectator && idleBldgId ? (
+                                <button
+                                  type="button"
+                                  data-modal-research-id={tech.id}
+                                  disabled={!affordable || !checkRes.ok}
+                                  onClick={() => engine.startResearch(idleBldgId, tech.id)}
+                                  className={`px-2 py-0.5 rounded font-black border cursor-pointer transition-colors ${
+                                    affordable
+                                      ? 'bg-cyan-600 hover:bg-cyan-500 border-cyan-300 text-white'
+                                      : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
+                                  }`}
+                                >
+                                  {affordable ? '立即研發' : '資源不足'}
+                                </button>
+                              ) : (
+                                <span className="text-slate-400">
+                                  {isSpectator ? '觀戰中' : `需閒置${bldgLabel}`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -1,6 +1,16 @@
 import * as THREE from 'three';
-import { BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType } from '../types/game';
+import { BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
+
+export interface DeerAnimParts {
+  bodyPivot: THREE.Group;
+  headPivot: THREE.Group;
+  tailPivot: THREE.Group;
+  flLeg: THREE.Group;
+  frLeg: THREE.Group;
+  blLeg: THREE.Group;
+  brLeg: THREE.Group;
+}
 
 export interface FactionVisualConfig {
   primary: number;
@@ -953,35 +963,150 @@ export function createGranaryMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
-
-export function createMarketMesh(faction: FactionId): THREE.Group {
+export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
-  addContactShadow(group, 1.5);
-  const wood = sharedWoodScaffoldMat;
-  const cloth = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.85 });
-  const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 2.2), wood);
-  base.position.y = 0.12;
-  base.castShadow = true;
-  const stall = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.0, 1.6), wood);
-  stall.position.y = 0.7;
-  stall.castShadow = true;
-  const awning = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 1.9), cloth);
-  awning.position.y = 1.35;
-  awning.rotation.x = -0.15;
-  const poleL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), wood);
-  poleL.position.set(-1.0, 0.75, 0.9);
-  const poleR = poleL.clone();
-  poleR.position.x = 1.0;
-  // Gold crate
-  const crate = new THREE.Mesh(
-    new THREE.BoxGeometry(0.45, 0.35, 0.45),
-    new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.4, roughness: 0.4 })
+  const civ = civId || colors.civilization || 'medieval';
+
+  addContactShadow(group, 2.15);
+
+  const stoneMaps = getStoneMasonryMaps();
+  const woodMaps = getTimberWoodMaps();
+  const roofMaps = getRoofShingleMaps();
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0xdbeafe : 0x94a3b8,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    normalScale: new THREE.Vector2(0.8, 0.8),
+    roughness: 0.88,
+  });
+  const woodMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0x5c2310 : civ === 'fantasy' ? 0x6b4226 : 0x925e34,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughness: 0.74,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0xf3ead8 : civ === 'fantasy' ? 0xdfd9c8 : 0xe7dec8,
+    roughness: 0.84,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0x1e293b : civ === 'fantasy' ? 0x15803d : colors.primary,
+    map: roofMaps.map,
+    normalMap: roofMaps.normalMap,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    roughness: 0.42,
+  });
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.8 });
+  const warmGlassMat = new THREE.MeshStandardMaterial({
+    color: 0xfde68a,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 0.55,
+    roughness: 0.2,
+  });
+
+  // 1. Stone foundation plinth (fits neatly inside house 1.65m collision radius)
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.32, 2.45), stoneMat);
+  plinth.position.y = 0.16;
+  plinth.receiveShadow = true;
+  group.add(plinth);
+
+  // 2. Main cottage body & corner timber posts
+  const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.65, 2.15), stoneMat);
+  lowerWall.position.y = 0.64;
+  lowerWall.castShadow = true;
+  group.add(lowerWall);
+
+  const upperWall = new THREE.Mesh(new THREE.BoxGeometry(2.38, 0.92, 2.08), wallMat);
+  upperWall.position.y = 1.42;
+  upperWall.castShadow = true;
+  group.add(upperWall);
+
+  const postPositions: Array<[number, number]> = [
+    [-1.18, 1.03],
+    [1.18, 1.03],
+    [-1.18, -1.03],
+    [1.18, -1.03],
+  ];
+  postPositions.forEach(([px, pz]) => {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.02, 0.14), woodMat);
+    post.position.set(px, 1.42, pz);
+    group.add(post);
+  });
+
+  // 3. Roof silhouette (Machiya curved kawara vs Medieval pitched gable + chimney vs Fantasy mossy gable)
+  if (civ === 'anime') {
+    const roof = new THREE.Mesh(makePagodaRoofGeo(1.92, 1.05), roofMat);
+    roof.scale.set(1.06, 0.95, 0.92);
+    roof.position.y = 1.88;
+    roof.castShadow = true;
+    group.add(roof);
+  } else {
+    const roofShape = new THREE.Shape();
+    roofShape.moveTo(-1.45, 0);
+    roofShape.lineTo(1.45, 0);
+    roofShape.lineTo(0, 1.12);
+    roofShape.closePath();
+    const roof = new THREE.Mesh(makeExtrudeGeo(roofShape, 2.35, 0.04, 0.04, 1, true), roofMat);
+    roof.position.set(0, 1.88, 0);
+    roof.castShadow = true;
+    group.add(roof);
+
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 2.45), woodMat);
+    ridge.position.set(0, 3.01, 0);
+    group.add(ridge);
+
+    if (civ === 'medieval') {
+      const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.1, 0.38), stoneMat);
+      chimney.position.set(0.68, 2.65, -0.55);
+      chimney.castShadow = true;
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.1, 0.46), stoneMat);
+      cap.position.set(0.68, 3.22, -0.55);
+      group.add(chimney, cap);
+    } else {
+      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
+      crystal.position.set(0, 3.35, 0);
+      crystal.name = 'animatedCrystal';
+      group.add(crystal);
+    }
+  }
+
+  // 4. Doorway with jambs + warm lit windows + hanging porch lantern
+  addArchedDoorway(group, -0.35, 0.32, 1.07, 0.68, 1.02, stoneMat, woodMat, ironMat);
+  addWarmLantern(group, 0.32, 1.38, 1.15, ironMat);
+
+  // Warm windows on front & side walls
+  const frontWin = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.08), warmGlassMat);
+  frontWin.position.set(0.55, 1.38, 1.04);
+  const winFrame = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.5, 0.05), woodMat);
+  winFrame.position.set(0.55, 1.38, 1.02);
+  const sideWinL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.46), warmGlassMat);
+  sideWinL.position.set(-1.2, 1.38, 0);
+  const sideWinR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.46), warmGlassMat);
+  sideWinR.position.set(1.2, 1.38, 0);
+  group.add(frontWin, winFrame, sideWinL, sideWinR);
+
+  // Stacked firewood bundle tucked against side wall
+  for (let i = 0; i < 3; i++) {
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.72, 6), woodMat);
+    log.rotation.x = Math.PI / 2;
+    log.position.set(1.32, 0.38 + (i === 2 ? 0.14 : 0), i === 2 ? 0 : -0.1 + i * 0.2);
+    group.add(log);
+  }
+
+  const badgeTitle =
+    civ === 'anime' ? '和風町屋' : civ === 'fantasy' ? '精靈樹屋' : '帝國民居';
+  const badge = createBadgeSprite(
+    colors.isHostile ? `${colors.labelPrefix || ''}${badgeTitle}` : badgeTitle,
+    '🏠',
+    '600',
+    0.95,
+    colors.isHostile,
+    false
   );
-  crate.position.set(0.7, 0.35, 1.1);
-  group.add(base, stall, awning, poleL, poleR, crate);
-  const badge = createBadgeSprite('市集', '⚖️', '', 0.9, colors.isHostile, false);
-  badge.position.y = 2.4;
+  badge.position.set(0, 3.65, 0);
   badge.name = 'bldgBadge';
   group.add(badge);
   return group;
@@ -2665,8 +2790,8 @@ export function createRubbleDecalMesh(footprintSize: number): THREE.Group {
 }
 
 
-/** Neutral contested shrine / banner — readable from mid-distance */
-export function createContestedShrineMesh(label = '爭奪點'): THREE.Group {
+/** Neutral contested shrine / banner — readable from mid-distance, clickable, and continuously reflects owner & contested clash */
+export function createContestedShrineMesh(label = '爭奪點', shrineType: ShrineType = 'war'): THREE.Group {
   const group = new THREE.Group();
   group.name = 'contestedShrine';
   addContactShadow(group, 2.4);
@@ -2676,62 +2801,114 @@ export function createContestedShrineMesh(label = '爭奪點'): THREE.Group {
     roughness: 0.88,
     metalness: 0.08,
   });
-  const goldMat = new THREE.MeshStandardMaterial({
+  const crystalMat = new THREE.MeshStandardMaterial({
     color: 0xfbbf24,
     emissive: 0xb45309,
-    emissiveIntensity: 0.35,
-    roughness: 0.45,
-    metalness: 0.4,
+    emissiveIntensity: 0.4,
+    roughness: 0.35,
+    metalness: 0.35,
   });
   const clothMat = new THREE.MeshStandardMaterial({
     color: 0xa8a29e,
-    roughness: 0.75,
+    roughness: 0.72,
+    side: THREE.DoubleSide,
   });
 
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 0.45, 8), stoneMat);
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.38, 0.45, 8), stoneMat);
   plinth.position.y = 0.22;
   plinth.castShadow = true;
   group.add(plinth);
 
-  const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 2.2, 0.55), stoneMat);
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.58, 2.15, 0.58), stoneMat);
   pillar.position.y = 1.4;
   pillar.castShadow = true;
   group.add(pillar);
 
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.45, 4), goldMat);
-  cap.position.y = 2.7;
+  const cap = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), crystalMat);
+  cap.position.y = 2.82;
+  cap.name = 'shrineCrystal';
   group.add(cap);
 
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.8, 6), stoneMat);
-  pole.position.set(0.85, 1.5, 0);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.9, 6), stoneMat);
+  pole.position.set(0.88, 1.5, 0);
   group.add(pole);
 
-  const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.1), clothMat);
-  banner.position.set(1.35, 2.1, 0);
-  banner.rotation.y = -0.4;
+  const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.15), clothMat);
+  banner.position.set(1.38, 2.15, 0);
+  banner.rotation.y = -0.35;
   banner.name = 'shrineBanner';
   group.add(banner);
 
-  // Capture ring (horizontal)
-  const ringGeo = new THREE.RingGeometry(9.5, 11.0, 48);
+  // Inner owner halo around pedestal — permanently displays owning faction color
+  const ownerRingGeo = new THREE.RingGeometry(1.48, 2.05, 32);
+  ownerRingGeo.rotateX(-Math.PI / 2);
+  const ownerRing = new THREE.Mesh(
+    ownerRingGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xa8a29e,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  ownerRing.position.y = 0.08;
+  ownerRing.name = 'ownerRing';
+  ownerRing.raycast = () => {};
+  group.add(ownerRing);
+
+  // Outer capture zone ring (horizontal) — non-raycastable so terrain clicks inside ring still command units
+  const ringGeo = new THREE.RingGeometry(9.4, 10.7, 48);
   ringGeo.rotateX(-Math.PI / 2);
   const ring = new THREE.Mesh(
     ringGeo,
     new THREE.MeshBasicMaterial({
-      color: 0xf8fafc,
+      color: 0xe2e8f0,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.34,
       side: THREE.DoubleSide,
       depthWrite: false,
     })
   );
   ring.position.y = 0.06;
   ring.name = 'captureRing';
+  ring.raycast = () => {};
   group.add(ring);
 
-  const badge = createBadgeSprite(label, '⚔️', '中立', 1, false, false, '爭奪中');
-  badge.position.y = 3.4;
+  // Inner pulse ring shown while actively capturing or under contested battle
+  const contestedRingGeo = new THREE.RingGeometry(8.5, 9.25, 48);
+  contestedRingGeo.rotateX(-Math.PI / 2);
+  const contestedRing = new THREE.Mesh(
+    contestedRingGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  contestedRing.position.y = 0.07;
+  contestedRing.name = 'contestedRing';
+  contestedRing.visible = false;
+  contestedRing.raycast = () => {};
+  group.add(contestedRing);
+
+  // Dedicated click-target cylinder centered on the shrine monument
+  const hitMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.35, 2.5, 3.8, 12),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  hitMesh.position.y = 1.9;
+  hitMesh.name = 'shrineHitVolume';
+  group.add(hitMesh);
+
+  const shrineIcon = shrineType === 'war' ? '⚔️' : shrineType === 'harvest' ? '🌾' : '⚒️';
+  const shrineRole = shrineType === 'war' ? '戰意祭壇' : shrineType === 'harvest' ? '豐饒祭壇' : '鍛造祭壇';
+  const badge = createBadgeSprite(label, shrineIcon, '中立', 0, false, true, `${shrineRole} · 可佔領`);
+  badge.position.y = 3.65;
   badge.name = 'shrineBadge';
+  badge.raycast = () => {};
   group.add(badge);
 
   return group;
@@ -2748,6 +2925,9 @@ export function createBuildingMesh(
     case 'town_center':
       group = createTownCenterMesh(faction, resolvedCiv);
       break;
+    case 'house':
+      group = createHouseMesh(faction, resolvedCiv);
+      break;
     case 'barracks':
       group = createBarracksMesh(faction, resolvedCiv);
       break;
@@ -2762,9 +2942,6 @@ export function createBuildingMesh(
       break;
     case 'granary':
       group = createGranaryMesh(faction);
-      break;
-    case 'market':
-      group = createMarketMesh(faction);
       break;
     case 'lumber_camp':
       group = createCampMesh('lumber', faction);
@@ -3535,26 +3712,33 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
   addContactShadow(group, 0.9);
 
-  const body = new THREE.Mesh(sharedDeerTorsoGeo, sharedDeerMat);
-  body.position.y = 0.7;
-  body.castShadow = true;
-  group.add(body);
+  // Articulated upper body pivot centered near chest/hip midpoint so bounding tilts naturally
+  const bodyPivot = new THREE.Group();
+  bodyPivot.position.set(0, 0.7, 0);
+  group.add(bodyPivot);
 
-  // Pale cream chest/belly & white tail tuft
+  const body = new THREE.Mesh(sharedDeerTorsoGeo, sharedDeerMat);
+  body.castShadow = true;
+  bodyPivot.add(body);
+
+  // Pale cream chest/belly & articulated white tail tuft
   const belly = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), sharedDeerCreamMat);
   belly.scale.set(1.9, 0.7, 0.85);
-  belly.position.set(0, 0.58, 0);
-  group.add(belly);
+  belly.position.set(0, -0.12, 0);
+  bodyPivot.add(belly);
 
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.46, 0.02, 0);
+  bodyPivot.add(tailPivot);
   const tail = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 6), sharedDeerCreamMat);
-  tail.position.set(-0.5, 0.74, 0);
+  tail.position.set(-0.04, 0.04, 0);
   tail.rotation.z = 0.9;
-  group.add(tail);
+  tailPivot.add(tail);
 
   const headPivot = new THREE.Group();
   headPivot.name = 'deerHeadPivot';
-  headPivot.position.set(0.32, 0.78, 0);
-  group.add(headPivot);
+  headPivot.position.set(0.32, 0.08, 0);
+  bodyPivot.add(headPivot);
   group.userData.deerHeadPivot = headPivot;
 
   const neck = new THREE.Mesh(sharedDeerNeckGeo, sharedDeerMat);
@@ -3590,21 +3774,37 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
     headPivot.add(antGrp);
   });
 
-  // 4 Slender Jointed Legs with Hooves grounded at y=0
-  [
-    [-0.31, -0.13],
-    [-0.31, 0.13],
-    [0.29, -0.12],
-    [0.29, 0.12],
-  ].forEach(([lx, lz]) => {
+  // 4 Articulated Hip/Shoulder Pivots with Hooves grounded at y=0
+  const makeLegPivot = (lx: number, lz: number): THREE.Group => {
+    const legPivot = new THREE.Group();
+    legPivot.position.set(lx, 0.54, lz);
     const upper = new THREE.Mesh(sharedDeerLegUpperGeo, sharedDeerMat);
-    upper.position.set(lx, 0.42, lz);
+    upper.position.set(0, -0.12, 0);
+    upper.castShadow = true;
     const lower = new THREE.Mesh(sharedDeerLegLowerGeo, sharedDeerMat);
-    lower.position.set(lx, 0.17, lz);
+    lower.position.set(0, -0.37, 0);
     const hoof = new THREE.Mesh(sharedDeerHoofGeo, sharedHoofMat);
-    hoof.position.set(lx, 0.025, lz);
-    group.add(upper, lower, hoof);
-  });
+    hoof.position.set(0, -0.515, 0);
+    legPivot.add(upper, lower, hoof);
+    group.add(legPivot);
+    return legPivot;
+  };
+
+  const blLeg = makeLegPivot(-0.31, -0.13);
+  const brLeg = makeLegPivot(-0.31, 0.13);
+  const flLeg = makeLegPivot(0.29, -0.12);
+  const frLeg = makeLegPivot(0.29, 0.12);
+
+  const animParts: DeerAnimParts = {
+    bodyPivot,
+    headPivot,
+    tailPivot,
+    flLeg,
+    frLeg,
+    blLeg,
+    brLeg,
+  };
+  group.userData.deerAnimParts = animParts;
 
   if (hasBadge) {
     const badge = createBadgeSprite('野生山羌', '🦌', `${amount}`, 1, false, true, '狩獵採集肉類 (×1.15)');
@@ -4255,6 +4455,8 @@ export function createUnitMesh(
       ? '🚢'
       : unitId === 'greek_fire_siphon'
       ? '🔥'
+      : unitId === 'scout_rider'
+      ? '🔭'
       : roleIcons[unitDef.visual.modelType] || '⚔️';
   const displayName = `${colors.labelPrefix || ''}${unitDef.name.split(' ')[0]}`;
   const badge = createBadgeSprite(
@@ -4531,31 +4733,39 @@ export function createUnitMesh(
     rArm.position.set(0, -0.14, 0.06);
     rightArmPivot.add(rArm);
   } else if (mType === 'knight') {
+    const isScout = unitId === 'scout_rider';
     bodyPivot.position.y = 0.0;
     const horseMat = new THREE.MeshStandardMaterial({
-      color: 0x5c2b10,
+      color: isScout ? 0x8b5a2b : 0x5c2b10,
       map: resFurMaps.map,
       normalMap: resFurMaps.normalMap,
       normalScale: new THREE.Vector2(0.55, 0.55),
       roughness: 0.62,
     });
-    const maneMat = new THREE.MeshStandardMaterial({ color: 0x1e1b18, roughness: 0.85 });
+    const maneMat = new THREE.MeshStandardMaterial({ color: isScout ? 0x292524 : 0x1e1b18, roughness: 0.85 });
     animParts.hitMaterials.push(horseMat);
 
-    // Sculpted Warhorse Torso + Saddle Barding Cloth + Leather Saddle
+    // Sculpted Warhorse Torso + Saddle Barding Cloth (or Light Scout Saddlebag)
     const horseBody = new THREE.Mesh(horseBarrelGeo, horseMat);
     horseBody.position.set(0, 0.88, 0);
     horseBody.castShadow = true;
     bodyPivot.add(horseBody);
 
-    const barding = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.39, 0.68, 12), armorMat);
-    barding.rotation.x = Math.PI / 2;
-    barding.position.set(0, 0.86, 0.02);
+    if (!isScout) {
+      const barding = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.39, 0.68, 12), armorMat);
+      barding.rotation.x = Math.PI / 2;
+      barding.position.set(0, 0.86, 0.02);
+      bodyPivot.add(barding);
+    } else {
+      const saddleCloth = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.14, 0.56), armorMat);
+      saddleCloth.position.set(0, 1.12, -0.04);
+      bodyPivot.add(saddleCloth);
+    }
     const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.12, 0.46), leatherMat);
     saddle.position.set(0, 1.2, -0.04);
     const tail = new THREE.Mesh(horseTailGeo, maneMat);
     tail.position.set(0, 0.98, -0.66);
-    bodyPivot.add(barding, saddle, tail);
+    bodyPivot.add(saddle, tail);
     animParts.horseTail = tail;
 
     // 4 Articulated Equine Legs with knee/hock pivots (front pair in leftLeg/leftKnee, hind pair in rightLeg/rightKnee)
@@ -4587,7 +4797,7 @@ export function createUnitMesh(
     animParts.rightLeg = hindPair.pairPivot;
     animParts.rightKnee = hindPair.kneePairPivot;
 
-    // Pivoting Arched Horse Neck + Head + Muzzle + Ears + Chamfron + Mane
+    // Pivoting Arched Horse Neck + Head + Muzzle + Ears + Mane
     const horseHeadPivot = new THREE.Group();
     horseHeadPivot.position.set(0, 1.0, 0.52);
     bodyPivot.add(horseHeadPivot);
@@ -4599,13 +4809,16 @@ export function createUnitMesh(
     const hHead = new THREE.Mesh(horseMuzzleGeo, horseMat);
     hHead.position.set(0, 0.44, 0.25);
     hHead.rotation.x = 0.48;
-    const chamfron = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.28), steelMat);
-    chamfron.position.set(0, 0.51, 0.3);
-    chamfron.rotation.x = 0.48;
     const mane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.48, 0.14), maneMat);
     mane.position.set(0, 0.26, 0.02);
     mane.rotation.x = 0.48;
-    horseHeadPivot.add(hNeck, hHead, chamfron, mane);
+    horseHeadPivot.add(hNeck, hHead, mane);
+    if (!isScout) {
+      const chamfron = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.28), steelMat);
+      chamfron.position.set(0, 0.51, 0.3);
+      chamfron.rotation.x = 0.48;
+      horseHeadPivot.add(chamfron);
+    }
 
     [-0.08, 0.08].forEach((ez) => {
       const ear = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.14, 5), horseMat);
@@ -4613,41 +4826,79 @@ export function createUnitMesh(
       horseHeadPivot.add(ear);
     });
 
-    // Seated Armored Rider with Pauldrons, Plumed Helm, Heater Shield & Lance + Pennant
-    const rider = new THREE.Mesh(unitBreastplateGeo, armorMat);
-    rider.position.set(0, 1.18, -0.04);
-    rider.castShadow = true;
-    bodyPivot.add(rider);
+    if (isScout) {
+      // Light Hooded Scout Rider with Cloak, Spyglass/Torch Spear & Signal Pennon
+      const rider = new THREE.Mesh(unitTunicGeo, leatherMat);
+      rider.position.set(0, 1.18, -0.04);
+      rider.castShadow = true;
+      const cloak = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.72, 6), armorMat);
+      cloak.position.set(0, 1.44, -0.18);
+      cloak.rotation.x = 0.28;
+      const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+      head.position.set(0, 1.88, -0.02);
+      const hood = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.36, 7), armorMat);
+      hood.position.set(0, 2.02, -0.05);
+      hood.rotation.x = -0.22;
+      const feather = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.28, 5), goldTrimMat);
+      feather.position.set(0.14, 2.15, -0.06);
+      feather.rotation.z = -0.35;
+      bodyPivot.add(rider, cloak, head, hood, feather);
 
-    const rPaulL = new THREE.Mesh(unitPauldronGeo, steelMat);
-    rPaulL.position.set(-0.26, 1.72, -0.04);
-    const rPaulR = new THREE.Mesh(unitPauldronGeo, steelMat);
-    rPaulR.position.set(0.26, 1.72, -0.04);
-    const helm = new THREE.Mesh(unitHelmGeo, steelMat);
-    helm.position.set(0, 1.88, -0.04);
-    const plume = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 6), goldTrimMat);
-    plume.rotation.x = -0.8;
-    plume.position.set(0, 2.22, -0.14);
-    bodyPivot.add(rPaulL, rPaulR, helm, plume);
+      leftArmPivot.position.set(-0.28, 1.64, 0.06);
+      bodyPivot.add(leftArmPivot);
+      const spyglass = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.032, 0.34, 7), goldTrimMat);
+      spyglass.rotation.x = Math.PI / 2.2;
+      spyglass.position.set(0, -0.06, 0.22);
+      leftArmPivot.add(spyglass);
 
-    leftArmPivot.position.set(-0.3, 1.66, 0.04);
-    bodyPivot.add(leftArmPivot);
-    const shield = new THREE.Mesh(unitHeaterShieldGeo, armorMat);
-    shield.rotation.y = -Math.PI / 2.2;
-    shield.position.set(-0.08, -0.08, 0.12);
-    leftArmPivot.add(shield);
+      rightArmPivot.position.set(0.3, 1.64, 0.04);
+      bodyPivot.add(rightArmPivot);
+      const scoutSpear = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.035, 1.7, 7), sharedWoodScaffoldMat);
+      scoutSpear.rotation.x = Math.PI / 6;
+      scoutSpear.position.set(0.04, 0.25, 0.3);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 5), steelMat);
+      tip.rotation.x = Math.PI / 6;
+      tip.position.set(0.04, 1.02, 0.74);
+      const pennon = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.22, 0.42), armorMat);
+      pennon.position.set(0.04, 0.78, 0.8);
+      rightArmPivot.add(scoutSpear, tip, pennon);
+    } else {
+      // Seated Armored Rider with Pauldrons, Plumed Helm, Heater Shield & Lance + Pennant
+      const rider = new THREE.Mesh(unitBreastplateGeo, armorMat);
+      rider.position.set(0, 1.18, -0.04);
+      rider.castShadow = true;
+      bodyPivot.add(rider);
 
-    rightArmPivot.position.set(0.32, 1.66, 0.06);
-    bodyPivot.add(rightArmPivot);
-    const lanceShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.055, 2.05, 8), sharedWoodScaffoldMat);
-    lanceShaft.rotation.x = Math.PI / 2.25;
-    lanceShaft.position.set(0.05, 0.02, 0.62);
-    const lanceTip = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.38, 6), steelMat);
-    lanceTip.rotation.x = Math.PI / 2.25;
-    lanceTip.position.set(0.05, 0.18, 1.66);
-    const pennant = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.18, 0.44), goldTrimMat);
-    pennant.position.set(0.05, 0.11, 1.3);
-    rightArmPivot.add(lanceShaft, lanceTip, pennant);
+      const rPaulL = new THREE.Mesh(unitPauldronGeo, steelMat);
+      rPaulL.position.set(-0.26, 1.72, -0.04);
+      const rPaulR = new THREE.Mesh(unitPauldronGeo, steelMat);
+      rPaulR.position.set(0.26, 1.72, -0.04);
+      const helm = new THREE.Mesh(unitHelmGeo, steelMat);
+      helm.position.set(0, 1.88, -0.04);
+      const plume = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 6), goldTrimMat);
+      plume.rotation.x = -0.8;
+      plume.position.set(0, 2.22, -0.14);
+      bodyPivot.add(rPaulL, rPaulR, helm, plume);
+
+      leftArmPivot.position.set(-0.3, 1.66, 0.04);
+      bodyPivot.add(leftArmPivot);
+      const shield = new THREE.Mesh(unitHeaterShieldGeo, armorMat);
+      shield.rotation.y = -Math.PI / 2.2;
+      shield.position.set(-0.08, -0.08, 0.12);
+      leftArmPivot.add(shield);
+
+      rightArmPivot.position.set(0.32, 1.66, 0.06);
+      bodyPivot.add(rightArmPivot);
+      const lanceShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.055, 2.05, 8), sharedWoodScaffoldMat);
+      lanceShaft.rotation.x = Math.PI / 2.25;
+      lanceShaft.position.set(0.05, 0.02, 0.62);
+      const lanceTip = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.38, 6), steelMat);
+      lanceTip.rotation.x = Math.PI / 2.25;
+      lanceTip.position.set(0.05, 0.18, 1.66);
+      const pennant = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.18, 0.44), goldTrimMat);
+      pennant.position.set(0.05, 0.11, 1.3);
+      rightArmPivot.add(lanceShaft, lanceTip, pennant);
+    }
   } else if (mType === 'ninja') {
     addBipedLegs(darkMat, darkMat);
 

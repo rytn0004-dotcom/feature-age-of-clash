@@ -6,12 +6,12 @@ import { BuildingType } from '../types/game';
 
 export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   town_center: 'C',
+  house: 'E',
   lumber_camp: 'L',
   mining_camp: 'G',
   dock: 'J',
   farm: 'R',
   granary: 'N',
-  market: 'E',
   barracks: 'V',
   archery_range: 'Y',
   armory_forge: 'K',
@@ -26,7 +26,7 @@ export const AGE_ADVANCE_HOTKEY = 'U';
 export const UNGARRISON_HOTKEY = 'G';
 
 export const TRAINING_SLOT_HOTKEYS = ['Z', 'C', 'V', 'E'] as const;
-export const TECH_SLOT_HOTKEYS = ['R', 'T', 'Y'] as const;
+export const TECH_SLOT_HOTKEYS = ['R', 'T', 'Y', 'K', 'L', 'O'] as const;
 
 /** Reverse lookup: KeyCode (e.g. 'KeyV') -> key label ('V') */
 export function eventCodeToHotkeyLabel(code: string): string | null {
@@ -98,7 +98,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
   {
     title: '村民建造快捷鍵 (選取工人時)',
     items: [
-      { keys: 'R / L / G / J', desc: '農田 / 伐木場 / 採礦營 / 碼頭' },
+      { keys: 'E / R / L / G / J', desc: '房屋 / 農田 / 伐木場 / 採礦營 / 碼頭' },
       { keys: 'V / Y / K', desc: '兵營 / 射箭場 / 文明專屬建築' },
       { keys: 'O / T / N / C', desc: '防禦圍牆 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },
@@ -108,7 +108,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
     title: '建築招募與駐防快捷鍵 (選取建築時)',
     items: [
       { keys: 'Z / C / V / E', desc: '訓練第 1~4 格位單位' },
-      { keys: 'R / T / Y', desc: '研發第 1~3 格位科技' },
+      { keys: 'R / T / Y / K / L / O', desc: '研發第 1~6 格位科技' },
       { keys: 'G / 右鍵建築', desc: '駐防單位全部撤出 / 派軍進駐建築' },
       { keys: '滑鼠右鍵', desc: '設定集結點 (點資源/農田自動採集)' },
     ],

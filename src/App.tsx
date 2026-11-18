@@ -134,6 +134,13 @@ export default function App() {
                 if (bBadge) bBadge.visible = engine.showOverheadBadges;
               }
             });
+            engine.contestedPoints.forEach((cp) => {
+              const m = (engine as any).contestedMeshes.get(cp.id);
+              if (m) {
+                const sBadge = m.getObjectByName('shrineBadge');
+                if (sBadge) sBadge.visible = engine.showOverheadBadges;
+              }
+            });
             forceUpdate();
           }
         }
