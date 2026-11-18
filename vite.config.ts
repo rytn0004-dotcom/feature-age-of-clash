@@ -4,7 +4,6 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
-  const disableHmr = process.env.DISABLE_HMR === 'true';
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -13,18 +12,13 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // AI Studio / Cloud Run proxies expect 0.0.0.0
-      port: Number(process.env.PORT) || 3000,
+      port: 3000,
       host: '0.0.0.0',
-      strictPort: false,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      hmr: disableHmr ? false : true,
+      // Do not modify—file watching is disabled to prevent flickering during agent edits.
+      hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: disableHmr ? null : undefined,
-    },
-    preview: {
-      port: Number(process.env.PORT) || 3000,
-      host: '0.0.0.0',
+      watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };
 });
