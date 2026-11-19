@@ -4739,6 +4739,9 @@ export function createTreeMesh(
   const group = new THREE.Group();
   const isRich = nodeTier === 'rich';
   addContactShadow(group, isRich ? 1.95 : 1.62);
+  const detailedVisual = new THREE.Group();
+  detailedVisual.name = 'treeDetailedVisual';
+  group.add(detailedVisual);
 
   const roll = Math.random();
   const species: 'rich' | 'oak' | 'birch' | 'pine' = isRich
@@ -4762,7 +4765,7 @@ export function createTreeMesh(
   trunk.receiveShadow = true;
   if (isRich) trunk.scale.set(1.26, 1.18, 1.26);
   else if (species === 'birch') trunk.scale.set(0.84, 1.08, 0.84);
-  group.add(trunk);
+  detailedVisual.add(trunk);
 
   // Flared root spurs + mossy root mound gripping the soil.
   // Small deterministic offsets make each root system feel grown into the terrain.
@@ -4775,13 +4778,13 @@ export function createTreeMesh(
     root.rotation.y = angle;
     root.position.set(Math.cos(angle) * 0.025, Math.sin(r * 1.9 + rootPhase) * 0.012, -Math.sin(angle) * 0.025);
     root.scale.set(length, 0.92 + Math.cos(r * 2.3 + rootPhase) * 0.07, length);
-    group.add(root);
+    detailedVisual.add(root);
   }
   const mossMound = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8), sharedTreeMossMat);
   mossMound.position.y = 0.08;
   mossMound.scale.set(1 + Math.sin(rootPhase) * 0.08, 1, 1 + Math.cos(rootPhase) * 0.08);
   mossMound.rotation.y = rootPhase * 0.35;
-  group.add(mossMound);
+  detailedVisual.add(mossMound);
 
   const canopyPivot = new THREE.Group();
   canopyPivot.name = 'treeCanopy';
@@ -4790,7 +4793,7 @@ export function createTreeMesh(
   // Slight per-tree lean and yaw break the repeated silhouettes while keeping the canopy above unit eye level.
   canopyPivot.rotation.set((Math.random() - 0.5) * 0.045, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.045);
   if (isRich) canopyPivot.scale.setScalar(1.22);
-  group.add(canopyPivot);
+  detailedVisual.add(canopyPivot);
   group.userData.treeCanopy = canopyPivot;
   group.userData.baseCanopyScale = isRich ? 1.22 : 1.0;
 
@@ -4851,7 +4854,7 @@ export function createTreeMesh(
       const sap = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), sapMat);
       sap.position.set(Math.cos(ang) * 0.65, 0.24, Math.sin(ang) * 0.65);
       sap.scale.set(0.8, 1.35, 0.8);
-      group.add(sap);
+      detailedVisual.add(sap);
     });
 
     const amberHalo = new THREE.Mesh(
@@ -4860,7 +4863,7 @@ export function createTreeMesh(
     );
     amberHalo.rotation.x = -Math.PI / 2;
     amberHalo.position.y = 0.04;
-    group.add(amberHalo);
+    detailedVisual.add(amberHalo);
   }
 
   if (hasBadge) {
@@ -4878,6 +4881,7 @@ export function createTreeMesh(
     group.userData.badgeSprite = badge;
   }
 
+  group.userData.treeDetailedVisual = detailedVisual;
   return group;
 }
 
@@ -5550,6 +5554,7 @@ export function updateResourceNodeDepletionVisual(
   subtype?: string
 ): void {
   const ratio = Math.max(0, Math.min(1, amount / Math.max(1, maxAmount)));
+  if (subtype === 'wood') mesh.userData.treeDepletionRatio = ratio;
 
   if (subtype === 'wood' && mesh.userData.treeCanopy) {
     const canopy = mesh.userData.treeCanopy as THREE.Object3D;
