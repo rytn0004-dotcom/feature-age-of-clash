@@ -4153,7 +4153,8 @@ export function createSettlementEnvironment(
     return index;
   };
   const selectedEdges: SettlementRoadEdge[] = [];
-  const nodeIndex = new Map(roadNodes.map((node, index) => [node.source.id, index]));
+  const nodeIndex = new Map<string, number>();
+  roadNodes.forEach((node, index) => nodeIndex.set(node.source.id, index));
   for (const edge of candidates) {
     const aIndex = nodeIndex.get(edge.a.source.id);
     const bIndex = nodeIndex.get(edge.b.source.id);
