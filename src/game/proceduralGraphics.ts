@@ -5034,6 +5034,107 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     return layout.cliffDiscs.some((cd) => Math.hypot(x - cd.x, z - cd.z) <= cd.radius + pad);
   };
 
+  const getResourceFootprint = (subtype?: string): number => {
+    switch (subtype) {
+      case 'wood': return 1.65;
+      case 'gold':
+      case 'stone': return 2.05;
+      case 'berry': return 1.25;
+      case 'hunt': return 1.1;
+      case 'farm': return 1.8;
+      default: return 1.25;
+    }
+  };
+
+  // Keep decorative vegetation outside harvestable silhouettes so trees, mines and bushes
+  // sit directly on the terrain instead of appearing to grow through grass blades.
+  const isNearResourceNode = (x: number, z: number, pad = 0): boolean => {
+    return layout.resourceNodes.some((node) =>
+      Math.hypot(x - node.x, z - node.z) <= getResourceFootprint(node.subtype) + pad
+    );
+  };
+
+  // Soft, irregular earth wear around harvest sites visually anchors resource props.
+  // A single instanced mesh keeps the extra ground layer to one draw call.
+  const wearNodes = layout.resourceNodes.filter((node) =>
+    node.subtype !== 'shore_fish' &&
+    node.subtype !== 'deep_fish' &&
+    !isOnBridge(node.x, node.z) &&
+    !isInWaterOrShore(node.x, node.z, 1.25) &&
+    !isInCliff(node.x, node.z, 0.8)
+  );
+  if (wearNodes.length > 0) {
+    const segments = 20;
+    const rings = [0.32, 0.68, 1.0];
+    const positions: number[] = [0, 0, 0];
+    const colors: number[] = [0.27, 0.19, 0.12, 0.24];
+    const indices: number[] = [];
+    for (let ring = 0; ring < rings.length; ring++) {
+      for (let seg = 0; seg < segments; seg++) {
+        const angle = (seg / segments) * Math.PI * 2;
+        const irregularity = 1 + Math.sin(angle * 3 + ring * 0.7) * 0.09 +
+          Math.cos(angle * 5 - ring * 1.1) * 0.045;
+        const radius = rings[ring] * irregularity;
+        positions.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        const alpha = ring === 0 ? 0.25 : ring === 1 ? 0.19 : 0;
+        colors.push(0.29, 0.205, 0.125, alpha);
+      }
+    }
+    const firstRing = 1;
+    for (let seg = 0; seg < segments; seg++) {
+      const next = (seg + 1) % segments;
+      indices.push(0, firstRing + seg, firstRing + next);
+    }
+    for (let ring = 0; ring < rings.length - 1; ring++) {
+      const inner = 1 + ring * segments;
+      const outer = inner + segments;
+      for (let seg = 0; seg < segments; seg++) {
+        const next = (seg + 1) % segments;
+        indices.push(
+          inner + seg, outer + seg, outer + next,
+          inner + seg, outer + next, inner + next
+        );
+      }
+    }
+    const wearGeo = new THREE.BufferGeometry();
+    wearGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    wearGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
+    wearGeo.setIndex(indices);
+    const wearMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    });
+    const wearMesh = new THREE.InstancedMesh(wearGeo, wearMat, wearNodes.length);
+    const wearDummy = new THREE.Object3D();
+    wearNodes.forEach((node, idx) => {
+      const radius = node.subtype === 'gold' || node.subtype === 'stone'
+        ? 2.65
+        : node.subtype === 'wood' ? 2.25
+        : node.subtype === 'farm' ? 2.4
+        : node.subtype === 'berry' ? 1.85
+        : 1.65;
+      wearDummy.position.set(node.x, 0.026, node.z);
+      wearDummy.scale.set(
+        radius * (0.88 + (idx % 4) * 0.045),
+        1,
+        radius * (0.76 + ((idx * 3) % 5) * 0.055)
+      );
+      wearDummy.rotation.y = (idx * 1.71) % (Math.PI * 2);
+      wearDummy.updateMatrix();
+      wearMesh.setMatrixAt(idx, wearDummy.matrix);
+    });
+    wearMesh.instanceMatrix.needsUpdate = true;
+    wearMesh.computeBoundingSphere();
+    wearMesh.renderOrder = 1;
+    envGroup.add(wearMesh);
+  }
+
   // 1. River strips with deep central channel, shimmering normal-mapped surface, and shoreline foam lines
   layout.waterRects.forEach((wr) => {
     const dx = wr.x2 - wr.x1;
@@ -5253,12 +5354,12 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
   // 6. Dense Instanced 3D Crossed Grass Clumps (skipping rivers, lakes, cliffs, and bridges)
   const grassPts: Array<{ x: number; z: number; scale: number; yaw: number; hex: number }> = [];
   const grassPalette = [0x3f6212, 0x4d7c0f, 0x365314, 0x65a30d, 0x2d4a1e];
-  for (let i = 0; i < 2400 && grassPts.length < 1750; i++) {
+  for (let i = 0; i < 3800 && grassPts.length < 1750; i++) {
     const rawX = (Math.sin(i * 78.233) * 43758.5453) % 1;
     const rawZ = (Math.sin(i * 19.913) * 19283.1234) % 1;
     const gx = (rawX < 0 ? rawX + 1 : rawX) * 172 - 86;
     const gz = (rawZ < 0 ? rawZ + 1 : rawZ) * 172 - 86;
-    if (isOnBridge(gx, gz) || isInWaterOrShore(gx, gz, 0.85) || isInCliff(gx, gz, 0.8)) continue;
+    if (isOnBridge(gx, gz) || isInWaterOrShore(gx, gz, 0.85) || isInCliff(gx, gz, 0.8) || isNearResourceNode(gx, gz, 0.55)) continue;
     grassPts.push({
       x: gx,
       z: gz,
@@ -5296,12 +5397,12 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
   // 7. Instanced Meadow Wildflowers scattered naturally across clear turf
   const flowerPts: Array<{ x: number; z: number; scale: number; hex: number }> = [];
   const flowerPalette = [0xfacc15, 0xfef9c3, 0xfb7185, 0xc084fc, 0xfde047];
-  for (let i = 0; i < 620 && flowerPts.length < 320; i++) {
+  for (let i = 0; i < 980 && flowerPts.length < 320; i++) {
     const rawX = (Math.sin(i * 41.13 + 7.2) * 31987.412) % 1;
     const rawZ = (Math.sin(i * 67.89 + 3.1) * 51234.789) % 1;
     const fx = (rawX < 0 ? rawX + 1 : rawX) * 166 - 83;
     const fz = (rawZ < 0 ? rawZ + 1 : rawZ) * 166 - 83;
-    if (isOnBridge(fx, fz) || isInWaterOrShore(fx, fz, 1.1) || isInCliff(fx, fz, 1.0)) continue;
+    if (isOnBridge(fx, fz) || isInWaterOrShore(fx, fz, 1.1) || isInCliff(fx, fz, 1.0) || isNearResourceNode(fx, fz, 0.45)) continue;
     flowerPts.push({
       x: fx,
       z: fz,
