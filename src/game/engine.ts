@@ -160,6 +160,7 @@ import {
   createTreeMesh,
   createUnitMesh,
   updateUnitVisualLod,
+  updateBuildingVisualLod,
   disposeBuildingVisualResources,
   registerFactionVisual,
   DeerAnimParts,
@@ -3740,6 +3741,16 @@ export class RtsEngine {
         this.selectedUnitIds.includes(unit.id) ||
         (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
       updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+    }
+
+    for (const building of this.buildings) {
+      if (!building.isConstructed || building.hp <= 0) continue;
+      const mesh = this.buildingMeshes.get(building.id);
+      if (!mesh || !mesh.visible) continue;
+      const forceHighDetail =
+        this.selectedBuildingId === building.id ||
+        (this.inspectedEntity?.type === 'building' && this.inspectedEntity.id === building.id);
+      updateBuildingVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
 
     this.nodeMeshes.forEach((mesh) => {
