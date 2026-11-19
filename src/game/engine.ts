@@ -146,6 +146,8 @@ import {
   createGoldMineMesh,
   createRallyFlagMesh,
   createRubbleDecalMesh,
+  createSettlementEnvironment,
+  disposeSettlementEnvironment,
   createSelectionRing,
   createShoreFishMesh,
   createStoneQuarryMesh,
@@ -229,6 +231,7 @@ export class RtsEngine {
   public resourceRichness: ResourceRichness = 'standard';
   public mapLayout: MapLayoutResult | null = null;
   private environmentGroup: THREE.Group | null = null;
+  private settlementEnvironmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
 
   // Pathfinding Navigation Grid Cache (land + naval waterway)
@@ -1379,6 +1382,26 @@ export class RtsEngine {
     return unit;
   }
 
+  private refreshSettlementEnvironment(): void {
+    if (this.settlementEnvironmentGroup) {
+      this.scene.remove(this.settlementEnvironmentGroup);
+      disposeSettlementEnvironment(this.settlementEnvironmentGroup);
+    }
+
+    this.settlementEnvironmentGroup = createSettlementEnvironment(
+      this.buildings.map((building) => ({
+        id: building.id,
+        faction: building.faction,
+        buildingType: building.buildingType,
+        x: building.x,
+        z: building.z,
+        hp: building.hp,
+      })),
+      this.mapLayout
+    );
+    this.scene.add(this.settlementEnvironmentGroup);
+  }
+
   public addBuilding(
     type: BuildingType,
     faction: FactionId,
@@ -1440,6 +1463,7 @@ export class RtsEngine {
     );
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
+    this.refreshSettlementEnvironment();
 
     if (this.isHumanControlled(faction) && instant) {
       this.stats.buildingsConstructed++;
@@ -5496,9 +5520,11 @@ export class RtsEngine {
   private updateBuildings(dt: number) {
     const remainingBuildings: BuildingEntity[] = [];
     let selectedDestroyed = false;
+    let settlementEnvironmentDirty = false;
 
     for (const bldg of this.buildings) {
       if (bldg.hp <= 0) {
+        settlementEnvironmentDirty = true;
         this.navGridDirty = true;
         this.waterNavGridDirty = true;
         // Eject any surviving garrisoned units before removing collapsed structure
@@ -5930,6 +5956,9 @@ export class RtsEngine {
     }
 
     this.buildings = remainingBuildings;
+    if (settlementEnvironmentDirty) {
+      this.refreshSettlementEnvironment();
+    }
     if (selectedDestroyed) {
       this.onSelectionChange?.();
     }
