@@ -158,6 +158,7 @@ import {
   DeerAnimParts,
   UnitAnimParts,
   updateBadgeSprite,
+  updateFarmCropVisual,
   updateResourceNodeDepletionVisual,
 } from './proceduralGraphics';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
@@ -1609,6 +1610,27 @@ export class RtsEngine {
       node = this.addResourceNode(`food_${building.id}`, 'food', building.x, building.z, 2500, true, 'farm');
     }
     return node;
+  }
+
+  private refreshFarmCropDepletionVisual(node: ResourceNode): void {
+    if (node.subtype !== 'farm') return;
+
+    const bucket = Math.ceil((node.amount / Math.max(1, node.maxAmount)) * 20);
+    if ((node as any)._lastFarmCropBucket === bucket) return;
+    (node as any)._lastFarmCropBucket = bucket;
+
+    const farmId = node.id.startsWith('food_') ? node.id.slice(5) : '';
+    const exactFarm = farmId ? this.buildings.find((building) => building.id === farmId) : undefined;
+    const farm =
+      exactFarm?.buildingType === 'farm'
+        ? exactFarm
+        : this.buildings
+            .filter((building) => building.buildingType === 'farm' && building.hp > 0)
+            .sort((a, b) => getDistance(a.x, a.z, node.x, node.z) - getDistance(b.x, b.z, node.x, node.z))[0];
+    if (!farm) return;
+
+    const farmMesh = this.buildingMeshes.get(farm.id);
+    if (farmMesh) updateFarmCropVisual(farmMesh, node.amount, node.maxAmount);
   }
 
   public spawnCommandIndicator(x: number, z: number, kind: 'move' | 'attack' | 'gather' | 'build' | 'rally') {
@@ -4488,6 +4510,10 @@ export class RtsEngine {
           }
         }
       }
+
+      // Refresh the linked farm only when its resource reserve crosses a 5% bucket.
+      // This runs after auto-reseed logic so a paid reseed restores the crop in the same tick.
+      this.refreshFarmCropDepletionVisual(node);
 
       if (unit.carryingResource.amount >= unit.unitDef.stats.carryCapacity) {
         unit.waypoints = undefined;
