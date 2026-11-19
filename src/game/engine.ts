@@ -183,6 +183,10 @@ export class RtsEngine {
 
   private frameId = 0;
   private isDestroyed = false;
+  private performanceOverlay: HTMLDivElement | null = null;
+  private performanceOverlayVisible = false;
+  private performanceFrameCount = 0;
+  private performanceWindowStart = 0;
 
   // RTS Multi-Participant & Team State
   public participants: MatchParticipant[] = createDefaultParticipants();
@@ -387,6 +391,7 @@ export class RtsEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.container.appendChild(this.renderer.domElement);
+    this.createPerformanceOverlay();
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xc4e0f2);
@@ -3120,6 +3125,71 @@ export class RtsEngine {
     }
   }
 
+  // ------------------ PERFORMANCE DIAGNOSTICS ------------------
+
+  private createPerformanceOverlay(): void {
+    const panel = document.createElement('div');
+    panel.setAttribute('role', 'status');
+    panel.setAttribute('aria-live', 'off');
+    panel.style.cssText = [
+      'position:absolute',
+      'top:12px',
+      'left:12px',
+      'z-index:40',
+      'display:none',
+      'pointer-events:none',
+      'padding:10px 12px',
+      'border:1px solid rgba(148,163,184,.28)',
+      'border-radius:9px',
+      'background:rgba(2,6,23,.86)',
+      'color:#e2e8f0',
+      'font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'white-space:pre',
+      'box-shadow:0 8px 24px rgba(0,0,0,.24)'
+    ].join(';');
+    panel.textContent = '效能監視器\\n按 F3 顯示或隱藏';
+    this.container.appendChild(panel);
+    this.performanceOverlay = panel;
+  }
+
+  private togglePerformanceOverlay(): void {
+    if (!this.performanceOverlay) return;
+    this.performanceOverlayVisible = !this.performanceOverlayVisible;
+    this.performanceOverlay.style.display = this.performanceOverlayVisible ? 'block' : 'none';
+    if (this.performanceOverlayVisible) {
+      this.performanceFrameCount = 0;
+      this.performanceWindowStart = performance.now();
+      this.performanceOverlay.textContent = '效能監視器\\n正在收集影格資料…';
+    }
+  }
+
+  private updatePerformanceOverlay(now: number): void {
+    if (!this.performanceOverlayVisible || !this.performanceOverlay) return;
+
+    this.performanceFrameCount += 1;
+    const elapsedMs = now - this.performanceWindowStart;
+    if (elapsedMs < 500) return;
+
+    const fps = (this.performanceFrameCount * 1000) / Math.max(1, elapsedMs);
+    const renderInfo = this.renderer.info;
+    const render = renderInfo.render;
+    const memory = renderInfo.memory;
+    const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
+    this.performanceOverlay.textContent = [
+      'PERFORMANCE MONITOR  ·  F3 隱藏',
+      `Frame FPS      ${fps.toFixed(1)}`,
+      `Draw Calls     ${render.calls.toLocaleString()}`,
+      `Triangles      ${render.triangles.toLocaleString()}`,
+      `Geometries     ${memory.geometries.toLocaleString()}`,
+      `Textures       ${memory.textures.toLocaleString()}`,
+      `Pixel Ratio    ${this.renderer.getPixelRatio().toFixed(2)}`,
+      `Renderer       ${rendererMode}`
+    ].join('\\n');
+
+    this.performanceFrameCount = 0;
+    this.performanceWindowStart = now;
+  }
+
   // ------------------ MAIN SIMULATION LOOP ------------------
 
   private startLoop() {
@@ -3146,6 +3216,7 @@ export class RtsEngine {
       }
 
       this.renderer.render(this.scene, this.camera);
+      this.updatePerformanceOverlay(now);
 
       if (this.isSoftwareGl) {
         this.afterDraw(tick);
@@ -7416,6 +7487,12 @@ export class RtsEngine {
       this.keysHeld.add(e.code);
       if (hasOpenUiModal) return;
 
+      if (!isTyping && e.code === 'F3') {
+        e.preventDefault();
+        this.togglePerformanceOverlay();
+        return;
+      }
+
       if (!isTyping && (e.code === 'Escape' || e.code === 'KeyP')) {
         if (this.gameState === 'playing') {
           if (this.placementBuildingType) {
@@ -7847,6 +7924,8 @@ export class RtsEngine {
     clearTimeout(this.frameId);
     this.cleanupWindowListeners.forEach((fn) => fn());
     this.cleanupWindowListeners = [];
+    this.performanceOverlay?.remove();
+    this.performanceOverlay = null;
     this.renderer.dispose();
   }
 }
