@@ -5331,6 +5331,32 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
       }
     }
   });
+  // Extend the existing pebble batch along riverbanks to soften the straight bank-plane edge.
+  layout.waterRects.forEach((wr, riverIdx) => {
+    const dx = wr.x2 - wr.x1;
+    const dz = wr.z2 - wr.z1;
+    const len = Math.hypot(dx, dz) || 1;
+    const nx = -dz / len;
+    const nz = dx / len;
+    const halfWidth = wr.halfWidth ?? 9.8;
+    for (let k = 0; k < 84; k++) {
+      const t = 0.035 + (k / 83) * 0.93;
+      const side = k % 2 === 0 ? 1 : -1;
+      const jitter = (Math.sin((k + riverIdx * 13) * 2.37) + 1) * 0.42;
+      const offset = halfWidth + 1.45 + jitter;
+      const px = wr.x1 + dx * t + nx * side * offset;
+      const pz = wr.z1 + dz * t + nz * side * offset;
+      if (Math.abs(px) > 89 || Math.abs(pz) > 89 || isOnBridge(px, pz) || isInCliff(px, pz, 0.4)) {
+        continue;
+      }
+      pebblePts.push({
+        x: px,
+        z: pz,
+        s: 0.46 + ((k * 3 + riverIdx) % 4) * 0.12,
+      });
+    }
+  });
+
   if (pebblePts.length > 0) {
     const rockGeo = makeCraggyRockGeo(0.45, 0);
     const instancedRocks = new THREE.InstancedMesh(rockGeo, sharedStoneLightMat, pebblePts.length);
