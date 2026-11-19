@@ -5062,8 +5062,184 @@ const sharedStumpGrowthRingMat = new THREE.MeshStandardMaterial({
 });
 const sharedStumpChipGeo = new THREE.CylinderGeometry(0.075, 0.095, 0.48, 6);
 
+export interface ResourceDepletionBatch {
+  group: THREE.Group;
+  capacity: number;
+  count: number;
+  scars: THREE.InstancedMesh;
+  stumps: THREE.InstancedMesh;
+  stumpCuts: THREE.InstancedMesh;
+  stumpRings: THREE.InstancedMesh;
+  woodChips: THREE.InstancedMesh;
+  excavationRims: THREE.InstancedMesh;
+  rubble: THREE.InstancedMesh;
+}
+
 /**
- * Leaves a small, non-interactive environmental trace when a natural resource is exhausted.
+ * Creates one fixed set of instanced batches for every depleted resource site on a map.
+ * Capacity is reserved once at setup; individual depletion events only write instance matrices.
+ */
+export function createResourceDepletionBatch(capacity: number): ResourceDepletionBatch {
+  const siteCapacity = Math.max(1, Math.floor(capacity));
+  const group = new THREE.Group();
+  group.name = 'resource-depletion-remnant-batches';
+  group.userData.isResourceRemnantBatch = true;
+
+  const makeBatch = (geo: THREE.BufferGeometry, material: THREE.Material, count: number, name: string) => {
+    const mesh = new THREE.InstancedMesh(geo, material, count);
+    mesh.name = name;
+    mesh.count = 0;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    group.add(mesh);
+    return mesh;
+  };
+
+  const batch: ResourceDepletionBatch = {
+    group,
+    capacity: siteCapacity,
+    count: 0,
+    scars: makeBatch(sharedResourceScarGeo, sharedResourceScarMat, siteCapacity, 'depletedSiteScars'),
+    stumps: makeBatch(sharedStumpGeo, sharedTreeTrunkMat, siteCapacity, 'depletedTreeStumps'),
+    stumpCuts: makeBatch(sharedStumpCutGeo, sharedStumpCutMat, siteCapacity, 'depletedTreeCutFaces'),
+    stumpRings: makeBatch(sharedStumpGrowthRingGeo, sharedStumpGrowthRingMat, siteCapacity, 'depletedTreeGrowthRings'),
+    woodChips: makeBatch(sharedStumpChipGeo, sharedTreeTrunkMat, siteCapacity * 2, 'depletedWoodChips'),
+    excavationRims: makeBatch(sharedExcavationRimGeo, sharedExcavationRimMat, siteCapacity, 'depletedExcavationRims'),
+    rubble: makeBatch(sharedGoldRockGeo, sharedGoldRockMat, siteCapacity * 5, 'depletedMineralRubble'),
+  };
+
+  return batch;
+}
+
+function writeResourceRemnantInstance(
+  mesh: THREE.InstancedMesh,
+  index: number,
+  x: number,
+  y: number,
+  z: number,
+  rotationX: number,
+  rotationY: number,
+  rotationZ: number,
+  scaleX: number,
+  scaleY: number,
+  scaleZ: number
+): void {
+  const dummy = new THREE.Object3D();
+  dummy.position.set(x, y, z);
+  dummy.rotation.set(rotationX, rotationY, rotationZ);
+  dummy.scale.set(scaleX, scaleY, scaleZ);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(index, dummy.matrix);
+}
+
+/**
+ * Adds a depleted site to shared instance batches. It never creates an Object3D per site.
+ * Returns false only if the map-reserved capacity is exceeded.
+ */
+export function addResourceDepletionRemnant(
+  batch: ResourceDepletionBatch,
+  x: number,
+  z: number,
+  subtype: 'wood' | 'gold' | 'stone',
+  nodeTier: 'standard' | 'rich' = 'standard'
+): boolean {
+  if (batch.count >= batch.capacity) return false;
+
+  const slot = batch.count;
+  const tierScale = nodeTier === 'rich' ? 1.12 : 1;
+  if (subtype === 'wood') {
+    writeResourceRemnantInstance(batch.scars, slot, x, 0.018, z, -Math.PI / 2, 0, 0, 0.78 * tierScale, 0.68 * tierScale, 1);
+    writeResourceRemnantInstance(batch.stumps, slot, x, 0.15 * tierScale, z, 0, 0, 0, tierScale, tierScale, tierScale);
+    writeResourceRemnantInstance(batch.stumpCuts, slot, x, 0.303 * tierScale, z, -Math.PI / 2, 0, 0, tierScale, tierScale, tierScale);
+    writeResourceRemnantInstance(batch.stumpRings, slot, x, 0.306 * tierScale, z, -Math.PI / 2, 0, 0, tierScale, tierScale, tierScale);
+
+    const chips = [
+      { x: 0.48, z: -0.2, yaw: 0.38, tilt: 1.42, scale: 1 },
+      { x: -0.34, z: 0.52, yaw: -0.62, tilt: 1.5, scale: 0.76 },
+    ];
+    chips.forEach((chip, index) => {
+      writeResourceRemnantInstance(
+        batch.woodChips,
+        slot * 2 + index,
+        x + chip.x * tierScale,
+        0.09 * tierScale,
+        z + chip.z * tierScale,
+        0.04,
+        chip.yaw,
+        chip.tilt,
+        chip.scale * tierScale,
+        chip.scale * tierScale,
+        chip.scale * tierScale
+      );
+    });
+  } else {
+    const scarScaleX = 1.55 * tierScale;
+    const scarScaleZ = 1.3 * tierScale;
+    writeResourceRemnantInstance(batch.scars, slot, x, 0.018, z, -Math.PI / 2, 0, 0, scarScaleX, scarScaleZ, 1);
+    writeResourceRemnantInstance(
+      batch.excavationRims,
+      slot,
+      x,
+      0.026,
+      z,
+      -Math.PI / 2,
+      0,
+      0,
+      subtype === 'gold' ? 1 : 0.88,
+      subtype === 'gold' ? 0.82 : 0.9,
+      1
+    );
+
+    const rubbleCount = subtype === 'gold' ? 4 : 5;
+    for (let i = 0; i < rubbleCount; i++) {
+      const angle = (i / rubbleCount) * Math.PI * 2 + (subtype === 'gold' ? 0.18 : 0.42);
+      const radius = (subtype === 'gold' ? 1.28 : 1.18) * tierScale;
+      const size = (subtype === 'gold' ? 0.11 : 0.13) * (0.82 + (i % 3) * 0.12);
+      writeResourceRemnantInstance(
+        batch.rubble,
+        slot * 5 + i,
+        x + Math.cos(angle) * radius,
+        0.075,
+        z + Math.sin(angle) * radius * 0.82,
+        0.18 + i * 0.09,
+        angle * 1.7,
+        0.12 - i * 0.035,
+        size * 1.25,
+        size * 0.82,
+        size
+      );
+    }
+  }
+
+  batch.count++;
+  batch.scars.count = batch.count;
+  batch.stumps.count = batch.count;
+  batch.stumpCuts.count = batch.count;
+  batch.stumpRings.count = batch.count;
+  batch.woodChips.count = batch.count * 2;
+  batch.excavationRims.count = batch.count;
+  batch.rubble.count = batch.count * 5;
+
+  const touched = [
+    batch.scars,
+    batch.stumps,
+    batch.stumpCuts,
+    batch.stumpRings,
+    batch.woodChips,
+    batch.excavationRims,
+    batch.rubble,
+  ];
+  touched.forEach((mesh) => {
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.boundingBox = null;
+    mesh.boundingSphere = null;
+  });
+
+  return true;
+}
+
+
  * Geometry and materials are shared so depleted sites do not accumulate unique GPU assets.
  */
 export function createResourceDepletionRemnant(
