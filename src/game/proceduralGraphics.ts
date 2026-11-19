@@ -3,7 +3,6 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
-import type { MapLayoutResult } from './mapGenerator';
 import { isPointInTerrainObstacle } from './collision';
 
 export interface DeerAnimParts {
