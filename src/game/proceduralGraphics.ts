@@ -5037,6 +5037,119 @@ export function createStoneQuarryMesh(
   return group;
 }
 
+const sharedResourceScarGeo = new THREE.CircleGeometry(1, 20);
+const sharedResourceScarMat = new THREE.MeshBasicMaterial({
+  color: 0x51483d,
+  transparent: true,
+  opacity: 0.58,
+  depthWrite: false,
+});
+const sharedExcavationRimGeo = new THREE.RingGeometry(1.02, 1.16, 20);
+const sharedExcavationRimMat = new THREE.MeshStandardMaterial({
+  color: 0x746958,
+  roughness: 1,
+});
+const sharedStumpGeo = new THREE.CylinderGeometry(0.32, 0.43, 0.3, 10);
+const sharedStumpCutGeo = new THREE.CircleGeometry(0.315, 10);
+const sharedStumpCutMat = new THREE.MeshStandardMaterial({
+  color: 0xc29a6b,
+  roughness: 0.96,
+});
+const sharedStumpGrowthRingGeo = new THREE.RingGeometry(0.105, 0.125, 10);
+const sharedStumpGrowthRingMat = new THREE.MeshStandardMaterial({
+  color: 0x795437,
+  roughness: 1,
+});
+const sharedStumpChipGeo = new THREE.CylinderGeometry(0.075, 0.095, 0.48, 6);
+
+/**
+ * Leaves a small, non-interactive environmental trace when a natural resource is exhausted.
+ * Geometry and materials are shared so depleted sites do not accumulate unique GPU assets.
+ */
+export function createResourceDepletionRemnant(
+  subtype: 'wood' | 'gold' | 'stone',
+  nodeTier: 'standard' | 'rich' = 'standard'
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = `depleted-${subtype}-remnant`;
+  group.userData.isResourceRemnant = true;
+  const tierScale = nodeTier === 'rich' ? 1.12 : 1;
+
+  const scar = new THREE.Mesh(sharedResourceScarGeo, sharedResourceScarMat);
+  scar.rotation.x = -Math.PI / 2;
+  scar.position.y = 0.018;
+  scar.scale.set(subtype === 'wood' ? 0.78 : 1.55 * tierScale, subtype === 'wood' ? 0.68 : 1.3 * tierScale, 1);
+  scar.castShadow = false;
+  scar.receiveShadow = false;
+  group.add(scar);
+
+  if (subtype === 'wood') {
+    const stump = new THREE.Mesh(sharedStumpGeo, sharedTreeTrunkMat);
+    stump.position.y = 0.15;
+    stump.castShadow = false;
+    stump.receiveShadow = false;
+    group.add(stump);
+
+    const cutFace = new THREE.Mesh(sharedStumpCutGeo, sharedStumpCutMat);
+    cutFace.rotation.x = -Math.PI / 2;
+    cutFace.position.y = 0.303;
+    group.add(cutFace);
+
+    const growthRing = new THREE.Mesh(sharedStumpGrowthRingGeo, sharedStumpGrowthRingMat);
+    growthRing.rotation.x = -Math.PI / 2;
+    growthRing.position.y = 0.306;
+    group.add(growthRing);
+
+    const chips = new THREE.InstancedMesh(sharedStumpChipGeo, sharedTreeTrunkMat, 2);
+    const dummy = new THREE.Object3D();
+    [
+      { x: 0.48, z: -0.2, yaw: 0.38, tilt: 1.42, scale: 1 },
+      { x: -0.34, z: 0.52, yaw: -0.62, tilt: 1.5, scale: 0.76 },
+    ].forEach((chip, index) => {
+      dummy.position.set(chip.x, 0.09, chip.z);
+      dummy.rotation.set(0.04, chip.yaw, chip.tilt);
+      dummy.scale.setScalar(chip.scale);
+      dummy.updateMatrix();
+      chips.setMatrixAt(index, dummy.matrix);
+    });
+    chips.instanceMatrix.needsUpdate = true;
+    chips.castShadow = false;
+    chips.receiveShadow = false;
+    group.add(chips);
+    group.scale.setScalar(tierScale);
+    return group;
+  }
+
+  const rim = new THREE.Mesh(sharedExcavationRimGeo, sharedExcavationRimMat);
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.026;
+  rim.scale.set(subtype === 'gold' ? 1.0 : 0.88, subtype === 'gold' ? 0.82 : 0.9, 1);
+  rim.castShadow = false;
+  rim.receiveShadow = false;
+  group.add(rim);
+
+  const rubbleMat = subtype === 'gold' ? sharedGoldRockMat : sharedStoneDarkMat;
+  const rubble = new THREE.InstancedMesh(sharedGoldRockGeo, rubbleMat, subtype === 'gold' ? 4 : 5);
+  const dummy = new THREE.Object3D();
+  const rubbleCount = subtype === 'gold' ? 4 : 5;
+  for (let i = 0; i < rubbleCount; i++) {
+    const angle = (i / rubbleCount) * Math.PI * 2 + (subtype === 'gold' ? 0.18 : 0.42);
+    const radius = (subtype === 'gold' ? 1.28 : 1.18) * tierScale;
+    dummy.position.set(Math.cos(angle) * radius, 0.075, Math.sin(angle) * radius * 0.82);
+    dummy.rotation.set(0.18 + i * 0.09, angle * 1.7, 0.12 - i * 0.035);
+    const size = (subtype === 'gold' ? 0.11 : 0.13) * (0.82 + (i % 3) * 0.12);
+    dummy.scale.set(size * 1.25, size * 0.82, size);
+    dummy.updateMatrix();
+    rubble.setMatrixAt(i, dummy.matrix);
+  }
+  rubble.instanceMatrix.needsUpdate = true;
+  rubble.castShadow = false;
+  rubble.receiveShadow = false;
+  group.add(rubble);
+
+  return group;
+}
+
 const sharedBushClumpGeo = makeFoliageClusterGeo(0.56, 1);
 const sharedBerryDotGeo = new THREE.SphereGeometry(0.085, 8, 8);
 const sharedBushLeafMat = new THREE.MeshStandardMaterial({
