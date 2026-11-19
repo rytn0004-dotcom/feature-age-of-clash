@@ -135,7 +135,8 @@ export function getTerrainPBRMaps(preset: MapPresetId = 'river_valley'): PBRMapS
   const cached = terrainCache.get(preset);
   if (cached) return cached;
 
-  const size = 512;
+  // 2K-class world coverage is expensive; 1K keeps ground detail crisp without a huge GPU footprint.
+  const size = 1024;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -180,8 +181,10 @@ export function getTerrainPBRMaps(preset: MapPresetId = 'river_valley'): PBRMapS
       const pebble = periodicNoise(u, v, 34, seed + 177);
       const cloverCluster = periodicNoise(u, v, 14, seed + 211);
       const flowerFlecks = periodicNoise(u, v, 52, seed + 241);
+      const fineGrain = periodicNoise(u * 2.6, v * 2.6, 96, seed + 263);
+      const mineralDust = periodicNoise(u * 1.8, v * 1.8, 128, seed + 277);
 
-      const h = macro * 0.42 + mid * 0.22 + micro * 0.16 + blades * 0.2 + (pebble > 0.82 ? 0.16 : 0);
+      const h = macro * 0.38 + mid * 0.2 + micro * 0.15 + blades * 0.18 + fineGrain * 0.06 + mineralDust * 0.03 + (pebble > 0.82 ? 0.16 : 0);
       heights[y * size + x] = h;
 
       let r: number;
@@ -226,7 +229,7 @@ export function getTerrainPBRMaps(preset: MapPresetId = 'river_valley'): PBRMapS
         b = lerp(b, palette.soil[2] * 1.12, gritMix);
       }
 
-      const bladeShade = (blades - 0.5) * 38;
+      const bladeShade = (blades - 0.5) * 34 + (fineGrain - 0.5) * 9 + (mineralDust - 0.5) * 5;
       const idx = (y * size + x) * 4;
       colorData[idx] = Math.max(0, Math.min(255, Math.round(r + bladeShade)));
       colorData[idx + 1] = Math.max(0, Math.min(255, Math.round(g + bladeShade * 1.06)));
@@ -257,7 +260,7 @@ let stoneCache: PBRMapSet | null = null;
 export function getStoneMasonryMaps(): PBRMapSet {
   if (stoneCache) return stoneCache;
 
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -284,16 +287,18 @@ export function getStoneMasonryMaps(): PBRMapSet {
       const grain = periodicFbm(u, v, 8, 4, 411);
       const chisel = periodicNoise(u * 2.4, v * 1.4, 28, 427);
       const moss = periodicFbm(u, v, 4, 3, 419);
+      const pore = periodicNoise(u * 4.8, v * 4.8, 76, 433);
+      const edgeWear = periodicNoise(u * 2.2, v * 2.2, 48, 439);
       const blockTone = (hash2D(col, row, 16, 777) - 0.5) * 38;
       const warmTint = (hash2D(col + 7, row + 3, 16, 787) - 0.5) * 14;
 
-      const h = isMortar ? 0.06 : 0.4 + bevel * 0.34 + grain * 0.18 + chisel * 0.08;
+      const h = isMortar ? 0.06 : 0.38 + bevel * 0.32 + grain * 0.16 + chisel * 0.08 + pore * 0.035 + edgeWear * 0.025;
       heights[y * size + x] = h;
 
       const aoShadow = isMortar ? 0.52 : 0.8 + bevel * 0.2;
       let base = isMortar
         ? 88 + grain * 18
-        : (186 + blockTone + (grain - 0.5) * 38 + (chisel - 0.5) * 18 + bevel * 16) * aoShadow;
+        : (186 + blockTone + (grain - 0.5) * 34 + (chisel - 0.5) * 18 + (pore - 0.5) * 12 + (edgeWear - 0.5) * 9 + bevel * 16) * aoShadow;
       let r = base * 0.99 + warmTint * 0.6;
       let g = base * 1.0 + warmTint * 0.2;
       let b = base * 1.02 - warmTint * 0.4;
@@ -331,7 +336,7 @@ let woodCache: PBRMapSet | null = null;
 export function getTimberWoodMaps(): PBRMapSet {
   if (woodCache) return woodCache;
 
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -362,16 +367,17 @@ export function getTimberWoodMaps(): PBRMapSet {
         Math.sin((fx * 4.2 + knotWarp + periodicNoise(u * 2.2, v, 8, 501 + plankIdx) * 1.5) * Math.PI * 2) * 0.5 + 0.5;
       const fiberGrain = periodicNoise(u * 6.0, v * 0.35, 24, 515 + plankIdx * 13);
       const finePores = periodicNoise(u * 10, v * 0.5, 32, 529);
+      const fiberMicro = periodicNoise(u * 18, v * 0.72, 64, 537);
       const tone = (hash2D(plankIdx, Math.floor(v * 2 + vShift), 16, 909) - 0.5) * 30;
 
       const h = isSeam
         ? 0.08
         : isNail
         ? 0.88
-        : 0.42 + fiberGrain * 0.32 + ringWave * 0.2 + finePores * 0.08 - knotWarp * 0.12;
+        : 0.4 + fiberGrain * 0.3 + ringWave * 0.18 + finePores * 0.07 + fiberMicro * 0.07 - knotWarp * 0.12;
       heights[y * size + x] = h;
 
-      const shade = isSeam ? 0.36 : 0.74 + fiberGrain * 0.24 + ringWave * 0.14 - knotWarp * 0.22;
+      const shade = isSeam ? 0.36 : 0.72 + fiberGrain * 0.22 + ringWave * 0.13 + (fiberMicro - 0.5) * 0.08 - knotWarp * 0.22;
       const idx = (y * size + x) * 4;
       if (isNail) {
         colorData[idx] = 54;
@@ -408,7 +414,7 @@ let roofCache: PBRMapSet | null = null;
 export function getRoofShingleMaps(): PBRMapSet {
   if (roofCache) return roofCache;
 
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -477,7 +483,7 @@ let waterNormalCache: THREE.DataTexture | null = null;
 export function getWaterRippleNormalMap(): THREE.DataTexture {
   if (waterNormalCache) return waterNormalCache;
 
-  const size = 256;
+  const size = 512;
   const heights = new Float32Array(size * size);
   for (let y = 0; y < size; y++) {
     const v = y / size;
@@ -498,7 +504,7 @@ export function getWaterRippleNormalMap(): THREE.DataTexture {
 let wheatCache: PBRMapSet | null = null;
 export function getWheatFieldMaps(): PBRMapSet {
   if (wheatCache) return wheatCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -533,7 +539,7 @@ export function getWheatFieldMaps(): PBRMapSet {
 let foliageCache: PBRMapSet | null = null;
 export function getFoliagePBRMaps(): PBRMapSet {
   if (foliageCache) return foliageCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -544,10 +550,11 @@ export function getFoliagePBRMaps(): PBRMapSet {
       const cluster = periodicFbm(u, v, 6, 4, 555);
       const leafVein = periodicNoise(u * 2.2, v * 2.2, 28, 577);
       const speck = periodicNoise(u * 3, v * 3, 40, 593);
-      const h = cluster * 0.58 + leafVein * 0.28 + speck * 0.14;
+      const microVein = periodicNoise(u * 9, v * 9, 72, 599);
+      const h = cluster * 0.52 + leafVein * 0.26 + speck * 0.14 + microVein * 0.08;
       heights[y * size + x] = h;
       const idx = (y * size + x) * 4;
-      const shade = 148 + Math.round(cluster * 74 + leafVein * 28);
+      const shade = 146 + Math.round(cluster * 70 + leafVein * 25 + (microVein - 0.5) * 18);
       colorData[idx] = Math.max(0, Math.min(255, shade - 10));
       colorData[idx + 1] = Math.max(0, Math.min(255, shade + 18));
       colorData[idx + 2] = Math.max(0, Math.min(255, shade - 22));
@@ -571,7 +578,7 @@ export function getFoliagePBRMaps(): PBRMapSet {
 let craggyRockCache: PBRMapSet | null = null;
 export function getCraggyRockMaps(): PBRMapSet {
   if (craggyRockCache) return craggyRockCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -618,7 +625,7 @@ export function getCraggyRockMaps(): PBRMapSet {
 let armorPlateCache: PBRMapSet | null = null;
 export function getArmorPlateMaps(): PBRMapSet {
   if (armorPlateCache) return armorPlateCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -630,6 +637,7 @@ export function getArmorPlateMaps(): PBRMapSet {
       const localX = (x % 128) / 128;
       const brushed = periodicNoise(u * 8, v * 0.45, 22, 1201);
       const hammer = periodicNoise(u * 2, v * 2, 18, 1213);
+      const polishGrain = periodicNoise(u * 16, v * 0.8, 56, 1229);
       const fluting = Math.pow(Math.abs(Math.sin(u * Math.PI * 6)), 0.7) * 0.14;
       const seamDist = Math.min(localY, 1 - localY, localX * 2, (1 - localX) * 2);
       const isSeam = seamDist < 0.045;
@@ -647,7 +655,7 @@ export function getArmorPlateMaps(): PBRMapSet {
         ? 132
         : isRivet
         ? Math.min(255, Math.round(228 + rivetHeight * 80))
-        : Math.max(166, Math.min(252, Math.round(202 + bevel * 20 + brushed * 24 + fluting * 85 + (hammer - 0.5) * 14)));
+        : Math.max(166, Math.min(252, Math.round(202 + bevel * 20 + brushed * 24 + fluting * 85 + (hammer - 0.5) * 14 + (polishGrain - 0.5) * 9)));
       const idx = (y * size + x) * 4;
       colorData[idx] = lum;
       colorData[idx + 1] = lum;
@@ -677,7 +685,7 @@ export function getArmorPlateMaps(): PBRMapSet {
 let clothWeaveCache: PBRMapSet | null = null;
 export function getClothWeaveMaps(): PBRMapSet {
   if (clothWeaveCache) return clothWeaveCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -734,7 +742,7 @@ export function getContactShadowTexture(): THREE.CanvasTexture {
 let barkCache: PBRMapSet | null = null;
 export function getTreeBarkMaps(): PBRMapSet {
   if (barkCache) return barkCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -746,10 +754,11 @@ export function getTreeBarkMaps(): PBRMapSet {
       const fissure = periodicFbm(u * 2.4, v * 0.35, 10, 3, 317);
       const crossCrack = periodicNoise(u * 1.2, v * 3.5, 16, 325);
       const lichen = periodicFbm(u, v, 8, 2, 331);
-      const h = ridge * 0.5 + fissure * 0.36 + crossCrack * 0.14;
+      const barkFiber = periodicNoise(u * 8, v * 0.7, 64, 337);
+      const h = ridge * 0.44 + fissure * 0.34 + crossCrack * 0.13 + barkFiber * 0.09;
       heights[y * size + x] = h;
 
-      let r = 78 + h * 58;
+      let r = 76 + h * 58 + (barkFiber - 0.5) * 9;
       let g = 52 + h * 38;
       let b = 30 + h * 22;
       if (lichen > 0.74) {
@@ -782,7 +791,7 @@ export function getTreeBarkMaps(): PBRMapSet {
 let furCache: PBRMapSet | null = null;
 export function getAnimalFurMaps(): PBRMapSet {
   if (furCache) return furCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -822,7 +831,7 @@ export function getAnimalFurMaps(): PBRMapSet {
 let leatherCache: PBRMapSet | null = null;
 export function getLeatherMaps(): PBRMapSet {
   if (leatherCache) return leatherCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -858,7 +867,7 @@ export function getLeatherMaps(): PBRMapSet {
 let constructionPadCache: PBRMapSet | null = null;
 export function getConstructionPadMaps(): PBRMapSet {
   if (constructionPadCache) return constructionPadCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -914,7 +923,7 @@ export function getConstructionPadMaps(): PBRMapSet {
 let damascusCache: PBRMapSet | null = null;
 export function getDamascusSteelMaps(): PBRMapSet {
   if (damascusCache) return damascusCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -955,7 +964,7 @@ export function getDamascusSteelMaps(): PBRMapSet {
 let chainmailCache: PBRMapSet | null = null;
 export function getChainmailPlateMaps(): PBRMapSet {
   if (chainmailCache) return chainmailCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -999,7 +1008,7 @@ export function getChainmailPlateMaps(): PBRMapSet {
 let goldFiligreeCache: PBRMapSet | null = null;
 export function getGoldFiligreeMaps(): PBRMapSet {
   if (goldFiligreeCache) return goldFiligreeCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -1038,7 +1047,7 @@ export function getGoldFiligreeMaps(): PBRMapSet {
 let oakHullCache: PBRMapSet | null = null;
 export function getOakHullMaps(): PBRMapSet {
   if (oakHullCache) return oakHullCache;
-  const size = 256;
+  const size = 512;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
@@ -1096,7 +1105,7 @@ export function getOakHullMaps(): PBRMapSet {
 let canvasSailCache: PBRMapSet | null = null;
 export function getCanvasSailMaps(): PBRMapSet {
   if (canvasSailCache) return canvasSailCache;
-  const size = 128;
+  const size = 256;
   const colorData = new Uint8Array(size * size * 4);
   const roughData = new Uint8Array(size * size * 4);
   const heights = new Float32Array(size * size);
