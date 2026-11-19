@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 
@@ -495,6 +496,14 @@ export function addContactShadow(group: THREE.Group, radius: number): THREE.Mesh
   return mesh;
 }
 
+// Subtle architectural edge rounding; radius is kept small to preserve silhouette.
+function roundedBuildingBox(width: number, height: number, depth: number): THREE.BufferGeometry {
+  const smallest = Math.min(Math.abs(width), Math.abs(height), Math.abs(depth));
+  const radius = Math.max(0.006, Math.min(smallest * 0.045, 0.075));
+  return new RoundedBoxGeometry(width, height, depth, 1, radius);
+}
+
+
 // ----------------- BUILDINGS (Sculpted Multi-Part Architecture) -----------------
 
 export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
@@ -573,17 +582,17 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     group.add(ishigaki);
 
     // Stone entrance stair apron
-    const steps = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.65, 1.0), stoneMat);
+    const steps = new THREE.Mesh(roundedBuildingBox(1.9, 0.65, 1.0), stoneMat);
     steps.position.set(0, 0.32, 2.85);
     group.add(steps);
 
-    const tier1 = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.85, 4.5), woodMat);
+    const tier1 = new THREE.Mesh(roundedBuildingBox(4.5, 1.85, 4.5), woodMat);
     tier1.position.y = 2.15;
     tier1.castShadow = true;
     group.add(tier1);
 
     // White shikkui plaster facade inset
-    const plaster1 = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.5, 4.62), plasterMat);
+    const plaster1 = new THREE.Mesh(roundedBuildingBox(4.2, 1.5, 4.62), plasterMat);
     plaster1.position.y = 2.15;
     group.add(plaster1);
 
@@ -592,7 +601,7 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     eave1.castShadow = true;
     group.add(eave1);
 
-    const tier2 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.55, 3.2), plasterMat);
+    const tier2 = new THREE.Mesh(roundedBuildingBox(3.2, 1.55, 3.2), plasterMat);
     tier2.position.y = 4.45;
     tier2.castShadow = true;
     group.add(tier2);
@@ -604,7 +613,7 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
       [-1.55, 1.55],
       [1.55, 1.55],
     ].forEach(([px, pz]) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.6, 0.16), woodMat);
+      const post = new THREE.Mesh(roundedBuildingBox(0.16, 1.6, 0.16), woodMat);
       post.position.set(px, 4.45, pz);
       group.add(post);
     });
@@ -614,7 +623,7 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     eave2.castShadow = true;
     group.add(eave2);
 
-    const tier3 = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.15, 2.1), plasterMat);
+    const tier3 = new THREE.Mesh(roundedBuildingBox(2.1, 1.15, 2.1), plasterMat);
     tier3.position.y = 6.25;
     tier3.castShadow = true;
     group.add(tier3);
@@ -632,7 +641,7 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     group.add(eave3);
 
     // Golden Shachihoko Roof Ridge Finials
-    const ridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.18, 0.2), goldMat);
+    const ridgeBeam = new THREE.Mesh(roundedBuildingBox(1.15, 0.18, 0.2), goldMat);
     ridgeBeam.position.y = 7.9;
     group.add(ridgeBeam);
     [-0.55, 0.55].forEach((sx) => {
@@ -652,7 +661,7 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
       lantern.position.set(lx, 2.25, 2.8);
       group.add(lantern);
     });
-    const kasagi = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.24, 0.34), vermilionMat);
+    const kasagi = new THREE.Mesh(roundedBuildingBox(3.2, 0.24, 0.34), vermilionMat);
     kasagi.position.set(0, 2.62, 2.8);
     group.add(kasagi);
   } else if (civ === 'fantasy') {
@@ -743,19 +752,19 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     group.add(crystal);
   } else {
     // Medieval Fortified Keep: Stepped Stone Plinth + Buttresses + Half-Timbered Upper Hall + Hipped Roof + 4 Turrets (fits <= 4.18m collider)
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.72, 5.6), darkStoneMat);
+    const plinth = new THREE.Mesh(roundedBuildingBox(5.6, 0.72, 5.6), darkStoneMat);
     plinth.position.y = 0.36;
     plinth.castShadow = true;
     plinth.receiveShadow = true;
     group.add(plinth);
 
     // Front cobblestone entry apron
-    const apron = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.14, 1.15), darkStoneMat);
+    const apron = new THREE.Mesh(roundedBuildingBox(2.8, 0.14, 1.15), darkStoneMat);
     apron.position.set(0, 0.07, 3.15);
     apron.receiveShadow = true;
     group.add(apron);
 
-    const keepLower = new THREE.Mesh(new THREE.BoxGeometry(4.15, 2.3, 4.15), stoneMat);
+    const keepLower = new THREE.Mesh(roundedBuildingBox(4.15, 2.3, 4.15), stoneMat);
     keepLower.position.y = 1.87;
     keepLower.castShadow = true;
     group.add(keepLower);
@@ -767,22 +776,22 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
       [-2.02, 2.02],
       [2.02, 2.02],
     ].forEach(([bx, bz]) => {
-      const buttress = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.4, 0.5), darkStoneMat);
+      const buttress = new THREE.Mesh(roundedBuildingBox(0.5, 2.4, 0.5), darkStoneMat);
       buttress.position.set(bx, 1.85, bz);
       group.add(buttress);
     });
 
     // Tudor half-timbered upper solar hall
-    const hallUpper = new THREE.Mesh(new THREE.BoxGeometry(4.45, 1.45, 4.45), plasterMat);
+    const hallUpper = new THREE.Mesh(roundedBuildingBox(4.45, 1.45, 4.45), plasterMat);
     hallUpper.position.y = 3.72;
     hallUpper.castShadow = true;
     group.add(hallUpper);
 
     [-1.48, 0, 1.48].forEach((tx) => {
-      const beamF = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.48, 4.54), woodMat);
+      const beamF = new THREE.Mesh(roundedBuildingBox(0.16, 1.48, 4.54), woodMat);
       beamF.position.set(tx, 3.72, 0);
       group.add(beamF);
-      const beamS = new THREE.Mesh(new THREE.BoxGeometry(4.54, 1.48, 0.16), woodMat);
+      const beamS = new THREE.Mesh(roundedBuildingBox(4.54, 1.48, 0.16), woodMat);
       beamS.position.set(0, 3.72, tx);
       group.add(beamS);
     });
@@ -922,24 +931,24 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
   const ironMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.8 });
 
   // Stone foundation plinth + Lower garrison wall (fits <= 3.02m collider)
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(4.25, 0.45, 3.75), stoneMat);
+  const plinth = new THREE.Mesh(roundedBuildingBox(4.25, 0.45, 3.75), stoneMat);
   plinth.position.y = 0.22;
   plinth.receiveShadow = true;
   group.add(plinth);
 
-  const base = new THREE.Mesh(new THREE.BoxGeometry(4.0, 1.2, 3.45), stoneMat);
+  const base = new THREE.Mesh(roundedBuildingBox(4.0, 1.2, 3.45), stoneMat);
   base.position.y = 1.02;
   base.castShadow = true;
   group.add(base);
 
   // Timber-framed upper floor
-  const upper = new THREE.Mesh(new THREE.BoxGeometry(3.85, 1.35, 3.25), civ === 'anime' ? plasterMat : woodMat);
+  const upper = new THREE.Mesh(roundedBuildingBox(3.85, 1.35, 3.25), civ === 'anime' ? plasterMat : woodMat);
   upper.position.y = 2.28;
   upper.castShadow = true;
   group.add(upper);
 
   [-1.7, 0, 1.7].forEach((tx) => {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.4, 3.35), woodMat);
+    const beam = new THREE.Mesh(roundedBuildingBox(0.16, 1.4, 3.35), woodMat);
     beam.position.set(tx, 2.28, 0);
     group.add(beam);
   });
@@ -949,7 +958,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     addMullionedWindow(group, wx, 2.32, 1.65, 0.46, 0.56, 0, woodMat);
     addMullionedWindow(group, wx, 2.32, -1.65, 0.46, 0.56, Math.PI, woodMat);
   });
-  const frontStep = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.14, 0.75), stoneMat);
+  const frontStep = new THREE.Mesh(roundedBuildingBox(2.0, 0.14, 0.75), stoneMat);
   frontStep.position.set(0, 0.07, 2.15);
   group.add(frontStep);
 
@@ -961,7 +970,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     roof.castShadow = true;
     group.add(roof);
 
-    const toriiTop = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.22, 0.28), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
+    const toriiTop = new THREE.Mesh(roundedBuildingBox(2.6, 0.22, 0.28), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
     toriiTop.position.set(0, 2.85, 1.88);
     group.add(toriiTop);
     [-0.98, 0.98].forEach((px) => {
@@ -985,7 +994,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     roof.castShadow = true;
     group.add(roof);
 
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.2, 3.75), woodMat);
+    const ridge = new THREE.Mesh(roundedBuildingBox(0.22, 0.2, 3.75), woodMat);
     ridge.position.set(0, 4.68, 0);
     group.add(ridge);
 
@@ -1003,7 +1012,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
 
   // Crossed Broadswords Insignia above Door
   [-Math.PI / 4, Math.PI / 4].forEach((rot) => {
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.35, 0.07), steelMat);
+    const blade = new THREE.Mesh(roundedBuildingBox(0.11, 1.35, 0.07), steelMat);
     blade.position.set(0, 2.55, 1.74);
     blade.rotation.z = rot;
     group.add(blade);
@@ -1014,7 +1023,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
   rackPost1.position.set(2.02, 0.62, 0.12);
   const rackPost2 = rackPost1.clone();
   rackPost2.position.set(2.02, 0.62, 0.95);
-  const rackBar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.0), woodMat);
+  const rackBar = new THREE.Mesh(roundedBuildingBox(0.1, 0.1, 1.0), woodMat);
   rackBar.position.set(2.02, 1.12, 0.54);
   group.add(rackPost1, rackPost2, rackBar);
 
@@ -1245,18 +1254,18 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
   });
 
   // 1. Stone foundation plinth (fits neatly inside house 1.65m collision radius)
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.32, 2.45), stoneMat);
+  const plinth = new THREE.Mesh(roundedBuildingBox(2.75, 0.32, 2.45), stoneMat);
   plinth.position.y = 0.16;
   plinth.receiveShadow = true;
   group.add(plinth);
 
   // 2. Main cottage body & corner timber posts
-  const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.65, 2.15), stoneMat);
+  const lowerWall = new THREE.Mesh(roundedBuildingBox(2.45, 0.65, 2.15), stoneMat);
   lowerWall.position.y = 0.64;
   lowerWall.castShadow = true;
   group.add(lowerWall);
 
-  const upperWall = new THREE.Mesh(new THREE.BoxGeometry(2.38, 0.92, 2.08), wallMat);
+  const upperWall = new THREE.Mesh(roundedBuildingBox(2.38, 0.92, 2.08), wallMat);
   upperWall.position.y = 1.42;
   upperWall.castShadow = true;
   group.add(upperWall);
@@ -1268,7 +1277,7 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     [1.18, -1.03],
   ];
   postPositions.forEach(([px, pz]) => {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.02, 0.14), woodMat);
+    const post = new THREE.Mesh(roundedBuildingBox(0.14, 1.02, 0.14), woodMat);
     post.position.set(px, 1.42, pz);
     group.add(post);
   });
@@ -1291,15 +1300,15 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     roof.castShadow = true;
     group.add(roof);
 
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 2.45), woodMat);
+    const ridge = new THREE.Mesh(roundedBuildingBox(0.16, 0.14, 2.45), woodMat);
     ridge.position.set(0, 3.01, 0);
     group.add(ridge);
 
     if (civ === 'medieval') {
-      const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.1, 0.38), stoneMat);
+      const chimney = new THREE.Mesh(roundedBuildingBox(0.38, 1.1, 0.38), stoneMat);
       chimney.position.set(0.68, 2.65, -0.55);
       chimney.castShadow = true;
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.1, 0.46), stoneMat);
+      const cap = new THREE.Mesh(roundedBuildingBox(0.46, 0.1, 0.46), stoneMat);
       cap.position.set(0.68, 3.22, -0.55);
       group.add(chimney, cap);
     } else {
@@ -1315,13 +1324,13 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
   addWarmLantern(group, 0.32, 1.38, 1.15, ironMat);
 
   // Warm windows on front & side walls
-  const frontWin = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.08), warmGlassMat);
+  const frontWin = new THREE.Mesh(roundedBuildingBox(0.44, 0.42, 0.08), warmGlassMat);
   frontWin.position.set(0.55, 1.38, 1.04);
-  const winFrame = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.5, 0.05), woodMat);
+  const winFrame = new THREE.Mesh(roundedBuildingBox(0.54, 0.5, 0.05), woodMat);
   winFrame.position.set(0.55, 1.38, 1.02);
-  const sideWinL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.46), warmGlassMat);
+  const sideWinL = new THREE.Mesh(roundedBuildingBox(0.08, 0.42, 0.46), warmGlassMat);
   sideWinL.position.set(-1.2, 1.38, 0);
-  const sideWinR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.46), warmGlassMat);
+  const sideWinR = new THREE.Mesh(roundedBuildingBox(0.08, 0.42, 0.46), warmGlassMat);
   sideWinR.position.set(1.2, 1.38, 0);
   group.add(frontWin, winFrame, sideWinL, sideWinR);
 
