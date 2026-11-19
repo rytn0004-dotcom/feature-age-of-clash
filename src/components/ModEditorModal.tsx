@@ -19,6 +19,7 @@ import {
 import { RtsEngine } from '../game/engine';
 import { AiRule, GameMod, UnitDefinition } from '../types/game';
 import { INITIAL_MODS } from '../game/mods';
+import { UnitPortrait } from './UnitPortrait';
 
 interface ModEditorModalProps {
   engine: RtsEngine;
@@ -428,8 +429,13 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                     className="p-3 bg-slate-800/80 border border-slate-700 rounded-xl space-y-2"
                   >
                     <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: unit.visual.color }} />
+                      <div className="flex items-center gap-2.5">
+                        <UnitPortrait
+                          unitId={unit.id}
+                          modelType={unit.visual.modelType}
+                          visualColor={unit.visual.color}
+                          size={42}
+                        />
                         <div>
                           <div className="font-bold text-white text-sm">{unit.name}</div>
                           <div className="text-[11px] text-slate-400">{unit.description}</div>
@@ -509,7 +515,10 @@ export const ModEditorModal: React.FC<ModEditorModalProps> = ({ engine, onClose,
                           <option value="ninja">木葉忍者 (Ninja)</option>
                           <option value="saiyan">賽亞戰士 (Saiyan)</option>
                           <option value="mage">大法師 (Mage)</option>
-                          <option value="golem">石精/樹精 (Golem)</option>
+                          <option value="golem">石精/樹精/投石機 (Golem)</option>
+                          <option value="ram">攻城衝車 (Ram)</option>
+                          <option value="cannon">重砲火器 (Cannon)</option>
+                          <option value="boat">海上船艦 (Boat)</option>
                         </select>
                       </div>
 

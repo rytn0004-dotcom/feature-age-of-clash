@@ -181,7 +181,8 @@ export function generateMapLayout(
     z: number,
     baseAmount: number,
     edgePad = 2.5,
-    isWild = false
+    isWild = false,
+    nodeTier: ResourceNode['nodeTier'] = 'standard'
   ): boolean => {
     const rx = +x.toFixed(2);
     const rz = +z.toFixed(2);
@@ -194,6 +195,7 @@ export function generateMapLayout(
       id,
       resourceType,
       subtype,
+      nodeTier,
       x: rx,
       z: rz,
       amount: Math.round(baseAmount * mult),
@@ -240,13 +242,14 @@ export function generateMapLayout(
     tz: number,
     amount: number,
     critical = false,
-    isWild = false
+    isWild = false,
+    nodeTier: ResourceNode['nodeTier'] = 'standard'
   ) => {
-    if (pushNode(id, resourceType, subtype, tx, tz, amount, 2.5, isWild)) return;
+    if (pushNode(id, resourceType, subtype, tx, tz, amount, 2.5, isWild, nodeTier)) return;
     for (let r = 2.2; r <= 18.0; r += 2.3) {
       for (let a = 0; a < 14; a++) {
         const ang = (a / 14) * Math.PI * 2;
-        if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 2.2, isWild)) {
+        if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 2.2, isWild, nodeTier)) {
           return;
         }
       }
@@ -255,7 +258,7 @@ export function generateMapLayout(
       for (let r = 2.4; r <= 24; r += 2.6) {
         for (let a = 0; a < 16; a++) {
           const ang = (a / 16) * Math.PI * 2 + 0.2;
-          if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 1.8, false)) {
+          if (pushNode(id, resourceType, subtype, tx + Math.cos(ang) * r, tz + Math.sin(ang) * r, amount, 1.8, false, nodeTier)) {
             return;
           }
         }
@@ -364,31 +367,31 @@ export function generateMapLayout(
   // 3. Contested Mid-Map & Outer Flank Resource Richness (strictly >= 23.5m from all TCs)
   const jitter = () => (rand() - 0.5) * 5.0;
 
-  const midGoldVeins = [
-    { x: -12 + jitter(), z: 6 + jitter(), amt: 2000 },
-    { x: 12 + jitter(), z: -6 + jitter(), amt: 2000 },
-    { x: -24 + jitter(), z: -28 + jitter(), amt: 1800 },
-    { x: 24 + jitter(), z: 28 + jitter(), amt: 1800 },
-    { x: -56 + jitter(), z: 36 + jitter(), amt: 2200 },
-    { x: 56 + jitter(), z: -36 + jitter(), amt: 2200 },
-    { x: 0 + jitter(), z: -56 + jitter(), amt: 1800 },
-    { x: 0 + jitter(), z: 56 + jitter(), amt: 1800 },
+  const midGoldVeins: Array<{ x: number; z: number; amt: number; tier: ResourceNode['nodeTier'] }> = [
+    { x: -12 + jitter(), z: 6 + jitter(), amt: 2400, tier: 'rich' },
+    { x: 12 + jitter(), z: -6 + jitter(), amt: 2400, tier: 'rich' },
+    { x: -24 + jitter(), z: -28 + jitter(), amt: 1800, tier: 'standard' },
+    { x: 24 + jitter(), z: 28 + jitter(), amt: 1800, tier: 'standard' },
+    { x: -56 + jitter(), z: 36 + jitter(), amt: 2400, tier: 'rich' },
+    { x: 56 + jitter(), z: -36 + jitter(), amt: 2400, tier: 'rich' },
+    { x: 0 + jitter(), z: -56 + jitter(), amt: 1800, tier: 'standard' },
+    { x: 0 + jitter(), z: 56 + jitter(), amt: 1800, tier: 'standard' },
   ];
   midGoldVeins.forEach((g, idx) => {
     if (richness === 'standard' && idx >= 6) return;
-    placeWithFallback(`gold_mid_${idx}`, 'gold', 'gold', g.x, g.z, g.amt, false, true);
+    placeWithFallback(`gold_mid_${idx}`, 'gold', 'gold', g.x, g.z, g.amt, false, true, g.tier);
   });
 
-  const midStoneOutcrops = [
-    { x: 0 + jitter(), z: 0 + jitter(), amt: 1400 },
-    { x: -34 + jitter(), z: -18 + jitter(), amt: 1200 },
-    { x: 34 + jitter(), z: 18 + jitter(), amt: 1200 },
-    { x: -22 + jitter(), z: 48 + jitter(), amt: 1200 },
-    { x: 22 + jitter(), z: -48 + jitter(), amt: 1200 },
+  const midStoneOutcrops: Array<{ x: number; z: number; amt: number; tier: ResourceNode['nodeTier'] }> = [
+    { x: 0 + jitter(), z: 0 + jitter(), amt: 1650, tier: 'rich' },
+    { x: -34 + jitter(), z: -18 + jitter(), amt: 1500, tier: 'rich' },
+    { x: 34 + jitter(), z: 18 + jitter(), amt: 1500, tier: 'rich' },
+    { x: -22 + jitter(), z: 48 + jitter(), amt: 1200, tier: 'standard' },
+    { x: 22 + jitter(), z: -48 + jitter(), amt: 1200, tier: 'standard' },
   ];
   midStoneOutcrops.forEach((s, idx) => {
     if (richness === 'standard' && idx >= 3) return;
-    placeWithFallback(`stone_mid_${idx}`, 'stone', 'stone', s.x, s.z, s.amt, false, true);
+    placeWithFallback(`stone_mid_${idx}`, 'stone', 'stone', s.x, s.z, s.amt, false, true, s.tier);
   });
 
   // Wild Berry Orchards across map flanks
@@ -453,17 +456,19 @@ export function generateMapLayout(
   forestCenters.forEach((spot, sIdx) => {
     const count = richness === 'abundant' ? spot.count + 2 : spot.count;
     for (let i = 0; i < count; i++) {
+      const isAncientHeartwood = i === 0;
       const ang = (i / count) * Math.PI * 2 + rand() * 0.4;
-      const rad = 1.8 + rand() * 5.0;
+      const rad = isAncientHeartwood ? 0.4 : 2.1 + rand() * 4.8;
       placeWithFallback(
         `wood_mid_${sIdx}_${i}`,
         'wood',
         'wood',
         spot.cx + Math.cos(ang) * rad,
         spot.cz + Math.sin(ang) * rad,
-        320,
+        isAncientHeartwood ? 480 : 320,
         false,
-        true
+        true,
+        isAncientHeartwood ? 'rich' : 'standard'
       );
     }
   });

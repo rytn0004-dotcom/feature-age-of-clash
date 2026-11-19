@@ -68,13 +68,17 @@ import {
   canUnitGatherNode,
   computeAiWorkerAllocation,
   computeBuildingVisualState,
+  computeFactionResourceTelemetry,
   computeGarrisonDefenseProfile,
+  computeSimulationSubsteps,
   computeSpatialAudioGain,
   computeStridePhaseDelta,
   createDefaultParticipants,
   deductCost,
   evaluateAiPlan,
   evaluateAiTechChoice,
+  FactionResourceTelemetry,
+  FARM_RESEED_WOOD_COST,
   findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
@@ -82,8 +86,10 @@ import {
   getBuildingMaxGarrison,
   getDistance,
   getEffectiveBuildingArmor,
+  getEffectiveGatherMultiplier,
   getFactionPopulationStats,
   getFoodGatherMultiplier,
+  getNodeTierGatherMultiplier,
   advanceStarRelicChannel,
   pickStarRelicSite,
   resolveStarRelicDelivery,
@@ -150,8 +156,9 @@ import {
   DeerAnimParts,
   UnitAnimParts,
   updateBadgeSprite,
+  updateResourceNodeDepletionVisual,
 } from './proceduralGraphics';
-import { getCraggyRockMaps, getWaterRippleNormalMap } from './proceduralTextures';
+import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
 
@@ -253,6 +260,7 @@ export class RtsEngine {
 
   // Civilization Progression & Research State
   public researchedTechsByFaction: Record<string, string[]> = {};
+  public autoReseedFarmsByFaction: Record<string, boolean> = {};
   public pendingCommandMode: 'normal' | 'attack_move' = 'normal';
 
   // Pooled 3D Particle VFX, KO Topples, Shockwaves & World Animation Clock
@@ -381,8 +389,36 @@ export class RtsEngine {
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb); // Clear blue sky
-    this.scene.fog = new THREE.FogExp2(0x87ceeb, 0.007);
+    this.scene.background = new THREE.Color(0xc4e0f2);
+    this.scene.fog = new THREE.FogExp2(0xc4e0f2, 0.0044);
+
+    // Procedural Sky Dome with Horizon-to-Zenith Atmospheric Gradient
+    const skyGeo = new THREE.SphereGeometry(260, 28, 16);
+    const skyPos = skyGeo.attributes.position;
+    const skyColors = new Float32Array(skyPos.count * 3);
+    const horizonCol = new THREE.Color(0xd2e9f7);
+    const midSkyCol = new THREE.Color(0x7ac0ea);
+    const zenithCol = new THREE.Color(0x3677bd);
+    const tmpSkyCol = new THREE.Color();
+    for (let i = 0; i < skyPos.count; i++) {
+      const py = skyPos.getY(i);
+      const t = Math.max(0, Math.min(1, py / 210));
+      if (t < 0.35) {
+        tmpSkyCol.lerpColors(horizonCol, midSkyCol, t / 0.35);
+      } else {
+        tmpSkyCol.lerpColors(midSkyCol, zenithCol, (t - 0.35) / 0.65);
+      }
+      skyColors[i * 3] = tmpSkyCol.r;
+      skyColors[i * 3 + 1] = tmpSkyCol.g;
+      skyColors[i * 3 + 2] = tmpSkyCol.b;
+    }
+    skyGeo.setAttribute('color', new THREE.BufferAttribute(skyColors, 3));
+    const skyDome = new THREE.Mesh(
+      skyGeo,
+      new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
+    );
+    skyDome.name = 'skyDome';
+    this.scene.add(skyDome);
 
     // Studio Environment map
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -391,30 +427,32 @@ export class RtsEngine {
 
     // Isometric tilt RTS camera
     const aspect = this.container.clientWidth / this.container.clientHeight;
-    this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 360);
+    this.camera = new THREE.PerspectiveCamera(42, aspect, 1, 380);
     this.updateCameraPosition();
 
-    // Lighting: Warm key directional sun + cool hemisphere fill
-    const sunLight = new THREE.DirectionalLight(0xfffaed, 2.2);
-    sunLight.position.set(40, 60, 30);
+    // Lighting: Warm golden key sun + cool sky/earth hemisphere + atmospheric rim backlight
+    const sunLight = new THREE.DirectionalLight(0xfff1d2, 2.05);
+    sunLight.position.set(44, 62, 32);
     sunLight.castShadow = !this.isSoftwareGl;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
+    const shadowRes = this.isSoftwareGl ? 1024 : 2048;
+    sunLight.shadow.mapSize.width = shadowRes;
+    sunLight.shadow.mapSize.height = shadowRes;
     sunLight.shadow.camera.near = 10;
-    sunLight.shadow.camera.far = 150;
-    const d = 45;
+    sunLight.shadow.camera.far = 160;
+    const d = 48;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
     sunLight.shadow.camera.bottom = -d;
-    sunLight.shadow.bias = -0.0005;
+    sunLight.shadow.bias = -0.0004;
+    sunLight.shadow.normalBias = 0.025;
     this.scene.add(sunLight);
 
-    const hemiLight = new THREE.HemisphereLight(0xb1e1ff, 0x3b5323, 1.05);
+    const hemiLight = new THREE.HemisphereLight(0xaad8ff, 0x3b4e24, 0.96);
     this.scene.add(hemiLight);
 
-    const rimLight = new THREE.DirectionalLight(0xbae6fd, 0.72);
-    rimLight.position.set(-36, 38, -32);
+    const rimLight = new THREE.DirectionalLight(0x93c5fd, 0.64);
+    rimLight.position.set(-38, 40, -34);
     rimLight.castShadow = false;
     this.scene.add(rimLight);
 
@@ -629,6 +667,9 @@ export class RtsEngine {
 
   private createMountainPerimeter() {
     const rockMaps = getCraggyRockMaps();
+    const foliageMaps = getFoliagePBRMaps();
+    const barkMaps = getTreeBarkMaps();
+
     const rockMat = new THREE.MeshStandardMaterial({
       color: 0x64748b,
       map: rockMaps.map,
@@ -644,30 +685,105 @@ export class RtsEngine {
       normalScale: new THREE.Vector2(1.3, 1.3),
       roughness: 0.96,
     });
-    const peakGeo = new THREE.DodecahedronGeometry(1, 1);
+    const snowCapMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      map: rockMaps.map,
+      normalMap: rockMaps.normalMap,
+      roughness: 0.74,
+    });
+    const ridgeGeo = new THREE.ConeGeometry(1, 1, 7);
+    const cragGeo = new THREE.DodecahedronGeometry(1, 1);
     const count = 64;
-    const radius = 114;
+    const radius = 115;
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
-      const dist = radius + Math.sin(i * 1.9) * 3.5;
+      const dist = radius + Math.sin(i * 1.9) * 3.8;
       const x = Math.cos(angle) * dist;
       const z = Math.sin(angle) * dist;
-      const w = 6.5 + (i % 4) * 1.6;
-      const h = 8.5 + ((i * 7) % 9) * 1.2;
+      const w = 6.8 + (i % 4) * 1.8;
+      const h = 11.5 + ((i * 7) % 9) * 1.45;
 
-      const peak = new THREE.Mesh(peakGeo, i % 2 === 0 ? rockMat : darkRockMat);
+      const peak = new THREE.Mesh(i % 3 === 0 ? cragGeo : ridgeGeo, i % 2 === 0 ? rockMat : darkRockMat);
       peak.scale.set(w, h, w * 0.88);
-      peak.rotation.set((i % 3) * 0.14, angle + i * 0.5, ((i + 1) % 3) * 0.1);
-      peak.position.set(x, h * 0.42, z);
+      peak.rotation.set(0, angle + i * 0.5, 0);
+      peak.position.set(x, h * 0.44, z);
       this.scene.add(peak);
 
+      // Snow / pale limestone summit cap on tallest peaks
+      if (i % 3 !== 0 && h > 15) {
+        const cap = new THREE.Mesh(ridgeGeo, snowCapMat);
+        cap.scale.set(w * 0.38, h * 0.32, w * 0.34);
+        cap.rotation.y = angle + i * 0.5;
+        cap.position.set(x, h * 0.78, z);
+        this.scene.add(cap);
+      }
+
       // Foothill spur
-      const spur = new THREE.Mesh(peakGeo, darkRockMat);
-      spur.scale.set(w * 0.72, h * 0.48, w * 0.72);
+      const spur = new THREE.Mesh(cragGeo, darkRockMat);
+      spur.scale.set(w * 0.75, h * 0.42, w * 0.75);
       spur.rotation.y = angle + 1.1;
-      spur.position.set(x - Math.cos(angle) * 3.8, h * 0.18, z - Math.sin(angle) * 3.8);
+      spur.position.set(x - Math.cos(angle) * 4.4, h * 0.16, z - Math.sin(angle) * 4.4);
       this.scene.add(spur);
     }
+
+    // Distant Foothill Alpine Forest Ring (grounded 2-tier layered conifers framing the valley)
+    const pineCount = 136;
+    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 2.4, 6);
+    const crownLowerGeo = new THREE.ConeGeometry(1.75, 3.0, 9);
+    const crownUpperGeo = new THREE.ConeGeometry(1.25, 2.6, 9);
+    const pineTrunkMat = new THREE.MeshStandardMaterial({
+      color: 0x5c3a21,
+      map: barkMaps.map,
+      roughness: 0.94,
+    });
+    const pineCrownMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: foliageMaps.map,
+      normalMap: foliageMaps.normalMap,
+      roughness: 0.88,
+    });
+    const instTrunks = new THREE.InstancedMesh(trunkGeo, pineTrunkMat, pineCount);
+    const instCrownsLower = new THREE.InstancedMesh(crownLowerGeo, pineCrownMat, pineCount);
+    const instCrownsUpper = new THREE.InstancedMesh(crownUpperGeo, pineCrownMat, pineCount);
+    const dummy = new THREE.Object3D();
+    const tint = new THREE.Color();
+    for (let i = 0; i < pineCount; i++) {
+      const a = (i / pineCount) * Math.PI * 2 + Math.sin(i * 3.1) * 0.03;
+      const r = 95 + (i % 5) * 3.2 + Math.cos(i * 2.3) * 1.6;
+      const px = Math.cos(a) * r;
+      const pz = Math.sin(a) * r;
+      const sc = 0.88 + ((i * 11) % 7) * 0.1;
+
+      dummy.position.set(px, 1.15 * sc, pz);
+      dummy.scale.set(sc, sc, sc);
+      dummy.rotation.set(0, i * 0.7, 0);
+      dummy.updateMatrix();
+      instTrunks.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(px, 2.55 * sc, pz);
+      dummy.scale.set(sc * 1.04, sc, sc * 1.04);
+      dummy.updateMatrix();
+      instCrownsLower.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(px, 3.85 * sc, pz);
+      dummy.scale.set(sc * 0.98, sc, sc * 0.98);
+      dummy.rotation.set(0, i * 0.7 + 0.45, 0);
+      dummy.updateMatrix();
+      instCrownsUpper.setMatrixAt(i, dummy.matrix);
+
+      tint.setHex(i % 3 === 0 ? 0x165329 : i % 3 === 1 ? 0x1f6b36 : 0x285e33);
+      instCrownsLower.setColorAt(i, tint);
+      instCrownsUpper.setColorAt(i, tint);
+    }
+    instTrunks.instanceMatrix.needsUpdate = true;
+    instCrownsLower.instanceMatrix.needsUpdate = true;
+    instCrownsUpper.instanceMatrix.needsUpdate = true;
+    if (instCrownsLower.instanceColor) instCrownsLower.instanceColor.needsUpdate = true;
+    if (instCrownsUpper.instanceColor) instCrownsUpper.instanceColor.needsUpdate = true;
+    instTrunks.computeBoundingSphere();
+    instCrownsLower.computeBoundingSphere();
+    instCrownsUpper.computeBoundingSphere();
+    this.scene.add(instTrunks, instCrownsLower, instCrownsUpper);
   }
 
   public getParticipant(factionId: FactionId): MatchParticipant | undefined {
@@ -921,6 +1037,7 @@ export class RtsEngine {
           : `友軍·`,
         civilization: civId,
       });
+      this.autoReseedFarmsByFaction[p.id] = true;
     });
     this.syncHumanResourcesAlias();
 
@@ -1024,7 +1141,7 @@ export class RtsEngine {
           groveBadgeFlags.add(prefix);
         }
       }
-      this.addResourceNode(rn.id, rn.resourceType, rn.x, rn.z, rn.amount, showBadge, rn.subtype);
+      this.addResourceNode(rn.id, rn.resourceType, rn.x, rn.z, rn.amount, showBadge, rn.subtype, rn.nodeTier);
     });
 
 
@@ -1327,7 +1444,8 @@ export class RtsEngine {
     z: number,
     amount: number,
     hasBadge = true,
-    subtype?: ResourceNode['subtype']
+    subtype?: ResourceNode['subtype'],
+    nodeTier: ResourceNode['nodeTier'] = 'standard'
   ): ResourceNode {
     const resolvedSubtype: ResourceNode['subtype'] =
       subtype || (type === 'food' ? 'farm' : type);
@@ -1335,6 +1453,7 @@ export class RtsEngine {
       id,
       resourceType: type,
       subtype: resolvedSubtype,
+      nodeTier,
       x,
       z,
       amount,
@@ -1345,11 +1464,11 @@ export class RtsEngine {
 
     let mesh: THREE.Group;
     if (type === 'wood') {
-      mesh = createTreeMesh(hasBadge);
+      mesh = createTreeMesh(hasBadge, nodeTier, amount);
     } else if (type === 'gold') {
-      mesh = createGoldMineMesh(amount);
+      mesh = createGoldMineMesh(amount, nodeTier);
     } else if (type === 'stone') {
-      mesh = createStoneQuarryMesh(amount);
+      mesh = createStoneQuarryMesh(amount, nodeTier);
     } else if (resolvedSubtype === 'berry') {
       mesh = createBerryBushMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'hunt') {
@@ -1375,6 +1494,72 @@ export class RtsEngine {
     this.nodeMeshes.set(id, mesh);
 
     return node;
+  }
+
+  public isAutoReseedFarmsEnabled(faction?: FactionId): boolean {
+    const f = faction || this.humanPlayerId;
+    return this.autoReseedFarmsByFaction[f] !== false;
+  }
+
+  public toggleAutoReseedFarms(faction?: FactionId): boolean {
+    const f = faction || this.humanPlayerId;
+    const next = !this.isAutoReseedFarmsEnabled(f);
+    this.autoReseedFarmsByFaction[f] = next;
+    sound.playSelect();
+    this.onStateChange?.();
+    return next;
+  }
+
+  public getFactionResourceTelemetry(faction?: FactionId): FactionResourceTelemetry {
+    const f = faction || this.humanPlayerId;
+    const hasOath = (this.starOathUntil[f] || 0) > this.simTime;
+    return computeFactionResourceTelemetry(
+      f,
+      this.units,
+      this.resourceNodes,
+      this.contestedPoints,
+      this.getResearchedTechs(f),
+      hasOath
+    );
+  }
+
+  public assignAllIdleWorkersToNode(nodeId: string): number {
+    const node = this.resourceNodes.find((n) => n.id === nodeId && n.amount > 0);
+    if (!node) return 0;
+    const idleWorkers = this.units.filter(
+      (u) =>
+        this.isHumanControlled(u.faction) &&
+        u.hp > 0 &&
+        u.unitDef.category === 'worker' &&
+        u.state === 'idle' &&
+        !u.garrisonedInBuildingId &&
+        canUnitGatherNode(u.unitDef, node)
+    );
+    if (idleWorkers.length === 0) {
+      sound.playInvalid();
+      return 0;
+    }
+    this.selectedUnitIds = idleWorkers.map((u) => u.id);
+    this.issueGatherOrder(nodeId);
+    this.onSelectionChange?.();
+    return idleWorkers.length;
+  }
+
+  public selectNextResourceOfType(type: ResourceType, fromNodeId?: string): ResourceNode | null {
+    const pool = this.resourceNodes.filter((n) => n.resourceType === type && n.amount > 0);
+    if (pool.length === 0) return null;
+    const curIdx = fromNodeId ? pool.findIndex((n) => n.id === fromNodeId) : -1;
+    const next = pool[(curIdx + 1) % pool.length];
+    this.selectedNodeId = next.id;
+    this.selectedBuildingId = null;
+    this.selectedUnitIds = [];
+    this.selectedContestedPointId = null;
+    this.cameraTarget.set(next.x, 0, next.z);
+    this.cameraDesiredTarget = null;
+    this.updateCameraPosition();
+    sound.playSelect();
+    this.onSelectionChange?.();
+    return next;
   }
 
   public getOrCreateFarmFoodNode(building: BuildingEntity): ResourceNode | null {
@@ -2946,16 +3131,11 @@ export class RtsEngine {
       const now = performance.now();
       const rawDt = Math.max(0.001, (now - lastTime) / 1000);
       lastTime = now;
-      const clampedRawDt = Math.min(rawDt, this.isSoftwareGl ? 0.25 : 0.05);
-      const totalDt = clampedRawDt * this.gameSpeed;
-
       if (this.gameState === 'playing') {
-        let remaining = totalDt;
-        while (remaining > 0.0001) {
-          const step = Math.min(remaining, 0.05);
-          this.updateSimulation(step);
-          this.stats.gameDuration += step;
-          remaining -= step;
+        const { stepDt, steps } = computeSimulationSubsteps(rawDt, this.gameSpeed, this.isSoftwareGl);
+        for (let s = 0; s < steps; s++) {
+          this.updateSimulation(stepDt);
+          this.stats.gameDuration += stepDt;
         }
       } else if (this.gameState === 'title') {
         // Atmospheric live camera pan over the battlefield
@@ -3040,6 +3220,11 @@ export class RtsEngine {
       }
       envIdx++;
     });
+
+    // Subtle flowing river & lake surface ripple drift
+    const waterNormal = getWaterRippleNormalMap();
+    waterNormal.offset.x = (waterNormal.offset.x + dt * 0.038) % 1;
+    waterNormal.offset.y = (waterNormal.offset.y + dt * 0.022) % 1;
 
     // 1. Camera Input pan & smooth camera focus damping
     this.handleCameraMovement(dt);
@@ -3506,13 +3691,23 @@ export class RtsEngine {
               ninja: '🥷',
               saiyan: '⚡',
               mage: '🔮',
-              golem: '🪵',
+              golem: unit.unitDef.category === 'siege' ? '🪨' : '🪵',
               ram: '🐏',
               cannon: '💣',
             };
             const icon =
-              unit.unitDefId === 'scout_rider'
+              unit.unitDefId === 'transport_boat'
+                ? '🚢'
+                : unit.unitDefId === 'war_galley'
+                ? '⛵'
+                : unit.unitDefId === 'greek_fire_siphon'
+                ? '🔥'
+                : unit.unitDefId === 'scout_rider'
                 ? '🔭'
+                : unit.unitDefId === 'anime_katana_shinigami'
+                ? '🗡️'
+                : unit.unitDefId === 'fantasy_paladin'
+                ? '🛡️'
                 : roleIcons[unit.unitDef.visual.modelType] || '⚔️';
             const hostile = this.isHostileToPlayer(unit);
             const pName = this.getParticipant(unit.faction)?.name || '';
@@ -3869,17 +4064,19 @@ export class RtsEngine {
       const nextNode = isBoat
         ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 95, true, true)
         : node?.resourceType === 'food'
-        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 24, false, false)
+        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 36, false, false)
         : findClosestResourceNode(
             unit.x,
             unit.z,
             this.resourceNodes.filter((n) => n.subtype !== 'deep_fish'),
             node?.resourceType,
-            24
+            36
           );
       if (nextNode) {
         unit.targetResourceNodeId = nextNode.id;
         unit.waypoints = undefined;
+        const nextMeta = this.getResourceDisplayMeta(nextNode);
+        unit.currentActionText = `${nextMeta.icon} 轉往${nextMeta.action}`;
       } else if (unit.carryingResource && unit.carryingResource.amount >= 1) {
         unit.targetResourceNodeId = undefined;
         unit.waypoints = undefined;
@@ -3934,13 +4131,14 @@ export class RtsEngine {
 
       const baseGatherRate = unit.unitDef.stats.gatherSpeed || 2;
       const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1;
+      const tierMult = getNodeTierGatherMultiplier(node.nodeTier);
       const oathGather =
         (this.starOathUntil[unit.faction] || 0) > this.simTime ? STAR_RELIC_OATH_GATHER : 1;
       const resTechMult = getResourceGatherTechMultiplier(
         this.getResearchedTechs(unit.faction),
         node.resourceType
       );
-      const gatherRate = baseGatherRate * subtypeMult * oathGather * resTechMult;
+      const gatherRate = baseGatherRate * subtypeMult * tierMult * oathGather * resTechMult;
       const prevAmount = node.amount;
 
       // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
@@ -4001,17 +4199,19 @@ export class RtsEngine {
         (unit as any)._gatherNodeType = node.subtype || node.resourceType;
       }
 
-      // Throttled remaining resource badge update (updates every ~10 units gathered to save canvas redraws)
+      // Throttled remaining resource badge + progressive mesh depletion visual update (every ~5%)
       if (node.amount > 0) {
         const nodeMesh = this.nodeMeshes.get(node.id);
         if (nodeMesh) {
-          const badge = nodeMesh.getObjectByName('badgeSprite') as THREE.Sprite;
-          if (badge) {
-            badge.visible = this.showOverheadBadges;
-            const bucket = Math.ceil(node.amount / 10);
-            if ((node as any)._lastBucket !== bucket) {
-              (node as any)._lastBucket = bucket;
+          const bucket = Math.ceil((node.amount / Math.max(1, node.maxAmount)) * 20);
+          if ((node as any)._lastBucket !== bucket) {
+            (node as any)._lastBucket = bucket;
+            updateResourceNodeDepletionVisual(nodeMesh, node.amount, node.maxAmount, node.subtype);
+            const badge = nodeMesh.getObjectByName('badgeSprite') as THREE.Sprite;
+            if (badge) {
+              badge.visible = this.showOverheadBadges;
               const curNodeAmt = Math.round(node.amount);
+              const isRich = node.nodeTier === 'rich';
               const icon =
                 node.subtype === 'deep_fish'
                   ? '🐠'
@@ -4022,7 +4222,9 @@ export class RtsEngine {
                   : node.subtype === 'hunt'
                   ? '🦌'
                   : node.resourceType === 'wood'
-                  ? '🪵'
+                  ? isRich
+                    ? '🌲'
+                    : '🪵'
                   : node.resourceType === 'gold'
                   ? '🪙'
                   : node.resourceType === 'stone'
@@ -4040,11 +4242,17 @@ export class RtsEngine {
                     ? '山羌屍體'
                     : '野生山羌'
                   : node.resourceType === 'wood'
-                  ? '木材'
+                  ? isRich
+                    ? '遠古神木'
+                    : '木材'
                   : node.resourceType === 'gold'
-                  ? '金礦'
+                  ? isRich
+                    ? '富金礦脈'
+                    : '金礦'
                   : node.resourceType === 'stone'
-                  ? '石礦'
+                  ? isRich
+                    ? '精良石脈'
+                    : '石礦'
                   : '農田';
               const isLiveHunt = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
               const badgeAmt = isLiveHunt
@@ -4061,7 +4269,11 @@ export class RtsEngine {
                 badgeRatio,
                 false,
                 true,
-                isLiveHunt ? '受驚會逃 · 先獵殺再採肉' : `剩餘 ${Math.round((node.amount / node.maxAmount) * 100)}%`
+                isLiveHunt
+                  ? '受驚會逃 · 先獵殺再採肉'
+                  : isRich
+                  ? `✨富脈×1.35 · 剩 ${Math.round((node.amount / node.maxAmount) * 100)}%`
+                  : `剩餘 ${Math.round((node.amount / node.maxAmount) * 100)}%`
               );
             }
           }
@@ -4069,24 +4281,53 @@ export class RtsEngine {
       }
 
       if (prevAmount > 0 && node.amount <= 0) {
-        this.navGridDirty = true;
-        const mesh = this.nodeMeshes.get(node.id);
-        if (mesh) {
-          this.scene.remove(mesh);
-          this.nodeMeshes.delete(node.id);
+        // Auto-reseed farm seamlessly if enabled and faction has enough wood
+        let reseeded = false;
+        if (node.subtype === 'farm' && this.isAutoReseedFarmsEnabled(unit.faction)) {
+          const owningFarm = this.buildings.find(
+            (b) =>
+              b.buildingType === 'farm' &&
+              b.hp > 0 &&
+              b.isConstructed &&
+              b.faction === unit.faction &&
+              Math.hypot(b.x - node.x, b.z - node.z) < 2.5
+          );
+          const resBag = this.getResourcesForFaction(unit.faction);
+          if (owningFarm && resBag.wood >= FARM_RESEED_WOOD_COST) {
+            resBag.wood -= FARM_RESEED_WOOD_COST;
+            this.syncHumanResourcesAlias();
+            node.maxAmount = 2500;
+            node.amount = 2500;
+            (node as any)._lastBucket = -1;
+            reseeded = true;
+            this.spawnParticleBurst(node.x, 0.8, node.z, 'leaf', 6);
+            if (this.isHumanControlled(unit.faction)) {
+              this.onResourcesChange?.(this.playerResources);
+              this.addFloatingText(node.x, 2.2, node.z, `🌾 自動補種農田 (-${FARM_RESEED_WOOD_COST} 木)`, '#4ade80');
+            }
+          }
         }
-        if (this.isHumanControlled(unit.faction) && !this.isSpectatorMode) {
-          const meta = this.getResourceDisplayMeta(node);
-          sound.playResourceDepleted(node.resourceType);
-          this.lastTacticalBroadcast = {
-            kind: 'resource_depleted',
-            message: `${meta.icon} 播報：${meta.name}資源已採盡，請派遣村民轉往他處！`,
-            x: node.x,
-            z: node.z,
-            time: performance.now(),
-          };
-          this.addFloatingText(node.x, 2.4, node.z, `${meta.icon} 資源已採盡！`, '#f59e0b');
-          this.onStateChange?.();
+
+        if (!reseeded) {
+          this.navGridDirty = true;
+          const mesh = this.nodeMeshes.get(node.id);
+          if (mesh) {
+            this.scene.remove(mesh);
+            this.nodeMeshes.delete(node.id);
+          }
+          if (this.isHumanControlled(unit.faction) && !this.isSpectatorMode) {
+            const meta = this.getResourceDisplayMeta(node);
+            sound.playResourceDepleted(node.resourceType);
+            this.lastTacticalBroadcast = {
+              kind: 'resource_depleted',
+              message: `${meta.icon} 播報：${meta.name}資源已採盡，村民將自動轉往附近礦點！`,
+              x: node.x,
+              z: node.z,
+              time: performance.now(),
+            };
+            this.addFloatingText(node.x, 2.4, node.z, `${meta.icon} 資源已採盡！`, '#f59e0b');
+            this.onStateChange?.();
+          }
         }
       }
 
@@ -4189,11 +4430,20 @@ export class RtsEngine {
     const pct = Math.round(bldg.buildProgress * 100);
     unit.currentActionText = `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`;
 
-    const dist = getDistance(unit.x, unit.z, bldg.x, bldg.z);
-    const buildReach = Math.max(2.6, getBuildingCollisionRadius(bldg) + 2.1);
+    // Position each builder flush against the scaffolding perimeter instead of piling far from walls
+    const bldgRad = getBuildingCollisionRadius(bldg);
+    const workRingRad = bldgRad + 0.95;
+    let idHash = 0;
+    for (let i = 0; i < unit.id.length; i++) idHash = (idHash * 31 + unit.id.charCodeAt(i)) | 0;
+    const approachAng = Math.atan2(unit.z - bldg.z, unit.x - bldg.x) + ((idHash % 7) - 3) * 0.04;
+    const slotX = bldg.x + Math.cos(approachAng) * workRingRad;
+    const slotZ = bldg.z + Math.sin(approachAng) * workRingRad;
 
-    if (dist > buildReach) {
-      this.moveUnitAlongPath(unit, bldg.x, bldg.z, dt);
+    const distToCenter = getDistance(unit.x, unit.z, bldg.x, bldg.z);
+    const buildReach = Math.max(2.2, bldgRad + 1.55);
+
+    if (distToCenter > buildReach) {
+      this.moveUnitAlongPath(unit, slotX, slotZ, dt);
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
@@ -4201,35 +4451,39 @@ export class RtsEngine {
       bldg.buildProgress += buildSpeed * dt;
       bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
 
-      const bFxTimer = ((unit as any)._buildFxTimer || 0) + dt;
-      if (bFxTimer >= 0.54) {
-        (unit as any)._buildFxTimer = 0;
-        this.spawnParticleBurst(
-          bldg.x + (unit.x - bldg.x) * 0.45,
-          0.9,
-          bldg.z + (unit.z - bldg.z) * 0.45,
-          'dust',
-          4
-        );
+      // Advance unified carpenter hammer cycle and trigger impact FX cleanly at downstroke contact
+      const prevPhase = (unit as any)._hammerPhase || 0;
+      const nextPhase = prevPhase + dt * 9.8;
+      (unit as any)._hammerPhase = nextPhase;
+      const prevCycle = Math.floor((prevPhase + Math.PI * 0.95) / (Math.PI * 2));
+      const nextCycle = Math.floor((nextPhase + Math.PI * 0.95) / (Math.PI * 2));
+      if (nextCycle > prevCycle) {
+        const wallContactX = bldg.x + (unit.x - bldg.x) * Math.min(0.85, bldgRad / Math.max(0.5, distToCenter));
+        const wallContactZ = bldg.z + (unit.z - bldg.z) * Math.min(0.85, bldgRad / Math.max(0.5, distToCenter));
+        const workHeight = 0.55 + bldg.buildProgress * 1.45;
+        this.spawnParticleBurst(wallContactX, workHeight, wallContactZ, 'dust', 3);
+        this.spawnParticleBurst(wallContactX, workHeight + 0.12, wallContactZ, 'gold', 1);
+        (bldg as any)._constructImpulse = 1.0;
         sound.playHammerBuild(this.getSpatialAudioScale(bldg.x, bldg.z));
-      } else {
-        (unit as any)._buildFxTimer = bFxTimer;
       }
 
       if (bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
+        (bldg as any)._constructImpulse = 1.35;
         const mesh = this.buildingMeshes.get(bldg.id);
         if (mesh) {
           applyBuildingConstructionVisuals(
             mesh,
-            computeBuildingVisualState(true, 1, bldg.hp, bldg.maxHp)
+            computeBuildingVisualState(true, 1, bldg.hp, bldg.maxHp),
+            this.simTime,
+            1.35
           );
         }
         sound.playConstruct(this.getSpatialAudioScale(bldg.x, bldg.z));
         this.spawnParticleBurst(bldg.x, 1.4, bldg.z, 'gold', 10);
-        this.spawnParticleBurst(bldg.x, 1.1, bldg.z, 'dust', 8);
+        this.spawnParticleBurst(bldg.x, 1.1, bldg.z, 'dust', 10);
         this.spawnShockwaveRing(bldg.x, bldg.z, 0xfbbf24, bldg.buildingDef.size + 1.4);
         this.navGridDirty = true;
         this.waterNavGridDirty = true;
@@ -5177,11 +5431,19 @@ export class RtsEngine {
       if ((bldg as any).hitFlashTimer && (bldg as any).hitFlashTimer > 0) {
         (bldg as any).hitFlashTimer = Math.max(0, (bldg as any).hitFlashTimer - dt);
       }
+      if ((bldg as any)._constructImpulse && (bldg as any)._constructImpulse > 0) {
+        (bldg as any)._constructImpulse = Math.max(0, (bldg as any)._constructImpulse - dt * 4.5);
+      }
 
       const bMesh = this.buildingMeshes.get(bldg.id);
       const visState = computeBuildingVisualState(bldg.isConstructed, bldg.buildProgress, bldg.hp, bldg.maxHp);
       if (bMesh) {
-        applyBuildingConstructionVisuals(bMesh, visState);
+        applyBuildingConstructionVisuals(
+          bMesh,
+          visState,
+          this.simTime,
+          (bldg as any)._constructImpulse || 0
+        );
         applyBuildingDamageVisuals(
           bMesh,
           visState.damageSeverity,
@@ -6049,16 +6311,19 @@ export class RtsEngine {
         tgtLKnee = 0.18;
       }
     } else if (unit.state === 'building') {
-      // Carpenter hammer double-strike cadence
-      const raw = 0.5 + 0.5 * Math.sin(t * 10.6);
-      const hammer = Math.pow(raw, 2.0);
-      tgtRArm = 0.45 - hammer * 1.55;
-      tgtLArm = -0.38;
-      tgtBodyX = 0.12 + hammer * 0.2;
-      tgtBodyYaw = (0.5 - hammer) * 0.2;
-      tgtLLeg = 0.16;
-      tgtRLeg = -0.16;
-      tgtLKnee = 0.14;
+      // Carpenter hammer windup -> decisive nail-strike cadence synced to particle & sound bursts
+      const hPhase = (unit as any)._hammerPhase !== undefined ? (unit as any)._hammerPhase : t * 9.8;
+      const raw = 0.5 - 0.5 * Math.cos(hPhase);
+      const hammer = Math.pow(raw, 1.65);
+      tgtRArm = 0.62 - hammer * 1.82;
+      tgtLArm = -0.44 - Math.sin(hPhase) * 0.08;
+      tgtBodyX = 0.08 + hammer * 0.24;
+      tgtBodyYaw = (0.45 - hammer) * 0.26;
+      tgtBodyY = baseBodyY - hammer * 0.035;
+      tgtLLeg = 0.2;
+      tgtRLeg = -0.2;
+      tgtLKnee = 0.22;
+      tgtRKnee = 0.14;
     } else if (unit.state === 'attacking') {
       if (isSiegeUnit) {
         if (mType === 'ram') {

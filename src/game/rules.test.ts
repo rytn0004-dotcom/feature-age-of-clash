@@ -1746,4 +1746,225 @@ test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter 
   assert.equal(aggDoctrine?.tech.id, 'med_doctrine_crusade');
 });
 
+test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and shared scout parity', async () => {
+  const {
+    INITIAL_POPULATION_CAP,
+    HOUSE_POPULATION_BONUS,
+    getFactionPopulationStats,
+  } = await import('./rules');
+  const { DEFAULT_BUILDINGS, SHARED_UNITS } = await import('./mods');
+  const { getBuildableTypesForCiv, getTrainableUnitsForBuilding } = await import('./civilizations');
+  const { BUILDING_HOTKEYS } = await import('./hotkeys');
 
+  assert.equal(INITIAL_POPULATION_CAP, 8);
+  assert.equal(HOUSE_POPULATION_BONUS, 5);
+  assert.equal(DEFAULT_BUILDINGS.town_center.populationProvided, 8);
+  assert.equal(DEFAULT_BUILDINGS.house.populationProvided, 5);
+  assert.equal(DEFAULT_BUILDINGS.barracks.populationProvided, undefined);
+  assert.equal(DEFAULT_BUILDINGS.archery_range.populationProvided, undefined);
+  assert.equal(BUILDING_HOTKEYS.house, 'E');
+
+  const scout = SHARED_UNITS.find((u) => u.id === 'scout_rider');
+  assert.ok(scout, 'Shared scout_rider must exist in SHARED_UNITS');
+  for (const civ of ['medieval', 'anime', 'fantasy'] as const) {
+    assert.ok(getBuildableTypesForCiv(civ).includes('house'), `${civ} must be able to build House`);
+    assert.ok(
+      getTrainableUnitsForBuilding('town_center', civ).includes('scout_rider'),
+      `${civ} TC must be able to train shared scout_rider`
+    );
+  }
+
+  const tcBuilding = {
+    faction: 'player' as const,
+    hp: 3000,
+    isConstructed: true,
+    buildingDef: DEFAULT_BUILDINGS.town_center,
+    queue: ['villager', 'villager'],
+  };
+  const incompleteHouse = {
+    faction: 'player' as const,
+    hp: 150,
+    isConstructed: false,
+    buildingDef: DEFAULT_BUILDINGS.house,
+    queue: [],
+  };
+  const constructedHouse = {
+    faction: 'player' as const,
+    hp: 600,
+    isConstructed: true,
+    buildingDef: DEFAULT_BUILDINGS.house,
+    queue: [],
+  };
+  const starterUnits = Array.from({ length: 4 }, () => ({ faction: 'player' as const, hp: 55 }));
+
+  // 4 active + 2 queued = 6 reserved, max = 8 (incomplete house does not increase cap)
+  const beforeHouse = getFactionPopulationStats('player', [tcBuilding, incompleteHouse], starterUnits);
+  assert.equal(beforeHouse.used, 4);
+  assert.equal(beforeHouse.queued, 2);
+  assert.equal(beforeHouse.totalReserved, 6);
+  assert.equal(beforeHouse.max, 8);
+
+  // Constructed house raises cap from 8 to 13
+  const afterHouse = getFactionPopulationStats('player', [tcBuilding, constructedHouse], starterUnits);
+  assert.equal(afterHouse.max, 13);
+});
+
+test('resource-module-upgrade: rich vein tiers, effective gather multipliers, telemetry /min, and mid-map rich spawns', async () => {
+  const {
+    RICH_NODE_GATHER_MULTIPLIER,
+    FARM_RESEED_WOOD_COST,
+    getNodeTierGatherMultiplier,
+    getEffectiveGatherMultiplier,
+    computeFactionResourceTelemetry,
+    generateSpawnPositions,
+  } = await import('./rules');
+  const { generateMapLayout } = await import('./mapGenerator');
+  const { MEDIEVAL_UNITS } = await import('./mods');
+
+  assert.equal(RICH_NODE_GATHER_MULTIPLIER, 1.35);
+  assert.equal(FARM_RESEED_WOOD_COST, 60);
+  assert.equal(getNodeTierGatherMultiplier('rich'), 1.35);
+  assert.equal(getNodeTierGatherMultiplier('standard'), 1.0);
+  assert.equal(getNodeTierGatherMultiplier(undefined), 1.0);
+
+  // Effective multiplier combines subtype, nodeTier, eco tech, and Star Relic Oath
+  const richGoldWithTech = getEffectiveGatherMultiplier(
+    { resourceType: 'gold', subtype: 'gold', nodeTier: 'rich' },
+    ['shared_prospecting_picks'],
+    false
+  );
+  assert.ok(richGoldWithTech > 1.65, `Expected rich gold + prospecting tech > 1.65, got ${richGoldWithTech}`);
+
+  const deepFishMult = getEffectiveGatherMultiplier(
+    { resourceType: 'food', subtype: 'deep_fish', nodeTier: 'standard' },
+    [],
+    false
+  );
+  assert.equal(deepFishMult, 1.55);
+
+  // Live worker allocation + /min telemetry including shrines
+  const villagerDef = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
+  const nodes = [
+    { id: 'n_food', resourceType: 'food' as const, subtype: 'hunt' as const, nodeTier: 'standard' as const, amount: 300 },
+    { id: 'n_gold', resourceType: 'gold' as const, subtype: 'gold' as const, nodeTier: 'rich' as const, amount: 2200 },
+    { id: 'n_wood', resourceType: 'wood' as const, subtype: 'wood' as const, nodeTier: 'standard' as const, amount: 300 },
+  ];
+  const workers = [
+    { faction: 'player' as const, hp: 55, state: 'gathering' as const, unitDef: villagerDef, targetResourceNodeId: 'n_food' },
+    { faction: 'player' as const, hp: 55, state: 'returning_resource' as const, unitDef: villagerDef, targetResourceNodeId: 'n_gold', carryingResource: { type: 'gold' as const, amount: 12 } },
+    { faction: 'player' as const, hp: 55, state: 'building' as const, unitDef: villagerDef },
+    { faction: 'player' as const, hp: 55, state: 'idle' as const, unitDef: villagerDef },
+  ];
+  const shrines = [
+    { ownerFaction: 'player' as const, shrineType: 'forge' as const, siegeSupplyActive: false }, // +2G/s, +2S/s = +120/min each
+  ];
+  const telemetry = computeFactionResourceTelemetry('player', workers, nodes, shrines, [], false);
+  assert.equal(telemetry.totalWorkers, 4);
+  assert.equal(telemetry.workersByResource.food, 1);
+  assert.equal(telemetry.workersByResource.gold, 1);
+  assert.equal(telemetry.workersByResource.wood, 0);
+  assert.equal(telemetry.workersByResource.building, 1);
+  assert.equal(telemetry.workersByResource.idle, 1);
+  // 1 villager on hunt (35 * 1.15 ≈ 40/min), 1 villager on rich gold (35 * 1.35 ≈ 47) + forge shrine (+120G, +120S)
+  assert.ok(telemetry.incomePerMin.food >= 38 && telemetry.incomePerMin.food <= 42);
+  assert.ok(telemetry.incomePerMin.gold >= 165 && telemetry.incomePerMin.gold <= 170);
+  assert.equal(telemetry.incomePerMin.stone, 120);
+
+  // Map generator spawns rich deposits in mid-map contested zones strictly >= 23.5m away from starter TCs
+  const spawns = generateSpawnPositions(2, 58).map((sp, idx) => ({ id: `p${idx}`, x: sp.x, z: sp.z }));
+  const layout = generateMapLayout('highland_basin', 'standard', spawns, 2026);
+  const richNodes = layout.resourceNodes.filter((n) => n.nodeTier === 'rich');
+  assert.ok(richNodes.length >= 6, `Expected rich mid-map gold/stone/ancient-wood nodes, found ${richNodes.length}`);
+  for (const rn of richNodes) {
+    for (const sp of spawns) {
+      const dist = Math.hypot(rn.x - sp.x, rn.z - sp.z);
+      assert.ok(dist >= 23.5, `Rich node ${rn.id} (${dist.toFixed(1)}m) must stay contested outside base radius`);
+    }
+  }
+});
+
+test('high-speed-presets-and-continuous-construction: 10x/20x speeds, substepping safety, and smooth build curves', async () => {
+  const {
+    GAME_SPEED_OPTIONS,
+    getNextGameSpeed,
+    computeSimulationSubsteps,
+    computeBuildingVisualState,
+  } = await import('./rules');
+
+  const speedValues = GAME_SPEED_OPTIONS.map((o) => o.value);
+  assert.deepEqual(speedValues, [1, 1.5, 2, 10, 20]);
+  assert.equal(getNextGameSpeed(1), 1.5);
+  assert.equal(getNextGameSpeed(2), 10);
+  assert.equal(getNextGameSpeed(10), 20);
+  assert.equal(getNextGameSpeed(20), 1);
+  assert.equal(getNextGameSpeed(99), 1);
+
+  // 20x speed on 60fps frame (~0.0167s) must sub-step accurately without tunneling (>0.05s step)
+  const fast60 = computeSimulationSubsteps(0.0167, 20, false);
+  assert.ok(fast60.steps >= 7 && fast60.stepDt <= 0.05 && fast60.stepDt > 0.01);
+  assert.ok(Math.abs(fast60.steps * fast60.stepDt - 0.0167 * 20) < 1e-6);
+
+  // Software GL slow frame at 20x caps cleanly to prevent CPU spiral-of-death while keeping stepDt <= 0.05
+  const slowSw = computeSimulationSubsteps(0.5, 20, true);
+  assert.ok(slowSw.stepDt <= 0.05 && slowSw.steps <= 36);
+
+  // Continuous construction state avoids jarring jumps at p=0 and smoothly rises across all tiers
+  const start = computeBuildingVisualState(false, 0.0, 10, 1000);
+  assert.ok(start.tier1Reveal > 0 && start.tier1Reveal < 0.15, `Start plinth should emerge gently, got ${start.tier1Reveal}`);
+  assert.ok(start.foundationReveal > 0.2 && start.scaffoldHeightScale < 0.2);
+
+  let prevT1 = start.tier1Reveal;
+  let prevT2 = start.tier2Reveal;
+  let prevT3 = start.tier3Reveal;
+  for (let i = 1; i <= 20; i++) {
+    const p = i / 20;
+    const st = computeBuildingVisualState(false, p, Math.round(p * 1000), 1000);
+    assert.ok(st.tier1Reveal >= prevT1 - 1e-9);
+    assert.ok(st.tier2Reveal >= prevT2 - 1e-9);
+    assert.ok(st.tier3Reveal >= prevT3 - 1e-9);
+    prevT1 = st.tier1Reveal;
+    prevT2 = st.tier2Reveal;
+    prevT3 = st.tier3Reveal;
+  }
+  const nearDone = computeBuildingVisualState(false, 0.96, 960, 1000);
+  assert.ok(nearDone.planksOpacity < 0.5 && nearDone.scaffoldHeightScale < 0.5);
+  const finished = computeBuildingVisualState(true, 1, 1000, 1000);
+  assert.equal(finished.showScaffold, false);
+  assert.equal(finished.planksOpacity, 0);
+});
+
+test('unit-portraits: distinct portrait specs for all 20 built-in units and all modelType fallbacks', async () => {
+  const { getUnitPortraitSpec } = await import('./unitPortraits');
+  const { SHARED_UNITS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
+
+  const allUnits = [...SHARED_UNITS, ...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS];
+  assert.equal(allUnits.length, 20, `Expected 20 built-in units, found ${allUnits.length}`);
+
+  const seenKeys = new Set<string>();
+  for (const unit of allUnits) {
+    const spec = getUnitPortraitSpec(unit.id, unit.visual.modelType);
+    assert.equal(spec.key, unit.id, `Expected dedicated portrait key for ${unit.id}, got ${spec.key}`);
+    assert.ok(spec.label.length > 0);
+    assert.ok(spec.accentHex.startsWith('#'));
+    seenKeys.add(spec.key);
+  }
+  assert.equal(seenKeys.size, 20);
+
+  const modelTypes = [
+    'villager',
+    'swordsman',
+    'archer',
+    'knight',
+    'ninja',
+    'saiyan',
+    'mage',
+    'golem',
+    'ram',
+    'cannon',
+    'boat',
+  ] as const;
+  for (const mt of modelTypes) {
+    const fallbackSpec = getUnitPortraitSpec(`custom_${mt}`, mt);
+    assert.equal(fallbackSpec.key, `fallback_${mt}`);
+  }
+});

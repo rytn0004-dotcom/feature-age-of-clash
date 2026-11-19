@@ -331,6 +331,8 @@ export interface ResourceNode {
   id: string;
   resourceType: ResourceType;
   subtype?: 'farm' | 'berry' | 'hunt' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
+  /** Quality tier of the resource deposit: 'rich' mid-map veins yield +35% faster gathering and larger reserves */
+  nodeTier?: 'standard' | 'rich';
   x: number;
   z: number;
   amount: number;

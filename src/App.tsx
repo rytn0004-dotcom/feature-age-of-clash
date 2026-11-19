@@ -8,7 +8,7 @@ import { PauseModal } from './components/PauseModal';
 import { GameOverModal } from './components/GameOverModal';
 import { sound } from './game/audio';
 import { MapPresetId, MatchParticipant, ResourceRichness } from './types/game';
-import { createDefaultParticipants } from './game/rules';
+import { createDefaultParticipants, getNextGameSpeed } from './game/rules';
 
 export default function App() {
   const [engine, setEngine] = useState<RtsEngine | null>(null);
@@ -157,11 +157,15 @@ export default function App() {
 
   const handleToggleSpeed = () => {
     if (!engine) return;
-    const speeds = [1.0, 1.5, 2.0];
-    const nextIdx = (speeds.indexOf(gameSpeed) + 1) % speeds.length;
-    const nextSpeed = speeds[nextIdx];
+    const nextSpeed = getNextGameSpeed(gameSpeed);
     engine.gameSpeed = nextSpeed;
     setGameSpeed(nextSpeed);
+  };
+
+  const handleSelectSpeed = (speed: number) => {
+    if (!engine) return;
+    engine.gameSpeed = speed;
+    setGameSpeed(speed);
   };
 
   const handleRestart = () => {
@@ -220,6 +224,7 @@ export default function App() {
           onToggleMute={handleToggleMute}
           gameSpeed={gameSpeed}
           onToggleSpeed={handleToggleSpeed}
+          onSelectSpeed={handleSelectSpeed}
         />
       )}
 

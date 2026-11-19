@@ -19,7 +19,7 @@ import {
   TechDefinition,
   UnitCategory,
 } from '../types/game';
-import { findTechDef } from './civilizations';
+import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
 
 /**
  * Per-second income from a captured strategic shrine.
@@ -684,12 +684,31 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   food: 1,
 };
 
+export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
+export const FARM_RESEED_WOOD_COST = 60;
+
+export function getNodeTierGatherMultiplier(nodeTier?: ResourceNode['nodeTier']): number {
+  return nodeTier === 'rich' ? RICH_NODE_GATHER_MULTIPLIER : 1.0;
+}
+
 export function getFoodGatherMultiplier(subtype?: ResourceNode['subtype'] | string): number {
   return FOOD_GATHER_MULTIPLIERS[subtype || 'farm'] ?? 1.0;
 }
 
 export function getFoodSourcePriority(subtype?: ResourceNode['subtype'] | string): number {
   return FOOD_SOURCE_PRIORITY[subtype || 'farm'] ?? 1;
+}
+
+export function getEffectiveGatherMultiplier(
+  node: Pick<ResourceNode, 'resourceType' | 'subtype' | 'nodeTier'>,
+  researchedTechs: string[],
+  hasStarOath = false
+): number {
+  const subtypeMult = node.resourceType === 'food' ? getFoodGatherMultiplier(node.subtype) : 1.0;
+  const tierMult = getNodeTierGatherMultiplier(node.nodeTier);
+  const techMult = getResourceGatherTechMultiplier(researchedTechs, node.resourceType);
+  const oathMult = hasStarOath ? STAR_RELIC_OATH_GATHER : 1.0;
+  return +(subtypeMult * tierMult * techMult * oathMult).toFixed(3);
 }
 
 /**
@@ -1247,6 +1266,46 @@ export function computeSpatialAudioGain(
   return +Math.max(0, Math.min(1, falloff)).toFixed(4);
 }
 
+export interface GameSpeedOption {
+  value: number;
+  label: string;
+  tag: string;
+}
+
+export const GAME_SPEED_OPTIONS: ReadonlyArray<GameSpeedOption> = [
+  { value: 1.0, label: '1x', tag: '標準' },
+  { value: 1.5, label: '1.5x', tag: '略快' },
+  { value: 2.0, label: '2x', tag: '快速' },
+  { value: 10.0, label: '10x', tag: '極速' },
+  { value: 20.0, label: '20x', tag: '超高速' },
+];
+
+export function getNextGameSpeed(currentSpeed: number): number {
+  const idx = GAME_SPEED_OPTIONS.findIndex((o) => Math.abs(o.value - currentSpeed) < 0.01);
+  if (idx < 0) return GAME_SPEED_OPTIONS[0].value;
+  return GAME_SPEED_OPTIONS[(idx + 1) % GAME_SPEED_OPTIONS.length].value;
+}
+
+/**
+ * Splits high-multiplier frame deltas (up to 20x) into collision-safe simulation sub-steps
+ * so high speeds accelerate game time accurately without unit tunneling or browser stalls.
+ */
+export function computeSimulationSubsteps(
+  rawDt: number,
+  gameSpeed: number,
+  isSoftwareGl = false
+): { stepDt: number; steps: number } {
+  const safeRaw = Math.min(Math.max(0.001, Number.isFinite(rawDt) ? rawDt : 0.016), isSoftwareGl ? 0.2 : 0.05);
+  const safeSpeed = Math.max(0.25, Math.min(20, Number.isFinite(gameSpeed) ? gameSpeed : 1));
+  const maxFrameSimDt = isSoftwareGl ? 1.8 : 1.5;
+  const totalDt = Math.min(safeRaw * safeSpeed, maxFrameSimDt);
+  const steps = Math.max(1, Math.ceil(totalDt / 0.05));
+  return {
+    stepDt: totalDt / steps,
+    steps,
+  };
+}
+
 export interface BuildingVisualState {
   stage: 1 | 2 | 3 | 4; // 1=foundation/scaffold, 2=walls framing, 3=roof/details, 4=completed
   tier1Reveal: number; // 0..1 grounded base plinth
@@ -1254,6 +1313,8 @@ export interface BuildingVisualState {
   tier3Reveal: number; // 0..1 roofs, turrets, finials
   showScaffold: boolean;
   scaffoldHeightScale: number;
+  foundationReveal: number; // 0..1 construction earth pad & corner stakes settle
+  planksOpacity: number; // 0..1 scaffolding catwalk plank fade during erection/dismantle
   hpRatio: number;
   damageSeverity: number; // 0 (healthy) -> 1 (critically wrecked)
   isSmoking: boolean;
@@ -1262,6 +1323,10 @@ export interface BuildingVisualState {
 }
 
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+const smooth01 = (v: number): number => {
+  const t = clamp01(v);
+  return t * t * (3 - 2 * t);
+};
 
 /**
  * Pure state mapper for staged building construction (avoiding whole-mesh Y stretching/floating)
@@ -1284,15 +1349,33 @@ export function computeBuildingVisualState(
     ? 2
     : 3;
 
-  // Staged vertical emergence per architectural tier (grounded from base upward)
-  const tier1Reveal = isConstructed ? 1 : clamp01(0.32 + (p / 0.3) * 0.68);
-  const tier2Reveal = isConstructed ? 1 : clamp01((p - 0.2) / 0.5);
-  const tier3Reveal = isConstructed ? 1 : clamp01((p - 0.62) / 0.36);
+  // Smooth, continuous vertical emergence per architectural tier (grounded from base upward)
+  const tier1Reveal = isConstructed ? 1 : clamp01(0.06 + smooth01(p / 0.3) * 0.94);
+  const tier2Reveal = isConstructed ? 1 : smooth01((p - 0.2) / 0.5);
+  const tier3Reveal = isConstructed ? 1 : smooth01((p - 0.62) / 0.36);
 
-  const showScaffold = !isConstructed && p < 0.99;
-  const scaffoldHeightScale = p < 0.88
-    ? 0.48 + 0.52 * clamp01(p / 0.78)
-    : Math.max(0.2, 1 - ((p - 0.88) / 0.12) * 0.8);
+  const showScaffold = !isConstructed && p < 0.995;
+  const scaffoldHeightScale = p < 0.1
+    ? 0.08 + smooth01(p / 0.1) * 0.44
+    : p < 0.86
+    ? 0.52 + smooth01((p - 0.1) / 0.72) * 0.48
+    : Math.max(0.05, 1 - smooth01((p - 0.86) / 0.14) * 0.95);
+
+  const foundationReveal = isConstructed
+    ? 0
+    : p < 0.12
+    ? 0.25 + smooth01(p / 0.12) * 0.75
+    : p > 0.88
+    ? Math.max(0.1, 1 - smooth01((p - 0.88) / 0.12) * 0.9)
+    : 1;
+
+  const planksOpacity = isConstructed
+    ? 0
+    : p < 0.14
+    ? smooth01(p / 0.14)
+    : p > 0.86
+    ? 1 - smooth01((p - 0.86) / 0.14)
+    : 1;
 
   const damageSeverity = isConstructed && hpRatio < 0.78
     ? clamp01((0.78 - hpRatio) / 0.78)
@@ -1305,6 +1388,8 @@ export function computeBuildingVisualState(
     tier3Reveal,
     showScaffold,
     scaffoldHeightScale,
+    foundationReveal,
+    planksOpacity,
     hpRatio,
     damageSeverity,
     isSmoking: isConstructed && hpRatio > 0 && hpRatio < 0.72,
@@ -1979,4 +2064,114 @@ export function getFactionPopulationStats(
     max,
   };
 }
+
+export interface ResourceIncomeRate {
+  food: number;
+  wood: number;
+  gold: number;
+  stone: number;
+}
+
+export interface FactionResourceTelemetry {
+  workersByResource: {
+    food: number;
+    wood: number;
+    gold: number;
+    stone: number;
+    building: number;
+    idle: number;
+  };
+  totalWorkers: number;
+  incomePerMin: ResourceIncomeRate;
+}
+
+/**
+ * Computes real-time worker allocation counts and estimated per-minute income
+ * (active gatherers + held strategic shrines) for the HUD and AI.
+ */
+export function computeFactionResourceTelemetry(
+  faction: FactionId,
+  units: Array<
+    Pick<
+      UnitEntity,
+      'faction' | 'hp' | 'state' | 'unitDef' | 'targetResourceNodeId' | 'carryingResource'
+    >
+  >,
+  resourceNodes: Array<Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>>,
+  contestedPoints: Array<Pick<ContestedPoint, 'ownerFaction' | 'shrineType' | 'siegeSupplyActive'>>,
+  researchedTechs: string[],
+  hasStarOath = false
+): FactionResourceTelemetry {
+  const nodeById = new Map<
+    string,
+    Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>
+  >();
+  for (const n of resourceNodes) {
+    nodeById.set(n.id, n);
+  }
+
+  const workersByResource = {
+    food: 0,
+    wood: 0,
+    gold: 0,
+    stone: 0,
+    building: 0,
+    idle: 0,
+  };
+  const incomeRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
+  let totalWorkers = 0;
+
+  for (const u of units) {
+    if (u.faction !== faction || u.hp <= 0 || u.unitDef.category !== 'worker') continue;
+    totalWorkers++;
+
+    if (u.state === 'building') {
+      workersByResource.building++;
+      continue;
+    }
+
+    if (u.state === 'gathering' || u.state === 'returning_resource') {
+      const targetNode = u.targetResourceNodeId ? nodeById.get(u.targetResourceNodeId) : undefined;
+      const resType: ResourceType | undefined =
+        targetNode?.resourceType ?? u.carryingResource?.type;
+      if (resType) {
+        workersByResource[resType]++;
+        const baseGatherPerSec = u.unitDef.stats.gatherSpeed || 0.5833;
+        const mult = targetNode
+          ? getEffectiveGatherMultiplier(targetNode, researchedTechs, hasStarOath)
+          : getEffectiveGatherMultiplier(
+              { resourceType: resType, subtype: resType === 'food' ? 'farm' : resType },
+              researchedTechs,
+              hasStarOath
+            );
+        incomeRaw[resType] += baseGatherPerSec * 60 * mult;
+        continue;
+      }
+    }
+
+    workersByResource.idle++;
+  }
+
+  // Add per-minute passive income from captured strategic shrines (shrine income ticks every 1s)
+  for (const cp of contestedPoints) {
+    if (cp.ownerFaction !== faction) continue;
+    const perSec = getShrineIncome(cp.shrineType, cp.siegeSupplyActive);
+    incomeRaw.food += perSec.food * 60;
+    incomeRaw.wood += perSec.wood * 60;
+    incomeRaw.gold += perSec.gold * 60;
+    incomeRaw.stone += perSec.stone * 60;
+  }
+
+  return {
+    workersByResource,
+    totalWorkers,
+    incomePerMin: {
+      food: Math.round(incomeRaw.food),
+      wood: Math.round(incomeRaw.wood),
+      gold: Math.round(incomeRaw.gold),
+      stone: Math.round(incomeRaw.stone),
+    },
+  };
+}
+
 

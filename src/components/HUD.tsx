@@ -21,16 +21,22 @@ import {
   Maximize2,
   Keyboard,
   FlaskConical,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
+import { UnitPortrait } from './UnitPortrait';
 import {
   canAfford,
+  FARM_RESEED_WOOD_COST,
+  GAME_SPEED_OPTIONS,
   getBuildingCombatStats,
   getBuildingMaxGarrison,
   getContestedShrineSummary,
   getEffectiveBuildingArmor,
+  getEffectiveGatherMultiplier,
   getFactionPopulationStats,
 } from '../game/rules';
 import {
@@ -64,6 +70,7 @@ interface HUDProps {
   onToggleMute: () => void;
   gameSpeed: number;
   onToggleSpeed: () => void;
+  onSelectSpeed?: (speed: number) => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -74,16 +81,37 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleMute,
   gameSpeed,
   onToggleSpeed,
+  onSelectSpeed,
 }) => {
   const minimapCanvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Long-lived offscreen buffers — avoid realloc on selection changes */
   const minimapStaticRef = useRef<HTMLCanvasElement | null>(null);
   const minimapDynRef = useRef<HTMLCanvasElement | null>(null);
+  const speedMenuRef = useRef<HTMLDivElement | null>(null);
   const [showAgeModal, setShowAgeModal] = useState(false);
   const [showHotkeysModal, setShowHotkeysModal] = useState(false);
   const [showTechTreeModal, setShowTechTreeModal] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [techTreeFilter, setTechTreeFilter] = useState<'all' | 'eco' | 'counter' | 'doctrine' | 'fortify'>('all');
   const [isHudCompact, setIsHudCompact] = useState(false);
+
+  useEffect(() => {
+    if (!showSpeedMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (speedMenuRef.current && !speedMenuRef.current.contains(e.target as Node)) {
+        setShowSpeedMenu(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') setShowSpeedMenu(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showSpeedMenu]);
 
   useEffect(() => {
     engine.onRequestOpenAgeModal = () => setShowAgeModal(true);
@@ -162,6 +190,8 @@ export const HUD: React.FC<HUDProps> = ({
   const observedPopStats = getFactionPopulationStats(observedFactionId, engine.buildings, engine.units);
   const observedPop = observedPopStats.used;
   const observedMaxPop = observedPopStats.max;
+  const observedTelemetry = engine.getFactionResourceTelemetry(observedFactionId);
+  const autoReseedEnabled = engine.isAutoReseedFarmsEnabled(observedFactionId);
 
   const isMinimapDraggingRef = useRef(false);
   const lastGroupClickRef = useRef<{ num: number; time: number }>({ num: 0, time: 0 });
@@ -660,11 +690,14 @@ export const HUD: React.FC<HUDProps> = ({
       {/* ================= TOP PERIMETER STATUS CLUSTER ================= */}
       <header className="flex justify-between items-center gap-2 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/85 to-transparent pointer-events-none">
         {/* Resource Badges */}
-        <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 pointer-events-auto whitespace-nowrap">
+        <div
+          data-top-resource-bar="true"
+          className="flex items-center gap-1 overflow-x-auto py-0.5 pointer-events-auto whitespace-nowrap"
+        >
           {isSpectator && observedParticipant && (
             <div
               data-spectator-watching="true"
-              className="flex items-center gap-1.5 px-2 py-1 bg-cyan-950/85 border border-cyan-500/45 rounded-lg shadow shrink-0 whitespace-nowrap"
+              className="flex items-center gap-1 px-1.5 py-1 bg-cyan-950/85 border border-cyan-500/45 rounded-lg shadow shrink-0 whitespace-nowrap"
             >
               <span
                 className="w-2.5 h-2.5 rounded-full border border-white/60 shrink-0"
@@ -677,38 +710,66 @@ export const HUD: React.FC<HUDProps> = ({
           )}
 
           {/* Food */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div
+            data-resource-pill="food"
+            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
+          >
             <span className="text-xs">🌾</span>
             <span className="text-[11px] font-bold text-slate-300">糧食</span>
             <span className="text-xs font-extrabold text-amber-400 tabular-nums">
               {Math.floor(observedRes.food)}
             </span>
+            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.food}/m·{observedTelemetry.workersByResource.food}
+            </span>
           </div>
 
           {/* Wood */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div
+            data-resource-pill="wood"
+            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
+          >
             <span className="text-xs">🪵</span>
             <span className="text-[11px] font-bold text-slate-300">木材</span>
             <span className="text-xs font-extrabold text-emerald-400 tabular-nums">
               {Math.floor(observedRes.wood)}
             </span>
+            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.wood}/m·{observedTelemetry.workersByResource.wood}
+            </span>
           </div>
 
           {/* Gold */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div
+            data-resource-pill="gold"
+            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
+          >
             <span className="text-xs">🪙</span>
             <span className="text-[11px] font-bold text-slate-300">黃金</span>
             <span className="text-xs font-extrabold text-yellow-300 tabular-nums">
               {Math.floor(observedRes.gold)}
             </span>
+            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.gold}/m·{observedTelemetry.workersByResource.gold}
+            </span>
           </div>
 
           {/* Stone */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div
+            data-resource-pill="stone"
+            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
+          >
             <span className="text-xs">🪨</span>
             <span className="text-[11px] font-bold text-slate-300">石料</span>
             <span className="text-xs font-extrabold text-slate-300 tabular-nums">
               {Math.floor(observedRes.stone)}
+            </span>
+            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.stone}/m·{observedTelemetry.workersByResource.stone}
             </span>
           </div>
 
@@ -805,15 +866,78 @@ export const HUD: React.FC<HUDProps> = ({
 
         {/* Top-Right Utility Cluster */}
         <div className="flex items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap">
-          {/* Game Speed */}
-          <button
-            onClick={onToggleSpeed}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900/85 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-lg text-xs font-bold cursor-pointer transition-colors shrink-0 whitespace-nowrap"
-            title="調整遊戲速度"
-          >
-            <FastForward className="w-3.5 h-3.5 text-amber-400" />
-            <span>{gameSpeed}x</span>
-          </button>
+          {/* Game Speed Split Control + Arrow Dropdown */}
+          <div ref={speedMenuRef} className="relative flex items-center shrink-0">
+            <div className="flex items-center bg-slate-900/90 border border-slate-700 rounded-lg overflow-hidden shadow">
+              <button
+                type="button"
+                data-cmd-speed-toggle="true"
+                onClick={onToggleSpeed}
+                className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-800 text-slate-200 text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
+                title="點擊切換下一段遊戲速度"
+              >
+                <FastForward className="w-3.5 h-3.5 text-amber-400" />
+                <span className="tabular-nums">{gameSpeed}x</span>
+              </button>
+              <button
+                type="button"
+                data-speed-dropdown-trigger="true"
+                aria-expanded={showSpeedMenu}
+                aria-haspopup="listbox"
+                aria-label="選擇遊戲倍速"
+                onClick={() => setShowSpeedMenu((prev) => !prev)}
+                className={`flex items-center justify-center px-1.5 py-1.5 border-l border-slate-700/90 hover:bg-slate-800 text-slate-300 hover:text-amber-300 cursor-pointer transition-colors ${
+                  showSpeedMenu ? 'bg-slate-800 text-amber-300' : ''
+                }`}
+                title="展開倍速選單（1x ~ 20x）"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform duration-150 ${showSpeedMenu ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </div>
+
+            {showSpeedMenu && (
+              <div
+                role="listbox"
+                aria-label="遊戲倍速選項"
+                data-speed-dropdown-menu="true"
+                className="absolute right-0 top-full mt-1.5 w-36 bg-slate-950/95 backdrop-blur-md border border-slate-700/90 rounded-xl shadow-2xl py-1 z-50"
+              >
+                {GAME_SPEED_OPTIONS.map((opt) => {
+                  const isActive = Math.abs(gameSpeed - opt.value) < 0.01;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      data-speed-option={String(opt.value)}
+                      onClick={() => {
+                        if (onSelectSpeed) {
+                          onSelectSpeed(opt.value);
+                        } else {
+                          engine.gameSpeed = opt.value;
+                        }
+                        setShowSpeedMenu(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-amber-500/20 text-amber-300 font-black'
+                          : 'text-slate-200 hover:bg-slate-800/90 font-semibold'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 tabular-nums">
+                        <span className={opt.value >= 10 ? 'text-amber-400 font-black' : ''}>{opt.label}</span>
+                        <span className="text-[10px] text-slate-400 font-normal">{opt.tag}</span>
+                      </span>
+                      {isActive && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Mod Switchboard & AI Editor */}
           <button
@@ -1271,7 +1395,15 @@ export const HUD: React.FC<HUDProps> = ({
             {isHudCompact ? (
               <div className="flex items-center justify-between gap-3 h-full pr-14 py-1">
                 {selectedUnits.length > 0 && (
-                  <div className="flex items-center gap-3 w-full">
+                  <div className="flex items-center gap-2.5 w-full">
+                    <UnitPortrait
+                      unitId={selectedUnits[0].unitDefId}
+                      modelType={selectedUnits[0].unitDef.visual.modelType}
+                      visualColor={selectedUnits[0].unitDef.visual.color}
+                      factionColor={engine.getParticipant(selectedUnits[0].faction)?.colorCss}
+                      size={28}
+                      level={selectedUnits[0].level}
+                    />
                     <span className="font-bold text-white text-xs truncate max-w-[130px]">
                       {selectedUnits.length === 1 ? selectedUnits[0].unitDef.name : `${selectedUnits[0].unitDef.name} (${selectedUnits.length})`}
                     </span>
@@ -1413,34 +1545,86 @@ export const HUD: React.FC<HUDProps> = ({
               <div className="flex flex-col md:flex-row gap-3 h-full">
                 {/* Unit Details */}
                 <div className="flex-1 space-y-1.5">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: primary.unitDef.visual.color }} />
-                      <span className="font-bold text-white text-sm">
-                        {selectedUnits.length === 1
-                          ? primary.unitDef.name
-                          : `${primary.unitDef.name} 等 ${selectedUnits.length} 名部隊`}
-                      </span>
-                      {xpEligible && (
-                        <span
-                          data-xp-level-badge="true"
-                          className="text-[11px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold"
-                        >
-                          Lv.{lvl} {getLevelTitle(lvl)}
-                        </span>
-                      )}
-                      {hasAuraBuff && (
-                        <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded font-bold">
-                          ⚡ 光環強化中
-                        </span>
+                  <div className="flex items-start gap-2.5 border-b border-slate-800 pb-1.5">
+                    <UnitPortrait
+                      unitId={primary.unitDefId}
+                      modelType={primary.unitDef.visual.modelType}
+                      visualColor={primary.unitDef.visual.color}
+                      factionColor={engine.getParticipant(primary.faction)?.colorCss}
+                      size={52}
+                      level={xpEligible ? lvl : undefined}
+                      className="shadow-lg"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-white text-sm">
+                            {selectedUnits.length === 1
+                              ? primary.unitDef.name
+                              : `${primary.unitDef.name} 等 ${selectedUnits.length} 名部隊`}
+                          </span>
+                          {xpEligible && (
+                            <span
+                              data-xp-level-badge="true"
+                              className="text-[11px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold"
+                            >
+                              Lv.{lvl} {getLevelTitle(lvl)}
+                            </span>
+                          )}
+                          {hasAuraBuff && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded font-bold">
+                              ⚡ 光環強化中
+                            </span>
+                          )}
+                        </div>
+
+                        {primary.kills > 0 && (
+                          <span className="text-xs text-amber-400 font-bold shrink-0">
+                            ⚔️ 擊殺: {primary.kills}
+                          </span>
+                        )}
+                      </div>
+
+                      {selectedUnits.length > 1 && (
+                        <div data-squad-roster="true" className="flex items-center flex-wrap gap-1 pt-1">
+                          {selectedUnits.slice(0, 10).map((su) => {
+                            const suHpPct = Math.max(0, Math.min(100, (su.hp / su.maxHp) * 100));
+                            return (
+                              <button
+                                key={su.id}
+                                type="button"
+                                onClick={() => {
+                                  engine.selectedUnitIds = [su.id];
+                                  engine.onSelectionChange?.();
+                                }}
+                                onDoubleClick={() => engine.setCameraFocus(su.x, su.z)}
+                                className="flex flex-col items-center p-0.5 rounded bg-slate-800/90 hover:bg-slate-700 border border-slate-700/80 hover:border-amber-400/70 transition-colors cursor-pointer"
+                                title={`點擊單選「${su.unitDef.name}」(${Math.round(su.hp)}/${su.maxHp} HP) · 雙擊聚焦鏡頭`}
+                              >
+                                <UnitPortrait
+                                  unitId={su.unitDefId}
+                                  modelType={su.unitDef.visual.modelType}
+                                  visualColor={su.unitDef.visual.color}
+                                  size={26}
+                                  level={su.level}
+                                />
+                                <div className="w-6 h-1 bg-slate-950 rounded-full overflow-hidden mt-0.5">
+                                  <div
+                                    className={`h-full ${suHpPct > 50 ? 'bg-emerald-400' : suHpPct > 25 ? 'bg-amber-400' : 'bg-red-500'}`}
+                                    style={{ width: `${suHpPct}%` }}
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })}
+                          {selectedUnits.length > 10 && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-300">
+                              +{selectedUnits.length - 10}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
-
-                    {primary.kills > 0 && (
-                      <span className="text-xs text-amber-400 font-bold shrink-0">
-                        ⚔️ 擊殺: {primary.kills}
-                      </span>
-                    )}
                   </div>
 
                   {/* Real-time Action Status Badge */}
@@ -1634,6 +1818,7 @@ export const HUD: React.FC<HUDProps> = ({
                                   </span>
                                 )}
                                 {isCivUnique && '✦'}
+                                {bType === 'house' && '🏠'}
                                 {bType === 'castle' && '🏰'}
                                 {bType === 'dock' && '⚓'}
                                 {bDef.name.split(' ')[0]}
@@ -1970,6 +2155,13 @@ export const HUD: React.FC<HUDProps> = ({
                               className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900/90 hover:bg-sky-900/80 disabled:hover:bg-slate-900/90 border border-sky-400/45 text-[10px] text-sky-100 cursor-pointer disabled:cursor-default"
                               title={isSpectator ? `${u.unitDef.name}` : `點擊單獨放出「${u.unitDef.name}」（優先從集結點出口出現）`}
                             >
+                              <UnitPortrait
+                                unitId={u.unitDefId}
+                                modelType={u.unitDef.visual.modelType}
+                                visualColor={u.unitDef.visual.color}
+                                size={18}
+                                level={u.level}
+                              />
                               <span className="font-bold">{u.unitDef.name.split(' ')[0]}</span>
                               <span className="text-[9px] font-mono text-emerald-300">{Math.round(u.hp)}HP</span>
                               {!isSpectator && <span className="text-amber-300 font-black ml-0.5">✕</span>}
@@ -2026,6 +2218,12 @@ export const HUD: React.FC<HUDProps> = ({
                               } ${isSpectator ? 'cursor-default' : 'cursor-pointer'}`}
                               title={isSpectator ? qLabel : `點擊取消訓練「${qLabel}」並全額退還資源`}
                             >
+                              <UnitPortrait
+                                unitId={qUnitId}
+                                modelType={qDef?.visual.modelType}
+                                visualColor={qDef?.visual.color}
+                                size={18}
+                              />
                               <span className="font-bold">
                                 {qIdx === 0 ? '▶ ' : `#${qIdx + 1} `}
                                 {qLabel}
@@ -2080,7 +2278,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 data-train-unit={uId}
                                 disabled={!affordable || ageLocked}
                                 onClick={() => engine.trainUnit(selectedBuilding.id, uId)}
-                                className={`flex flex-col items-start px-2 py-1 rounded border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
+                                className={`flex items-center gap-2 px-2 py-1 rounded border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
                                   ageLocked
                                     ? 'bg-slate-900/80 border-slate-800 text-slate-400'
                                     : isBldgPopFull
@@ -2091,34 +2289,42 @@ export const HUD: React.FC<HUDProps> = ({
                                 }`}
                                 title={`${uDef.name}${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
                               >
-                                <span className="font-bold text-white text-[11px] flex items-center gap-1">
-                                  {trainHotkey && !ageLocked && (
-                                    <span className="text-[9px] font-mono px-1 rounded bg-slate-950/85 text-amber-300 border border-slate-700">
-                                      {trainHotkey}
-                                    </span>
-                                  )}
-                                  <span>{uDef.name}</span>
-                                  {ageLocked && (
-                                    <span className="text-[9px] px-1 rounded bg-red-950 text-red-300 border border-red-500/40">
-                                      🔒時代{uDef.requiredAge}
-                                    </span>
-                                  )}
-                                  {!ageLocked && isBldgPopFull && (
-                                    <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-300 border border-rose-500/40">
-                                      🏠人口滿
-                                    </span>
-                                  )}
-                                  {isXpHero && !ageLocked && (
-                                    <span className="text-[9px] px-1 rounded bg-amber-500/25 text-amber-300 border border-amber-400/50">
-                                      ★歷練
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="text-[10px] text-amber-400 font-mono">
-                                  {uDef.stats.cost.food ? `${uDef.stats.cost.food}F ` : ''}
-                                  {uDef.stats.cost.wood ? `${uDef.stats.cost.wood}W ` : ''}
-                                  {uDef.stats.cost.gold ? `${uDef.stats.cost.gold}G` : ''}
-                                </span>
+                                <UnitPortrait
+                                  unitId={uId}
+                                  modelType={uDef.visual.modelType}
+                                  visualColor={uDef.visual.color}
+                                  size={34}
+                                />
+                                <div className="flex flex-col items-start">
+                                  <span className="font-bold text-white text-[11px] flex items-center gap-1">
+                                    {trainHotkey && !ageLocked && (
+                                      <span className="text-[9px] font-mono px-1 rounded bg-slate-950/85 text-amber-300 border border-slate-700">
+                                        {trainHotkey}
+                                      </span>
+                                    )}
+                                    <span>{uDef.name}</span>
+                                    {ageLocked && (
+                                      <span className="text-[9px] px-1 rounded bg-red-950 text-red-300 border border-red-500/40">
+                                        🔒時代{uDef.requiredAge}
+                                      </span>
+                                    )}
+                                    {!ageLocked && isBldgPopFull && (
+                                      <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-300 border border-rose-500/40">
+                                        🏠人口滿
+                                      </span>
+                                    )}
+                                    {isXpHero && !ageLocked && (
+                                      <span className="text-[9px] px-1 rounded bg-amber-500/25 text-amber-300 border border-amber-400/50">
+                                        ★歷練
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-[10px] text-amber-400 font-mono">
+                                    {uDef.stats.cost.food ? `${uDef.stats.cost.food}F ` : ''}
+                                    {uDef.stats.cost.wood ? `${uDef.stats.cost.wood}W ` : ''}
+                                    {uDef.stats.cost.gold ? `${uDef.stats.cost.gold}G` : ''}
+                                  </span>
+                                </div>
                               </button>
                             );
                           })}
@@ -2221,6 +2427,45 @@ export const HUD: React.FC<HUDProps> = ({
                         ✦ {selectedBuilding.buildingDef.description}
                       </div>
                     )}
+
+                    {(selectedBuilding.buildingType === 'farm' ||
+                      selectedBuilding.buildingType === 'granary' ||
+                      selectedBuilding.buildingType === 'town_center' ||
+                      selectedBuilding.buildingType === 'lumber_camp' ||
+                      selectedBuilding.buildingType === 'mining_camp') && (() => {
+                      const bResTelemetry = engine.getFactionResourceTelemetry(selectedBuilding.faction);
+                      const isFarmControl =
+                        selectedBuilding.buildingType === 'farm' ||
+                        selectedBuilding.buildingType === 'granary' ||
+                        selectedBuilding.buildingType === 'town_center';
+                      const bAutoReseed = engine.isAutoReseedFarmsEnabled(selectedBuilding.faction);
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/70 border border-slate-700/70 rounded px-2 py-1 text-[10px]">
+                          <span className="text-slate-300 font-mono">
+                            {selectedBuilding.buildingType === 'lumber_camp'
+                              ? `🪵 伐木 ${bResTelemetry.workersByResource.wood}工 (+${bResTelemetry.incomePerMin.wood}/分)`
+                              : selectedBuilding.buildingType === 'mining_camp'
+                              ? `⛏️ 金${bResTelemetry.workersByResource.gold}工(+${bResTelemetry.incomePerMin.gold}/分) · 石${bResTelemetry.workersByResource.stone}工(+${bResTelemetry.incomePerMin.stone}/分)`
+                              : `🌾 糧食 ${bResTelemetry.workersByResource.food}工 (+${bResTelemetry.incomePerMin.food}/分)`}
+                          </span>
+                          {isFarmControl && !isSpectator && (
+                            <button
+                              type="button"
+                              data-toggle-auto-reseed="true"
+                              onClick={() => engine.toggleAutoReseedFarms(selectedBuilding.faction)}
+                              className={`px-2 py-0.5 rounded border font-bold cursor-pointer transition-colors ${
+                                bAutoReseed
+                                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/80'
+                                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                              }`}
+                              title={`農田耗盡時自動花費 ${FARM_RESEED_WOOD_COST} 木材重新播種`}
+                            >
+                              🌾 自動補種 ({FARM_RESEED_WOOD_COST}木): {bAutoReseed ? '開啟' : '關閉'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -2228,9 +2473,19 @@ export const HUD: React.FC<HUDProps> = ({
             })()}
 
             {/* If a Resource Node is selected */}
-            {!selectedUnits.length && !selectedBuilding && selectedNode && (
-              <div className="flex flex-col md:flex-row items-center gap-4 h-full p-2">
-                <div className="w-16 h-16 rounded-2xl bg-slate-800 border-2 border-amber-500/60 flex items-center justify-center text-3xl shadow-lg shrink-0">
+            {!selectedUnits.length && !selectedBuilding && selectedNode && (() => {
+              const isRichNode = selectedNode.nodeTier === 'rich';
+              const activeTechs = engine.getResearchedTechs(observedFactionId);
+              const effMult = getEffectiveGatherMultiplier(selectedNode, activeTechs);
+              const idleCount = playerUnits.filter(
+                (u) => u.unitDef.category === 'worker' && u.state === 'idle' && !u.garrisonedInBuildingId
+              ).length;
+              const nodeWorkers = engine.units.filter((u) => u.hp > 0 && u.targetResourceNodeId === selectedNode.id).length;
+              return (
+              <div data-resource-inspector="true" className="flex flex-col md:flex-row items-center gap-4 h-full p-2">
+                <div className={`w-16 h-16 rounded-2xl bg-slate-800 border-2 flex items-center justify-center text-3xl shadow-lg shrink-0 ${
+                  isRichNode ? 'border-yellow-400 shadow-amber-500/20' : 'border-amber-500/60'
+                }`}>
                   {selectedNode.subtype === 'deep_fish'
                     ? '🐠'
                     : selectedNode.subtype === 'shore_fish'
@@ -2242,28 +2497,43 @@ export const HUD: React.FC<HUDProps> = ({
                     : selectedNode.resourceType === 'gold'
                     ? '🪙'
                     : selectedNode.resourceType === 'wood'
-                    ? '🪵'
+                    ? isRichNode
+                      ? '🌲'
+                      : '🪵'
                     : selectedNode.resourceType === 'stone'
                     ? '🪨'
                     : '🌾'}
                 </div>
                 <div className="flex-1 space-y-1.5 w-full">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-                    <span className="font-bold text-white text-sm">
-                      {selectedNode.subtype === 'deep_fish' && '深海魚群 (Deep-Sea Fish · ×1.55 最快)'}
-                      {selectedNode.subtype === 'shore_fish' && '沿岸魚群 (Shore Fish · ×1.32)'}
-                      {selectedNode.subtype === 'hunt' && '野生山羌 (Wild Muntjac · ×1.15)'}
-                      {selectedNode.subtype === 'berry' && '野生漿果叢 (Forage Berry Bush · ×1.0)'}
-                      {selectedNode.resourceType === 'gold' && '天然金礦脈 (Gold Ore Node)'}
-                      {selectedNode.resourceType === 'wood' && '茂密森林原木 (Forest Timber)'}
-                      {selectedNode.resourceType === 'stone' && '堅硬花崗石礦 (Stone Quarry)'}
-                      {selectedNode.resourceType === 'food' &&
-                        selectedNode.subtype !== 'deep_fish' &&
-                        selectedNode.subtype !== 'shore_fish' &&
-                        selectedNode.subtype !== 'berry' &&
-                        selectedNode.subtype !== 'hunt' &&
-                        '成熟麥田作物 (Harvest Farm · ×1.0)'}
-                    </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-bold text-white text-sm">
+                        {selectedNode.subtype === 'deep_fish' && '深海魚群 (僅漁船可捕撈 · ×1.55 最快)'}
+                        {selectedNode.subtype === 'shore_fish' && '沿岸魚群 (Shore Fish · ×1.32)'}
+                        {selectedNode.subtype === 'hunt' && '野生山羌 (Wild Muntjac · ×1.15)'}
+                        {selectedNode.subtype === 'berry' && '野生漿果叢 (Forage Berry Bush · ×1.0)'}
+                        {selectedNode.resourceType === 'gold' && (isRichNode ? '高純度富金礦脈 (Rich Gold Vein)' : '天然金礦脈 (Gold Ore Node)')}
+                        {selectedNode.resourceType === 'wood' && (isRichNode ? '遠古神木林 (Ancient Heartwood)' : '茂密森林原木 (Forest Timber)')}
+                        {selectedNode.resourceType === 'stone' && (isRichNode ? '精良花崗石脈 (Rich Stone Quarry)' : '堅硬花崗石礦 (Stone Quarry)')}
+                        {selectedNode.resourceType === 'food' &&
+                          selectedNode.subtype !== 'deep_fish' &&
+                          selectedNode.subtype !== 'shore_fish' &&
+                          selectedNode.subtype !== 'berry' &&
+                          selectedNode.subtype !== 'hunt' &&
+                          '成熟麥田作物 (Harvest Farm · ×1.0)'}
+                      </span>
+                      {isRichNode && (
+                        <span
+                          data-rich-node-badge="true"
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 border border-yellow-400/60 font-black"
+                        >
+                          ✨ 富產礦脈 +35%
+                        </span>
+                      )}
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-500/40 font-mono font-bold">
+                        總效率 ×{effMult.toFixed(2)}
+                      </span>
+                    </div>
                     <span className="text-xs px-2.5 py-0.5 bg-amber-500/20 text-amber-300 font-mono rounded-full font-bold border border-amber-500/30">
                       剩餘 {Math.round((selectedNode.amount / selectedNode.maxAmount) * 100)}%
                     </span>
@@ -2279,41 +2549,80 @@ export const HUD: React.FC<HUDProps> = ({
                     </div>
                     <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
                       <div
-                        className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all"
+                        className={`h-full transition-all ${
+                          isRichNode
+                            ? 'bg-gradient-to-r from-yellow-500 via-amber-400 to-lime-300'
+                            : 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                        }`}
                         style={{ width: `${Math.max(0, (selectedNode.amount / selectedNode.maxAmount) * 100)}%` }}
                       />
                     </div>
                   </div>
 
-                  {/* Assign idle villagers quick button */}
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="text-xs text-slate-300 flex items-center gap-1.5">
-                      <span>⛏️ 當前開採村民:</span>
-                      <strong className="text-amber-400 font-bold">
-                        {engine.units.filter((u) => u.targetResourceNodeId === selectedNode.id).length} 人
-                      </strong>
+                  {/* Quick dispatch & resource management actions */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="text-xs text-slate-300 flex items-center gap-2">
+                      <span>
+                        ⛏️ 當前開採: <strong className="text-amber-400 font-bold">{nodeWorkers} 人</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => engine.selectNextResourceOfType(selectedNode.resourceType, selectedNode.id)}
+                        className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-[11px] font-bold cursor-pointer"
+                        title="切換視角到下一個同類型資源點"
+                      >
+                        🔍 下一個同類礦點
+                      </button>
                     </div>
 
                     {!isSpectator && (
-                      <button
-                        onClick={() => {
-                          const idleWorker = engine.units.find(
-                            (u) => engine.isHumanControlled(u.faction) && u.unitDef.category === 'worker' && u.state === 'idle'
-                          );
-                          if (idleWorker) {
-                            engine.selectedUnitIds = [idleWorker.id];
-                            engine.issueGatherOrder(selectedNode.id);
-                          }
-                        }}
-                        className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded shadow transition-colors cursor-pointer"
-                      >
-                        指派閒置村民開採
-                      </button>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {selectedNode.subtype === 'farm' && (
+                          <button
+                            type="button"
+                            data-toggle-auto-reseed="true"
+                            onClick={() => engine.toggleAutoReseedFarms(observedFactionId)}
+                            className={`px-2.5 py-1 text-[11px] font-bold rounded border cursor-pointer transition-colors ${
+                              autoReseedEnabled
+                                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/80'
+                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                            }`}
+                          >
+                            🌾 自動補種 ({FARM_RESEED_WOOD_COST}木): {autoReseedEnabled ? '開' : '關'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={idleCount === 0}
+                          onClick={() => {
+                            const idleWorker = engine.units.find(
+                              (u) => engine.isHumanControlled(u.faction) && u.unitDef.category === 'worker' && u.state === 'idle' && !u.garrisonedInBuildingId
+                            );
+                            if (idleWorker) {
+                              engine.selectedUnitIds = [idleWorker.id];
+                              engine.issueGatherOrder(selectedNode.id);
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 text-xs font-bold rounded shadow transition-colors cursor-pointer"
+                        >
+                          指派 1 名閒置
+                        </button>
+                        {idleCount > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => engine.assignAllIdleWorkersToNode(selectedNode.id)}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold rounded shadow transition-colors cursor-pointer"
+                          >
+                            全派閒置 ({idleCount})
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* If a Contested Shrine Point is selected */}
             {!selectedUnits.length && !selectedBuilding && !selectedNode && selectedContestedPoint && (() => {
@@ -2512,13 +2821,15 @@ export const HUD: React.FC<HUDProps> = ({
                       isSpectator ? 'border-cyan-500/40 bg-slate-900/60' : 'border-red-500/40 bg-red-950/20'
                     }`}
                   >
-                    <div
-                      className={`w-14 h-14 rounded-xl border-2 flex items-center justify-center text-2xl shadow-lg shrink-0 ${
-                        isSpectator ? 'bg-slate-800 border-cyan-400' : 'bg-red-900/60 border-red-500'
-                      }`}
-                    >
-                      ⚔️
-                    </div>
+                    <UnitPortrait
+                      unitId={enemyUnit.unitDefId}
+                      modelType={enemyUnit.unitDef.visual.modelType}
+                      visualColor={enemyUnit.unitDef.visual.color}
+                      factionColor={owner?.colorCss || (isSpectator ? '#22d3ee' : '#ef4444')}
+                      size={56}
+                      level={enemyUnit.level}
+                      className="shadow-lg"
+                    />
                     <div className="flex-1 space-y-1 w-full">
                       <div
                         className={`flex items-center justify-between border-b pb-1 ${
