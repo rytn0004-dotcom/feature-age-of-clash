@@ -507,7 +507,8 @@ function roundedBuildingBox(width: number, height: number, depth: number): THREE
 
 
 // Shared low-poly shingle geometry; each building uses one InstancedMesh batch.
-const sharedGableShingleGeo = new RoundedBoxGeometry(0.42, 0.065, 0.34, 1, 0.025);
+const sharedGableShingleGeo = new RoundedBoxGeometry(0.42, 0.065, 0.34, 2, 0.026);
+const sharedGableRafterGeo = new RoundedBoxGeometry(1, 0.13, 0.12, 2, 0.025);
 
 /**
  * Adds overlapping shingle courses to a simple gable roof.
@@ -558,6 +559,35 @@ function addGableRoofShingles(
   shingles.instanceMatrix.needsUpdate = true;
   if (shingles.instanceColor) shingles.instanceColor.needsUpdate = true;
   parent.add(shingles);
+
+  // Exposed verge rafters make the timber structure legible from close camera angles.
+  // A single instanced batch keeps the added architectural detail inexpensive.
+  const rafters = new THREE.InstancedMesh(sharedGableRafterGeo, material, 4);
+  rafters.name = 'instancedGableRafters';
+  rafters.castShadow = true;
+  rafters.receiveShadow = true;
+  const beamColor = new THREE.Color(0.58, 0.42, 0.28);
+  let beamIndex = 0;
+  for (let side = 0; side < 2; side++) {
+    const sign = side === 0 ? -1 : 1;
+    const angle = sign === -1 ? Math.atan2(rise, halfWidth) : -Math.atan2(rise, halfWidth);
+    for (let end = 0; end < 2; end++) {
+      dummy.position.set(
+        sign * halfWidth * 0.5,
+        baseY + rise * 0.5,
+        (end === 0 ? -1 : 1) * (halfDepth + 0.035)
+      );
+      dummy.rotation.set(0, 0, angle);
+      dummy.scale.set(slopeLength + 0.12, 1, 1);
+      dummy.updateMatrix();
+      rafters.setMatrixAt(beamIndex, dummy.matrix);
+      rafters.setColorAt(beamIndex, beamColor);
+      beamIndex++;
+    }
+  }
+  rafters.instanceMatrix.needsUpdate = true;
+  if (rafters.instanceColor) rafters.instanceColor.needsUpdate = true;
+  parent.add(rafters);
 }
 
 // ----------------- BUILDINGS (Sculpted Multi-Part Architecture) -----------------
@@ -1186,6 +1216,7 @@ export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   canopy.position.set(0, 2.45, 0);
   canopy.castShadow = true;
   group.add(canopy);
+  addGableRoofShingles(group, 2.45, 1.38, 2.45, 1.825, roofMat, 7);
 
   // Twin Straw Archery Targets tucked within collision footprint facing camera
   [-1.02, 0.88].forEach((tx, idx) => {
@@ -6534,18 +6565,18 @@ export interface UnitAnimParts {
 }
 
 // Shared Sculpted Unit Sub-Geometries
-const unitThighGeo = new THREE.CapsuleGeometry(0.072, 0.125, 5, 10);
+const unitThighGeo = new THREE.CapsuleGeometry(0.072, 0.125, 7, 14);
 const unitShinGeo = makeLatheGeo([
   [0.048, -0.13],
   [0.064, -0.05],
   [0.068, 0.04],
   [0.058, 0.09],
-], 10);
-const unitBootGeo = new THREE.BoxGeometry(0.125, 0.085, 0.22);
-const unitPoleynGeo = new THREE.SphereGeometry(0.068, 8, 6);
-const unitArmSegmentGeo = new THREE.CapsuleGeometry(0.054, 0.18, 5, 10);
-const unitHandGeo = new THREE.SphereGeometry(0.066, 8, 6);
-const unitHeadGeo = new THREE.SphereGeometry(0.185, 16, 12);
+], 14);
+const unitBootGeo = new RoundedBoxGeometry(0.125, 0.085, 0.22, 2, 0.022);
+const unitPoleynGeo = new THREE.SphereGeometry(0.068, 12, 8);
+const unitArmSegmentGeo = new THREE.CapsuleGeometry(0.054, 0.18, 7, 14);
+const unitHandGeo = new THREE.SphereGeometry(0.066, 12, 8);
+const unitHeadGeo = new THREE.SphereGeometry(0.185, 24, 18);
 
 const unitTunicGeo = makeLatheGeo([
   [0.245, 0.0],
@@ -6553,8 +6584,10 @@ const unitTunicGeo = makeLatheGeo([
   [0.195, 0.34],
   [0.238, 0.52],
   [0.145, 0.6],
-  [0.01, 0.61],
-], 14);
+  [0.118, 0.635],
+  [0.096, 0.715],
+  [0.01, 0.735],
+], 20);
 
 const unitBreastplateGeo = makeLatheGeo([
   [0.235, 0.0],
@@ -6562,10 +6595,12 @@ const unitBreastplateGeo = makeLatheGeo([
   [0.275, 0.42],
   [0.26, 0.58],
   [0.155, 0.64],
-  [0.01, 0.65],
-], 14);
+  [0.124, 0.665],
+  [0.098, 0.73],
+  [0.01, 0.75],
+], 20);
 
-const unitPauldronGeo = new THREE.SphereGeometry(0.148, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6);
+const unitPauldronGeo = new THREE.SphereGeometry(0.148, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.6);
 const unitStrawHatGeo = makeLatheGeo([
   [0.39, 0.0],
   [0.31, 0.055],
@@ -6580,7 +6615,7 @@ const unitHelmGeo = makeLatheGeo([
   [0.17, 0.3],
   [0.06, 0.36],
   [0.01, 0.37],
-], 16);
+], 22);
 
 // Tapered Flowing Cape Shape (curved top & scalloped hem)
 const unitCapeShape = new THREE.Shape();
@@ -6674,14 +6709,14 @@ const horseBarrelGeo = makeLatheGeo([
   [0.345, 0.44],
   [0.245, 0.65],
   [0.01, 0.72],
-], 16);
+], 22);
 horseBarrelGeo.rotateX(Math.PI / 2);
 
 const horseNeckGeo = makeLatheGeo([
   [0.225, 0.0],
   [0.195, 0.24],
   [0.14, 0.54],
-], 12);
+], 16);
 const horseMuzzleGeo = makeLatheGeo([
   [0.01, -0.18],
   [0.148, -0.08],
