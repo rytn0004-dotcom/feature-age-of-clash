@@ -3941,16 +3941,23 @@ export function createTreeMesh(
   else if (species === 'birch') trunk.scale.set(0.84, 1.08, 0.84);
   group.add(trunk);
 
-  // Flared root spurs + mossy root mound gripping the soil
+  // Flared root spurs + mossy root mound gripping the soil.
+  // Small deterministic offsets make each root system feel grown into the terrain.
   const rootCount = isRich ? 4 : 3;
+  const rootPhase = Math.random() * Math.PI * 2;
   for (let r = 0; r < rootCount; r++) {
     const root = new THREE.Mesh(sharedTreeRootGeo, trunkMat);
-    root.rotation.y = (r * Math.PI * 2) / rootCount + 0.3;
-    if (isRich) root.scale.setScalar(1.22);
+    const angle = (r * Math.PI * 2) / rootCount + 0.3 + Math.sin(r * 2.1 + rootPhase) * 0.11;
+    const length = (isRich ? 1.22 : 1) * (0.9 + (Math.sin(r * 1.7 + rootPhase) + 1) * 0.065);
+    root.rotation.y = angle;
+    root.position.set(Math.cos(angle) * 0.025, Math.sin(r * 1.9 + rootPhase) * 0.012, -Math.sin(angle) * 0.025);
+    root.scale.set(length, 0.92 + Math.cos(r * 2.3 + rootPhase) * 0.07, length);
     group.add(root);
   }
   const mossMound = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8), sharedTreeMossMat);
   mossMound.position.y = 0.08;
+  mossMound.scale.set(1 + Math.sin(rootPhase) * 0.08, 1, 1 + Math.cos(rootPhase) * 0.08);
+  mossMound.rotation.y = rootPhase * 0.35;
   group.add(mossMound);
 
   const canopyPivot = new THREE.Group();
