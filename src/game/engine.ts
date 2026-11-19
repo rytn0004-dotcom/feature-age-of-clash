@@ -145,7 +145,10 @@ import {
   createEnvironmentFeaturesGroup,
   createGoldMineMesh,
   createRallyFlagMesh,
-  createRubbleDecalMesh,
+  createBuildingRubbleBatch,
+  addBuildingRubbleDecal,
+  setBuildingRubbleDecalScale,
+  BuildingRubbleBatch,
   createResourceDepletionBatch,
   addResourceDepletionRemnant,
   ResourceDepletionBatch,
@@ -298,7 +301,8 @@ export class RtsEngine {
     startZ: number;
     dustTimer: number;
   }> = [];
-  private rubbleDecals: Array<{ mesh: THREE.Group; age: number; maxAge: number }> = [];
+  private rubbleDecalBatch: BuildingRubbleBatch | null = null;
+  private rubbleDecals: Array<{ slot: number; age: number; maxAge: number }> = [];
   private shockwaveRings: Array<{ mesh: THREE.Mesh; age: number; maxAge: number; maxScale: number }> = [];
 
   // Tactical Event Alert State (Enemy spotted / Under attack / Resource depleted)
@@ -942,7 +946,10 @@ export class RtsEngine {
       this.scene.remove(cb.mesh);
     });
     this.collapsingBuildings = [];
-    this.rubbleDecals.forEach((rd) => this.scene.remove(rd.mesh));
+    if (this.rubbleDecalBatch) {
+      this.scene.remove(this.rubbleDecalBatch.group);
+      this.rubbleDecalBatch = null;
+    }
     this.rubbleDecals = [];
     this.shockwaveRings.forEach((s) => {
       this.scene.remove(s.mesh);
@@ -1082,6 +1089,8 @@ export class RtsEngine {
       matchSeed
     );
     this.mapLayout = layout;
+    this.rubbleDecalBatch = createBuildingRubbleBatch(64);
+    this.scene.add(this.rubbleDecalBatch.group);
     this.depletedResourceBatch = createResourceDepletionBatch(layout.resourceNodes.length + 32);
     this.scene.add(this.depletedResourceBatch.group);
 
@@ -3517,11 +3526,11 @@ export class RtsEngine {
       rd.age += dt;
       const remain = 1 - rd.age / rd.maxAge;
       if (remain <= 0) {
-        this.scene.remove(rd.mesh);
+        if (this.rubbleDecalBatch) setBuildingRubbleDecalScale(this.rubbleDecalBatch, rd.slot, 0);
         this.rubbleDecals.splice(i, 1);
-      } else if (remain < 0.35) {
-        const s = Math.max(0.05, remain / 0.35);
-        rd.mesh.scale.set(s, s, s);
+      } else if (remain < 0.35 && this.rubbleDecalBatch) {
+        const scale = Math.max(0.05, remain / 0.35);
+        setBuildingRubbleDecalScale(this.rubbleDecalBatch, rd.slot, scale);
       }
     }
 
@@ -5619,10 +5628,17 @@ export class RtsEngine {
             startZ: bldg.z,
             dustTimer: 0,
           });
-          const rubble = createRubbleDecalMesh(bldg.buildingDef.size);
-          rubble.position.set(bldg.x, 0, bldg.z);
-          this.scene.add(rubble);
-          this.rubbleDecals.push({ mesh: rubble, age: 0, maxAge: 9.0 });
+          if (this.rubbleDecalBatch) {
+            const slot = addBuildingRubbleDecal(
+              this.rubbleDecalBatch,
+              bldg.x,
+              bldg.z,
+              bldg.buildingDef.size
+            );
+            const recycled = this.rubbleDecals.findIndex((entry) => entry.slot === slot);
+            if (recycled >= 0) this.rubbleDecals.splice(recycled, 1);
+            this.rubbleDecals.push({ slot, age: 0, maxAge: 9.0 });
+          }
 
           this.spawnShockwaveRing(bldg.x, bldg.z, 0xf97316, bldg.buildingDef.size + 2.2);
           this.spawnParticleBurst(bldg.x, 1.4, bldg.z, 'smoke', 9);
