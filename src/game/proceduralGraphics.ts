@@ -3222,63 +3222,198 @@ export function disposeBuildingVisualResources(mesh: THREE.Group): void {
   }
 }
 
-const rubbleCharMat = new THREE.MeshStandardMaterial({
-  color: 0x292524,
-  roughness: 0.96,
+const sharedRubbleAshGeo = new THREE.CircleGeometry(1, 18);
+const sharedRubbleEmberGeo = new THREE.CircleGeometry(1, 12);
+const sharedRubbleDebrisChunkGeo = new THREE.DodecahedronGeometry(0.42, 0);
+const sharedRubbleDebrisPlankGeo = new THREE.BoxGeometry(1.15, 0.14, 0.28);
+const sharedRubbleAshMat = new THREE.MeshBasicMaterial({
+  color: 0x1c1917,
+  transparent: true,
+  opacity: 0.78,
+  depthWrite: false,
 });
-const rubbleStoneMat = new THREE.MeshStandardMaterial({
-  color: 0x57534e,
-  roughness: 0.92,
+const sharedRubbleEmberMat = new THREE.MeshBasicMaterial({
+  color: 0xea580c,
+  transparent: true,
+  opacity: 0.42,
+  depthWrite: false,
 });
+const sharedRubbleDebrisMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  vertexColors: true,
+  roughness: 0.94,
+});
+const sharedRubbleStoneColor = new THREE.Color(0x57534e);
+const sharedRubbleCharColor = new THREE.Color(0x292524);
+const sharedRubbleDummy = new THREE.Object3D();
+const sharedRubbleScale = new THREE.Vector3();
+const sharedRubbleMatrix = new THREE.Matrix4();
 
-export function createRubbleDecalMesh(footprintSize: number): THREE.Group {
+export interface BuildingRubbleBatch {
+  group: THREE.Group;
+  capacity: number;
+  nextSlot: number;
+  ash: THREE.InstancedMesh;
+  ember: THREE.InstancedMesh;
+  chunks: THREE.InstancedMesh;
+  planks: THREE.InstancedMesh;
+  ashBase: THREE.Matrix4[];
+  emberBase: THREE.Matrix4[];
+  chunkBase: THREE.Matrix4[];
+  plankBase: THREE.Matrix4[];
+}
+
+function makeHiddenRubbleMatrices(count: number): THREE.Matrix4[] {
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  return Array.from({ length: count }, () => hidden.clone());
+}
+
+/**
+ * A fixed-size, reusable batch for temporary building-collapse debris.
+ * Four InstancedMeshes render every active rubble decal, regardless of building count.
+ */
+export function createBuildingRubbleBatch(capacity = 64): BuildingRubbleBatch {
+  const slots = Math.max(1, Math.floor(capacity));
   const group = new THREE.Group();
+  group.name = 'building-collapse-rubble-batch';
+  group.userData.isBuildingRubbleBatch = true;
+
+  const makeBatch = (
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    count: number,
+    name: string
+  ): THREE.InstancedMesh => {
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.name = name;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    for (let i = 0; i < count; i++) {
+      mesh.setMatrixAt(i, sharedRubbleMatrix.makeScale(0, 0, 0));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+    return mesh;
+  };
+
+  const batch: BuildingRubbleBatch = {
+    group,
+    capacity: slots,
+    nextSlot: 0,
+    ash: makeBatch(sharedRubbleAshGeo, sharedRubbleAshMat, slots, 'buildingRubbleAsh'),
+    ember: makeBatch(sharedRubbleEmberGeo, sharedRubbleEmberMat, slots, 'buildingRubbleEmbers'),
+    chunks: makeBatch(sharedRubbleDebrisChunkGeo, sharedRubbleDebrisMat, slots * 7, 'buildingRubbleStoneChunks'),
+    planks: makeBatch(sharedRubbleDebrisPlankGeo, sharedRubbleDebrisMat, slots * 4, 'buildingRubbleTimberPlanks'),
+    ashBase: makeHiddenRubbleMatrices(slots),
+    emberBase: makeHiddenRubbleMatrices(slots),
+    chunkBase: makeHiddenRubbleMatrices(slots * 7),
+    plankBase: makeHiddenRubbleMatrices(slots * 4),
+  };
+
+  for (let slot = 0; slot < slots; slot++) {
+    for (let i = 0; i < 7; i++) {
+      batch.chunks.setColorAt(slot * 7 + i, i % 2 === 0 ? sharedRubbleStoneColor : sharedRubbleCharColor);
+    }
+    for (let i = 0; i < 4; i++) {
+      batch.planks.setColorAt(slot * 4 + i, i % 2 === 0 ? sharedRubbleStoneColor : sharedRubbleCharColor);
+    }
+  }
+  if (batch.chunks.instanceColor) batch.chunks.instanceColor.needsUpdate = true;
+  if (batch.planks.instanceColor) batch.planks.instanceColor.needsUpdate = true;
+
+  return batch;
+}
+
+function writeBuildingRubbleMatrix(
+  mesh: THREE.InstancedMesh,
+  baseMatrices: THREE.Matrix4[],
+  index: number,
+  x: number,
+  y: number,
+  z: number,
+  rotationX: number,
+  rotationY: number,
+  rotationZ: number,
+  scaleX: number,
+  scaleY: number,
+  scaleZ: number
+): void {
+  sharedRubbleDummy.position.set(x, y, z);
+  sharedRubbleDummy.rotation.set(rotationX, rotationY, rotationZ);
+  sharedRubbleDummy.scale.set(scaleX, scaleY, scaleZ);
+  sharedRubbleDummy.updateMatrix();
+  baseMatrices[index].copy(sharedRubbleDummy.matrix);
+  mesh.setMatrixAt(index, baseMatrices[index]);
+}
+
+/** Adds a collapse decal to the next ring-buffer slot, recycling the oldest visual when full. */
+export function addBuildingRubbleDecal(
+  batch: BuildingRubbleBatch,
+  x: number,
+  z: number,
+  footprintSize: number
+): number {
+  const slot = batch.nextSlot;
+  batch.nextSlot = (batch.nextSlot + 1) % batch.capacity;
   const radius = Math.max(1.8, footprintSize * 0.96);
 
-  const ashDisc = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 18),
-    new THREE.MeshBasicMaterial({
-      color: 0x1c1917,
-      transparent: true,
-      opacity: 0.78,
-      depthWrite: false,
-    })
-  );
-  ashDisc.rotation.x = -Math.PI / 2;
-  ashDisc.position.y = 0.03;
-  group.add(ashDisc);
+  writeBuildingRubbleMatrix(batch.ash, batch.ashBase, slot, x, 0.03, z, -Math.PI / 2, 0, 0, radius, radius, 1);
+  writeBuildingRubbleMatrix(batch.ember, batch.emberBase, slot, x, 0.04, z, -Math.PI / 2, 0, 0, radius * 0.42, radius * 0.42, 1);
 
-  const emberCore = new THREE.Mesh(
-    new THREE.CircleGeometry(radius * 0.42, 12),
-    new THREE.MeshBasicMaterial({
-      color: 0xea580c,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-    })
-  );
-  emberCore.rotation.x = -Math.PI / 2;
-  emberCore.position.y = 0.04;
-  group.add(emberCore);
-
-  const chunkGeo = new THREE.DodecahedronGeometry(0.42, 0);
-  const plankGeo = new THREE.BoxGeometry(1.15, 0.14, 0.28);
+  let chunkIndex = 0;
+  let plankIndex = 0;
   for (let i = 0; i < 11; i++) {
-    const ang = (i / 11) * Math.PI * 2 + (i % 3) * 0.25;
-    const dist = i === 0 ? 0.15 : radius * (0.2 + (i % 4) * 0.17);
+    const angle = (i / 11) * Math.PI * 2 + (i % 3) * 0.25;
+    const distance = i === 0 ? 0.15 : radius * (0.2 + (i % 4) * 0.17);
     const isPlank = i % 3 === 0;
-    const debris = new THREE.Mesh(
-      isPlank ? plankGeo : chunkGeo,
-      i % 2 === 0 ? rubbleStoneMat : rubbleCharMat
+    const localIndex = isPlank ? slot * 4 + plankIndex++ : slot * 7 + chunkIndex++;
+    const mesh = isPlank ? batch.planks : batch.chunks;
+    const matrices = isPlank ? batch.plankBase : batch.chunkBase;
+    const size = 0.9 + (i % 3) * 0.32;
+    writeBuildingRubbleMatrix(
+      mesh,
+      matrices,
+      localIndex,
+      x + Math.cos(angle) * distance,
+      isPlank ? 0.12 : 0.24,
+      z + Math.sin(angle) * distance,
+      i * 0.35,
+      angle + 0.6,
+      (i % 2 === 0 ? 1 : -1) * 0.28,
+      size,
+      size,
+      size
     );
-    debris.position.set(Math.cos(ang) * dist, isPlank ? 0.12 : 0.24, Math.sin(ang) * dist);
-    debris.rotation.set(i * 0.35, ang + 0.6, (i % 2 === 0 ? 1 : -1) * 0.28);
-    debris.scale.setScalar(0.9 + (i % 3) * 0.32);
-    group.add(debris);
   }
 
-  return group;
+  const touched = [batch.ash, batch.ember, batch.chunks, batch.planks];
+  touched.forEach((mesh) => {
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.boundingBox = null;
+    mesh.boundingSphere = null;
+  });
+  return slot;
 }
+
+/** Shrinks a rubble slot during its final fade window without allocating or rebuilding meshes. */
+export function setBuildingRubbleDecalScale(batch: BuildingRubbleBatch, slot: number, scale: number): void {
+  if (slot < 0 || slot >= batch.capacity) return;
+  const factor = Math.max(0, scale);
+  const apply = (mesh: THREE.InstancedMesh, base: THREE.Matrix4[], index: number) => {
+    sharedRubbleScale.set(factor, factor, factor);
+    sharedRubbleMatrix.copy(base[index]).scale(sharedRubbleScale);
+    mesh.setMatrixAt(index, sharedRubbleMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  apply(batch.ash, batch.ashBase, slot);
+  apply(batch.ember, batch.emberBase, slot);
+  for (let i = 0; i < 7; i++) apply(batch.chunks, batch.chunkBase, slot * 7 + i);
+  for (let i = 0; i < 4; i++) apply(batch.planks, batch.plankBase, slot * 4 + i);
+}
+
 
 
 /** Neutral contested shrine / banner — readable from mid-distance, clickable, and continuously reflects owner & contested clash */
