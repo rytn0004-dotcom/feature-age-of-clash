@@ -146,7 +146,9 @@ import {
   createGoldMineMesh,
   createRallyFlagMesh,
   createRubbleDecalMesh,
-  createResourceDepletionRemnant,
+  createResourceDepletionBatch,
+  addResourceDepletionRemnant,
+  ResourceDepletionBatch,
   createSettlementEnvironment,
   disposeSettlementEnvironment,
   createSelectionRing,
@@ -260,7 +262,7 @@ export class RtsEngine {
   private unitMeshes = new Map<string, THREE.Group>();
   private buildingMeshes = new Map<string, THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
-  private depletedResourceMeshes = new Map<string, THREE.Group>();
+  private depletedResourceBatch: ResourceDepletionBatch | null = null;
   private projectileMeshes = new Map<string, { mesh: THREE.Mesh; type: Projectile['type'] }>();
   private projectilePool: Record<Projectile['type'], THREE.Mesh[]> = {
     arrow: [],
@@ -921,8 +923,10 @@ export class RtsEngine {
       this.scene.remove(m);
     });
     this.nodeMeshes.forEach((m) => this.scene.remove(m));
-    this.depletedResourceMeshes.forEach((m) => this.scene.remove(m));
-    this.depletedResourceMeshes.clear();
+    if (this.depletedResourceBatch) {
+      this.scene.remove(this.depletedResourceBatch.group);
+      this.depletedResourceBatch = null;
+    }
     this.selectionRings.forEach((r) => this.scene.remove(r));
     this.selectionRings.clear();
     this.commandIndicators.forEach((c) => this.scene.remove(c.mesh));
@@ -1078,6 +1082,8 @@ export class RtsEngine {
       matchSeed
     );
     this.mapLayout = layout;
+    this.depletedResourceBatch = createResourceDepletionBatch(layout.resourceNodes.length + 32);
+    this.scene.add(this.depletedResourceBatch.group);
 
     this.environmentGroup = createEnvironmentFeaturesGroup(layout);
     this.scene.add(this.environmentGroup);
@@ -4499,13 +4505,17 @@ export class RtsEngine {
             this.scene.remove(mesh);
             this.nodeMeshes.delete(node.id);
           }
-          if (node.subtype === 'wood' || node.subtype === 'gold' || node.subtype === 'stone') {
-            const previousRemnant = this.depletedResourceMeshes.get(node.id);
-            if (previousRemnant) this.scene.remove(previousRemnant);
-            const remnant = createResourceDepletionRemnant(node.subtype, node.nodeTier);
-            remnant.position.set(node.x, 0, node.z);
-            this.scene.add(remnant);
-            this.depletedResourceMeshes.set(node.id, remnant);
+          if (
+            this.depletedResourceBatch &&
+            (node.subtype === 'wood' || node.subtype === 'gold' || node.subtype === 'stone')
+          ) {
+            addResourceDepletionRemnant(
+              this.depletedResourceBatch,
+              node.x,
+              node.z,
+              node.subtype,
+              node.nodeTier
+            );
           }
           if (this.isHumanControlled(unit.faction) && !this.isSpectatorMode) {
             const meta = this.getResourceDisplayMeta(node);
