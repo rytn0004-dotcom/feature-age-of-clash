@@ -21,8 +21,9 @@ function loadTreePrototype(variant: KayKitTreeVariant): Promise<THREE.Group> {
       prototype.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        // Distant-only silhouettes keep their color and lighting but skip shadow passes.
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
       });
       return prototype;
     });

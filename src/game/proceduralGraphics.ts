@@ -528,6 +528,7 @@ function addGableRoofShingles(
   const count = rows * depthRows * 2;
   const shingles = new THREE.InstancedMesh(sharedGableShingleGeo, material, count);
   shingles.name = 'instancedRoofShingles';
+  shingles.userData.distanceLodMinPixels = 36;
   shingles.castShadow = true;
   shingles.receiveShadow = true;
   const dummy = new THREE.Object3D();
@@ -564,6 +565,7 @@ function addGableRoofShingles(
   // A single instanced batch keeps the added architectural detail inexpensive.
   const rafters = new THREE.InstancedMesh(sharedGableRafterGeo, material, 4);
   rafters.name = 'instancedGableRafters';
+  rafters.userData.distanceLodMinPixels = 24;
   rafters.castShadow = true;
   rafters.receiveShadow = true;
   const beamColor = new THREE.Color(0.58, 0.42, 0.28);
@@ -3764,6 +3766,7 @@ export function createBuildingMesh(
 
   attachBuildingConstructionRig(group, type);
   addBuildingGroundDetails(group, type);
+  prepareBuildingVisualLod(group);
 
   // Pre-collect animated flags, crystals & badge references so simulation never traverses per frame
   const animFlags: THREE.Object3D[] = [];
@@ -3951,6 +3954,7 @@ function addBuildingGroundDetails(group: THREE.Group, type: BuildingType): void 
 
   const mesh = new THREE.Mesh(geometry, buildingGroundMaterial);
   mesh.name = 'buildingGroundDetails';
+  mesh.userData.distanceLodMinPixels = 30;
   mesh.renderOrder = 1;
   mesh.frustumCulled = true;
   mesh.castShadow = false;
@@ -6765,6 +6769,64 @@ function makeSiegeWheel(
     wheelPivot.add(spoke);
   }
   return wheelPivot;
+}
+
+interface BuildingDistanceLodPart {
+  object: THREE.Object3D;
+  baseVisible: boolean;
+  minPixelRadius: number;
+}
+
+const buildingLodWorldCenter = new THREE.Vector3();
+
+/**
+ * Cache only authored, optional architecture layers. Structural meshes,
+ * construction rigs, damage visuals, animated flags, and badges stay untouched.
+ */
+function prepareBuildingVisualLod(group: THREE.Group): void {
+  const parts: BuildingDistanceLodPart[] = [];
+  group.updateMatrixWorld(true);
+
+  group.traverse((object) => {
+    const minPixelRadius = object.userData.distanceLodMinPixels;
+    if (typeof minPixelRadius !== 'number' || !Number.isFinite(minPixelRadius)) return;
+    parts.push({ object, baseVisible: object.visible, minPixelRadius });
+  });
+
+  if (parts.length === 0) return;
+
+  const bounds = new THREE.Box3().setFromObject(group);
+  const sphere = new THREE.Sphere();
+  bounds.getBoundingSphere(sphere);
+  group.userData.buildingLodParts = parts;
+  group.userData.buildingLodCenter = sphere.center.clone();
+  group.userData.buildingLodRadius = Math.max(0.5, sphere.radius);
+}
+
+/** Hide only roof micro-geometry and ground aprons below their projected size. */
+export function updateBuildingVisualLod(
+  group: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  viewportHeight: number,
+  forceHighDetail = false
+): void {
+  const parts = group.userData.buildingLodParts as BuildingDistanceLodPart[] | undefined;
+  const localCenter = group.userData.buildingLodCenter as THREE.Vector3 | undefined;
+  const localRadius = group.userData.buildingLodRadius as number | undefined;
+  if (!parts?.length || !localCenter || typeof localRadius !== 'number') return;
+
+  group.updateMatrixWorld(true);
+  buildingLodWorldCenter.copy(localCenter).applyMatrix4(group.matrixWorld);
+  const distance = Math.max(0.001, camera.position.distanceTo(buildingLodWorldCenter));
+  const safeHeight = Math.max(1, viewportHeight);
+  const focalPixels = safeHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
+  const worldRadius = localRadius * group.matrixWorld.getMaxScaleOnAxis();
+  const projectedRadius = (worldRadius * focalPixels) / distance;
+
+  for (const part of parts) {
+    const shouldShow = part.baseVisible && (forceHighDetail || projectedRadius >= part.minPixelRadius);
+    if (part.object.visible !== shouldShow) part.object.visible = shouldShow;
+  }
 }
 
 export interface UnitVisualContext {
