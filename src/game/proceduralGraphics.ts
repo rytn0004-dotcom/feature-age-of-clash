@@ -1477,6 +1477,8 @@ export function createFarmMesh(): THREE.Group {
   const wheatInst = new THREE.InstancedMesh(stalkGeo, wheatMat, stalkCount);
   const dummy = new THREE.Object3D();
   const sheafColor = new THREE.Color();
+  const farmCropBaseMatrices: THREE.Matrix4[] = [];
+  const farmCropBaseColors: THREE.Color[] = [];
   let idx = 0;
   for (let row = 0; row < 6; row++) {
     const z = -1.28 + row * 0.51;
@@ -1499,8 +1501,10 @@ export function createFarmMesh(): THREE.Group {
       dummy.scale.set(0.92 + ((col + row) % 3) * 0.14, hScale, 0.92 + ((col + row) % 3) * 0.14);
       dummy.updateMatrix();
       wheatInst.setMatrixAt(idx, dummy.matrix);
+      farmCropBaseMatrices.push(dummy.matrix.clone());
       sheafColor.setHSL(0.11 + ((col + row) % 4) * 0.009, 0.78, 0.46 + ((row + col) % 3) * 0.06);
       wheatInst.setColorAt(idx, sheafColor);
+      farmCropBaseColors.push(sheafColor.clone());
       idx++;
     }
   }
@@ -1508,6 +1512,9 @@ export function createFarmMesh(): THREE.Group {
   if (wheatInst.instanceColor) wheatInst.instanceColor.needsUpdate = true;
   wheatInst.castShadow = true;
   group.add(wheatInst);
+  group.userData.farmCropInstances = wheatInst;
+  group.userData.farmCropBaseMatrices = farmCropBaseMatrices;
+  group.userData.farmCropBaseColors = farmCropBaseColors;
 
   // Split-rail perimeter fence posts & horizontal rails
   const postGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.72, 6);
@@ -5123,6 +5130,43 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     group.userData.badgeSprite = badge;
   }
   return group;
+}
+
+/**
+ * Thins, shortens, and dries the farm's crop instances as its food reserve is harvested.
+ * A deterministic shuffled order keeps missing stalks distributed across the whole plot.
+ */
+export function updateFarmCropVisual(mesh: THREE.Group, amount: number, maxAmount: number): void {
+  const instances = mesh.userData.farmCropInstances as THREE.InstancedMesh | undefined;
+  const baseMatrices = mesh.userData.farmCropBaseMatrices as THREE.Matrix4[] | undefined;
+  const baseColors = mesh.userData.farmCropBaseColors as THREE.Color[] | undefined;
+  if (!instances || !baseMatrices || baseMatrices.length !== instances.count) return;
+
+  const ratio = THREE.MathUtils.clamp(amount / Math.max(1, maxAmount), 0, 1);
+  const scratch = new THREE.Object3D();
+  const color = new THREE.Color();
+  const dryCropTint = new THREE.Color(0xa18b5d);
+  const dryFactor = (1 - ratio) * 0.42;
+
+  for (let i = 0; i < instances.count; i++) {
+    baseMatrices[i].decompose(scratch.position, scratch.quaternion, scratch.scale);
+    const removalRank = ((i * 37) % instances.count + 0.5) / instances.count;
+    if (removalRank > ratio) {
+      scratch.scale.setScalar(0);
+    } else {
+      scratch.scale.y *= 0.7 + ratio * 0.3;
+    }
+    scratch.updateMatrix();
+    instances.setMatrixAt(i, scratch.matrix);
+
+    if (baseColors && baseColors[i] && instances.instanceColor) {
+      color.copy(baseColors[i]).lerp(dryCropTint, dryFactor);
+      instances.setColorAt(i, color);
+    }
+  }
+
+  instances.instanceMatrix.needsUpdate = true;
+  if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
 }
 
 /**
