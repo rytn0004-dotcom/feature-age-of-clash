@@ -6768,6 +6768,76 @@ export interface UnitVisualContext {
   unitId?: string;
 }
 
+interface UnitDistanceLodPart {
+  mesh: THREE.Mesh;
+  baseVisible: boolean;
+  radius: number;
+}
+
+const unitLodWorldCenter = new THREE.Vector3();
+const UNIT_LOD_MIN_RADIUS = 0.012;
+const UNIT_LOD_MAX_RADIUS = 0.105;
+const UNIT_LOD_MIN_PIXEL_RADIUS = 1.45;
+
+/**
+ * Cache tiny authored mesh parts once so far-away armies can skip details
+ * that occupy less than roughly 1.5 screen pixels. Main silhouettes, weapons,
+ * equipment and animation pivots stay untouched.
+ */
+export function prepareUnitVisualLod(group: THREE.Group): void {
+  const parts: UnitDistanceLodPart[] = [];
+  group.updateMatrixWorld(true);
+
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry || mesh.name === 'contactShadow') return;
+
+    const geometry = mesh.geometry;
+    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+    const radius = geometry.boundingSphere?.radius ?? 0;
+    if (radius < UNIT_LOD_MIN_RADIUS || radius > UNIT_LOD_MAX_RADIUS) return;
+
+    parts.push({ mesh, baseVisible: mesh.visible, radius });
+  });
+
+  group.userData.distanceLodParts = parts;
+}
+
+/**
+ * Toggle only micro-details according to their projected size in the current
+ * perspective view. Selected / inspected units keep all details enabled.
+ */
+export function updateUnitVisualLod(
+  group: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  viewportHeight: number,
+  forceHighDetail = false
+): void {
+  const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
+  if (!parts?.length) return;
+
+  group.updateMatrixWorld(true);
+  const safeHeight = Math.max(1, viewportHeight);
+  const focalPixels = safeHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
+
+  for (const part of parts) {
+    if (!part.baseVisible) continue;
+    let shouldShow = true;
+
+    if (!forceHighDetail) {
+      const bounds = part.mesh.geometry.boundingSphere;
+      if (bounds) {
+        unitLodWorldCenter.copy(bounds.center).applyMatrix4(part.mesh.matrixWorld);
+        const distance = Math.max(0.001, camera.position.distanceTo(unitLodWorldCenter));
+        const worldRadius = part.radius * part.mesh.matrixWorld.getMaxScaleOnAxis();
+        shouldShow = (worldRadius * focalPixels) / distance >= UNIT_LOD_MIN_PIXEL_RADIUS;
+      }
+    }
+
+    if (part.mesh.visible !== shouldShow) part.mesh.visible = shouldShow;
+  }
+}
+
 /** Map researched tech ids to silhouette upgrades (procedural accessories). */
 export function getUnitVisualFlags(ctx?: UnitVisualContext) {
   const age = ctx?.age || 1;
@@ -8403,6 +8473,7 @@ export function createUnitMesh(
   group.userData.visualFlags = flags;
   group.userData.visualUnitId = unitId;
   group.scale.set(s, s, s);
+  prepareUnitVisualLod(group);
   return group;
 }
 

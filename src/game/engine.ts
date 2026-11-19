@@ -159,6 +159,7 @@ import {
   createStoneQuarryMesh,
   createTreeMesh,
   createUnitMesh,
+  updateUnitVisualLod,
   disposeBuildingVisualResources,
   registerFactionVisual,
   DeerAnimParts,
@@ -347,6 +348,7 @@ export class RtsEngine {
   private cameraDesiredTarget: THREE.Vector3 | null = null;
   private cameraPanVelX = 0;
   private cameraPanVelZ = 0;
+  private unitLodAccumulator = 0;
   private edgeScrollDirX = 0;
   private edgeScrollDirZ = 0;
   private keysHeld = new Set<string>();
@@ -3342,6 +3344,7 @@ export class RtsEngine {
         this.updateCameraPosition();
       }
 
+      this.updateUnitVisualLods(rawDt);
       this.renderer.render(this.scene, this.camera);
       this.updateAdaptiveQuality(now);
       this.updatePerformanceOverlay(now);
@@ -3704,6 +3707,30 @@ export class RtsEngine {
       this.cameraTarget.z + 26 * z
     );
     this.camera.lookAt(this.cameraTarget.x, 0, this.cameraTarget.z);
+  }
+
+  /** Refresh unit micro-detail visibility at a low cadence, including while paused. */
+  private updateUnitVisualLods(dt: number): void {
+    this.unitLodAccumulator += Math.min(dt, 0.25);
+    if (this.unitLodAccumulator < 0.22) return;
+    this.unitLodAccumulator = 0;
+
+    const viewportHeight = Math.max(
+      1,
+      this.renderer.domElement.height || this.renderer.domElement.clientHeight || 720
+    );
+    this.camera.updateMatrixWorld(true);
+
+    for (const unit of this.units) {
+      if (unit.hp <= 0) continue;
+      const mesh = this.unitMeshes.get(unit.id);
+      if (!mesh || !mesh.visible) continue;
+
+      const forceHighDetail =
+        this.selectedUnitIds.includes(unit.id) ||
+        (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
+      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+    }
   }
 
   private updateUnits(dt: number) {
