@@ -3147,7 +3147,7 @@ export class RtsEngine {
       'white-space:pre',
       'box-shadow:0 8px 24px rgba(0,0,0,.24)'
     ].join(';');
-    panel.textContent = '效能監視器\\n按 F3 顯示或隱藏';
+    panel.textContent = '效能監視器\n按 F3 顯示或隱藏';
     this.container.appendChild(panel);
     this.performanceOverlay = panel;
   }
@@ -3159,7 +3159,7 @@ export class RtsEngine {
     if (this.performanceOverlayVisible) {
       this.performanceFrameCount = 0;
       this.performanceWindowStart = performance.now();
-      this.performanceOverlay.textContent = '效能監視器\\n正在收集影格資料…';
+      this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
     }
   }
 
@@ -3184,7 +3184,7 @@ export class RtsEngine {
       `Textures       ${memory.textures.toLocaleString()}`,
       `Pixel Ratio    ${this.renderer.getPixelRatio().toFixed(2)}`,
       `Renderer       ${rendererMode}`
-    ].join('\\n');
+    ].join('\n');
 
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
