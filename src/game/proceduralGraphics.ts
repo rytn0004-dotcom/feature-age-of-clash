@@ -1619,6 +1619,8 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
   roof.castShadow = true;
   group.add(roof);
 
+  const campStockMeshes: THREE.Mesh[] = [];
+
   if (type === 'lumber') {
     // Stacked bark-textured timber logs on saw-horse + chopping stump tucked within 2.05m collider
     [
@@ -1631,6 +1633,7 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
       log.position.set(lx, ly, lz);
       log.castShadow = true;
       group.add(log);
+      campStockMeshes.push(log);
     });
     const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.32, 0.52, 10), barkMat);
     stump.position.set(-1.12, 0.26, 0.55);
@@ -1672,9 +1675,40 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
     const ore2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), oreMat);
     ore2.position.set(1.28, 0.7, 0.38);
     group.add(ore1, ore2);
+    campStockMeshes.push(ore1, ore2);
   }
 
+  group.userData.campStockType = type;
+  group.userData.campStockMeshes = campStockMeshes.map((mesh) => ({
+    mesh,
+    baseScale: mesh.scale.clone(),
+  }));
+
   return group;
+}
+
+export function updateCampResourceStockVisual(
+  group: THREE.Group,
+  remainingRatio: number,
+  stockType: 'wood' | 'ore'
+): void {
+  if (group.userData.campStockType !== (stockType === 'wood' ? 'lumber' : 'mining')) return;
+  const parts = group.userData.campStockMeshes as Array<{
+    mesh: THREE.Mesh;
+    baseScale: THREE.Vector3;
+  }> | undefined;
+  if (!parts || parts.length === 0) return;
+
+  const ratio = THREE.MathUtils.clamp(remainingRatio, 0, 1);
+  const visibleCount = ratio <= 0.015 ? 0 : Math.max(1, Math.ceil(ratio * parts.length));
+  parts.forEach((part, index) => {
+    part.mesh.visible = index < visibleCount;
+    part.mesh.scale.copy(part.baseScale);
+    if (part.mesh.visible) {
+      const settleScale = 0.84 + ratio * 0.16;
+      part.mesh.scale.y *= settleScale;
+    }
+  });
 }
 
 export function createDockMesh(faction: FactionId): THREE.Group {
