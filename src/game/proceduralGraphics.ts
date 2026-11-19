@@ -276,9 +276,8 @@ function makePineSkirtGeo(baseRadius: number, height: number, radialSegs = 12): 
 }
 
 function makeGrassClumpGeo(): THREE.BufferGeometry {
-  // 5 crossed curved blades per clump for crisp readability at RTS camera height
+  // Five crossed, tapered blades with a gentle two-stage bend for a less rigid silhouette.
   const positions: number[] = [];
-  const normals: number[] = [];
   const indices: number[] = [];
   const blades = [
     { angle: 0.15, w: 0.13, h: 0.62, lean: 0.16 },
@@ -289,25 +288,27 @@ function makeGrassClumpGeo(): THREE.BufferGeometry {
   ];
   blades.forEach((b, idx) => {
     const base = idx * 5;
+    const variation = 1 + Math.sin(idx * 2.37) * 0.07;
+    const width = b.w * variation;
+    const height = b.h * (1 + Math.cos(idx * 1.83) * 0.055);
+    const lean = b.lean * (0.9 + (Math.sin(idx * 1.41) + 1) * 0.12);
     const cos = Math.cos(b.angle);
     const sin = Math.sin(b.angle);
-    const px = -sin * b.w * 0.5;
-    const pz = cos * b.w * 0.5;
-    const lx = cos * b.lean;
-    const lz = sin * b.lean;
+    const px = -sin * width * 0.5;
+    const pz = cos * width * 0.5;
+    const lx = cos * lean;
+    const lz = sin * lean;
     positions.push(
       -px, 0, -pz,
       px, 0, pz,
-      -px * 0.55 + lx * 0.35, b.h * 0.55, -pz * 0.55 + lz * 0.35,
-      px * 0.55 + lx * 0.35, b.h * 0.55, pz * 0.55 + lz * 0.35,
-      lx, b.h, lz
+      -px * 0.58 + lx * 0.16, height * 0.52, -pz * 0.58 + lz * 0.16,
+      px * 0.58 + lx * 0.16, height * 0.52, pz * 0.58 + lz * 0.16,
+      lx * 1.12, height, lz * 1.12
     );
-    for (let k = 0; k < 5; k++) normals.push(0, 1, 0);
     indices.push(base, base + 1, base + 3, base, base + 3, base + 2, base + 2, base + 3, base + 4);
   });
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
@@ -5177,9 +5178,9 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     const rDummy = new THREE.Object3D();
     const rockTint = new THREE.Color();
     pebblePts.forEach((pt, idx) => {
-      rDummy.position.set(pt.x, 0.15 * pt.s, pt.z);
-      rDummy.scale.set(pt.s * 1.25, pt.s * 0.72, pt.s);
-      rDummy.rotation.set(idx * 0.5, idx * 1.1, 0);
+      rDummy.position.set(pt.x, 0.105 * pt.s, pt.z);
+      rDummy.scale.set(pt.s * (1.12 + (idx % 3) * 0.09), pt.s * (0.58 + (idx % 4) * 0.07), pt.s * (0.88 + (idx % 5) * 0.055));
+      rDummy.rotation.set(Math.sin(idx * 1.37) * 0.12, idx * 1.1, Math.cos(idx * 0.91) * 0.1);
       rDummy.updateMatrix();
       instancedRocks.setMatrixAt(idx, rDummy.matrix);
       rockTint.setHex(idx % 3 === 0 ? 0xa3a3a3 : idx % 3 === 1 ? 0x8c9586 : 0xb8b2a6);
@@ -5221,8 +5222,8 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     const gTint = new THREE.Color();
     grassPts.forEach((pt, idx) => {
       gDummy.position.set(pt.x, 0.0, pt.z);
-      gDummy.scale.set(pt.scale, pt.scale * (0.95 + (idx % 3) * 0.15), pt.scale);
-      gDummy.rotation.set(0, pt.yaw, 0);
+      gDummy.scale.set(pt.scale, pt.scale * (0.88 + (idx % 5) * 0.09), pt.scale * (0.92 + (idx % 4) * 0.045));
+      gDummy.rotation.set(Math.sin(idx * 1.73) * 0.055, pt.yaw, Math.cos(idx * 1.29) * 0.055);
       gDummy.updateMatrix();
       instancedGrass.setMatrixAt(idx, gDummy.matrix);
       gTint.setHex(pt.hex);
@@ -5258,8 +5259,8 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     const fTint = new THREE.Color();
     flowerPts.forEach((pt, idx) => {
       fDummy.position.set(pt.x, 0.28 * pt.scale, pt.z);
-      fDummy.scale.set(pt.scale, pt.scale * 0.65, pt.scale);
-      fDummy.rotation.set(0, idx * 0.9, 0);
+      fDummy.scale.set(pt.scale * (0.9 + (idx % 3) * 0.08), pt.scale * (0.58 + (idx % 4) * 0.055), pt.scale * (0.9 + (idx % 5) * 0.04));
+      fDummy.rotation.set(Math.sin(idx * 1.7) * 0.18, idx * 0.9, Math.cos(idx * 1.13) * 0.16);
       fDummy.updateMatrix();
       instancedFlowers.setMatrixAt(idx, fDummy.matrix);
       fTint.setHex(pt.hex);
