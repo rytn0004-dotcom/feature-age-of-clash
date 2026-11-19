@@ -3589,6 +3589,7 @@ export function createBuildingMesh(
   }
 
   attachBuildingConstructionRig(group, type);
+  addBuildingGroundDetails(group, type);
 
   // Pre-collect animated flags, crystals & badge references so simulation never traverses per frame
   const animFlags: THREE.Object3D[] = [];
@@ -3603,6 +3604,184 @@ export function createBuildingMesh(
   group.userData.animCrystals = animCrystals;
   group.userData.bldgBadge = bldgBadge;
   return group;
+}
+
+// Subtle ground apron and entrance stepping stones shared by every building of a type.
+// Each building receives one compact mesh; geometry and material are cached to avoid
+// regenerating the same decorative vertices and materials for every placement.
+interface BuildingGroundProfile {
+  halfWidth: number;
+  halfDepth: number;
+  pathLength: number;
+  pathWidth: number;
+}
+
+const buildingGroundProfile = (type: BuildingType): BuildingGroundProfile | null => {
+  switch (type) {
+    case 'town_center':
+      return { halfWidth: 4.45, halfDepth: 4.05, pathLength: 4.6, pathWidth: 2.0 };
+    case 'castle':
+    case 'landmark_aachen':
+    case 'landmark_barracks':
+    case 'landmark_guildhall':
+    case 'landmark_citadel':
+    case 'landmark_observatory':
+    case 'landmark_arsenal':
+      return { halfWidth: 4.0, halfDepth: 3.7, pathLength: 4.0, pathWidth: 1.85 };
+    case 'barracks':
+      return { halfWidth: 2.75, halfDepth: 2.45, pathLength: 3.2, pathWidth: 1.65 };
+    case 'archery_range':
+      return { halfWidth: 2.85, halfDepth: 2.7, pathLength: 3.25, pathWidth: 1.6 };
+    case 'house':
+      return { halfWidth: 1.88, halfDepth: 1.7, pathLength: 2.7, pathWidth: 1.15 };
+    case 'granary':
+      return { halfWidth: 2.2, halfDepth: 2.15, pathLength: 2.5, pathWidth: 1.25 };
+    case 'lumber_camp':
+    case 'mining_camp':
+      return { halfWidth: 2.35, halfDepth: 2.15, pathLength: 2.65, pathWidth: 1.3 };
+    case 'armory_forge':
+      return { halfWidth: 2.55, halfDepth: 2.45, pathLength: 2.9, pathWidth: 1.4 };
+    case 'tower':
+      return { halfWidth: 1.55, halfDepth: 1.55, pathLength: 1.8, pathWidth: 0.9 };
+    case 'spirit_shrine':
+    case 'mana_well':
+      return { halfWidth: 1.85, halfDepth: 1.85, pathLength: 2.0, pathWidth: 1.0 };
+    case 'farm':
+    case 'dock':
+    case 'wall':
+      return null;
+    default:
+      return null;
+  }
+};
+
+const buildingGroundGeometryCache = new Map<BuildingType, THREE.BufferGeometry>();
+const buildingGroundMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.84,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  toneMapped: false,
+});
+
+function createBuildingGroundGeometry(profile: BuildingGroundProfile): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const addVertex = (x: number, y: number, z: number, color: THREE.Color): number => {
+    const index = positions.length / 3;
+    positions.push(x, y, z);
+    colors.push(color.r, color.g, color.b);
+    return index;
+  };
+  const color = new THREE.Color();
+
+  // Feathered, slightly irregular earth apron around the building foundation.
+  const segments = 32;
+  const ringScales = [0.56, 0.74, 0.9, 1.0];
+  const ringColors = [0x806547, 0x88734f, 0x7d7953, 0x617044];
+  const center = addVertex(0, 0.025, 0, color.setHex(ringColors[0]));
+  const rings: number[][] = [];
+  ringScales.forEach((scale, ringIndex) => {
+    const ring: number[] = [];
+    for (let seg = 0; seg < segments; seg++) {
+      const angle = (seg / segments) * Math.PI * 2;
+      const ripple = 1 + Math.sin(angle * 3 + ringIndex * 0.8) * 0.045 +
+        Math.cos(angle * 5 - ringIndex * 1.3) * 0.025;
+      const x = Math.cos(angle) * profile.halfWidth * 1.16 * scale * ripple;
+      const z = Math.sin(angle) * profile.halfDepth * 1.16 * scale * ripple;
+      const tint = color.setHex(ringColors[ringIndex]);
+      ring.push(addVertex(x, 0.025, z, tint));
+    }
+    rings.push(ring);
+  });
+  for (let seg = 0; seg < segments; seg++) {
+    const next = (seg + 1) % segments;
+    indices.push(center, rings[0][seg], rings[0][next]);
+  }
+  for (let ring = 0; ring < rings.length - 1; ring++) {
+    const inner = rings[ring];
+    const outer = rings[ring + 1];
+    for (let seg = 0; seg < segments; seg++) {
+      const next = (seg + 1) % segments;
+      indices.push(inner[seg], outer[seg], outer[next], inner[seg], outer[next], inner[next]);
+    }
+  }
+
+  // Low-opacity worn-earth lane leading away from the main entrance.
+  const startZ = profile.halfDepth * 0.72;
+  const endZ = startZ + profile.pathLength;
+  const halfStart = profile.pathWidth * 0.38;
+  const halfEnd = profile.pathWidth * 0.58;
+  const pathCenter = addVertex(0, 0.031, (startZ + endZ) * 0.5, color.setHex(0x786348));
+  const pathPts: Array<[number, number]> = [
+    [-halfStart, startZ],
+    [-halfEnd * 0.96, endZ * 0.42 + startZ * 0.58],
+    [-halfEnd, endZ],
+    [halfEnd, endZ],
+    [halfEnd * 0.96, endZ * 0.42 + startZ * 0.58],
+    [halfStart, startZ],
+  ];
+  const pathIndices = pathPts.map(([x, z]) => addVertex(x, 0.031, z, color.setHex(0x806b4e)));
+  for (let i = 0; i < pathIndices.length; i++) {
+    indices.push(pathCenter, pathIndices[i], pathIndices[(i + 1) % pathIndices.length]);
+  }
+
+  // Irregular pale stone pavers set into the dirt lane. They are all part of the same mesh.
+  const stonePalette = [0xb5ad98, 0x9d9684, 0xc0b7a0, 0xaaa38f];
+  const stoneCount = Math.max(4, Math.round(profile.pathLength / 0.62));
+  for (let stone = 0; stone < stoneCount; stone++) {
+    const t = (stone + 0.45) / stoneCount;
+    const z = THREE.MathUtils.lerp(startZ + 0.16, endZ - 0.14, t);
+    const xOffset = Math.sin(stone * 2.17) * profile.pathWidth * 0.095;
+    const stoneWidth = profile.pathWidth * (0.25 + (stone % 3) * 0.025);
+    const stoneDepth = 0.28 + (stone % 2) * 0.08;
+    const yaw = Math.sin(stone * 1.63) * 0.12;
+    const shape: Array<[number, number]> = [
+      [-0.78, -0.5], [0.58, -0.56], [0.92, -0.22], [0.8, 0.52],
+      [-0.46, 0.62], [-0.92, 0.18],
+    ];
+    const stoneCenter = addVertex(xOffset, 0.043 + (stone % 2) * 0.002, z, color.setHex(stonePalette[stone % stonePalette.length]));
+    const stoneVertices = shape.map(([sx, sz], idx) => {
+      const jitter = 0.94 + ((stone * 5 + idx * 3) % 7) * 0.018;
+      const px = sx * stoneWidth * jitter;
+      const pz = sz * stoneDepth * jitter;
+      const rx = px * Math.cos(yaw) - pz * Math.sin(yaw);
+      const rz = px * Math.sin(yaw) + pz * Math.cos(yaw);
+      return addVertex(xOffset + rx, 0.043 + (stone % 2) * 0.002, z + rz, color.setHex(stonePalette[stone % stonePalette.length]));
+    });
+    for (let i = 0; i < stoneVertices.length; i++) {
+      indices.push(stoneCenter, stoneVertices[i], stoneVertices[(i + 1) % stoneVertices.length]);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function addBuildingGroundDetails(group: THREE.Group, type: BuildingType): void {
+  const profile = buildingGroundProfile(type);
+  if (!profile) return;
+
+  let geometry = buildingGroundGeometryCache.get(type);
+  if (!geometry) {
+    geometry = createBuildingGroundGeometry(profile);
+    buildingGroundGeometryCache.set(type, geometry);
+  }
+
+  const mesh = new THREE.Mesh(geometry, buildingGroundMaterial);
+  mesh.name = 'buildingGroundDetails';
+  mesh.renderOrder = 1;
+  mesh.frustumCulled = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  group.add(mesh);
 }
 
 // ----------------- OVERHEAD BILLBOARDS & BADGES -----------------
