@@ -4052,6 +4052,8 @@ function appendSettlementProps(
     }
   });
 
+  if (!Object.values(props).some((items) => items.length > 0)) return;
+
   const assets = getSettlementPropAssets();
   const dummy = new THREE.Object3D();
   (Object.keys(props) as Array<keyof typeof props>).forEach((kind) => {
