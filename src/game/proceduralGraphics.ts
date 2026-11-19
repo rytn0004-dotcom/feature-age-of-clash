@@ -3415,50 +3415,6 @@ export function setBuildingRubbleDecalScale(batch: BuildingRubbleBatch, slot: nu
 }
 
 
-  const group = new THREE.Group();
-  const radius = Math.max(1.8, footprintSize * 0.96);
-
-  const ashDisc = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 18),
-    new THREE.MeshBasicMaterial({
-      color: 0x1c1917,
-      transparent: true,
-      opacity: 0.78,
-      depthWrite: false,
-    })
-  );
-  ashDisc.rotation.x = -Math.PI / 2;
-  ashDisc.position.y = 0.03;
-  group.add(ashDisc);
-
-  const emberCore = new THREE.Mesh(
-    new THREE.CircleGeometry(radius * 0.42, 12),
-    new THREE.MeshBasicMaterial({
-      color: 0xea580c,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-    })
-  );
-  emberCore.rotation.x = -Math.PI / 2;
-  emberCore.position.y = 0.04;
-  group.add(emberCore);
-
-  const chunkGeo = new THREE.DodecahedronGeometry(0.42, 0);
-  const plankGeo = new THREE.BoxGeometry(1.15, 0.14, 0.28);
-  for (let i = 0; i < 11; i++) {
-    const ang = (i / 11) * Math.PI * 2 + (i % 3) * 0.25;
-    const dist = i === 0 ? 0.15 : radius * (0.2 + (i % 4) * 0.17);
-    const isPlank = i % 3 === 0;
-    const debris = new THREE.Mesh(
-      isPlank ? plankGeo : chunkGeo,
-      i % 2 === 0 ? rubbleStoneMat : rubbleCharMat
-    );
-    debris.position.set(Math.cos(ang) * dist, isPlank ? 0.12 : 0.24, Math.sin(ang) * dist);
-    debris.rotation.set(i * 0.35, ang + 0.6, (i % 2 === 0 ? 1 : -1) * 0.28);
-    debris.scale.setScalar(0.9 + (i % 3) * 0.32);
-    group.add(debris);
-  }
 
 /** Neutral contested shrine / banner — readable from mid-distance, clickable, and continuously reflects owner & contested clash */
 export function createContestedShrineMesh(label = '爭奪點', shrineType: ShrineType = 'war'): THREE.Group {
