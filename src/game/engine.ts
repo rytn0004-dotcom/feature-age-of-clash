@@ -187,6 +187,12 @@ export class RtsEngine {
   private performanceOverlayVisible = false;
   private performanceFrameCount = 0;
   private performanceWindowStart = 0;
+  private qualityWindowStart = 0;
+  private qualityFrameCount = 0;
+  private qualityLevel: 0 | 1 | 2 = 2;
+  private lowFpsSamples = 0;
+  private highFpsSamples = 0;
+  private qualityCooldownUntil = 0;
 
   // RTS Multi-Participant & Team State
   public participants: MatchParticipant[] = createDefaultParticipants();
@@ -3127,6 +3133,61 @@ export class RtsEngine {
 
   // ------------------ PERFORMANCE DIAGNOSTICS ------------------
 
+  private updateAdaptiveQuality(now: number): void {
+    if (this.isSoftwareGl) return;
+    if (this.qualityWindowStart === 0) {
+      this.qualityWindowStart = now;
+      return;
+    }
+    this.qualityFrameCount += 1;
+    const elapsed = now - this.qualityWindowStart;
+    if (elapsed < 2200) return;
+
+    const fps = (this.qualityFrameCount * 1000) / Math.max(1, elapsed);
+    this.qualityFrameCount = 0;
+    this.qualityWindowStart = now;
+    if (now < this.qualityCooldownUntil) return;
+
+    if (fps < 38) {
+      this.lowFpsSamples += 1;
+      this.highFpsSamples = 0;
+    } else if (fps > 56) {
+      this.highFpsSamples += 1;
+      this.lowFpsSamples = 0;
+    } else {
+      this.lowFpsSamples = 0;
+      this.highFpsSamples = 0;
+    }
+
+    let nextLevel = this.qualityLevel;
+    if (this.lowFpsSamples >= 2 && this.qualityLevel > 0) {
+      nextLevel = (this.qualityLevel - 1) as 0 | 1;
+    } else if (this.highFpsSamples >= 4 && this.qualityLevel < 2) {
+      nextLevel = (this.qualityLevel + 1) as 1 | 2;
+    }
+    if (nextLevel === this.qualityLevel) return;
+
+    this.qualityLevel = nextLevel;
+    this.lowFpsSamples = 0;
+    this.highFpsSamples = 0;
+    this.qualityCooldownUntil = now + 6000;
+
+    const pixelRatio = nextLevel === 0 ? 1 : nextLevel === 1 ? 1.35 : Math.min(window.devicePixelRatio || 1, 2);
+    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.shadowMap.enabled = nextLevel > 0;
+    const shadowSize = nextLevel === 0 ? 512 : nextLevel === 1 ? 1024 : 2048;
+    this.scene.traverse((object) => {
+      if (!(object instanceof THREE.DirectionalLight)) return;
+      object.castShadow = nextLevel > 0;
+      if (object.shadow.mapSize.width !== shadowSize || object.shadow.mapSize.height !== shadowSize) {
+        object.shadow.mapSize.set(shadowSize, shadowSize);
+        object.shadow.map?.dispose();
+        object.shadow.map = null;
+        object.shadow.camera.updateProjectionMatrix();
+      }
+    });
+  }
+
   private createPerformanceOverlay(): void {
     const panel = document.createElement('div');
     panel.setAttribute('role', 'status');
@@ -3183,7 +3244,8 @@ export class RtsEngine {
       `Geometries     ${memory.geometries.toLocaleString()}`,
       `Textures       ${memory.textures.toLocaleString()}`,
       `Pixel Ratio    ${this.renderer.getPixelRatio().toFixed(2)}`,
-      `Renderer       ${rendererMode}`
+      `Renderer       ${rendererMode}`,
+      `Quality        ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
     ].join('\n');
 
     this.performanceFrameCount = 0;
@@ -3216,6 +3278,7 @@ export class RtsEngine {
       }
 
       this.renderer.render(this.scene, this.camera);
+      this.updateAdaptiveQuality(now);
       this.updatePerformanceOverlay(now);
 
       if (this.isSoftwareGl) {
