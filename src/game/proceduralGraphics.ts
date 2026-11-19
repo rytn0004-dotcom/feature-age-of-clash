@@ -1476,6 +1476,7 @@ export function createFarmMesh(): THREE.Group {
   const stalkCount = 84;
   const wheatInst = new THREE.InstancedMesh(stalkGeo, wheatMat, stalkCount);
   const dummy = new THREE.Object3D();
+  const farmCropBaseMatrices: THREE.Matrix4[] = [];
   const sheafColor = new THREE.Color();
   let idx = 0;
   for (let row = 0; row < 6; row++) {
@@ -1498,6 +1499,7 @@ export function createFarmMesh(): THREE.Group {
       const hScale = 0.85 + ((row * 3 + col * 7) % 5) * 0.1;
       dummy.scale.set(0.92 + ((col + row) % 3) * 0.14, hScale, 0.92 + ((col + row) % 3) * 0.14);
       dummy.updateMatrix();
+      farmCropBaseMatrices.push(dummy.matrix.clone());
       wheatInst.setMatrixAt(idx, dummy.matrix);
       sheafColor.setHSL(0.11 + ((col + row) % 4) * 0.009, 0.78, 0.46 + ((row + col) % 3) * 0.06);
       wheatInst.setColorAt(idx, sheafColor);
@@ -1507,6 +1509,8 @@ export function createFarmMesh(): THREE.Group {
   wheatInst.instanceMatrix.needsUpdate = true;
   if (wheatInst.instanceColor) wheatInst.instanceColor.needsUpdate = true;
   wheatInst.castShadow = true;
+  group.userData.farmCropMesh = wheatInst;
+  group.userData.farmCropBaseMatrices = farmCropBaseMatrices;
   group.add(wheatInst);
 
   // Split-rail perimeter fence posts & horizontal rails
@@ -1553,6 +1557,36 @@ export function createFarmMesh(): THREE.Group {
   group.add(farmBadge);
 
   return group;
+}
+
+
+export function updateFarmCropVisual(group: THREE.Group, remainingRatio: number): void {
+  const cropMesh = group.userData.farmCropMesh as THREE.InstancedMesh | undefined;
+  const baseMatrices = group.userData.farmCropBaseMatrices as THREE.Matrix4[] | undefined;
+  if (!cropMesh || !baseMatrices || baseMatrices.length === 0) return;
+
+  const ratio = THREE.MathUtils.clamp(remainingRatio, 0, 1);
+  const position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const matrix = new THREE.Matrix4();
+
+  baseMatrices.forEach((baseMatrix, index) => {
+    baseMatrix.decompose(position, rotation, scale);
+    // Deterministic field-wide harvest pattern: depleted patches become short stubble,
+    // while untouched patches retain their full height. No new instances or draw calls.
+    const patchThreshold = ((index * 37) % baseMatrices.length) / baseMatrices.length;
+    const cropHeight = patchThreshold < ratio ? 1 : 0.12;
+    const patchScale = 0.86 + ratio * 0.14;
+    const nextScale = new THREE.Vector3(
+      scale.x * patchScale,
+      scale.y * cropHeight,
+      scale.z * patchScale
+    );
+    matrix.compose(position, rotation, nextScale);
+    cropMesh.setMatrixAt(index, matrix);
+  });
+  cropMesh.instanceMatrix.needsUpdate = true;
 }
 
 export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): THREE.Group {
@@ -1619,6 +1653,8 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
   roof.castShadow = true;
   group.add(roof);
 
+  const campStockMeshes: THREE.Mesh[] = [];
+
   if (type === 'lumber') {
     // Stacked bark-textured timber logs on saw-horse + chopping stump tucked within 2.05m collider
     [
@@ -1631,6 +1667,7 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
       log.position.set(lx, ly, lz);
       log.castShadow = true;
       group.add(log);
+      campStockMeshes.push(log);
     });
     const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.32, 0.52, 10), barkMat);
     stump.position.set(-1.12, 0.26, 0.55);
@@ -1672,9 +1709,40 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
     const ore2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), oreMat);
     ore2.position.set(1.28, 0.7, 0.38);
     group.add(ore1, ore2);
+    campStockMeshes.push(ore1, ore2);
   }
 
+  group.userData.campStockType = type;
+  group.userData.campStockMeshes = campStockMeshes.map((mesh) => ({
+    mesh,
+    baseScale: mesh.scale.clone(),
+  }));
+
   return group;
+}
+
+export function updateCampResourceStockVisual(
+  group: THREE.Group,
+  remainingRatio: number,
+  stockType: 'wood' | 'ore'
+): void {
+  if (group.userData.campStockType !== (stockType === 'wood' ? 'lumber' : 'mining')) return;
+  const parts = group.userData.campStockMeshes as Array<{
+    mesh: THREE.Mesh;
+    baseScale: THREE.Vector3;
+  }> | undefined;
+  if (!parts || parts.length === 0) return;
+
+  const ratio = THREE.MathUtils.clamp(remainingRatio, 0, 1);
+  const visibleCount = ratio <= 0.015 ? 0 : Math.max(1, Math.ceil(ratio * parts.length));
+  parts.forEach((part, index) => {
+    part.mesh.visible = index < visibleCount;
+    part.mesh.scale.copy(part.baseScale);
+    if (part.mesh.visible) {
+      const settleScale = 0.84 + ratio * 0.16;
+      part.mesh.scale.y *= settleScale;
+    }
+  });
 }
 
 export function createDockMesh(faction: FactionId): THREE.Group {

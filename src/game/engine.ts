@@ -149,6 +149,8 @@ import {
   createSettlementEnvironment,
   disposeSettlementEnvironment,
   createSelectionRing,
+  updateCampResourceStockVisual,
+  updateFarmCropVisual,
   createShoreFishMesh,
   createStoneQuarryMesh,
   createTreeMesh,
@@ -1402,6 +1404,65 @@ export class RtsEngine {
     this.scene.add(this.settlementEnvironmentGroup);
   }
 
+  private refreshEconomicBuildingVisuals(): void {
+    const camps = this.buildings.filter(
+      (building) =>
+        building.hp > 0 &&
+        (building.buildingType === 'lumber_camp' || building.buildingType === 'mining_camp')
+    );
+
+    for (const camp of camps) {
+      const isLumber = camp.buildingType === 'lumber_camp';
+      const nearbyNodes = this.resourceNodes
+        .filter((node) => {
+          const matchesType = isLumber
+            ? node.resourceType === 'wood'
+            : node.resourceType === 'gold' || node.resourceType === 'stone';
+          return matchesType && Math.hypot(node.x - camp.x, node.z - camp.z) <= 30;
+        })
+        .map((node) => ({
+          ratio: Math.max(0, Math.min(1, node.amount / Math.max(1, node.maxAmount))),
+          distance: Math.hypot(node.x - camp.x, node.z - camp.z),
+        }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 4);
+
+      let stockRatio = 0;
+      if (nearbyNodes.length > 0) {
+        let weightedTotal = 0;
+        let totalWeight = 0;
+        nearbyNodes.forEach((node) => {
+          const weight = 1 / (1 + node.distance * 0.08);
+          weightedTotal += node.ratio * weight;
+          totalWeight += weight;
+        });
+        stockRatio = totalWeight > 0 ? weightedTotal / totalWeight : 0;
+      }
+
+      const mesh = this.buildingMeshes.get(camp.id);
+      if (mesh) {
+        updateCampResourceStockVisual(mesh, stockRatio, isLumber ? 'wood' : 'ore');
+      }
+    }
+
+    const farms = this.buildings.filter((building) => building.hp > 0 && building.buildingType === 'farm');
+    for (const farm of farms) {
+      const farmNode = this.resourceNodes
+        .filter(
+          (node) => node.subtype === 'farm' && Math.hypot(node.x - farm.x, node.z - farm.z) < 2.5
+        )
+        .sort(
+          (a, b) =>
+            Math.hypot(a.x - farm.x, a.z - farm.z) - Math.hypot(b.x - farm.x, b.z - farm.z)
+        )[0];
+      const cropRatio = farmNode
+        ? Math.max(0, Math.min(1, farmNode.amount / Math.max(1, farmNode.maxAmount)))
+        : 1;
+      const mesh = this.buildingMeshes.get(farm.id);
+      if (mesh) updateFarmCropVisual(mesh, cropRatio);
+    }
+  }
+
   public addBuilding(
     type: BuildingType,
     faction: FactionId,
@@ -1464,6 +1525,7 @@ export class RtsEngine {
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
     this.refreshSettlementEnvironment();
+    this.refreshEconomicBuildingVisuals();
 
     if (this.isHumanControlled(faction) && instant) {
       this.stats.buildingsConstructed++;
@@ -1527,6 +1589,7 @@ export class RtsEngine {
     mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
+    this.refreshEconomicBuildingVisuals();
 
     return node;
   }
@@ -4365,6 +4428,14 @@ export class RtsEngine {
           if ((node as any)._lastBucket !== bucket) {
             (node as any)._lastBucket = bucket;
             updateResourceNodeDepletionVisual(nodeMesh, node.amount, node.maxAmount, node.subtype);
+            if (
+              node.resourceType === 'wood' ||
+              node.resourceType === 'gold' ||
+              node.resourceType === 'stone' ||
+              node.subtype === 'farm'
+            ) {
+              this.refreshEconomicBuildingVisuals();
+            }
             const badge = nodeMesh.getObjectByName('badgeSprite') as THREE.Sprite;
             if (badge) {
               badge.visible = this.showOverheadBadges;
@@ -4466,6 +4537,14 @@ export class RtsEngine {
           }
         }
 
+        if (
+          node.resourceType === 'wood' ||
+          node.resourceType === 'gold' ||
+          node.resourceType === 'stone' ||
+          node.subtype === 'farm'
+        ) {
+          this.refreshEconomicBuildingVisuals();
+        }
         if (!reseeded) {
           this.navGridDirty = true;
           const mesh = this.nodeMeshes.get(node.id);
