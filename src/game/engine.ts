@@ -168,6 +168,7 @@ import {
   updateFarmCropVisual,
   updateResourceNodeDepletionVisual,
 } from './proceduralGraphics';
+import { attachKayKitTreeLod, updateTreeVisualLod } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
@@ -1549,6 +1550,10 @@ export class RtsEngine {
     mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
+    if (type === 'wood' && nodeTier === 'standard') {
+      const variantSeed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+      attachKayKitTreeLod(mesh, variantSeed % 2 === 0 ? 'A' : 'B');
+    }
 
     return node;
   }
@@ -3420,6 +3425,11 @@ export class RtsEngine {
         canopy.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
         canopy.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
       }
+      const distanceLodTree = nMesh.userData.treeAssetLod as THREE.Object3D | undefined;
+      if (distanceLodTree) {
+        distanceLodTree.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
+        distanceLodTree.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
+      }
       envIdx++;
     });
 
@@ -3731,6 +3741,10 @@ export class RtsEngine {
         (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
       updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
+
+    this.nodeMeshes.forEach((mesh) => {
+      if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
+    });
   }
 
   private updateUnits(dt: number) {
