@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 
@@ -115,6 +116,35 @@ export function applyTerrainBiomeMaterial(
 
 // ----------------- SCULPTURAL GEOMETRY HELPERS -----------------
 
+/** Light vertex relaxation that softens harsh polygon corners without adding triangles. */
+function softenGeometrySurface(geo: THREE.BufferGeometry, strength = 0.16, iterations = 1): THREE.BufferGeometry {
+  const smoothGeo = mergeVertices(geo, 1e-4);
+  const position = smoothGeo.attributes.position;
+  const index = smoothGeo.index;
+  if (!index || position.count < 4) { smoothGeo.computeVertexNormals(); return smoothGeo; }
+  const neighbours: Array<Set<number>> = Array.from({ length: position.count }, () => new Set<number>());
+  for (let i = 0; i < index.count; i += 3) {
+    const a = index.getX(i), b = index.getX(i + 1), c = index.getX(i + 2);
+    neighbours[a].add(b); neighbours[a].add(c); neighbours[b].add(a); neighbours[b].add(c); neighbours[c].add(a); neighbours[c].add(b);
+  }
+  let source = new Float32Array(position.array);
+  let target = new Float32Array(source.length);
+  for (let pass = 0; pass < Math.max(1, iterations); pass++) {
+    target.set(source);
+    for (let i = 0; i < position.count; i++) {
+      const adjacent = neighbours[i]; if (adjacent.size < 3) continue;
+      let ax = 0, ay = 0, az = 0;
+      adjacent.forEach((n) => { ax += source[n * 3]; ay += source[n * 3 + 1]; az += source[n * 3 + 2]; });
+      const inv = 1 / adjacent.size, offset = i * 3;
+      target[offset] += (ax * inv - source[offset]) * strength;
+      target[offset + 1] += (ay * inv - source[offset + 1]) * strength;
+      target[offset + 2] += (az * inv - source[offset + 2]) * strength;
+    }
+    const swap = source; source = target; target = swap;
+  }
+  position.array.set(source); position.needsUpdate = true; smoothGeo.computeVertexNormals(); return smoothGeo;
+}
+
 function safeComputeTangents<T extends THREE.BufferGeometry>(geo: T): T {
   if (geo.index && geo.attributes.uv && geo.attributes.normal) {
     geo.computeTangents();
@@ -180,7 +210,7 @@ function makePagodaRoofGeo(baseRadius: number, height: number): THREE.LatheGeome
   return geo;
 }
 
-function makeCraggyRockGeo(radius: number, detail = 1): THREE.DodecahedronGeometry {
+function makeCraggyRockGeo(radius: number, detail = 1): THREE.BufferGeometry {
   const geo = new THREE.DodecahedronGeometry(radius, detail);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -195,11 +225,12 @@ function makeCraggyRockGeo(radius: number, detail = 1): THREE.DodecahedronGeomet
     pos.setXYZ(i, x * scale, y * (y < 0 ? 0.55 : scale * 0.88), z * scale);
   }
   pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  return safeComputeTangents(geo);
+  const softened = softenGeometrySurface(geo, 0.2, 1);
+  softened.computeVertexNormals();
+  return safeComputeTangents(softened);
 }
 
-function makeFoliageClusterGeo(radius: number, detail = 1): THREE.IcosahedronGeometry {
+function makeFoliageClusterGeo(radius: number, detail = 1): THREE.BufferGeometry {
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -216,11 +247,12 @@ function makeFoliageClusterGeo(radius: number, detail = 1): THREE.IcosahedronGeo
     pos.setXYZ(i, x * scale, y * (y < 0 ? 0.72 : scale * 0.9), z * scale);
   }
   pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  return safeComputeTangents(geo);
+  const softened = softenGeometrySurface(geo, 0.22, 1);
+  softened.computeVertexNormals();
+  return safeComputeTangents(softened);
 }
 
-function makePineSkirtGeo(baseRadius: number, height: number, radialSegs = 12): THREE.ConeGeometry {
+function makePineSkirtGeo(baseRadius: number, height: number, radialSegs = 12): THREE.BufferGeometry {
   const geo = new THREE.ConeGeometry(baseRadius, height, radialSegs, 3);
   geo.translate(0, height * 0.5, 0);
   const pos = geo.attributes.position;
@@ -237,8 +269,9 @@ function makePineSkirtGeo(baseRadius: number, height: number, radialSegs = 12): 
     }
   }
   pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  return safeComputeTangents(geo);
+  const softened = softenGeometrySurface(geo, 0.12, 1);
+  softened.computeVertexNormals();
+  return safeComputeTangents(softened);
 }
 
 function makeGrassClumpGeo(): THREE.BufferGeometry {
