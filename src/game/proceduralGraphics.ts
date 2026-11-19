@@ -4414,9 +4414,11 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     [-0.18, 0.4, 0.44, 0.8, 0.7, 0.8],
   ].forEach(([cx, cy, cz, sx, sy, sz], i) => {
     const clump = new THREE.Mesh(sharedBushClumpGeo, sharedBushLeafMat);
-    clump.position.set(cx, cy, cz);
-    clump.scale.set(sx, sy, sz);
-    clump.rotation.y = i * 0.8;
+    // Deterministic per-lobe variation breaks the repeated round silhouette without adding geometry.
+    const fullness = 1 + Math.sin(i * 2.17) * 0.055;
+    clump.position.set(cx, cy + Math.cos(i * 1.73) * 0.025, cz);
+    clump.scale.set(sx * fullness, sy * (1 + Math.cos(i * 1.31) * 0.045), sz * (1 - Math.sin(i * 1.91) * 0.05));
+    clump.rotation.set(Math.sin(i * 1.47) * 0.075, i * 0.8, Math.cos(i * 1.23) * 0.075);
     clump.castShadow = true;
     group.add(clump);
   });
