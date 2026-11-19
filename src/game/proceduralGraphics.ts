@@ -3957,6 +3957,8 @@ export function createTreeMesh(
   canopyPivot.name = 'treeCanopy';
   // Raised above unit eye-level so low conifer boughs never swallow nearby soldiers
   canopyPivot.position.y = isRich ? 2.18 : 1.94;
+  // Slight per-tree lean and yaw break the repeated silhouettes while keeping the canopy above unit eye level.
+  canopyPivot.rotation.set((Math.random() - 0.5) * 0.045, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.045);
   if (isRich) canopyPivot.scale.setScalar(1.22);
   group.add(canopyPivot);
   group.userData.treeCanopy = canopyPivot;
@@ -3991,11 +3993,11 @@ export function createTreeMesh(
   } else {
     // Natural 5-Tier Asymmetric Alpine Conifer Pine
     const tiers: Array<[THREE.BufferGeometry, number, number, number, number, number]> = [
-      [sharedPineSkirt1Geo, 0.05, -0.1, -0.04, 0.2, 1.02],
-      [sharedPineSkirt2Geo, -0.04, 0.65, 0.05, 0.85, 0.96],
-      [sharedPineSkirt2Geo, 0.03, 1.38, -0.02, 1.65, 0.82],
-      [sharedPineSkirt3Geo, -0.02, 2.05, 0.03, 2.4, 0.84],
-      [sharedPineSkirt3Geo, 0.0, 2.65, 0.0, 0.4, 0.56],
+      [sharedPineSkirt1Geo, 0.05, -0.1, -0.04, 0.2, 1.04],
+      [sharedPineSkirt2Geo, -0.04, 0.58, 0.05, 0.85, 1.00],
+      [sharedPineSkirt2Geo, 0.03, 1.28, -0.02, 1.65, 0.88],
+      [sharedPineSkirt3Geo, -0.02, 1.98, 0.03, 2.4, 0.88],
+      [sharedPineSkirt3Geo, 0.0, 2.58, 0.0, 0.4, 0.62],
     ];
     tiers.forEach(([geo, px, py, pz, ry, sc]) => {
       const tier = new THREE.Mesh(geo, leafMat);
