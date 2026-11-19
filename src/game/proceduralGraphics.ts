@@ -505,6 +505,60 @@ function roundedBuildingBox(width: number, height: number, depth: number): THREE
 }
 
 
+// Shared low-poly shingle geometry; each building uses one InstancedMesh batch.
+const sharedGableShingleGeo = new RoundedBoxGeometry(0.42, 0.065, 0.34, 1, 0.025);
+
+/**
+ * Adds overlapping shingle courses to a simple gable roof.
+ * Tiles are instanced in one draw call and stay within the existing roof silhouette.
+ */
+function addGableRoofShingles(
+  parent: THREE.Group,
+  halfWidth: number,
+  rise: number,
+  baseY: number,
+  halfDepth: number,
+  material: THREE.Material,
+  depthRows = 5
+): void {
+  const slopeLength = Math.hypot(halfWidth, rise);
+  const rows = Math.max(4, Math.ceil(slopeLength / 0.38));
+  const count = rows * depthRows * 2;
+  const shingles = new THREE.InstancedMesh(sharedGableShingleGeo, material, count);
+  shingles.name = 'instancedRoofShingles';
+  shingles.castShadow = true;
+  shingles.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  let index = 0;
+
+  for (let side = 0; side < 2; side++) {
+    const sign = side === 0 ? -1 : 1;
+    const rotation = sign === -1 ? Math.atan2(rise, halfWidth) : -Math.atan2(rise, halfWidth);
+    for (let row = 0; row < rows; row++) {
+      const t = 0.12 + (row / Math.max(1, rows - 1)) * 0.76;
+      const x = sign * halfWidth * (1 - t);
+      const y = baseY + rise * t + 0.045;
+      for (let depth = 0; depth < depthRows; depth++) {
+        const zT = depthRows === 1 ? 0.5 : depth / (depthRows - 1);
+        const z = THREE.MathUtils.lerp(-halfDepth * 0.82, halfDepth * 0.82, zT);
+        dummy.position.set(x, y, z);
+        dummy.rotation.set(0, 0, rotation);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        shingles.setMatrixAt(index, dummy.matrix);
+        const shade = 0.91 + ((row * 7 + depth * 3 + side * 5) % 7) * 0.012;
+        color.setRGB(shade, shade, shade);
+        shingles.setColorAt(index, color);
+        index++;
+      }
+    }
+  }
+  shingles.instanceMatrix.needsUpdate = true;
+  if (shingles.instanceColor) shingles.instanceColor.needsUpdate = true;
+  parent.add(shingles);
+}
+
 // ----------------- BUILDINGS (Sculpted Multi-Part Architecture) -----------------
 
 export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
@@ -995,6 +1049,8 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     roof.castShadow = true;
     group.add(roof);
 
+    addGableRoofShingles(group, 2.3, 1.7, 2.95, 1.825, roofMat, 7);
+
     const ridge = new THREE.Mesh(roundedBuildingBox(0.22, 0.2, 3.75), woodMat);
     ridge.position.set(0, 4.68, 0);
     group.add(ridge);
@@ -1300,6 +1356,8 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     roof.position.set(0, 1.88, 0);
     roof.castShadow = true;
     group.add(roof);
+
+    addGableRoofShingles(group, 1.45, 1.12, 1.88, 1.175, roofMat, 5);
 
     const ridge = new THREE.Mesh(roundedBuildingBox(0.16, 0.14, 2.45), woodMat);
     ridge.position.set(0, 3.01, 0);
