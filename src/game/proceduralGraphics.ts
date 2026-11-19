@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
+import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
+import type { MapLayoutResult } from './mapGenerator';
+import { isPointInTerrainObstacle } from './collision';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -3784,7 +3786,415 @@ function addBuildingGroundDetails(group: THREE.Group, type: BuildingType): void 
   group.add(mesh);
 }
 
+// ----------------- SETTLEMENT ROADS & YARD PROPS -----------------
+
+type SettlementBuildingInput = Pick<
+  BuildingEntity,
+  'id' | 'faction' | 'buildingType' | 'x' | 'z' | 'hp'
+>;
+
+interface SettlementRoadNode {
+  source: SettlementBuildingInput;
+  entranceX: number;
+  entranceZ: number;
+  profile: BuildingGroundProfile;
+}
+
+interface SettlementRoadEdge {
+  a: SettlementRoadNode;
+  b: SettlementRoadNode;
+  distance: number;
+}
+
+const settlementRoadMaterial = new THREE.MeshBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.88,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  toneMapped: false,
+});
+
+function createSettlementRoadGeometry(edges: SettlementRoadEdge[]): THREE.BufferGeometry | null {
+  if (edges.length === 0) return null;
+
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+  const addVertex = (x: number, y: number, z: number, hex: number): number => {
+    const color = new THREE.Color(hex);
+    const index = positions.length / 3;
+    positions.push(x, y, z);
+    colors.push(color.r, color.g, color.b);
+    return index;
+  };
+  const addQuad = (a: number, b: number, c: number, d: number) => {
+    indices.push(a, b, c, a, c, d);
+  };
+
+  const edgeBands = [
+    { offset: -0.5, color: 0x59603b },
+    { offset: -0.31, color: 0x786246 },
+    { offset: 0.31, color: 0x786246 },
+    { offset: 0.5, color: 0x59603b },
+  ];
+
+  edges.forEach((edge, edgeIndex) => {
+    const start = new THREE.Vector3(edge.a.entranceX, 0, edge.a.entranceZ);
+    const end = new THREE.Vector3(edge.b.entranceX, 0, edge.b.entranceZ);
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 2.8) return;
+
+    const sideX = -dz / length;
+    const sideZ = dx / length;
+    const bend = Math.sin((edgeIndex + 1) * 2.17) * Math.min(0.5, length * 0.025);
+    const control = new THREE.Vector3(
+      (start.x + end.x) * 0.5 + sideX * bend,
+      0,
+      (start.z + end.z) * 0.5 + sideZ * bend
+    );
+    const curvePoint = (t: number): THREE.Vector3 => {
+      const oneMinus = 1 - t;
+      return new THREE.Vector3(
+        oneMinus * oneMinus * start.x + 2 * oneMinus * t * control.x + t * t * end.x,
+        0,
+        oneMinus * oneMinus * start.z + 2 * oneMinus * t * control.z + t * t * end.z
+      );
+    };
+
+    const rows = Math.max(8, Math.ceil(length / 1.15));
+    const rowIndices: number[][] = [];
+    for (let row = 0; row <= rows; row++) {
+      const t = row / rows;
+      const point = curvePoint(t);
+      const tangent = new THREE.Vector3(
+        2 * (1 - t) * (control.x - start.x) + 2 * t * (end.x - control.x),
+        0,
+        2 * (1 - t) * (control.z - start.z) + 2 * t * (end.z - control.z)
+      ).normalize();
+      const nx = -tangent.z;
+      const nz = tangent.x;
+      const ids: number[] = [];
+      edgeBands.forEach((band) => {
+        ids.push(addVertex(
+          point.x + nx * band.offset * 1.9,
+          0.034,
+          point.z + nz * band.offset * 1.9,
+          band.color
+        ));
+      });
+      rowIndices.push(ids);
+    }
+    for (let row = 0; row < rows; row++) {
+      for (let band = 0; band < edgeBands.length - 1; band++) {
+        addQuad(
+          rowIndices[row][band],
+          rowIndices[row + 1][band],
+          rowIndices[row + 1][band + 1],
+          rowIndices[row][band + 1]
+        );
+      }
+    }
+
+    // Flat, irregular paving stones share the road mesh and therefore do not add draw calls.
+    const paverCount = Math.max(3, Math.floor(length / 1.0));
+    for (let stone = 0; stone < paverCount; stone++) {
+      const t = (stone + 0.5) / paverCount;
+      const point = curvePoint(t);
+      const tangent = new THREE.Vector3(
+        2 * (1 - t) * (control.x - start.x) + 2 * t * (end.x - control.x),
+        0,
+        2 * (1 - t) * (control.z - start.z) + 2 * t * (end.z - control.z)
+      ).normalize();
+      const nx = -tangent.z;
+      const nz = tangent.x;
+      const lane = ((stone % 3) - 1) * 0.17;
+      const jitter = Math.sin((stone + 1) * 1.91 + edgeIndex) * 0.08;
+      const centerX = point.x + nx * (lane + jitter);
+      const centerZ = point.z + nz * (lane + jitter);
+      const halfW = 0.27 + (stone % 2) * 0.045;
+      const halfL = 0.19 + (stone % 3) * 0.025;
+      const stoneColor = [0xa49c89, 0xb6ad98, 0x958d7c, 0xc0b6a0][stone % 4];
+      const corners: Array<[number, number]> = [
+        [-halfW, -halfL], [halfW, -halfL], [halfW * 0.92, halfL], [-halfW * 0.9, halfL * 0.94],
+      ];
+      const ids = corners.map(([localX, localZ]) => {
+        const x = centerX + nx * localX + tangent.x * localZ;
+        const z = centerZ + nz * localX + tangent.z * localZ;
+        return addVertex(x, 0.043, z, stoneColor);
+      });
+      addQuad(ids[0], ids[1], ids[2], ids[3]);
+    }
+  });
+
+  if (positions.length === 0) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+interface SettlementPropTransform {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  scale: number;
+}
+
+let settlementPropGeometries: {
+  crate: THREE.BufferGeometry;
+  barrel: THREE.BufferGeometry;
+  log: THREE.BufferGeometry;
+  ore: THREE.BufferGeometry;
+} | null = null;
+
+let settlementPropMaterials: {
+  wood: THREE.MeshStandardMaterial;
+  ore: THREE.MeshStandardMaterial;
+} | null = null;
+
+function getSettlementPropAssets() {
+  if (!settlementPropGeometries) {
+    settlementPropGeometries = {
+      crate: new RoundedBoxGeometry(0.72, 0.62, 0.72, 1, 0.045),
+      barrel: new THREE.CylinderGeometry(0.28, 0.32, 0.76, 8),
+      log: new THREE.CylinderGeometry(0.15, 0.18, 1.35, 7),
+      ore: makeCraggyRockGeo(0.34, 0),
+    };
+  }
+  if (!settlementPropMaterials) {
+    const wood = getTimberWoodMaps();
+    const stone = getCraggyRockMaps();
+    settlementPropMaterials = {
+      wood: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: wood.map,
+        normalMap: wood.normalMap,
+        roughness: 0.91,
+      }),
+      ore: new THREE.MeshStandardMaterial({
+        color: 0x9ca3af,
+        map: stone.map,
+        normalMap: stone.normalMap,
+        roughness: 0.94,
+      }),
+    };
+  }
+  return { geometries: settlementPropGeometries, materials: settlementPropMaterials };
+}
+
+function appendSettlementProps(
+  group: THREE.Group,
+  buildings: SettlementBuildingInput[],
+  layout: MapLayoutResult | null
+): void {
+  const props: Record<'crate' | 'barrel' | 'log' | 'ore', SettlementPropTransform[]> = {
+    crate: [], barrel: [], log: [], ore: [],
+  };
+  const obstacleDiscs = layout ? [...layout.waterDiscs, ...layout.cliffDiscs] : [];
+  const isClear = (x: number, z: number, ownerId: string): boolean => {
+    if (layout && isPointInTerrainObstacle(x, z, layout.waterRects, obstacleDiscs, layout.bridges)) return false;
+    return buildings.every((other) => {
+      if (other.id === ownerId || other.hp <= 0) return true;
+      const otherProfile = buildingGroundProfile(other.buildingType);
+      if (!otherProfile) return true;
+      return !(
+        Math.abs(x - other.x) < otherProfile.halfWidth * 0.72 + 0.5 &&
+        Math.abs(z - other.z) < otherProfile.halfDepth * 0.72 + 0.5
+      );
+    });
+  };
+  const place = (kind: keyof typeof props, building: SettlementBuildingInput, x: number, z: number, yaw: number, scale = 1) => {
+    if (!isClear(x, z, building.id)) return;
+    const y = kind === 'crate' ? 0.31 * scale : kind === 'barrel' ? 0.38 * scale : kind === 'log' ? 0.17 * scale : 0.22 * scale;
+    props[kind].push({ x, y, z, yaw, scale });
+  };
+
+  buildings.forEach((building) => {
+    if (building.hp <= 0) return;
+    const profile = buildingGroundProfile(building.buildingType);
+    if (!profile) return;
+    const sideX = building.x + profile.halfWidth + 0.58;
+    const rearZ = building.z - profile.halfDepth * 0.42;
+
+    switch (building.buildingType) {
+      case 'lumber_camp':
+        place('log', building, sideX, rearZ - 0.48, 0.12, 1);
+        place('log', building, sideX + 0.04, rearZ + 0.02, -0.08, 0.88);
+        place('crate', building, sideX - 0.15, rearZ + 0.9, 0.18, 0.78);
+        break;
+      case 'mining_camp':
+        place('ore', building, sideX, rearZ - 0.35, 0.2, 1.1);
+        place('ore', building, sideX + 0.55, rearZ + 0.3, -0.2, 0.82);
+        place('crate', building, sideX - 0.1, rearZ + 0.95, 0.35, 0.82);
+        break;
+      case 'granary':
+        place('barrel', building, sideX, rearZ - 0.25, 0.16, 0.92);
+        place('crate', building, sideX + 0.5, rearZ + 0.55, -0.18, 0.78);
+        break;
+      case 'house':
+        place('barrel', building, sideX, rearZ - 0.1, 0.12, 0.74);
+        place('crate', building, sideX + 0.42, rearZ + 0.6, -0.12, 0.64);
+        break;
+      case 'barracks':
+      case 'archery_range':
+      case 'armory_forge':
+        place('crate', building, sideX, rearZ - 0.2, 0.22, 0.86);
+        place('barrel', building, sideX + 0.48, rearZ + 0.55, -0.1, 0.82);
+        break;
+      default:
+        break;
+    }
+  });
+
+  const assets = getSettlementPropAssets();
+  const dummy = new THREE.Object3D();
+  (Object.keys(props) as Array<keyof typeof props>).forEach((kind) => {
+    const items = props[kind];
+    if (items.length === 0) return;
+    const isOre = kind === 'ore';
+    const mesh = new THREE.InstancedMesh(
+      assets.geometries[kind],
+      isOre ? assets.materials.ore : assets.materials.wood,
+      items.length
+    );
+    mesh.name = 'settlementProps_' + kind;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    items.forEach((item, index) => {
+      dummy.position.set(item.x, item.y, item.z);
+      dummy.rotation.set(kind === 'log' ? Math.PI / 2 : 0, item.yaw, 0);
+      dummy.scale.setScalar(item.scale);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    group.add(mesh);
+  });
+}
+
+export function createSettlementEnvironment(
+  buildings: SettlementBuildingInput[],
+  layout: MapLayoutResult | null
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'settlementEnvironment';
+  const liveBuildings = buildings.filter((building) => building.hp > 0);
+  const roadNodes: SettlementRoadNode[] = liveBuildings.flatMap((building) => {
+    const profile = buildingGroundProfile(building.buildingType);
+    if (!profile) return [];
+    return [{
+      source: building,
+      profile,
+      entranceX: building.x,
+      entranceZ: building.z + profile.halfDepth * 0.72 + profile.pathLength,
+    }];
+  });
+
+  const obstacleDiscs = layout ? [...layout.waterDiscs, ...layout.cliffDiscs] : [];
+  const candidates: SettlementRoadEdge[] = [];
+  for (let i = 0; i < roadNodes.length; i++) {
+    for (let j = i + 1; j < roadNodes.length; j++) {
+      const a = roadNodes[i];
+      const b = roadNodes[j];
+      if (a.source.faction !== b.source.faction) continue;
+      const distance = Math.hypot(a.entranceX - b.entranceX, a.entranceZ - b.entranceZ);
+      if (distance < 3.6 || distance > 25) continue;
+
+      let blocked = false;
+      for (let sample = 1; sample <= 11 && !blocked; sample++) {
+        const t = sample / 12;
+        const x = THREE.MathUtils.lerp(a.entranceX, b.entranceX, t);
+        const z = THREE.MathUtils.lerp(a.entranceZ, b.entranceZ, t);
+        const dx = b.entranceX - a.entranceX;
+        const dz = b.entranceZ - a.entranceZ;
+        const len = Math.hypot(dx, dz) || 1;
+        const nx = -dz / len;
+        const nz = dx / len;
+        for (const side of [-0.72, 0, 0.72]) {
+          const sx = x + nx * side;
+          const sz = z + nz * side;
+          if (layout && isPointInTerrainObstacle(sx, sz, layout.waterRects, obstacleDiscs, layout.bridges)) {
+            blocked = true;
+            break;
+          }
+          for (let k = 0; k < roadNodes.length; k++) {
+            if (k === i || k === j) continue;
+            const other = roadNodes[k];
+            if (
+              Math.abs(sx - other.source.x) < other.profile.halfWidth * 0.68 &&
+              Math.abs(sz - other.source.z) < other.profile.halfDepth * 0.68
+            ) {
+              blocked = true;
+              break;
+            }
+          }
+          if (blocked) break;
+        }
+      }
+      if (!blocked) candidates.push({ a, b, distance });
+    }
+  }
+
+  candidates.sort((a, b) => a.distance - b.distance);
+  const parent = roadNodes.map((_, index) => index);
+  const degree = roadNodes.map(() => 0);
+  const findRoot = (index: number): number => {
+    while (parent[index] !== index) {
+      parent[index] = parent[parent[index]];
+      index = parent[index];
+    }
+    return index;
+  };
+  const selectedEdges: SettlementRoadEdge[] = [];
+  const nodeIndex = new Map(roadNodes.map((node, index) => [node.source.id, index]));
+  for (const edge of candidates) {
+    const aIndex = nodeIndex.get(edge.a.source.id);
+    const bIndex = nodeIndex.get(edge.b.source.id);
+    if (aIndex === undefined || bIndex === undefined) continue;
+    const aRoot = findRoot(aIndex);
+    const bRoot = findRoot(bIndex);
+    if (aRoot === bRoot || degree[aIndex] >= 2 || degree[bIndex] >= 2) continue;
+    parent[aRoot] = bRoot;
+    degree[aIndex] += 1;
+    degree[bIndex] += 1;
+    selectedEdges.push(edge);
+  }
+
+  const roadGeometry = createSettlementRoadGeometry(selectedEdges);
+  if (roadGeometry) {
+    const roads = new THREE.Mesh(roadGeometry, settlementRoadMaterial);
+    roads.name = 'settlementRoadLinks';
+    roads.userData.ownedGeometry = true;
+    roads.renderOrder = 2;
+    roads.castShadow = false;
+    roads.receiveShadow = false;
+    group.add(roads);
+  }
+
+  appendSettlementProps(group, liveBuildings, layout);
+  return group;
+}
+
+export function disposeSettlementEnvironment(group: THREE.Group | null): void {
+  if (!group) return;
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.isMesh && mesh.userData.ownedGeometry) {
+      mesh.geometry.dispose();
+      mesh.userData.ownedGeometry = false;
+    }
+  });
+}
+
 // ----------------- OVERHEAD BILLBOARDS & BADGES -----------------
+
 
 export function createBadgeCanvas(
   title: string,
