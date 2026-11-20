@@ -21,6 +21,7 @@ import {
   UnitDefinition,
   UnitEntity,
   ContestedPoint,
+  WallChainPoint,
 } from '../types/game';
 import {
   DEFAULT_BUILDINGS,
@@ -75,6 +76,9 @@ import {
   canUnitGatherNode,
   computeAiWorkerAllocation,
   selectAiWorkerReassignment,
+  calculateWallChainCost,
+  layoutWallChain,
+  WallSegmentPlacement,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
   computeGarrisonDefenseProfile,
@@ -216,6 +220,8 @@ interface FieldSiegeProject {
   mesh: THREE.Group;
   progressRing: THREE.Mesh;
 }
+
+const MAX_WALL_CHAIN_SEGMENTS = 120;
 
 export class RtsEngine {
   public container: HTMLElement;
@@ -374,6 +380,9 @@ export class RtsEngine {
   // Placement mode
   public placementBuildingType: BuildingType | null = null;
   private placementGhostMesh: THREE.Group | null = null;
+  public wallPlacementPoints: WallChainPoint[] = [];
+  private wallPlacementCursor: WallChainPoint | null = null;
+  private wallPlacementPreviewGroup: THREE.Group | null = null;
 
   // Camera navigation (zoom + keyboard + screen edge panning)
   public cameraTarget = new THREE.Vector3(0, 0, 0);
@@ -1465,7 +1474,8 @@ export class RtsEngine {
     faction: FactionId,
     x: number,
     z: number,
-    instant = false
+    instant = false,
+    rotationY = 0
   ): BuildingEntity {
     const baseDef = DEFAULT_BUILDINGS[type];
     const civ = this.getCivilizationForFaction(faction);
@@ -1497,6 +1507,7 @@ export class RtsEngine {
       buildingDef: bDef,
       x,
       z,
+      rotationY,
       hp: instant ? finalMaxHp : Math.round(finalMaxHp * 0.1),
       maxHp: finalMaxHp,
       isConstructed: instant,
@@ -1514,6 +1525,7 @@ export class RtsEngine {
 
     const mesh = createBuildingMesh(type, faction, civ);
     mesh.position.set(x, 0, z);
+    mesh.rotation.y = rotationY;
     mesh.userData = { ...mesh.userData, type: 'building', id, faction, team };
     applyBuildingConstructionVisuals(
       mesh,
@@ -3158,12 +3170,22 @@ export class RtsEngine {
       this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
       return;
     }
-    if (!canAfford(this.playerResources, bDef.cost)) return;
-
-    this.placementBuildingType = type;
-    if (this.placementGhostMesh) {
-      this.scene.remove(this.placementGhostMesh);
+    if (!canAfford(this.playerResources, bDef.cost)) {
+      sound.playInvalid();
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '⚠️ 資源不足，無法開始建造', '#ef4444');
+      return;
     }
+
+    this.cancelPlacement();
+    this.placementBuildingType = type;
+    if (type === 'wall') {
+      this.wallPlacementPoints = [];
+      this.wallPlacementCursor = null;
+      this.rebuildWallPlacementPreview();
+      this.onSelectionChange?.();
+      return;
+    }
+
     this.placementGhostMesh = createBuildingMesh(type, this.humanPlayerId, this.getCivilizationForFaction(this.humanPlayerId));
     const clonedGhostMats = new Map<THREE.Material, THREE.Material>();
     this.placementGhostMesh.traverse((child) => {
@@ -3185,10 +3207,269 @@ export class RtsEngine {
       }
     });
     this.scene.add(this.placementGhostMesh);
+    this.onSelectionChange?.();
+  }
+
+  public updateWallPlacementPreview(x: number, z: number) {
+    if (this.placementBuildingType !== 'wall') return;
+    this.wallPlacementCursor = { x, z };
+    this.rebuildWallPlacementPreview();
+  }
+
+  /** First left click starts a wall, Shift+left click adds a corner, plain left click finishes it. */
+  public handleWallPlacementClick(x: number, z: number, addWaypoint = false): 'started' | 'waypoint' | 'committed' | 'invalid' {
+    if (this.placementBuildingType !== 'wall') return 'invalid';
+
+    const point = { x, z };
+    if (this.wallPlacementPoints.length === 0) {
+      this.wallPlacementPoints = [point];
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      this.spawnCommandIndicator(x, z, 'build');
+      this.addFloatingText(x, 2.4, z, '📍 城牆起點已設定，移動滑鼠拉出牆線', '#67e8f9');
+      sound.playOrder();
+      this.onSelectionChange?.();
+      return 'started';
+    }
+
+    const previous = this.wallPlacementPoints[this.wallPlacementPoints.length - 1];
+    if (getDistance(previous.x, previous.z, x, z) < 0.75) {
+      this.addFloatingText(x, 2.4, z, '⚠️ 牆段太短，請拉開至少 0.75 單位', '#ef4444');
+      sound.playInvalid();
+      return 'invalid';
+    }
+
+    if (addWaypoint) {
+      this.wallPlacementPoints = [...this.wallPlacementPoints, point];
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      this.spawnCommandIndicator(x, z, 'build');
+      this.addFloatingText(x, 2.4, z, '↪️ 城牆轉折點已固定，繼續拉出下一段', '#67e8f9');
+      sound.playOrder();
+      this.onSelectionChange?.();
+      return 'waypoint';
+    }
+
+    const completedPoints = [...this.wallPlacementPoints, point];
+    const committed = this.commitWallChain(completedPoints);
+    if (!committed) {
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      return 'invalid';
+    }
+
+    this.cancelPlacement();
+    this.onSelectionChange?.();
+    return 'committed';
+  }
+
+  public getWallPlacementPreviewInfo() {
+    const points = [...this.wallPlacementPoints];
+    if (this.wallPlacementCursor && points.length > 0) {
+      const last = points[points.length - 1];
+      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
+        points.push(this.wallPlacementCursor);
+      }
+    }
+
+    const bDef = DEFAULT_BUILDINGS.wall;
+    const placements = layoutWallChain(points);
+    const cost = calculateWallChainCost(placements.length, bDef.cost);
+    const obs = this.getTerrainNavObstacles();
+    const invalidCount = placements.reduce((count, segment) => {
+      const valid = isPlacementLocationValid(
+        segment.x,
+        segment.z,
+        bDef.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obs?.rects,
+        obs?.discs,
+        obs?.bridges,
+        'wall'
+      );
+      return count + (valid ? 0 : 1);
+    }, 0);
+
+    return {
+      pointCount: this.wallPlacementPoints.length,
+      segmentCount: placements.length,
+      distance: points.slice(1).reduce((sum, point, index) => sum + getDistance(points[index].x, points[index].z, point.x, point.z), 0),
+      cost,
+      canAfford: canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
+      invalidCount,
+      isValid: placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS && invalidCount === 0 && canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
+    };
+  }
+
+  private commitWallChain(points: readonly WallChainPoint[]): boolean {
+    const placements = layoutWallChain(points);
+    if (placements.length === 0) {
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '⚠️ 請先設定起點，再設定足夠長度的終點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+    if (placements.length > MAX_WALL_CHAIN_SEGMENTS) {
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `⚠️ 單次最多規劃 ${MAX_WALL_CHAIN_SEGMENTS} 個牆段，請分批建造`, '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    const bDef = DEFAULT_BUILDINGS.wall;
+    const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+    if (bDef.requiredAge && currentAge < bDef.requiredAge) return false;
+
+    const obs = this.getTerrainNavObstacles();
+    const firstInvalid = placements.find((segment) =>
+      !isPlacementLocationValid(
+        segment.x,
+        segment.z,
+        bDef.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obs?.rects,
+        obs?.discs,
+        obs?.bridges,
+        'wall'
+      )
+    );
+    if (firstInvalid) {
+      this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    const cost = calculateWallChainCost(placements.length, bDef.cost);
+    const humanRes = this.getResourcesForFaction(this.humanPlayerId);
+    if (!canAfford(humanRes, cost)) {
+      this.addFloatingText(this.cameraTarget.x, 2.8, this.cameraTarget.z, `⚠️ 城牆需要木材 ${cost.wood}、石料 ${cost.stone}，目前資源不足`, '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    this.resourcesByFaction[this.humanPlayerId] = deductCost(humanRes, cost);
+    this.syncHumanResourcesAlias();
+    this.onResourcesChange?.(this.playerResources);
+
+    const chainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const segments = placements.map((placement, index) => {
+      const building = this.addBuilding('wall', this.humanPlayerId, placement.x, placement.z, false, placement.rotationY);
+      building.wallChainId = chainId;
+      building.wallChainIndex = index;
+      building.wallChainSize = placements.length;
+      return building;
+    });
+
+    const workers = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity =>
+        !!unit &&
+        unit.hp > 0 &&
+        unit.unitDef.category === 'worker' &&
+        !unit.garrisonedInBuildingId &&
+        this.isHumanControlled(unit.faction)
+      );
+
+    const builderCount = Math.min(workers.length, segments.length);
+    if (builderCount > 0) {
+      for (let index = 0; index < builderCount; index++) {
+        const startIndex = Math.floor((index * segments.length) / builderCount);
+        const endIndex = Math.floor(((index + 1) * segments.length) / builderCount);
+        const assignedSegments = segments.slice(startIndex, endIndex);
+        const first = assignedSegments[0];
+        const worker = workers[index];
+        worker.targetBuildingId = first.id;
+        worker.targetResourceNodeId = undefined;
+        worker.targetEntityId = undefined;
+        worker.targetGarrisonBuildingId = undefined;
+        worker.waypoints = undefined;
+        worker.pathGoal = undefined;
+        worker.pathCooldown = 0;
+        worker.commandQueue = assignedSegments.slice(1).map((segment) => ({ type: 'build' as const, buildingId: segment.id }));
+        worker.state = 'building';
+        worker.currentActionText = `🔨 前往建造城牆（${startIndex + 1}/${segments.length}）`;
+      }
+    }
+
+    sound.playConstruct();
+    this.spawnCommandIndicator(points[0].x, points[0].z, 'build');
+    this.spawnCommandIndicator(points[points.length - 1].x, points[points.length - 1].z, 'build');
+    this.addFloatingText(
+      points[points.length - 1].x,
+      3.0,
+      points[points.length - 1].z,
+      `🧱 已規劃 ${segments.length} 段城牆 · 木材 ${cost.wood} · 石料 ${cost.stone}`,
+      '#86efac'
+    );
+    return true;
+  }
+
+  private rebuildWallPlacementPreview() {
+    if (this.wallPlacementPreviewGroup) {
+      this.scene.remove(this.wallPlacementPreviewGroup);
+      this.wallPlacementPreviewGroup.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const material = (object as THREE.Line).material;
+        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+        else if (material?.dispose) material.dispose();
+      });
+      this.wallPlacementPreviewGroup = null;
+    }
+    if (this.placementBuildingType !== 'wall') return;
+
+    const group = new THREE.Group();
+    const info = this.getWallPlacementPreviewInfo();
+    const previewPoints = [...this.wallPlacementPoints];
+    if (this.wallPlacementCursor && previewPoints.length > 0) {
+      const last = previewPoints[previewPoints.length - 1];
+      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
+        previewPoints.push(this.wallPlacementCursor);
+      }
+    }
+
+    if (previewPoints.length >= 2) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(
+        previewPoints.map((point) => new THREE.Vector3(point.x, 0.13, point.z))
+      );
+      const material = new THREE.LineBasicMaterial({
+        color: info.isValid ? 0x22c55e : 0xef4444,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.name = 'wallPlacementLine';
+      group.add(line);
+    }
+
+    previewPoints.forEach((point, index) => {
+      const isCursor = index === previewPoints.length - 1 && this.wallPlacementCursor !== null && previewPoints.length > this.wallPlacementPoints.length;
+      const geometry = new THREE.CircleGeometry(isCursor ? 0.28 : 0.42, 20);
+      const material = new THREE.MeshBasicMaterial({
+        color: isCursor ? (info.isValid ? 0x22c55e : 0xef4444) : index === 0 ? 0xfbbf24 : 0x38bdf8,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const marker = new THREE.Mesh(geometry, material);
+      marker.rotation.x = -Math.PI / 2;
+      marker.position.set(point.x, 0.15, point.z);
+      group.add(marker);
+    });
+
+    this.wallPlacementPreviewGroup = group;
+    this.scene.add(group);
   }
 
   public confirmPlacement(x: number, z: number): boolean {
     if (!this.placementBuildingType) return false;
+    if (this.placementBuildingType === 'wall') {
+      return this.handleWallPlacementClick(x, z, false) === 'committed';
+    }
     const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     const humanCiv = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
@@ -3258,6 +3539,19 @@ export class RtsEngine {
 
   public cancelPlacement() {
     this.placementBuildingType = null;
+    this.wallPlacementPoints = [];
+    this.wallPlacementCursor = null;
+    if (this.wallPlacementPreviewGroup) {
+      this.scene.remove(this.wallPlacementPreviewGroup);
+      this.wallPlacementPreviewGroup.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const material = (object as THREE.Line).material;
+        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+        else if (material?.dispose) material.dispose();
+      });
+      this.wallPlacementPreviewGroup = null;
+    }
     if (this.placementGhostMesh) {
       this.scene.remove(this.placementGhostMesh);
       this.placementGhostMesh = null;
@@ -5041,8 +5335,10 @@ export class RtsEngine {
     if (!bldg || bldg.hp <= 0 || bldg.isConstructed) {
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -5118,6 +5414,9 @@ export class RtsEngine {
         if (bldg.buildingDef.landmarkAgeAdvance) {
           this.advanceAge(bldg.faction, bldg.buildingType as LandmarkType);
         }
+
+        // Finish the next queued construction before returning to automatic gathering.
+        if (this.tryDequeueCommand(unit)) return;
 
         if (bldg.buildingType === 'farm') {
           const farmNode = this.getOrCreateFarmFoodNode(bldg)!;
