@@ -23,6 +23,42 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
+import { DEFAULT_BUILDINGS } from './mods';
+import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
+
+test('progression: military production buildings unlock at the intended ages', () => {
+  assert.equal(DEFAULT_BUILDINGS.barracks.requiredAge, 1);
+  assert.equal(DEFAULT_BUILDINGS.archery_range.requiredAge, 2);
+  assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
+  assert.equal(DEFAULT_BUILDINGS.siege_workshop.requiredAge, 3);
+
+  const civIds = ['medieval', 'anime', 'fantasy'] as const;
+  for (const civId of civIds) {
+    const civ = getCivilizationConfig(civId);
+    assert.ok(civ.buildableBuildings.includes('barracks'));
+    assert.ok(civ.buildableBuildings.includes('archery_range'));
+    assert.ok(civ.buildableBuildings.includes('stable'));
+    assert.ok(civ.buildableBuildings.includes('siege_workshop'));
+
+    const barracksUnits = civ.trainableByBuilding.barracks || [];
+    assert.ok(barracksUnits.length > 0, civId + ' must have Age I infantry');
+    assert.equal(barracksUnits.some((id) => ['longbowman', 'anime_ninja_assassin', 'anime_saiyan_brawler', 'fantasy_mage', 'knight', 'scout_rider', 'fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon'].includes(id)), false, civId + ' barracks must not bypass later-age production');
+    assert.ok((civ.trainableByBuilding.stable || []).every((id) => ['knight', 'scout_rider', 'fantasy_paladin'].includes(id)), civId + ' stable may only train cavalry');
+  }
+
+  assert.deepEqual(getCivilizationConfig('medieval').trainableByBuilding.siege_workshop, ['catapult', 'bombard_cannon', 'greek_fire_siphon']);
+  assert.deepEqual(getCivilizationConfig('anime').trainableByBuilding.siege_workshop, ['catapult', 'bombard_cannon']);
+  assert.deepEqual(getCivilizationConfig('fantasy').trainableByBuilding.barracks, ['fantasy_footman']);
+});
+
+test('progression: field engineering is an Age II barracks technology', () => {
+  const fieldTech = getAllTechsForBuilding('barracks', 'medieval').find((tech) => tech.id === 'shared_field_engineering');
+  assert.ok(fieldTech, 'Field engineering must be available from the barracks tech list');
+  assert.equal(fieldTech.requiredAge, 2);
+  assert.equal(canResearchTech(fieldTech, [], 1).ok, false);
+  assert.equal(canResearchTech(fieldTech, [], 2).ok, true);
+  assert.match(fieldTech.description, /至少 4 名步兵/);
+});
 
 test('economy: canAfford accurately checks resource amounts', () => {
   const current = { food: 100, wood: 50, gold: 20, stone: 0 };
