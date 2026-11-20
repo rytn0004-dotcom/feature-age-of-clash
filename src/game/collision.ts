@@ -70,6 +70,10 @@ export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType
     case 'barracks':
     case 'archery_range':
       return 2.68; // 2.68 + 0.40 unit radius = 3.08m (>2.83m corner), while 2.68 + 0.36 nav padding < 3.10m keeps flush alley open
+    case 'stable':
+      return 3.05;
+    case 'siege_workshop':
+      return 3.35;
     case 'lumber_camp':
     case 'mining_camp':
       return 2.05;
