@@ -2202,6 +2202,20 @@ test('siege tactics: select nearby frontline escorts and preserve units with act
 });
 
 
+test('AI survival: damaged frontline units seek shelter by role and personality', async () => {
+  const { shouldAiUnitSeekShelter } = await import('./rules');
+
+  assert.equal(shouldAiUnitSeekShelter(35, 100, 'ranged', 'standard'), true);
+  assert.equal(shouldAiUnitSeekShelter(35, 100, 'melee', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(27, 100, 'melee', 'standard'), true);
+  assert.equal(shouldAiUnitSeekShelter(36, 100, 'melee', 'defensive'), true);
+  assert.equal(shouldAiUnitSeekShelter(27, 100, 'melee', 'hard'), false);
+  assert.equal(shouldAiUnitSeekShelter(15, 100, 'siege', 'defensive'), false);
+  assert.equal(shouldAiUnitSeekShelter(10, 100, 'worker', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(0, 0, 'melee', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(Number.NaN, 100, 'melee', 'standard'), false);
+});
+
 test('AI economy: rebalance one worker from a clear surplus into the largest resource deficit', () => {
   assert.deepEqual(
     selectAiWorkerReassignment(
