@@ -3057,10 +3057,19 @@ export class RtsEngine {
     if (!def) return false;
 
     const currentAge = this.ageByFaction[bldg.faction] || 1;
-    if (def.requiredAge && currentAge < def.requiredAge) {
+    if (!bldg.buildingDef.trainableUnits.includes(unitDefId) || unitDefId === 'battering_ram') {
       if (this.isHumanControlled(bldg.faction)) {
         sound.playInvalid();
-        this.addFloatingText(bldg.x, 3.0, bldg.z, `🔒 需先晉升至時代 ${def.requiredAge} 才能建造`, '#ef4444');
+        this.addFloatingText(bldg.x, 3.0, bldg.z, '🔒 此兵種必須由對應時代的軍事建築或野戰工程解鎖', '#f59e0b');
+      }
+      return false;
+    }
+    const minimumRoleAge = def.category === 'ranged' || def.category === 'cavalry' ? 2 : def.category === 'siege' ? 3 : 1;
+    const requiredUnitAge = Math.max(def.requiredAge || 1, minimumRoleAge);
+    if (currentAge < requiredUnitAge) {
+      if (this.isHumanControlled(bldg.faction)) {
+        sound.playInvalid();
+        this.addFloatingText(bldg.x, 3.0, bldg.z, `🔒 需先晉升至時代 ${requiredUnitAge} 才能訓練此兵種`, '#ef4444');
       }
       return false;
     }
@@ -3132,6 +3141,12 @@ export class RtsEngine {
   public startPlacement(type: BuildingType) {
     const bDef = DEFAULT_BUILDINGS[type];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+    const civ = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
+    if (!civ.buildableBuildings.includes(type)) {
+      sound.playInvalid();
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築不屬於目前文明的可建造清單', '#ef4444');
+      return;
+    }
     if (bDef.requiredAge && currentAge < bDef.requiredAge) {
       sound.playInvalid();
       this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
@@ -3169,6 +3184,14 @@ export class RtsEngine {
   public confirmPlacement(x: number, z: number): boolean {
     if (!this.placementBuildingType) return false;
     const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
+    const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+    const humanCiv = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
+    if (!humanCiv.buildableBuildings.includes(this.placementBuildingType) || (bDef.requiredAge && currentAge < bDef.requiredAge)) {
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築尚未解鎖或不屬於目前文明', '#ef4444');
+      sound.playInvalid();
+      this.cancelPlacement();
+      return false;
+    }
     const humanRes = this.getResourcesForFaction(this.humanPlayerId);
     if (!canAfford(humanRes, bDef.cost)) {
       this.cancelPlacement();
@@ -7064,7 +7087,9 @@ export class RtsEngine {
   ): boolean {
     const bDef = DEFAULT_BUILDINGS[bType];
     const aiRes = this.getResourcesForFaction(aiId);
-    if (!bDef || !canAfford(aiRes, bDef.cost)) return false;
+    const aiAge = this.ageByFaction[aiId] || 1;
+    const aiCiv = getCivilizationConfig(this.getCivilizationForFaction(aiId));
+    if (!bDef || !aiCiv.buildableBuildings.includes(bType) || (bDef.requiredAge && aiAge < bDef.requiredAge) || !canAfford(aiRes, bDef.cost)) return false;
 
     const builder =
       aiWorkers.find((w) => w.hp > 0 && w.state === 'idle') ||
@@ -7165,6 +7190,8 @@ export class RtsEngine {
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
       const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
+      const aiStableList = aiBuildings.filter((b) => b.buildingType === 'stable');
+      const aiSiegeWorkshopList = aiBuildings.filter((b) => b.buildingType === 'siege_workshop');
       const aiDocks = aiBuildings.filter((b) => b.buildingType === 'dock');
       const aiUniqueBldg = aiBuildings.find((b) => b.buildingType === aiCiv.uniqueBuildingType);
 
@@ -7633,8 +7660,12 @@ export class RtsEngine {
           this.tryAiConstructBuilding(aiId, buildCmd.targetId as BuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
         } else if (aiBarracksList.length === 0 && aiWorkers.length >= 4 && aiRes.wood >= 150 && this.stats.gameDuration > 10) {
           this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
-        } else if (!aiArcheryList.length && this.stats.gameDuration > 16) {
+        } else if (aiAge >= 2 && !aiArcheryList.length && this.stats.gameDuration > 16) {
           this.tryAiConstructBuilding(aiId, 'archery_range', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.65);
+        } else if (aiAge >= 2 && !aiStableList.length && this.stats.gameDuration > 24) {
+          this.tryAiConstructBuilding(aiId, 'stable', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.35);
+        } else if (aiAge >= 3 && !aiSiegeWorkshopList.length && this.stats.gameDuration > 55) {
+          this.tryAiConstructBuilding(aiId, 'siege_workshop', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.85);
         } else if (!aiUniqueBldg && this.stats.gameDuration > 24) {
           this.tryAiConstructBuilding(aiId, aiCiv.uniqueBuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.75);
         } else {
@@ -7728,6 +7759,38 @@ export class RtsEngine {
       });
       if (chosenTech) {
         this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
+      }
+
+      const fieldEngineeringTech = findTechDef('shared_field_engineering');
+      const fieldSpendable = {
+        ...aiRes,
+        food: Math.max(0, aiRes.food - reserveFood),
+        gold: Math.max(0, aiRes.gold - reserveGold),
+      };
+      const fieldResearchHall = aiBarracksList.find((b) => b.isConstructed && !b.activeTechId);
+      if (
+        aiAge >= 2 &&
+        fieldEngineeringTech &&
+        !researched.includes('shared_field_engineering') &&
+        aiArmy.filter((u) => u.unitDef.category === 'melee').length >= 4 &&
+        fieldResearchHall &&
+        canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok &&
+        canAfford(fieldSpendable, fieldEngineeringTech.cost)
+      ) {
+        this.startResearch(fieldResearchHall.id, fieldEngineeringTech.id);
+      }
+
+      const aiHasRam = aiUnits.some((u) => u.hp > 0 && u.unitDefId === 'battering_ram');
+      const aiRamBuilders = aiArmy
+        .filter((u) => u.unitDef.category === 'melee' && (u.state === 'idle' || u.state === 'moving'))
+        .slice(0, 4);
+      if (
+        aiAge >= 2 &&
+        !aiHasRam &&
+        this.getResearchedTechs(aiId).includes('shared_field_engineering') &&
+        aiRamBuilders.length >= 4
+      ) {
+        this.beginFieldRamAssembly(aiId, aiRamBuilders, false);
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
@@ -8129,6 +8192,9 @@ export class RtsEngine {
                   return;
                 }
               }
+            } else if (this.selectedUnitIds.length > 0 && keyLabel === FIELD_ENGINEERING_HOTKEY) {
+              this.startFieldRamAssembly();
+              return;
             }
           }
         }
