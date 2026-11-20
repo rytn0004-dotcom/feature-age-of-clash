@@ -3285,6 +3285,7 @@ export class RtsEngine {
     const placements = layoutWallChain(points);
     const cost = calculateWallChainCost(placements.length, bDef.cost);
     const obs = this.getTerrainNavObstacles();
+    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
     const invalidCount = placements.reduce((count, segment) => {
       const valid = isPlacementLocationValid(
         segment.x,
@@ -3299,7 +3300,7 @@ export class RtsEngine {
         'wall'
       );
       return count + (valid ? 0 : 1);
-    }, 0);
+    }, 0) + (invalidPathPoint ? 1 : 0);
 
     return {
       pointCount: this.wallPlacementPoints.length,
@@ -3310,6 +3311,28 @@ export class RtsEngine {
       invalidCount,
       isValid: placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS && invalidCount === 0 && canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
     };
+  }
+
+  private findInvalidWallPathPoint(
+    points: readonly WallChainPoint[],
+    obstacles = this.getTerrainNavObstacles()
+  ): WallChainPoint | null {
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const end = points[index + 1];
+      const dx = end.x - start.x;
+      const dz = end.z - start.z;
+      const length = Math.hypot(dx, dz);
+      const samples = Math.max(1, Math.ceil(length / 0.65));
+      for (let sample = 0; sample <= samples; sample++) {
+        const t = sample / samples;
+        const point = { x: start.x + dx * t, z: start.z + dz * t };
+        if (isPointInTerrainObstacle(point.x, point.z, obstacles?.rects, obstacles?.discs, obstacles?.bridges)) {
+          return point;
+        }
+      }
+    }
+    return null;
   }
 
   private commitWallChain(points: readonly WallChainPoint[]): boolean {
@@ -3330,6 +3353,13 @@ export class RtsEngine {
     if (bDef.requiredAge && currentAge < bDef.requiredAge) return false;
 
     const obs = this.getTerrainNavObstacles();
+    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
+    if (invalidPathPoint) {
+      this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
     const firstInvalid = placements.find((segment) =>
       !isPlacementLocationValid(
         segment.x,
@@ -3566,7 +3596,7 @@ export class RtsEngine {
       this.scene.remove(this.placementGhostMesh);
       this.placementGhostMesh = null;
     }
-    this.onSelectionChange?.();
+    if (!this.isDestroyed) this.onSelectionChange?.();
   }
 
   // ------------------ PERFORMANCE DIAGNOSTICS ------------------
@@ -8883,6 +8913,7 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];
     cancelAnimationFrame(this.frameId);
