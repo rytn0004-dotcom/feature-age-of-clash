@@ -20,6 +20,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   spirit_shrine: 'K',
   mana_well: 'K',
   wall: 'O',
+  gate: 'P',
   tower: 'T',
   castle: 'N',
 };
@@ -103,7 +104,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
     items: [
       { keys: 'E / R / L / G / J', desc: '房屋 / 農田 / 伐木場 / 採礦營 / 碼頭' },
       { keys: 'V / Y / Z / M / K', desc: '兵營 / 射箭場 / 馬廄 / 攻城器工坊 / 文明專屬建築' },
-      { keys: 'O / T / N / C', desc: '防禦圍牆 / 警戒箭塔 / 要塞城堡 / 主堡' },
+      { keys: 'O / P / T / N / C', desc: '防禦圍牆 / 城門 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },
       { keys: 'E (選取步兵；非村民)', desc: '已研發野戰工程後，集結至少 4 名步兵組裝衝車' },
     ],
