@@ -2063,3 +2063,18 @@ test('field engineering: ram assembly uses one shared Age II, research, infantry
   assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, { ...resources, wood: 139 }).ok, false);
   assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, resources).ok, true);
 });
+
+
+test('AI siege: all personalities field-assemble battering rams instead of training them from buildings', async () => {
+  const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
+  const allPersonalityRules = [
+    ...DEFAULT_AI_RULES,
+    ...DEFENSIVE_AI_RULES,
+    ...EASY_AI_RULES,
+    ...HARD_AI_RULES,
+  ];
+  const invalidRamTrainRules = allPersonalityRules.filter(
+    (rule) => rule.action.type === 'train_unit' && rule.action.targetId === 'battering_ram'
+  );
+  assert.deepEqual(invalidRamTrainRules.map((rule) => rule.id), []);
+});
