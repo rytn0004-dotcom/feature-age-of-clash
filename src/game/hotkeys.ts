@@ -105,7 +105,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
       { keys: 'V / Y / S / M / K', desc: '兵營 / 射箭場 / 馬廄 / 攻城器工坊 / 文明專屬建築' },
       { keys: 'O / T / N / C', desc: '防禦圍牆 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },
-      { keys: 'E (選取步兵)', desc: '已研發野戰工程後，集結至少 4 名步兵組裝衝車' },
+      { keys: 'E (選取步兵；非村民)', desc: '已研發野戰工程後，集結至少 4 名步兵組裝衝車' },
     ],
   },
   {
