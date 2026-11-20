@@ -3407,8 +3407,9 @@ export class RtsEngine {
 
     // 0. World environmental animations (water ripples, fluttering banners, gentle tree/deer sway)
     const waterNorm = getWaterRippleNormalMap();
-    waterNorm.offset.x = (this.simTime * 0.038) % 1;
-    waterNorm.offset.y = (this.simTime * 0.022) % 1;
+    // Preserve the previous combined scroll rate while updating the shared normal map only once.
+    waterNorm.offset.x = (this.simTime * 0.074) % 1;
+    waterNorm.offset.y = (this.simTime * 0.044) % 1;
 
     let flagIdx = 0;
     this.buildingMeshes.forEach((bMesh) => {
@@ -7177,7 +7178,9 @@ export class RtsEngine {
         aiAge
       );
       const activeCounts: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
-      const resourceNodeById = new Map(this.resourceNodes.map((node) => [node.id, node]));
+      const resourceNodeById = new Map<string, ResourceNode>(
+        this.resourceNodes.map((node) => [node.id, node] as const)
+      );
       const nodeWorkerCounts = new Map<string, number>();
       for (const w of aiActiveWorkers) {
         if (w.state === 'returning_resource' && w.carryingResource) {
