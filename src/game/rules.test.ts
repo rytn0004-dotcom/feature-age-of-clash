@@ -732,7 +732,7 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
-  const { selectOptimalCombatTarget, selectClusterFocusTarget } = await import('./rules');
+  const { selectOptimalCombatTarget, selectClusterFocusTarget, shouldSwitchCombatTarget, assignRaidTargets } = await import('./rules');
 
   const mkUnit = (
     id: string,
@@ -838,6 +838,48 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const healthyMelee = mkUnit('emFull', 'ai2', 2, 'melee', 7, 0, 110, 110, 1.5, 3.8);
   const clusterTarget = selectClusterFocusTarget(squad, [healthyMelee, woundedArcher], [enemyFarm]);
   assert.equal(clusterTarget?.id, 'eaLow');
+
+  // Target hysteresis: retain a sound target, but switch decisively to a wounded high-value counter.
+  const woundedArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, enemyMelee), false);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, woundedArcher), true);
+  assert.equal(shouldSwitchCombatTarget(swordsman, { ...enemyMelee, hp: 0 }, woundedArcher), true);
+  const friendlyArcher = mkUnit('friendly', 'ai1', 1, 'ranged', 1, 0);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, friendlyArcher), false);
+
+  // Raid assignments cap each exposed worker at two attackers and preserve valid sticky assignments.
+  const raiders = [
+    { id: 'r1', x: 0, z: 0 },
+    { id: 'r2', x: 1, z: 0 },
+    { id: 'r3', x: 19, z: 0 },
+    { id: 'r4', x: 20, z: 0 },
+    { id: 'r5', x: 10, z: 0 },
+  ];
+  const workers = [
+    { id: 'w1', x: 1, z: 0 },
+    { id: 'w2', x: 19, z: 0 },
+  ];
+  const raidAssignments = assignRaidTargets(raiders, workers, 2);
+  const raidCounts = raidAssignments.reduce((counts, assignment) => {
+    counts[assignment.targetId] = (counts[assignment.targetId] || 0) + 1;
+    return counts;
+  }, {} as Record<string, number>);
+  assert.equal(raidAssignments.length, 4, 'a fifth raider should not overstack a full target list');
+  assert.equal(raidCounts.w1, 2);
+  assert.equal(raidCounts.w2, 2);
+
+  const stickyAssignments = assignRaidTargets(
+    [
+      { id: 'r1', x: 0, z: 0, targetEntityId: 'w2' },
+      { id: 'r2', x: 1, z: 0 },
+    ],
+    workers,
+    1
+  );
+  assert.deepEqual(stickyAssignments, [
+    { raiderId: 'r1', targetId: 'w2' },
+    { raiderId: 'r2', targetId: 'w1' },
+  ]);
 });
 
 test('audio-locomotion-buildings: spatial gain, staged construction/damage visuals, and stride phase math', async () => {
