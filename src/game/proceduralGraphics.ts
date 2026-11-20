@@ -1523,6 +1523,17 @@ export function createGranaryMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+const sharedHouseGableRoofGeo = (() => {
+  const shape = new THREE.Shape();
+  shape.moveTo(-1.45, 0);
+  shape.lineTo(1.45, 0);
+  shape.lineTo(0, 1.12);
+  shape.closePath();
+  return makeExtrudeGeo(shape, 2.35, 0.04, 0.04, 1, true);
+})();
+const sharedHouseFirewoodLogGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.72, 6);
+const sharedHouseFantasyCrystalGeo = new THREE.OctahedronGeometry(0.22, 0);
+
 export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -1595,11 +1606,13 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     [-1.18, -1.03],
     [1.18, -1.03],
   ];
-  postPositions.forEach(([px, pz]) => {
-    const post = new THREE.Mesh(roundedBuildingBox(0.14, 1.02, 0.14), woodMat);
-    post.position.set(px, 1.42, pz);
-    group.add(post);
-  });
+  createVisualInstanceBatch(
+    group,
+    roundedBuildingBox(0.14, 1.02, 0.14),
+    woodMat,
+    postPositions.map(([px, pz]) => ({ position: [px, 1.42, pz] })),
+    'instancedHouseCornerPosts'
+  );
 
   // 3. Roof silhouette (Machiya curved kawara vs Medieval pitched gable + chimney vs Fantasy mossy gable)
   if (civ === 'anime') {
@@ -1609,12 +1622,7 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     roof.castShadow = true;
     group.add(roof);
   } else {
-    const roofShape = new THREE.Shape();
-    roofShape.moveTo(-1.45, 0);
-    roofShape.lineTo(1.45, 0);
-    roofShape.lineTo(0, 1.12);
-    roofShape.closePath();
-    const roof = new THREE.Mesh(makeExtrudeGeo(roofShape, 2.35, 0.04, 0.04, 1, true), roofMat);
+    const roof = new THREE.Mesh(sharedHouseGableRoofGeo, roofMat);
     roof.position.set(0, 1.88, 0);
     roof.castShadow = true;
     group.add(roof);
@@ -1633,7 +1641,7 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
       cap.position.set(0.68, 3.22, -0.55);
       group.add(chimney, cap);
     } else {
-      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
+      const crystal = new THREE.Mesh(sharedHouseFantasyCrystalGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
       crystal.position.set(0, 3.35, 0);
       crystal.name = 'animatedCrystal';
       group.add(crystal);
@@ -1649,19 +1657,27 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
   frontWin.position.set(0.55, 1.38, 1.04);
   const winFrame = new THREE.Mesh(roundedBuildingBox(0.54, 0.5, 0.05), woodMat);
   winFrame.position.set(0.55, 1.38, 1.02);
-  const sideWinL = new THREE.Mesh(roundedBuildingBox(0.08, 0.42, 0.46), warmGlassMat);
-  sideWinL.position.set(-1.2, 1.38, 0);
-  const sideWinR = new THREE.Mesh(roundedBuildingBox(0.08, 0.42, 0.46), warmGlassMat);
-  sideWinR.position.set(1.2, 1.38, 0);
-  group.add(frontWin, winFrame, sideWinL, sideWinR);
+  createVisualInstanceBatch(
+    group,
+    roundedBuildingBox(0.08, 0.42, 0.46),
+    warmGlassMat,
+    [-1.2, 1.2].map((px) => ({ position: [px, 1.38, 0] })),
+    'instancedHouseSideWindows'
+  );
+  group.add(frontWin, winFrame);
 
-  // Stacked firewood bundle tucked against side wall
-  for (let i = 0; i < 3; i++) {
-    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.72, 6), woodMat);
-    log.rotation.x = Math.PI / 2;
-    log.position.set(1.32, 0.38 + (i === 2 ? 0.14 : 0), i === 2 ? 0 : -0.1 + i * 0.2);
-    group.add(log);
-  }
+  // Stacked firewood bundle shares one geometry and one three-instance batch.
+  createVisualInstanceBatch(
+    group,
+    sharedHouseFirewoodLogGeo,
+    woodMat,
+    [
+      { position: [1.32, 0.38, -0.1], rotation: [Math.PI / 2, 0, 0] },
+      { position: [1.32, 0.38, 0.1], rotation: [Math.PI / 2, 0, 0] },
+      { position: [1.32, 0.52, 0], rotation: [Math.PI / 2, 0, 0] },
+    ],
+    'instancedHouseFirewood'
+  );
 
   const badgeTitle =
     civ === 'anime' ? '和風町屋' : civ === 'fantasy' ? '精靈樹屋' : '帝國民居';
@@ -2064,6 +2080,26 @@ function createDockMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+const sharedTowerShaftGeo = makeLatheGeo([
+  [1.42, 0.0],
+  [1.36, 0.7],
+  [1.1, 1.2],
+  [0.92, 5.2],
+  [1.18, 5.55],
+  [1.18, 5.9],
+  [0.01, 5.9],
+], 8);
+const sharedTowerArrowSlitGeo = new THREE.BoxGeometry(0.12, 0.75, 0.14);
+const sharedTowerBalconyGeo = new THREE.CylinderGeometry(1.38, 1.22, 0.75, 8);
+const sharedTowerMerlonGeo = new THREE.BoxGeometry(0.38, 0.36, 0.22);
+const sharedTowerRoofGeo = new THREE.ConeGeometry(1.52, 1.85, 8);
+const sharedTowerFinialGeo = new THREE.SphereGeometry(0.14, 8, 8);
+const sharedTowerFinialMat = new THREE.MeshStandardMaterial({
+  color: 0xf59e0b,
+  roughness: 0.25,
+  metalness: 0.88,
+});
+
 export function createTowerMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -2106,53 +2142,50 @@ export function createTowerMesh(faction: FactionId): THREE.Group {
   const ironMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.82 });
 
   // Battered stone base + tapered octagonal masonry shaft
-  const shaft = new THREE.Mesh(
-    makeLatheGeo([
-      [1.42, 0.0],
-      [1.36, 0.7],
-      [1.1, 1.2],
-      [0.92, 5.2],
-      [1.18, 5.55],
-      [1.18, 5.9],
-      [0.01, 5.9],
-    ], 8),
-    stoneMat
-  );
+  const shaft = new THREE.Mesh(sharedTowerShaftGeo, stoneMat);
   shaft.castShadow = true;
   shaft.receiveShadow = true;
   group.add(shaft);
 
-  // Dark recessed arrow slits on 4 cardinal faces
+  // Dark recessed arrow slits on 4 cardinal faces share one instance batch.
+  const arrowSlitTransforms: VisualInstanceTransform[] = [];
   for (let i = 0; i < 4; i++) {
     const a = (i * Math.PI) / 2;
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.75, 0.14), ironMat);
-    slit.position.set(Math.sin(a) * 0.98, 3.3, Math.cos(a) * 0.98);
-    slit.rotation.y = a;
-    group.add(slit);
+    arrowSlitTransforms.push({
+      position: [Math.sin(a) * 0.98, 3.3, Math.cos(a) * 0.98],
+      rotation: [0, a, 0],
+    });
   }
+  createVisualInstanceBatch(
+    group, sharedTowerArrowSlitGeo, ironMat, arrowSlitTransforms, 'instancedTowerArrowSlits'
+  );
 
   // Timber hoarding balcony with corbel brackets & merlon parapet
-  const balcony = new THREE.Mesh(new THREE.CylinderGeometry(1.38, 1.22, 0.75, 8), woodMat);
+  const balcony = new THREE.Mesh(sharedTowerBalconyGeo, woodMat);
   balcony.position.y = 5.72;
   balcony.castShadow = true;
   group.add(balcony);
 
+  const towerMerlonTransforms: VisualInstanceTransform[] = [];
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.36, 0.22), darkStoneMat);
-    merlon.position.set(Math.sin(a) * 1.24, 6.22, Math.cos(a) * 1.24);
-    merlon.rotation.y = a;
-    group.add(merlon);
+    towerMerlonTransforms.push({
+      position: [Math.sin(a) * 1.24, 6.22, Math.cos(a) * 1.24],
+      rotation: [0, a, 0],
+    });
   }
+  createVisualInstanceBatch(
+    group, sharedTowerMerlonGeo, darkStoneMat, towerMerlonTransforms, 'instancedTowerMerlons'
+  );
 
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.52, 1.85, 8), roofMat);
+  const roof = new THREE.Mesh(sharedTowerRoofGeo, roofMat);
   roof.position.y = 7.05;
   roof.castShadow = true;
   group.add(roof);
 
   const spireFinial = new THREE.Mesh(
-    new THREE.SphereGeometry(0.14, 8, 8),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.25, metalness: 0.88 })
+    sharedTowerFinialGeo,
+    sharedTowerFinialMat
   );
   spireFinial.position.y = 8.05;
   group.add(spireFinial);
