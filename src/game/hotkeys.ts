@@ -25,6 +25,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
 };
 
 export const AGE_ADVANCE_HOTKEY = 'U';
+export const FIELD_ENGINEERING_HOTKEY = 'E';
 export const UNGARRISON_HOTKEY = 'G';
 
 export const TRAINING_SLOT_HOTKEYS = ['Z', 'C', 'V', 'E'] as const;
