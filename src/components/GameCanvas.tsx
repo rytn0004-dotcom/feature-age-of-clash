@@ -27,6 +27,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     width: number;
     height: number;
   } | null>(null);
+  const [wallPlacementInfo, setWallPlacementInfo] = useState<
+    ReturnType<RtsEngine['getWallPlacementPreviewInfo']> | null
+  >(null);
   const [hoverHint, setHoverHint] = useState<{
     x: number;
     y: number;
@@ -311,6 +314,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       if (engine.isSpectatorMode) return;
       if (engine.placementBuildingType) {
         engine.cancelPlacement();
+        setWallPlacementInfo(null);
         return;
       }
       if (engine.pendingCommandMode === 'attack_move') {
@@ -441,7 +445,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       if (engine.placementBuildingType) {
         const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
         if (worldPoint) {
-          engine.confirmPlacement(worldPoint.x, worldPoint.z);
+          if (engine.placementBuildingType === 'wall') {
+            const result = engine.handleWallPlacementClick(worldPoint.x, worldPoint.z, e.shiftKey);
+            setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
+            if (result === 'committed') setWallPlacementInfo(null);
+          } else {
+            engine.confirmPlacement(worldPoint.x, worldPoint.z);
+          }
         }
         return;
       }
@@ -483,7 +493,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     const engine = engineRef.current;
     if (!engine) return;
 
-    // Update building placement ghost position and visual collision color
+    // Wall mode uses a live polyline preview; other buildings keep the single-footprint ghost.
+    if (engine.placementBuildingType === 'wall') {
+      if (hoverHint) setHoverHint(null);
+      const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
+      if (worldPoint) {
+        engine.updateWallPlacementPreview(worldPoint.x, worldPoint.z);
+        setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
+      }
+      return;
+    }
+
+    // Update ordinary building placement ghost position and visual collision color.
     if (engine.placementBuildingType) {
       if (hoverHint) setHoverHint(null);
       const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
@@ -939,6 +960,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         ref={floatingCanvasRef}
         className="absolute inset-0 w-full h-full pointer-events-none z-10"
       />
+
+      {engineRef.current?.placementBuildingType === 'wall' && (
+        <div
+          data-wall-placement-guide="true"
+          className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none rounded-xl border border-cyan-300/40 bg-slate-950/90 px-4 py-3 text-center text-xs text-slate-100 shadow-2xl backdrop-blur-md"
+        >
+          <div className="mb-1 text-sm font-black text-cyan-200">🧱 城牆連續規劃</div>
+          <div>左鍵設定起點　·　Shift + 左鍵固定轉折點　·　左鍵設定終點並完成</div>
+          <div className="mt-1 text-slate-300">右鍵／Esc 取消規劃</div>
+          {wallPlacementInfo && (
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-white/10 pt-2">
+              <span>牆段 {wallPlacementInfo.segmentCount}</span>
+              <span>長度 {wallPlacementInfo.distance.toFixed(1)}</span>
+              <span className={wallPlacementInfo.isValid ? 'text-emerald-300' : 'text-rose-300'}>
+                {wallPlacementInfo.isValid ? '路線可建造' : wallPlacementInfo.pointCount === 0 ? '等待起點' : wallPlacementInfo.invalidCount > 0 ? `無效位置 ${wallPlacementInfo.invalidCount}` : '距離太短或資源不足'}
+              </span>
+              <span>🪵 {wallPlacementInfo.cost.wood}</span>
+              <span>🪨 {wallPlacementInfo.cost.stone}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Contextual Hover Tooltip Badge with Custom Resource Action SVG */}
       {hoverHint && !marqueeBox && !engineRef.current?.placementBuildingType && (
