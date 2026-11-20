@@ -648,12 +648,16 @@ function addMerlonsAroundBox(
   parent.add(merlons);
 }
 
+// Lantern geometry and emissive housing material are immutable and shared across every building.
+const sharedWarmLanternHousingGeo = new THREE.CylinderGeometry(0.11, 0.09, 0.22, 6);
+const sharedWarmLanternCapGeo = new THREE.ConeGeometry(0.16, 0.12, 6);
+const sharedWarmLanternGlowMat = new THREE.MeshBasicMaterial({ color: 0xfde047 });
+
 function addWarmLantern(parent: THREE.Group, x: number, y: number, z: number, frameMat: THREE.Material) {
-  const glowMat = new THREE.MeshBasicMaterial({ color: 0xfde047 });
-  const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 0.22, 6), glowMat);
+  const housing = new THREE.Mesh(sharedWarmLanternHousingGeo, sharedWarmLanternGlowMat);
   housing.position.set(x, y, z);
   parent.add(housing);
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.12, 6), frameMat);
+  const cap = new THREE.Mesh(sharedWarmLanternCapGeo, frameMat);
   cap.position.set(x, y + 0.16, z);
   parent.add(cap);
 }
