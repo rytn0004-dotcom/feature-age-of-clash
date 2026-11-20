@@ -1015,7 +1015,7 @@ export const DEFAULT_AI_RULES: AiRule[] = [
   },
   {
     id: 'ai_advance_age_2',
-    name: '時代 II 突破晉升 (資源充足時修建封建地標解鎖箭塔與衝車)',
+    name: '時代 II 突破晉升 (解鎖射箭場、馬廄與野戰工程)',
     enabled: true,
     conditions: [
       { field: 'age', operator: '<', value: 2 },
@@ -1027,7 +1027,7 @@ export const DEFAULT_AI_RULES: AiRule[] = [
   },
   {
     id: 'ai_advance_age_3',
-    name: '時代 III 城堡晉升 (解鎖防禦城堡與遠程投石機)',
+    name: '時代 III 城堡晉升 (解鎖攻城器工坊與重型投石機)',
     enabled: true,
     conditions: [
       { field: 'age', operator: '==', value: 2 },
@@ -1084,19 +1084,6 @@ export const DEFAULT_AI_RULES: AiRule[] = [
       { field: 'armyCount', operator: '<', value: 24 },
     ],
     action: { type: 'train_unit', targetId: 'catapult', priority: 71 },
-  },
-  {
-    id: 'ai_train_siege_ram',
-    name: '攻城衝車協同 (時代 II 配合步兵製造裝甲衝車破陣)',
-    enabled: true,
-    conditions: [
-      { field: 'age', operator: '>=', value: 2 },
-      { field: 'wood', operator: '>=', value: 120 },
-      { field: 'gold', operator: '>=', value: 50 },
-      { field: 'armyCount', operator: '>=', value: 2 },
-      { field: 'armyCount', operator: '<', value: 22 },
-    ],
-    action: { type: 'train_unit', targetId: 'battering_ram', priority: 69 },
   },
   {
     id: 'ai_train_army_elite',
