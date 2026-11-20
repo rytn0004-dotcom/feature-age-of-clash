@@ -67,6 +67,7 @@ import {
   getSiegeChannelMultiplier,
   canAfford,
   canAssembleFieldRam,
+  shouldPrioritizeAiFieldEngineering,
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
@@ -7757,6 +7758,26 @@ export class RtsEngine {
           enemyComposition.fortificationCount++;
         }
       }
+      // Mandatory Age II field engineering gets first access to an idle barracks.
+      // Otherwise optional tech scoring could repeatedly occupy the only barracks queue.
+      const fieldEngineeringTech = findTechDef(FIELD_RAM_TECH_ID);
+      const fieldResearchHall = aiBarracksList.find((b) => b.isConstructed && !b.activeTechId);
+      const fieldEngineeringReady = !!fieldEngineeringTech && shouldPrioritizeAiFieldEngineering({
+        age: aiAge,
+        researched: researched.includes(FIELD_RAM_TECH_ID),
+        researchInProgress: aiBuildings.some((b) => b.activeTechId === FIELD_RAM_TECH_ID),
+        meleeUnitCount: aiArmy.filter((u) => u.unitDef.category === 'melee').length,
+        hasAvailableBarracks: !!fieldResearchHall,
+        prerequisitesMet: !!fieldEngineeringTech && canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok,
+        resources: aiRes,
+        reserveFood,
+        reserveGold,
+        techCost: fieldEngineeringTech?.cost || { food: 0, wood: 0, gold: 0, stone: 0 },
+      });
+      if (fieldEngineeringReady && fieldEngineeringTech && fieldResearchHall) {
+        this.startResearch(fieldResearchHall.id, fieldEngineeringTech.id);
+      }
+
       const techCandidates: Array<{ buildingId: string; tech: TechDefinition }> = [];
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
@@ -7776,26 +7797,6 @@ export class RtsEngine {
       });
       if (chosenTech) {
         this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
-      }
-
-      const fieldEngineeringTech = findTechDef(FIELD_RAM_TECH_ID);
-      const fieldSpendable = {
-        ...aiRes,
-        food: Math.max(0, aiRes.food - reserveFood),
-        gold: Math.max(0, aiRes.gold - reserveGold),
-      };
-      const fieldResearchHall = aiBarracksList.find((b) => b.isConstructed && !b.activeTechId);
-      if (
-        aiAge >= 2 &&
-        fieldEngineeringTech &&
-        !researched.includes(FIELD_RAM_TECH_ID) &&
-        !aiBuildings.some((b) => b.activeTechId === fieldEngineeringTech.id) &&
-        aiArmy.filter((u) => u.unitDef.category === 'melee').length >= 4 &&
-        fieldResearchHall &&
-        canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok &&
-        canAfford(fieldSpendable, fieldEngineeringTech.cost)
-      ) {
-        this.startResearch(fieldResearchHall.id, fieldEngineeringTech.id);
       }
 
       const aiHasRam = aiUnits.some((u) => u.hp > 0 && u.unitDefId === 'battering_ram');
