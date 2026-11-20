@@ -124,6 +124,9 @@ import {
   resolveMatchOutcome,
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
+  isWallLinkedToTower,
+  shouldBreachWallAfterSiegeHit,
+  WALL_REPAIR_COST,
 } from './rules';
 import {
   getBuildingCollisionRadius,
@@ -147,6 +150,8 @@ import { sound } from './audio';
 import {
   applyBuildingConstructionVisuals,
   applyBuildingDamageVisuals,
+  applyWallBreachVisuals,
+  updateGateDoorAnimation,
   applyTerrainBiomeMaterial,
   createBerryBushMesh,
   createBuildingMesh,
@@ -1469,6 +1474,99 @@ export class RtsEngine {
     this.scene.add(this.settlementEnvironmentGroup);
   }
 
+  private refreshWallTowerConnections(): void {
+    const towers = this.buildings.filter(
+      (building) => building.buildingType === 'tower' && building.hp > 0 && building.isConstructed
+    );
+    for (const building of this.buildings) {
+      if (!building.buildingDef.isWall) continue;
+      building.wallTowerLinked = isWallLinkedToTower(building, towers);
+    }
+  }
+
+  public toggleGate(buildingId: string): boolean {
+    const gate = this.buildings.find((building) => building.id === buildingId);
+    if (!gate || gate.buildingType !== 'gate' || gate.hp <= 0 || !gate.isConstructed || gate.wallBreached || !this.isHumanControlled(gate.faction)) return false;
+    gate.gateOpen = !gate.gateOpen;
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    sound.playOrder();
+    this.addFloatingText(gate.x, 3.0, gate.z, gate.gateOpen ? '🚪 城門開啟 · 友軍可通行' : '🛡️ 城門關閉 · 防線封鎖', gate.gateOpen ? '#86efac' : '#fbbf24');
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  /** Assign selected infantry/cavalry/ranged guards to patrol their nearest friendly wall chain. */
+  public issueWallPatrolOrder(): number {
+    const selected = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0 && !unit.garrisonedInBuildingId && unit.unitDef.category !== 'worker' && unit.unitDef.category !== 'siege' && this.isHumanControlled(unit.faction));
+    const availableWalls = this.buildings.filter((building) => building.faction === this.humanPlayerId && building.buildingDef.isWall && building.hp > 0 && building.isConstructed && !building.wallBreached && !(building.buildingType === 'gate' && building.gateOpen));
+    if (selected.length === 0 || availableWalls.length === 0) {
+      sound.playInvalid();
+      return 0;
+    }
+
+    const townCenter = this.buildings.find((building) => building.faction === this.humanPlayerId && building.buildingType === 'town_center' && building.hp > 0);
+    let assigned = 0;
+    for (const unit of selected) {
+      const nearestWall = [...availableWalls].sort((a, b) => getDistance(unit.x, unit.z, a.x, a.z) - getDistance(unit.x, unit.z, b.x, b.z))[0];
+      const chainId = nearestWall.wallChainId;
+      const chain = availableWalls.filter((wall) => chainId ? wall.wallChainId === chainId : wall.id === nearestWall.id).sort((a, b) => (a.wallChainIndex ?? 0) - (b.wallChainIndex ?? 0));
+      const route: Array<{ x: number; z: number }> = [];
+      for (const wall of chain) {
+        const yaw = wall.rotationY || 0;
+        const dirX = Math.cos(yaw);
+        const dirZ = -Math.sin(yaw);
+        const normalX = -dirZ;
+        const normalZ = dirX;
+        const plus = { x: wall.x + normalX * 2.25, z: wall.z + normalZ * 2.25 };
+        const minus = { x: wall.x - normalX * 2.25, z: wall.z - normalZ * 2.25 };
+        const usePlus = !townCenter || getDistance(plus.x, plus.z, townCenter.x, townCenter.z) <= getDistance(minus.x, minus.z, townCenter.x, townCenter.z);
+        const side = usePlus ? 1 : -1;
+        route.push({ x: wall.x + normalX * 2.25 * side, z: wall.z + normalZ * 2.25 * side });
+      }
+      if (chain.length === 1) {
+        const wall = chain[0];
+        const yaw = wall.rotationY || 0;
+        const dirX = Math.cos(yaw);
+        const dirZ = -Math.sin(yaw);
+        route.unshift({ x: route[0].x - dirX * 1.15, z: route[0].z - dirZ * 1.15 });
+        route.push({ x: route[0].x + dirX * 1.15, z: route[0].z + dirZ * 1.15 });
+      } else if (chain.length > 1) {
+        const firstYaw = chain[0].rotationY || 0;
+        const lastYaw = chain[chain.length - 1].rotationY || 0;
+        route.unshift({ x: route[0].x - Math.cos(firstYaw) * 1.15, z: route[0].z + Math.sin(firstYaw) * 1.15 });
+        const last = route[route.length - 1];
+        route.push({ x: last.x + Math.cos(lastYaw) * 1.15, z: last.z - Math.sin(lastYaw) * 1.15 });
+      }
+      if (route.length < 2) continue;
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+      route.forEach((point, index) => {
+        const distance = getDistance(unit.x, unit.z, point.x, point.z);
+        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+      });
+      unit.wallPatrolRoute = route;
+      unit.wallPatrolIndex = nearestIndex;
+      unit.commandQueue = undefined;
+      unit.targetEntityId = undefined;
+      unit.targetResourceNodeId = undefined;
+      unit.targetBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.targetX = route[nearestIndex].x;
+      unit.targetZ = route[nearestIndex].z;
+      unit.state = 'moving';
+      unit.currentActionText = '🛡️ 沿城牆巡邏';
+      assigned++;
+    }
+    if (assigned > 0) { sound.playOrder(); this.onSelectionChange?.(); }
+    return assigned;
+  }
+
   public addBuilding(
     type: BuildingType,
     faction: FactionId,
@@ -1509,6 +1607,9 @@ export class RtsEngine {
       x,
       z,
       rotationY,
+      gateOpen: false,
+      wallBreached: false,
+      wallRepairPaid: false,
       hp: instant ? finalMaxHp : Math.round(finalMaxHp * 0.1),
       maxHp: finalMaxHp,
       isConstructed: instant,
@@ -1534,7 +1635,10 @@ export class RtsEngine {
     );
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
-    if (refreshEnvironment) this.refreshSettlementEnvironment();
+    if (refreshEnvironment) {
+      this.refreshSettlementEnvironment();
+      this.refreshWallTowerConnections();
+    }
 
     if (this.isHumanControlled(faction) && instant) {
       this.stats.buildingsConstructed++;
@@ -2021,6 +2125,8 @@ export class RtsEngine {
       u.targetResourceNodeId = undefined;
       u.targetBuildingId = undefined;
       u.attackMoveGoal = null;
+      u.wallPatrolRoute = undefined;
+      u.wallPatrolIndex = undefined;
       u.waypoints = undefined;
       u.pathGoal = undefined;
       u.velocity = { x: 0, z: 0 };
@@ -2380,6 +2486,8 @@ export class RtsEngine {
       }
 
       unit.commandQueue = undefined;
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetX = tx;
       unit.targetZ = tz;
       unit.attackMoveGoal = null;
@@ -2553,7 +2661,20 @@ export class RtsEngine {
 
   public issueBuildOrder(buildingId: string) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
-    if (!bldg || bldg.isConstructed || bldg.hp <= 0) return;
+    const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
+    if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
+    if (isWallRepair && !bldg.wallRepairPaid) {
+      const resources = this.getResourcesForFaction(bldg.faction);
+      if (!canAfford(resources, WALL_REPAIR_COST)) {
+        this.addFloatingText(bldg.x, 2.7, bldg.z, `⚠️ 修復城牆需要木材 ${WALL_REPAIR_COST.wood}、石料 ${WALL_REPAIR_COST.stone}`, '#ef4444');
+        sound.playInvalid();
+        return;
+      }
+      this.resourcesByFaction[bldg.faction] = deductCost(resources, WALL_REPAIR_COST);
+      this.syncHumanResourcesAlias();
+      if (this.isHumanControlled(bldg.faction)) this.onResourcesChange?.(this.playerResources);
+      bldg.wallRepairPaid = true;
+    }
 
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
@@ -2565,6 +2686,8 @@ export class RtsEngine {
 
     const bName = bldg.buildingDef.name.split(' ')[0];
     workers.forEach((worker) => {
+      worker.wallPatrolRoute = undefined;
+      worker.wallPatrolIndex = undefined;
       worker.targetBuildingId = buildingId;
       worker.targetResourceNodeId = undefined;
       worker.targetEntityId = undefined;
@@ -2573,7 +2696,7 @@ export class RtsEngine {
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
       worker.state = 'building';
-      worker.currentActionText = `🔨 前往建造${bName}`;
+      worker.currentActionText = isWallRepair ? '🧱 前往修復城牆' : `🔨 前往建造${bName}`;
     });
     this.onSelectionChange?.();
   }
@@ -3401,6 +3524,7 @@ export class RtsEngine {
       return building;
     });
     this.refreshSettlementEnvironment();
+    this.refreshWallTowerConnections();
 
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((unit) => unit.id === id))
@@ -4262,6 +4386,16 @@ export class RtsEngine {
       // Behavior by state
       switch (unit.state) {
         case 'moving':
+          if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker') {
+            const patrolThreat = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, { maxSearchRange: 10 });
+            if (patrolThreat) {
+              unit.targetEntityId = patrolThreat.id;
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              this.stepUnitAttacking(unit, dt);
+              break;
+            }
+          }
           if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
               maxSearchRange: 13,
@@ -4295,6 +4429,14 @@ export class RtsEngine {
           this.stepUnitGarrisoning(unit, dt);
           break;
         case 'idle':
+          if (unit.wallPatrolRoute?.length && unit.unitDef.category !== 'worker') {
+            const patrolIndex = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+            unit.targetX = unit.wallPatrolRoute[patrolIndex].x;
+            unit.targetZ = unit.wallPatrolRoute[patrolIndex].z;
+            unit.state = 'moving';
+            unit.currentActionText = '🛡️ 恢復城牆巡邏';
+            break;
+          }
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
           if (unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
@@ -4485,6 +4627,11 @@ export class RtsEngine {
       }
     }
 
+    if (unit.wallPatrolRoute?.length && (unit.targetX === undefined || unit.targetZ === undefined)) {
+      const index = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+      unit.targetX = unit.wallPatrolRoute[index].x;
+      unit.targetZ = unit.wallPatrolRoute[index].z;
+    }
     if (unit.targetX === undefined || unit.targetZ === undefined) {
       unit.state = 'idle';
       unit.attackMoveGoal = null;
@@ -4493,6 +4640,19 @@ export class RtsEngine {
     }
 
     const dist = getDistance(unit.x, unit.z, unit.targetX, unit.targetZ);
+    if (dist < 0.45 && unit.wallPatrolRoute && unit.wallPatrolRoute.length >= 2) {
+      unit.wallPatrolIndex = ((unit.wallPatrolIndex || 0) + 1) % unit.wallPatrolRoute.length;
+      const next = unit.wallPatrolRoute[unit.wallPatrolIndex];
+      unit.targetX = next.x;
+      unit.targetZ = next.z;
+      unit.state = 'moving';
+      unit.velocity = { x: 0, z: 0 };
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.currentActionText = '🛡️ 沿城牆巡邏';
+      return;
+    }
     if (dist < 0.45) {
       unit.state = 'idle';
       unit.attackMoveGoal = null;
@@ -4576,6 +4736,12 @@ export class RtsEngine {
       if (followUp && (!this.isHumanControlled(unit.faction) || !!unit.attackMoveGoal)) {
         unit.targetEntityId = followUp.id;
         unit.state = 'attacking';
+      } else if (unit.wallPatrolRoute?.length) {
+        const patrolIndex = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+        unit.targetX = unit.wallPatrolRoute[patrolIndex].x;
+        unit.targetZ = unit.wallPatrolRoute[patrolIndex].z;
+        unit.state = 'moving';
+        unit.currentActionText = '🛡️ 恢復城牆巡邏';
       } else if (unit.attackMoveGoal) {
         unit.targetX = unit.attackMoveGoal.x;
         unit.targetZ = unit.attackMoveGoal.z;
@@ -4692,6 +4858,7 @@ export class RtsEngine {
           }
 
           target.hp -= dmg;
+          if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, unit.unitDef.category === 'siege');
           (target as any).lastDamagedTime = performance.now();
           (target as any).hitFlashTimer = 0.085;
           if (target.type === 'unit') {
@@ -4710,6 +4877,22 @@ export class RtsEngine {
         }
       }
     }
+  }
+
+  private applyWallBreachIfNeeded(building: BuildingEntity, siegeHit: boolean): void {
+    if (!siegeHit || !shouldBreachWallAfterSiegeHit(building)) return;
+    building.wallBreached = true;
+    if (building.buildingType === 'gate') building.gateOpen = true;
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    const mesh = this.buildingMeshes.get(building.id);
+    if (mesh) {
+      if (building.buildingType === 'gate') updateGateDoorAnimation(mesh, true, 1.0);
+      else applyWallBreachVisuals(mesh, true);
+    }
+    this.refreshWallTowerConnections();
+    this.addFloatingText(building.x, 3.1, building.z, '💥 城牆遭攻城器擊破 · 防線出現缺口！', '#fb923c');
+    if (this.selectedBuildingId === building.id) this.onSelectionChange?.();
   }
 
   private stepUnitGathering(unit: UnitEntity, dt: number) {
@@ -5373,21 +5556,19 @@ export class RtsEngine {
     }
 
     const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
-    if (!bldg || bldg.hp <= 0 || bldg.isConstructed) {
+    const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
+    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall)) {
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
-      if (!this.tryDequeueCommand(unit)) {
-        unit.state = 'idle';
-        unit.currentActionText = '💤 待命中 (閒置)';
-      }
+      if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
       return;
     }
 
-    const pct = Math.round(bldg.buildProgress * 100);
-    unit.currentActionText = `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`;
+    const pct = Math.round((bldg.hp / Math.max(1, bldg.maxHp)) * 100);
+    unit.currentActionText = repairingWall ? `🧱 修復城牆 (${pct}%)` : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
 
-    // Position each builder flush against the scaffolding perimeter instead of piling far from walls
-    const bldgRad = getBuildingCollisionRadius(bldg);
+    // A breached wall is passable, so use its footprint to define the carpenter's work ring.
+    const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
     const workRingRad = bldgRad + 0.95;
     let idHash = 0;
     for (let i = 0; i < unit.id.length; i++) idHash = (idHash * 31 + unit.id.charCodeAt(i)) | 0;
@@ -5403,9 +5584,14 @@ export class RtsEngine {
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
-      const buildSpeed = 1 / bldg.buildingDef.buildTime;
-      bldg.buildProgress += buildSpeed * dt;
-      bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
+      if (repairingWall) {
+        const repairSpeed = bldg.maxHp / (bldg.buildingDef.buildTime * 0.65);
+        bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
+      } else {
+        const buildSpeed = 1 / bldg.buildingDef.buildTime;
+        bldg.buildProgress += buildSpeed * dt;
+        bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
+      }
 
       // Advance unified carpenter hammer cycle and trigger impact FX cleanly at downstroke contact
       const prevPhase = (unit as any)._hammerPhase || 0;
@@ -5423,7 +5609,29 @@ export class RtsEngine {
         sound.playHammerBuild(this.getSpatialAudioScale(bldg.x, bldg.z));
       }
 
-      if (bldg.buildProgress >= 1) {
+      if (repairingWall && bldg.hp >= bldg.maxHp) {
+        bldg.hp = bldg.maxHp;
+        bldg.wallBreached = false;
+        bldg.wallRepairPaid = false;
+        bldg.gateOpen = false;
+        bldg.buildProgress = 1;
+        this.navGridDirty = true;
+        this.waterNavGridDirty = true;
+        const repairMesh = this.buildingMeshes.get(bldg.id);
+        if (repairMesh) {
+          if (bldg.buildingType === 'gate') updateGateDoorAnimation(repairMesh, false, 1.0);
+          else applyWallBreachVisuals(repairMesh, false);
+        }
+        this.refreshWallTowerConnections();
+        this.spawnParticleBurst(bldg.x, 1.2, bldg.z, 'stone', 8);
+        this.spawnParticleBurst(bldg.x, 1.4, bldg.z, 'gold', 6);
+        this.addFloatingText(bldg.x, 2.7, bldg.z, '🧱 城牆缺口已修復 · 防線恢復', '#86efac');
+        unit.targetBuildingId = undefined;
+        if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 修復完成'; }
+        return;
+      }
+
+      if (!repairingWall && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
@@ -5443,6 +5651,7 @@ export class RtsEngine {
         this.spawnShockwaveRing(bldg.x, bldg.z, 0xfbbf24, bldg.buildingDef.size + 1.4);
         this.navGridDirty = true;
         this.waterNavGridDirty = true;
+        this.refreshWallTowerConnections();
         if (this.isHumanControlled(bldg.faction)) this.stats.buildingsConstructed++;
         if (this.selectedBuildingId === bldg.id) this.onSelectionChange?.();
         unit.targetBuildingId = undefined;
@@ -6411,6 +6620,7 @@ export class RtsEngine {
       const bMesh = this.buildingMeshes.get(bldg.id);
       const visState = computeBuildingVisualState(bldg.isConstructed, bldg.buildProgress, bldg.hp, bldg.maxHp);
       if (bMesh) {
+        if (bldg.buildingType === 'gate') updateGateDoorAnimation(bMesh, !!bldg.gateOpen || !!bldg.wallBreached, dt);
         applyBuildingConstructionVisuals(
           bMesh,
           visState,
@@ -6771,6 +6981,7 @@ export class RtsEngine {
     this.buildings = remainingBuildings;
     if (settlementEnvironmentDirty) {
       this.refreshSettlementEnvironment();
+      this.refreshWallTowerConnections();
     }
     if (selectedDestroyed) {
       this.onSelectionChange?.();
@@ -6884,6 +7095,7 @@ export class RtsEngine {
         }
 
         target.hp -= dmg;
+        if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, attacker?.unitDef.category === 'siege' || proj.damage >= 20);
         (target as any).lastDamagedTime = performance.now();
         (target as any).hitFlashTimer = 0.08;
         if (target.type === 'unit') {
