@@ -6843,34 +6843,48 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     envGroup.add(bridgeGroup);
   });
 
-  // 4. Highland cliffs & multi-tiered craggy rocky mesas
+  // 4. Highland cliffs & multi-tiered craggy rocky mesas.
+  // Each cliff tier shares one instanced batch across all cliff discs on the map.
   const cragGeo = makeCraggyRockGeo(1.0, 1);
+  const mossCapGeo = new THREE.CylinderGeometry(0.52, 0.68, 0.35, 8);
   const mossCapMat = new THREE.MeshStandardMaterial({
     color: 0x3f6212,
     map: resFoliageMaps.map,
     normalMap: resFoliageMaps.normalMap,
     roughness: 0.88,
   });
+  const mesaTransforms: VisualInstanceTransform[] = [];
+  const spireTransforms: VisualInstanceTransform[] = [];
+  const capTransforms: VisualInstanceTransform[] = [];
+
   layout.cliffDiscs.forEach((cd, cIdx) => {
-    const mesa = new THREE.Mesh(cragGeo, cliffMat);
-    mesa.scale.set(cd.radius * 0.98, 2.3, cd.radius * 0.92);
-    mesa.position.set(cd.x, 1.15, cd.z);
-    mesa.rotation.set(0.12, cIdx * 0.9, 0.08);
-    mesa.castShadow = true;
-    mesa.receiveShadow = true;
-    envGroup.add(mesa);
-
-    const spire = new THREE.Mesh(cragGeo, sharedStoneDarkMat);
-    spire.scale.set(cd.radius * 0.62, 2.75, cd.radius * 0.58);
-    spire.position.set(cd.x + 0.35, 2.75, cd.z - 0.25);
-    spire.rotation.set(-0.15, cIdx * 1.4, 0.1);
-    spire.castShadow = true;
-    envGroup.add(spire);
-
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(cd.radius * 0.52, cd.radius * 0.68, 0.35, 8), mossCapMat);
-    cap.position.set(cd.x - 0.25, 2.48, cd.z + 0.2);
-    envGroup.add(cap);
+    mesaTransforms.push({
+      position: [cd.x, 1.15, cd.z],
+      rotation: [0.12, cIdx * 0.9, 0.08],
+      scale: [cd.radius * 0.98, 2.3, cd.radius * 0.92],
+    });
+    spireTransforms.push({
+      position: [cd.x + 0.35, 2.75, cd.z - 0.25],
+      rotation: [-0.15, cIdx * 1.4, 0.1],
+      scale: [cd.radius * 0.62, 2.75, cd.radius * 0.58],
+    });
+    capTransforms.push({
+      position: [cd.x - 0.25, 2.48, cd.z + 0.2],
+      scale: [cd.radius, 1, cd.radius],
+    });
   });
+
+  if (mesaTransforms.length > 0) {
+    createVisualInstanceBatch(
+      envGroup, cragGeo, cliffMat, mesaTransforms, 'instancedHighlandMesas', true, true
+    );
+    createVisualInstanceBatch(
+      envGroup, cragGeo, sharedStoneDarkMat, spireTransforms, 'instancedHighlandSpires', true
+    );
+    createVisualInstanceBatch(
+      envGroup, mossCapGeo, mossCapMat, capTransforms, 'instancedHighlandMossCaps'
+    );
+  }
 
   // 5. Instanced decorative shoreline & cliff-base boulders (1 draw call)
   const pebblePts: Array<{ x: number; z: number; s: number }> = [];
