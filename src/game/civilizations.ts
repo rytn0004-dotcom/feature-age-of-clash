@@ -874,7 +874,7 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
   {
     id: 'shared_siege_engineers',
     civId: 'shared',
-    buildingType: 'barracks',
+    buildingType: 'siege_workshop',
     name: '攻城工兵學',
     icon: '⚙️',
     roleTag: '攻城',
