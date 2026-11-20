@@ -124,8 +124,10 @@ import {
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
+  assignRaidTargets,
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
+  shouldSwitchCombatTarget,
   isWallLinkedToTower,
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
@@ -8558,25 +8560,51 @@ export class RtsEngine {
         });
         const activeThreat = baseThreat && nearestEnemyDist <= 28 ? baseThreat : null;
 
-        aiArmy.forEach((unit) => {
+        aiArmy.forEach((unit, idx) => {
+          const targetContext = {
+            defendAnchor,
+            clusterFocusTargetId: baseClusterTarget?.id,
+            maxSearchRange: 30,
+          };
           const bestTarget =
-            selectOptimalCombatTarget(unit, this.units, [], this.units, {
-              defendAnchor,
-              clusterFocusTargetId: baseClusterTarget?.id,
-              maxSearchRange: 30,
-            }) || activeThreat;
+            selectOptimalCombatTarget(unit, this.units, [], this.units, targetContext) || activeThreat;
 
           if (bestTarget) {
-            unit.targetEntityId = bestTarget.id;
-            unit.attackMoveGoal = { x: anchorX, z: anchorZ };
-            unit.waypoints = undefined;
-            unit.state = 'attacking';
+            const currentTarget =
+              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
+              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              null;
+            const needsRetarget = shouldSwitchCombatTarget(
+              unit,
+              currentTarget,
+              bestTarget,
+              this.units,
+              targetContext,
+              18
+            );
+            const needsAnchorSync =
+              !unit.attackMoveGoal ||
+              getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, anchorX, anchorZ) > 1;
+            if (unit.state !== 'attacking' || needsRetarget || needsAnchorSync) {
+              unit.targetEntityId = bestTarget.id;
+              unit.attackMoveGoal = { x: anchorX, z: anchorZ };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+            }
           } else {
-            // Form defensive perimeter in front of TC facing the threat
-            const guardAngle = toCenterAngle + (Math.random() - 0.5) * 1.4;
+            // Stable, deterministic defensive arc slots prevent every AI tick from issuing a new random path.
+            const centeredIndex = idx - (aiArmy.length - 1) / 2;
+            const guardAngle = toCenterAngle + centeredIndex * 0.13;
             const gx = Math.max(-84, Math.min(84, anchorX + Math.cos(guardAngle) * 8));
             const gz = Math.max(-84, Math.min(84, anchorZ + Math.sin(guardAngle) * 8));
-            if (getDistance(unit.x, unit.z, anchorX, anchorZ) > 13 || unit.state === 'idle') {
+            const guardGoalChanged =
+              unit.targetX === undefined ||
+              unit.targetZ === undefined ||
+              getDistance(unit.targetX, unit.targetZ, gx, gz) > 1.5;
+            if (
+              (getDistance(unit.x, unit.z, anchorX, anchorZ) > 13 || unit.state === 'idle') &&
+              (unit.state !== 'moving' || guardGoalChanged)
+            ) {
               unit.targetX = gx;
               unit.targetZ = gz;
               unit.targetEntityId = undefined;
@@ -8644,6 +8672,18 @@ export class RtsEngine {
               !u.garrisonedInBuildingId &&
               this.isHostile({ faction: aiId, team: aiTeam }, u)
           );
+          const raiderUnits = strikeUnits.filter(
+            (unit, idx) =>
+              unit.unitDef.category === 'cavalry' ||
+              idx % 3 === 0 ||
+              unit.unitDef.stats.speed >= 3.6
+          );
+          const raidTargetByUnit = new Map(
+            assignRaidTargets(raiderUnits, exposedWorkers, 2).map((assignment) => [
+              assignment.raiderId,
+              assignment.targetId,
+            ])
+          );
 
           const ecoBuilding =
             this.buildings
@@ -8695,40 +8735,68 @@ export class RtsEngine {
               idx % 3 === 0 ||
               unit.unitDef.stats.speed >= 3.6;
 
-            if (isRaider && exposedWorkers.length > 0) {
-              const prey = exposedWorkers.reduce((best, w) =>
-                getDistance(unit.x, unit.z, w.x, w.z) < getDistance(unit.x, unit.z, best.x, best.z)
-                  ? w
-                  : best
-              );
-              unit.targetEntityId = prey.id;
-              unit.attackMoveGoal = { x: prey.x, z: prey.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
+            const assignedPreyId = raidTargetByUnit.get(unit.id);
+            const prey = assignedPreyId
+              ? exposedWorkers.find((worker) => worker.id === assignedPreyId)
+              : undefined;
+            if (isRaider && prey) {
+              const goalChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, prey.x, prey.z) > 3;
+              if (unit.state !== 'attacking' || unit.targetEntityId !== prey.id || goalChanged) {
+                unit.targetEntityId = prey.id;
+                unit.attackMoveGoal = { x: prey.x, z: prey.z };
+                unit.waypoints = undefined;
+                unit.state = 'attacking';
+              }
               unit.currentActionText = '獵殺村民';
               return;
             }
 
-            if (isRaider && ecoBuilding && Math.random() < 0.35) {
-              unit.targetEntityId = ecoBuilding.id;
-              unit.attackMoveGoal = { x: ecoBuilding.x, z: ecoBuilding.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
+            // A stable subset of raiders pressures economy buildings; avoid a fresh random roll every AI tick.
+            if (isRaider && ecoBuilding && idx % 3 === 1) {
+              const goalChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, ecoBuilding.x, ecoBuilding.z) > 3;
+              if (unit.state !== 'attacking' || unit.targetEntityId !== ecoBuilding.id || goalChanged) {
+                unit.targetEntityId = ecoBuilding.id;
+                unit.attackMoveGoal = { x: ecoBuilding.x, z: ecoBuilding.z };
+                unit.waypoints = undefined;
+                unit.state = 'attacking';
+              }
               unit.currentActionText = '破壞經濟';
               return;
             }
 
             // Main body: push toward stronghold, retarget opportunistically
-            const optimalLocal = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
+            const targetContext = {
               clusterFocusTargetId: clusterTarget?.id,
               maxSearchRange: 28,
-            });
+            };
+            const optimalLocal = selectOptimalCombatTarget(
+              unit,
+              this.units,
+              this.buildings,
+              this.units,
+              targetContext
+            );
             const chosen = optimalLocal || clusterTarget || stronghold;
-            if (
-              unit.state !== 'attacking' ||
-              !unit.targetEntityId ||
-              (chosen && chosen.id !== unit.targetEntityId && Math.random() < 0.5)
-            ) {
+            const currentTarget =
+              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
+              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              null;
+            const targetChanged = shouldSwitchCombatTarget(
+              unit,
+              currentTarget,
+              chosen,
+              this.units,
+              targetContext,
+              18
+            );
+            const goalChanged =
+              !unit.attackMoveGoal ||
+              getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
+            if (unit.state !== 'attacking' || targetChanged || goalChanged) {
               unit.targetEntityId = chosen.id;
               unit.attackMoveGoal = { x: goalX, z: goalZ };
               unit.waypoints = undefined;
