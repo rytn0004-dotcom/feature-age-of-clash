@@ -2517,6 +2517,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Ground stone sill (tier1)
   const sill = new THREE.Mesh(sharedWallSillGeo, stoneMat);
+  sill.name = 'wallSill';
   sill.position.y = 0.21;
   sill.castShadow = true;
   sill.receiveShadow = true;
@@ -2524,6 +2525,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Main fortified wall curtain (tier2)
   const curtain = new THREE.Mesh(sharedWallCurtainGeo, civ === 'anime' ? trimMat : stoneMat);
+  curtain.name = 'wallCurtain';
   curtain.position.y = 1.18;
   curtain.castShadow = true;
   curtain.receiveShadow = true;
@@ -2541,6 +2543,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Top palisade / battlements & walkway (tier3)
   const walkway = new THREE.Mesh(sharedWallWalkwayGeo, woodMat);
+  walkway.name = 'wallWalkway';
   walkway.position.y = 2.02;
   group.add(walkway);
 
@@ -2566,6 +2569,120 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
   );
 
   return group;
+}
+
+export function applyWallBreachVisuals(group: THREE.Group, breached: boolean): void {
+  const hiddenWhenBreached = [
+    'wallCurtain',
+    'wallWalkway',
+    'instancedWallMerlons',
+    'instancedWallPalisadeStakes',
+  ];
+  hiddenWhenBreached.forEach((name) => {
+    const part = group.getObjectByName(name);
+    if (part) part.visible = !breached;
+  });
+}
+
+/** Lightweight double-leaf gate built from the same masonry and timber visual language as walls. */
+export function createGateMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const civ = civId || colors.civilization || 'medieval';
+  addContactShadow(group, 1.95);
+
+  const stoneMaps = getStoneMasonryMaps();
+  const woodMaps = getTimberWoodMaps();
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0xdbeafe : 0x64748b,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    roughness: 0.86,
+  });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0x7c2d12 : civ === 'fantasy' ? 0x166534 : 0x78350f,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughness: 0.78,
+  });
+  const ironMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0x93c5fd : 0x475569,
+    metalness: 0.72,
+    roughness: 0.38,
+  });
+  const addBox = (
+    name: string,
+    geometry: THREE.BoxGeometry,
+    material: THREE.Material,
+    x: number,
+    y: number,
+    z: number,
+    parent: THREE.Group = group
+  ) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = name;
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+
+  // Heavy stone piers frame a genuine passage opening.
+  const postGeo = new THREE.BoxGeometry(0.52, 2.9, 0.82);
+  [-1.28, 1.28].forEach((x, index) => {
+    addBox(`gateStonePost${index}`, postGeo, stoneMat, x, 1.45, 0);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.24, 1.0), stoneMat);
+    cap.name = `gatePostCap${index}`;
+    cap.position.set(x, 2.94, 0);
+    cap.castShadow = true;
+    group.add(cap);
+  });
+  addBox('gateLintel', new THREE.BoxGeometry(2.95, 0.34, 0.95), stoneMat, 0, 2.72, 0);
+
+  const createLeaf = (name: string, hingeX: number, sign: number) => {
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.set(hingeX, 0, 0);
+    addBox(`${name}Panel`, new THREE.BoxGeometry(1.02, 1.95, 0.18), timberMat, sign * 0.51, 1.25, 0, pivot);
+    addBox(`${name}TopRail`, new THREE.BoxGeometry(1.06, 0.16, 0.24), ironMat, sign * 0.51, 2.22, 0, pivot);
+    addBox(`${name}BottomRail`, new THREE.BoxGeometry(1.06, 0.16, 0.24), ironMat, sign * 0.51, 0.28, 0, pivot);
+    for (let index = 0; index < 5; index++) {
+      addBox(
+        `${name}Bar${index}`,
+        new THREE.BoxGeometry(0.075, 1.84, 0.24),
+        ironMat,
+        sign * (0.12 + index * 0.195),
+        1.25,
+        0.03,
+        pivot
+      );
+    }
+    addBox(`${name}BraceA`, new THREE.BoxGeometry(1.22, 0.12, 0.2), ironMat, sign * 0.51, 0.78, 0.02, pivot).rotation.z = sign * 0.62;
+    addBox(`${name}BraceB`, new THREE.BoxGeometry(1.22, 0.12, 0.2), ironMat, sign * 0.51, 1.72, 0.02, pivot).rotation.z = -sign * 0.62;
+    group.add(pivot);
+  };
+  createLeaf('gateLeftLeaf', -1.02, 1);
+  createLeaf('gateRightLeaf', 1.02, -1);
+
+  const crest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.34, 0.22), ironMat);
+  crest.name = 'gateCrest';
+  crest.position.set(0, 3.05, 0.45);
+  crest.castShadow = true;
+  group.add(crest);
+  return group;
+}
+
+/** Smoothly swings both gate leaves clear of the opening when the gate is unlocked. */
+export function updateGateDoorAnimation(group: THREE.Group, open: boolean, dt: number): void {
+  const left = group.getObjectByName('gateLeftLeaf');
+  const right = group.getObjectByName('gateRightLeaf');
+  if (!left || !right) return;
+  const speed = 6.5;
+  const leftTarget = open ? Math.PI * 0.48 : 0;
+  const rightTarget = open ? -Math.PI * 0.48 : 0;
+  left.rotation.y = THREE.MathUtils.damp(left.rotation.y, leftTarget, speed, dt);
+  right.rotation.y = THREE.MathUtils.damp(right.rotation.y, rightTarget, speed, dt);
 }
 
 const sharedCastleTowerGeo = makeLatheGeo([
@@ -4401,6 +4518,9 @@ export function createBuildingMesh(
       break;
     case 'wall':
       group = createWallMesh(faction, resolvedCiv);
+      break;
+    case 'gate':
+      group = createGateMesh(faction, resolvedCiv);
       break;
     case 'tower':
       group = createTowerMesh(faction);
