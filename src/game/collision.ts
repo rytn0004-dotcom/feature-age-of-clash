@@ -48,8 +48,10 @@ export function getUnitColliderRadius(category: UnitCategory, scale = 1): number
  * Farms are walkable terrain (radius 0). Solid non-wall structures inset their solid core by
  * BUILDING_AUTO_CHANNEL_SETBACK so flush-placed buildings automatically leave a passable corridor.
  */
-export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType' | 'buildingDef'>): number {
-  if (b.buildingType === 'farm') return 0;
+export function getBuildingCollisionRadius(
+  b: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'gateOpen' | 'wallBreached'>
+): number {
+  if (b.buildingType === 'farm' || b.wallBreached || (b.buildingType === 'gate' && b.gateOpen)) return 0;
   if (b.buildingDef.isWall) return b.buildingDef.size;
   switch (b.buildingType) {
     case 'town_center':
