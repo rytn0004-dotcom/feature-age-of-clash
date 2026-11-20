@@ -6627,16 +6627,23 @@ export function createShoreFishMesh(amount = 450, hasBadge = false): THREE.Group
   hitDisc.position.y = 0.18;
   group.add(hitDisc);
 
-  // The school is static in the current simulation; instance bodies and tails separately.
+  const detailedVisual = new THREE.Group();
+  detailedVisual.name = 'fishDetailedVisual';
+  group.add(detailedVisual);
+  group.userData.fishDetailedVisual = detailedVisual;
+  group.userData.fishVisualType = 'shore';
+
+  // Three instanced fish remain the close-range fallback.
   const fish = [
     { x: 0.28, y: 0.14, z: 0.12, yaw: 0.4, scale: 1.0 },
     { x: -0.26, y: 0.13, z: -0.22, yaw: 2.3, scale: 0.88 },
     { x: -0.05, y: 0.16, z: 0.32, yaw: -1.4, scale: 0.82 },
   ];
+  group.userData.fishAssetTransforms = fish;
   const rootMatrices = createFishRootMatrices(fish);
-  createMatrixInstanceBatch(group, sharedFishBodyGeo, sharedShoreFishMat, rootMatrices, 'instancedShoreFishBodies');
+  createMatrixInstanceBatch(detailedVisual, sharedFishBodyGeo, sharedShoreFishMat, rootMatrices, 'instancedShoreFishBodies');
   createMatrixInstanceBatch(
-    group,
+    detailedVisual,
     sharedFishTailGeo,
     sharedShoreFishMat,
     createFishPartMatrices(rootMatrices, [-0.24, 0, 0]),
@@ -6670,23 +6677,30 @@ export function createDeepFishMesh(amount = 650, hasBadge = false): THREE.Group 
   hitDisc.position.y = 0.22;
   group.add(hitDisc);
 
-  // The school is static in the current simulation; body, tail and dorsal batches preserve each fish transform.
+  const detailedVisual = new THREE.Group();
+  detailedVisual.name = 'fishDetailedVisual';
+  group.add(detailedVisual);
+  group.userData.fishDetailedVisual = detailedVisual;
+  group.userData.fishVisualType = 'deep';
+
+  // Three instanced fish remain the close-range fallback.
   const fish = [
     { x: 0.05, y: 0.22, z: -0.05, yaw: 0.75, pitch: -0.25, scale: 1.45 },
     { x: -0.34, y: 0.16, z: 0.28, yaw: 2.5, pitch: 0.1, scale: 1.18 },
     { x: 0.36, y: 0.15, z: 0.25, yaw: -1.1, pitch: 0.08, scale: 1.12 },
   ];
+  group.userData.fishAssetTransforms = fish;
   const rootMatrices = createFishRootMatrices(fish);
-  createMatrixInstanceBatch(group, sharedFishBodyGeo, sharedDeepFishMat, rootMatrices, 'instancedDeepFishBodies');
+  createMatrixInstanceBatch(detailedVisual, sharedFishBodyGeo, sharedDeepFishMat, rootMatrices, 'instancedDeepFishBodies');
   createMatrixInstanceBatch(
-    group,
+    detailedVisual,
     sharedFishTailGeo,
     sharedDeepFishMat,
     createFishPartMatrices(rootMatrices, [-0.24, 0, 0]),
     'instancedDeepFishTails'
   );
   createMatrixInstanceBatch(
-    group,
+    detailedVisual,
     sharedDeepFishDorsalGeo,
     sharedDeepFishMat,
     createFishPartMatrices(rootMatrices, [0.02, 0.1, 0], [0, 0, 0.45]),
