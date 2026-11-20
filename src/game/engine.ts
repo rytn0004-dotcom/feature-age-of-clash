@@ -6931,7 +6931,7 @@ export class RtsEngine {
         tgtRLeg = -0.2;
         tgtLKnee = 0.18;
       }
-    } else if (unit.state === 'building') {
+    } else if (unit.state === 'building' || unit.state === 'assembling') {
       // Carpenter hammer windup -> decisive nail-strike cadence synced to particle & sound bursts
       const hPhase = (unit as any)._hammerPhase !== undefined ? (unit as any)._hammerPhase : t * 9.8;
       const raw = 0.5 - 0.5 * Math.cos(hPhase);
