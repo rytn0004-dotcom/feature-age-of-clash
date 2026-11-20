@@ -2268,7 +2268,7 @@ test('wall defence: siege thresholds create breaches, linked towers add armor, a
   const { WALL_BREACH_HP_RATIO, WALL_REPAIR_COST, isWallLinkedToTower, shouldBreachWallAfterSiegeHit, getEffectiveBuildingArmor } = await import('./rules');
   const { DEFAULT_BUILDINGS } = await import('./mods');
   const { getBuildableTypesForCiv } = await import('./civilizations');
-  const { BUILDING_HOTKEYS } = await import('./hotkeys');
+  const { BUILDING_HOTKEYS, eventCodeToHotkeyLabel } = await import('./hotkeys');
   assert.equal(BUILDING_HOTKEYS.gate, '0');
   assert.equal(eventCodeToHotkeyLabel('Digit0'), '0');
   assert.ok(['medieval', 'anime', 'fantasy'].every((civ) => getBuildableTypesForCiv(civ as any).includes('gate')));
