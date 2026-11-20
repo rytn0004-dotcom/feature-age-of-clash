@@ -3070,6 +3070,41 @@ const scaffoldCrateMat = new THREE.MeshStandardMaterial({
   roughness: 0.86,
 });
 
+interface ScaffoldInstanceTransform {
+  position: [number, number, number];
+  rotation?: [number, number, number];
+}
+
+/** Create one shadow-compatible instanced batch for repeated static scaffold parts. */
+function addScaffoldInstanceBatch(
+  parent: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  transforms: ScaffoldInstanceTransform[],
+  name: string,
+  castShadow = false
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
+  mesh.name = name;
+  mesh.castShadow = castShadow;
+
+  const dummy = new THREE.Object3D();
+  transforms.forEach((transform, index) => {
+    dummy.position.set(...transform.position);
+    const rotation = transform.rotation || [0, 0, 0];
+    dummy.rotation.set(rotation[0], rotation[1], rotation[2]);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  });
+
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  parent.add(mesh);
+  return mesh;
+}
+
 function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): void {
   group.updateMatrixWorld(true);
   const overallBox = new THREE.Box3();
@@ -3156,33 +3191,44 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
     [px, pz],
     [-px, pz],
   ];
-  corners.forEach(([cx, cz]) => {
-    const pole = new THREE.Mesh(poleGeo, scaffoldPoleMat);
-    pole.position.set(cx, scafH * 0.5, cz);
-    pole.castShadow = true;
-    scaffoldFrame.add(pole);
+  addScaffoldInstanceBatch(
+    scaffoldFrame,
+    poleGeo,
+    scaffoldPoleMat,
+    corners.map(([cx, cz]) => ({ position: [cx, scafH * 0.5, cz] })),
+    'instancedScaffoldPoles',
+    true
+  );
 
-    // Timber corner stake footing collar
-    const stakeCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.22, 6), scaffoldCrateMat);
-    stakeCollar.position.set(cx, 0.11, cz);
-    scaffoldFrame.add(stakeCollar);
-  });
+  // Timber corner stake footing collars share one geometry and one draw call.
+  const stakeCollarGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.22, 6);
+  addScaffoldInstanceBatch(
+    scaffoldFrame,
+    stakeCollarGeo,
+    scaffoldCrateMat,
+    corners.map(([cx, cz]) => ({ position: [cx, 0.11, cz] })),
+    'instancedScaffoldStakeCollars'
+  );
 
   // Ground boundary rope perimeter connecting corner stakes
   const ropeXGeo = new THREE.CylinderGeometry(0.022, 0.022, px * 2, 5);
   ropeXGeo.rotateZ(Math.PI / 2);
   const ropeZGeo = new THREE.CylinderGeometry(0.022, 0.022, pz * 2, 5);
   ropeZGeo.rotateX(Math.PI / 2);
-  [pz, -pz].forEach((rz) => {
-    const r = new THREE.Mesh(ropeXGeo, scaffoldRopeMat);
-    r.position.set(0, 0.36, rz);
-    scaffoldFrame.add(r);
-  });
-  [px, -px].forEach((rx) => {
-    const r = new THREE.Mesh(ropeZGeo, scaffoldRopeMat);
-    r.position.set(rx, 0.36, 0);
-    scaffoldFrame.add(r);
-  });
+  addScaffoldInstanceBatch(
+    scaffoldFrame,
+    ropeXGeo,
+    scaffoldRopeMat,
+    [pz, -pz].map((rz) => ({ position: [0, 0.36, rz] })),
+    'instancedScaffoldBoundaryRopeX'
+  );
+  addScaffoldInstanceBatch(
+    scaffoldFrame,
+    ropeZGeo,
+    scaffoldRopeMat,
+    [px, -px].map((rx) => ({ position: [rx, 0.36, 0] })),
+    'instancedScaffoldBoundaryRopeZ'
+  );
 
   let pulleyLoad: THREE.Object3D | null = null;
 
@@ -3191,32 +3237,37 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
     const ledgerH2 = scafH * 0.82;
     const xBeamGeo = new THREE.BoxGeometry(px * 2 + 0.14, 0.08, 0.09);
     const zBeamGeo = new THREE.BoxGeometry(0.09, 0.08, pz * 2 + 0.14);
+    const xLedgerTransforms: ScaffoldInstanceTransform[] = [];
+    const zLedgerTransforms: ScaffoldInstanceTransform[] = [];
     [ledgerH1, ledgerH2].forEach((ly) => {
       [pz, -pz].forEach((bz) => {
-        const xb = new THREE.Mesh(xBeamGeo, scaffoldPoleMat);
-        xb.position.set(0, ly, bz);
-        scaffoldFrame.add(xb);
+        xLedgerTransforms.push({ position: [0, ly, bz] });
       });
       [px, -px].forEach((bx) => {
-        const zb = new THREE.Mesh(zBeamGeo, scaffoldPoleMat);
-        zb.position.set(bx, ly, 0);
-        scaffoldFrame.add(zb);
+        zLedgerTransforms.push({ position: [bx, ly, 0] });
       });
     });
+    addScaffoldInstanceBatch(
+      scaffoldFrame, xBeamGeo, scaffoldPoleMat, xLedgerTransforms, 'instancedScaffoldXLedgers'
+    );
+    addScaffoldInstanceBatch(
+      scaffoldFrame, zBeamGeo, scaffoldPoleMat, zLedgerTransforms, 'instancedScaffoldZLedgers'
+    );
 
     // Diagonal cross-braces on side scaffolding frames for structural authenticity
     const diagLen = Math.hypot(px * 1.9, ledgerH2 * 0.88);
     const diagAngle = Math.atan2(ledgerH2 * 0.88, px * 1.9);
     const braceGeo = new THREE.BoxGeometry(diagLen, 0.055, 0.055);
+    const braceTransforms: ScaffoldInstanceTransform[] = [];
     [pz, -pz].forEach((bz) => {
-      const b1 = new THREE.Mesh(braceGeo, scaffoldPoleMat);
-      b1.position.set(0, ledgerH2 * 0.5, bz);
-      b1.rotation.z = diagAngle;
-      const b2 = new THREE.Mesh(braceGeo, scaffoldPoleMat);
-      b2.position.set(0, ledgerH2 * 0.5, bz);
-      b2.rotation.z = -diagAngle;
-      scaffoldFrame.add(b1, b2);
+      braceTransforms.push(
+        { position: [0, ledgerH2 * 0.5, bz], rotation: [0, 0, diagAngle] },
+        { position: [0, ledgerH2 * 0.5, bz], rotation: [0, 0, -diagAngle] }
+      );
     });
+    addScaffoldInstanceBatch(
+      scaffoldFrame, braceGeo, scaffoldPoleMat, braceTransforms, 'instancedScaffoldCrossBraces'
+    );
 
     // Wooden plank catwalks at mid-level for builders
     const frontWalk = new THREE.Mesh(new THREE.BoxGeometry(px * 1.95, 0.06, 0.38), scaffoldPlankMat);
@@ -3247,15 +3298,14 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
     const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.55), scaffoldCrateMat);
     crate.position.set(px - 0.35, 0.24, pz + 0.28);
     scaffoldFrame.add(crate);
-    for (let l = 0; l < 2; l++) {
-      const log = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.1, 0.1, 0.95, 6),
-        scaffoldPoleMat
-      );
-      log.rotation.z = Math.PI / 2;
-      log.position.set(-px + 0.55, 0.12 + l * 0.16, pz + 0.28);
-      scaffoldFrame.add(log);
-    }
+    const scaffoldLogGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.95, 6);
+    const scaffoldLogTransforms: ScaffoldInstanceTransform[] = [0, 1].map((l) => ({
+      position: [-px + 0.55, 0.12 + l * 0.16, pz + 0.28],
+      rotation: [0, 0, Math.PI / 2],
+    }));
+    addScaffoldInstanceBatch(
+      scaffoldFrame, scaffoldLogGeo, scaffoldPoleMat, scaffoldLogTransforms, 'instancedScaffoldLogs'
+    );
   }
 
   group.add(scaffoldGroup);
