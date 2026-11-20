@@ -66,6 +66,9 @@ import {
   getBuildingAssaultProfile,
   getSiegeChannelMultiplier,
   canAfford,
+  canAssembleFieldRam,
+  FIELD_RAM_COST,
+  FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   computeAiWorkerAllocation,
   computeBuildingVisualState,
@@ -209,8 +212,6 @@ interface FieldSiegeProject {
   mesh: THREE.Group;
   progressRing: THREE.Mesh;
 }
-
-const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
 
 export class RtsEngine {
   public container: HTMLElement;
@@ -4949,13 +4950,6 @@ export class RtsEngine {
       return false;
     };
     const age = this.ageByFaction[faction] || 1;
-    if (age < 2) return fail('🔒 野戰工程隊需要時代 II');
-    if (!this.getResearchedTechs(faction).includes('shared_field_engineering')) {
-      return fail('🔒 請先在兵營研發「野戰工程隊」');
-    }
-    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
-      return fail('🪵 這支軍團已有一輛衝車正在組裝');
-    }
     const builders = selected
       .filter(
         (unit) =>
@@ -4966,11 +4960,13 @@ export class RtsEngine {
           (unit.state === 'idle' || unit.state === 'moving')
       )
       .slice(0, 4);
-    if (builders.length < 4) return fail('🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵');
-    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
-
     const resources = this.getResourcesForFaction(faction);
-    if (!canAfford(resources, FIELD_RAM_COST)) return fail('⚠️ 野戰衝車需要 140 木材與 60 黃金');
+    const assemblyCheck = canAssembleFieldRam(age, this.getResearchedTechs(faction), builders.length, resources);
+    if (!assemblyCheck.ok) return fail(assemblyCheck.reason || '⚠️ 目前無法組裝野戰衝車');
+    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
+      return fail('🪵 這支軍團已有一輛衝車正在組裝');
+    }
+    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
     const x = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.x, 0) / builders.length));
     const z = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.z, 0) / builders.length));
     const visual = this.createFieldRamAssemblyVisual(x, z);
@@ -7768,7 +7764,7 @@ export class RtsEngine {
         this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
       }
 
-      const fieldEngineeringTech = findTechDef('shared_field_engineering');
+      const fieldEngineeringTech = findTechDef(FIELD_RAM_TECH_ID);
       const fieldSpendable = {
         ...aiRes,
         food: Math.max(0, aiRes.food - reserveFood),
@@ -7778,7 +7774,7 @@ export class RtsEngine {
       if (
         aiAge >= 2 &&
         fieldEngineeringTech &&
-        !researched.includes('shared_field_engineering') &&
+        !researched.includes(FIELD_RAM_TECH_ID) &&
         aiArmy.filter((u) => u.unitDef.category === 'melee').length >= 4 &&
         fieldResearchHall &&
         canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok &&
@@ -7794,7 +7790,7 @@ export class RtsEngine {
       if (
         aiAge >= 2 &&
         !aiHasRam &&
-        this.getResearchedTechs(aiId).includes('shared_field_engineering') &&
+        this.getResearchedTechs(aiId).includes(FIELD_RAM_TECH_ID) &&
         aiRamBuilders.length >= 4
       ) {
         this.beginFieldRamAssembly(aiId, aiRamBuilders, false);
