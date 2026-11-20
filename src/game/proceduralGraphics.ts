@@ -631,6 +631,9 @@ function addArchedDoorway(
   parent.add(hinges);
 }
 
+const sharedMerlonGeometry = new THREE.BoxGeometry(0.38, 0.36, 0.28);
+const sharedMerlonDummy = new THREE.Object3D();
+
 function addMerlonsAroundBox(
   parent: THREE.Group,
   halfW: number,
