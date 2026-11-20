@@ -2216,6 +2216,18 @@ test('AI survival: damaged frontline units seek shelter by role and personality'
   assert.equal(shouldAiUnitSeekShelter(Number.NaN, 100, 'melee', 'standard'), false);
 });
 
+test('AI garrison recovery: workers return immediately and wounded troops wait until healed', async () => {
+  const { shouldAiUnitLeaveShelter } = await import('./rules');
+
+  assert.equal(shouldAiUnitLeaveShelter(10, 100, 'worker'), true);
+  assert.equal(shouldAiUnitLeaveShelter(71, 100, 'melee'), false);
+  assert.equal(shouldAiUnitLeaveShelter(72, 100, 'melee'), true);
+  assert.equal(shouldAiUnitLeaveShelter(90, 100, 'ranged', 0.9), true);
+  assert.equal(shouldAiUnitLeaveShelter(89, 100, 'ranged', 0.9), false);
+  assert.equal(shouldAiUnitLeaveShelter(100, 0, 'cavalry'), false);
+  assert.equal(shouldAiUnitLeaveShelter(100, 100, 'cavalry', Number.NaN), true);
+});
+
 test('AI economy: rebalance one worker from a clear surplus into the largest resource deficit', () => {
   assert.deepEqual(
     selectAiWorkerReassignment(
