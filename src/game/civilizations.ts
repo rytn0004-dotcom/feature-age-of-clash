@@ -193,7 +193,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
       barracks: ['fantasy_footman'],
       archery_range: ['fantasy_mage'],
-      stable: ['fantasy_paladin'],
+      stable: ['fantasy_paladin', 'scout_rider'],
       siege_workshop: ['fantasy_treant', 'catapult', 'bombard_cannon'],
       landmark_barracks: ['fantasy_footman'],
       landmark_citadel: [],
