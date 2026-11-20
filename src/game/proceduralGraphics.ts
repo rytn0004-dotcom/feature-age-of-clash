@@ -5255,6 +5255,28 @@ const sharedRichQuartzMat = new THREE.MeshStandardMaterial({
   emissive: 0x38bdf8,
   emissiveIntensity: 0.42,
 });
+const sharedGoldCartBodyGeo = new THREE.BoxGeometry(0.76, 0.44, 0.92);
+const sharedGoldMineHaloGeo = new THREE.RingGeometry(1.78, 2.15, 28);
+const sharedGoldMineHaloMat = new THREE.MeshBasicMaterial({
+  color: 0xfacc15,
+  transparent: true,
+  opacity: 0.45,
+  side: THREE.DoubleSide,
+});
+const sharedQuarryCrowbarGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.05, 6);
+const sharedQuarryMalletHandleGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.55, 6);
+const sharedQuarryMalletHeadGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.24, 8);
+const sharedQuarryStoneHaloGeo = new THREE.RingGeometry(1.6, 1.95, 28);
+const sharedQuarryStoneHaloMat = new THREE.MeshBasicMaterial({
+  color: 0x38bdf8,
+  transparent: true,
+  opacity: 0.4,
+  side: THREE.DoubleSide,
+});
+const sharedQuarryCraneBraceGeo = new THREE.BoxGeometry(1.05, 0.1, 0.1);
+const sharedQuarryPulleyWheelGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12);
+const sharedQuarryRopeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.85, 5);
+
 
 interface VisualInstanceTransform {
   position: [number, number, number];
@@ -5406,15 +5428,19 @@ export function createGoldMineMesh(
   );
 
   // Mine Adit Timber Portal + Wooden Track Sleepers + Iron Rails + Ore Cart
-  const post1 = new THREE.Mesh(sharedGoldPostGeo, sharedWoodScaffoldMat);
-  post1.position.set(-1.15, 1.15, 1.28);
-  post1.rotation.z = -0.08;
-  const post2 = new THREE.Mesh(sharedGoldPostGeo, sharedWoodScaffoldMat);
-  post2.position.set(1.15, 1.15, 1.28);
-  post2.rotation.z = 0.08;
+  createVisualInstanceBatch(
+    group,
+    sharedGoldPostGeo,
+    sharedWoodScaffoldMat,
+    [
+      { position: [-1.15, 1.15, 1.28], rotation: [0, 0, -0.08] },
+      { position: [1.15, 1.15, 1.28], rotation: [0, 0, 0.08] },
+    ],
+    'instancedGoldMineAditPosts'
+  );
   const beam = new THREE.Mesh(sharedGoldBeamGeo, sharedWoodScaffoldMat);
   beam.position.set(0, 2.28, 1.28);
-  group.add(post1, post2, beam);
+  group.add(beam);
 
   // Rail sleepers & twin iron rails share one batch each.
   createVisualInstanceBatch(
@@ -5435,7 +5461,7 @@ export function createGoldMineMesh(
   // Rolling Wooden Ore Cart loaded with gold nuggets
   const cartGroup = new THREE.Group();
   cartGroup.position.set(0, 0.34, 1.92);
-  const cartBody = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.44, 0.92), sharedWoodScaffoldMat);
+  const cartBody = new THREE.Mesh(sharedGoldCartBodyGeo, sharedWoodScaffoldMat);
   cartBody.castShadow = true;
   cartGroup.add(cartBody);
   createVisualInstanceBatch(
@@ -5470,10 +5496,7 @@ export function createGoldMineMesh(
   addWarmLantern(group, 0.88, 1.96, 1.32, sharedIronRailMat);
 
   if (isRich) {
-    const goldHalo = new THREE.Mesh(
-      new THREE.RingGeometry(1.78, 2.15, 28),
-      new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
-    );
+    const goldHalo = new THREE.Mesh(sharedGoldMineHaloGeo, sharedGoldMineHaloMat);
     goldHalo.rotation.x = -Math.PI / 2;
     goldHalo.position.y = 0.05;
     group.add(goldHalo);
@@ -5557,13 +5580,13 @@ export function createStoneQuarryMesh(
   );
 
   // Quarry iron crowbar wedge & mason's wooden mallet leaning on blocks
-  const crowbar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.05, 6), sharedIronRailMat);
+  const crowbar = new THREE.Mesh(sharedQuarryCrowbarGeo, sharedIronRailMat);
   crowbar.position.set(0.88, 0.45, 1.18);
   crowbar.rotation.z = 0.42;
-  const malletHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.55, 6), sharedWoodScaffoldMat);
+  const malletHandle = new THREE.Mesh(sharedQuarryMalletHandleGeo, sharedWoodScaffoldMat);
   malletHandle.position.set(-0.55, 0.62, 1.05);
   malletHandle.rotation.set(0.35, 0, -0.5);
-  const malletHead = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.24, 8), sharedWoodScaffoldMat);
+  const malletHead = new THREE.Mesh(sharedQuarryMalletHeadGeo, sharedWoodScaffoldMat);
   malletHead.position.set(-0.36, 0.76, 1.12);
   malletHead.rotation.z = Math.PI / 2;
   group.add(crowbar, malletHandle, malletHead);
@@ -5587,10 +5610,7 @@ export function createStoneQuarryMesh(
       )
     );
 
-    const stoneHalo = new THREE.Mesh(
-      new THREE.RingGeometry(1.6, 1.95, 28),
-      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
-    );
+    const stoneHalo = new THREE.Mesh(sharedQuarryStoneHaloGeo, sharedQuarryStoneHaloMat);
     stoneHalo.rotation.x = -Math.PI / 2;
     stoneHalo.position.y = 0.05;
     group.add(stoneHalo);
@@ -5600,16 +5620,16 @@ export function createStoneQuarryMesh(
   const cranePost = new THREE.Mesh(sharedCranePostGeo, sharedWoodScaffoldMat);
   cranePost.position.set(1.32, 1.35, -0.5);
   cranePost.castShadow = true;
-  const craneBrace = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.1, 0.1), sharedWoodScaffoldMat);
+  const craneBrace = new THREE.Mesh(sharedQuarryCraneBraceGeo, sharedWoodScaffoldMat);
   craneBrace.position.set(0.95, 2.05, -0.5);
   craneBrace.rotation.z = 0.72;
   const craneArm = new THREE.Mesh(sharedCraneArmGeo, sharedWoodScaffoldMat);
   craneArm.position.set(0.55, 2.6, -0.5);
   craneArm.rotation.z = -0.24;
-  const pulleyWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12), sharedIronRailMat);
+  const pulleyWheel = new THREE.Mesh(sharedQuarryPulleyWheelGeo, sharedIronRailMat);
   pulleyWheel.rotation.x = Math.PI / 2;
   pulleyWheel.position.set(-0.22, 2.75, -0.5);
-  const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.85, 5), sharedWoodScaffoldMat);
+  const rope = new THREE.Mesh(sharedQuarryRopeGeo, sharedWoodScaffoldMat);
   rope.position.set(-0.22, 2.15, -0.5);
   const hungBlock = new THREE.Mesh(sharedQuarryBlockGeo, sharedStoneLightMat);
   hungBlock.scale.setScalar(0.62);
