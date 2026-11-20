@@ -25,6 +25,63 @@ export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
 
+export const WALL_SEGMENT_SPACING = 2.7;
+
+export interface WallChainPoint {
+  x: number;
+  z: number;
+}
+
+export interface WallSegmentPlacement extends WallChainPoint {
+  rotationY: number;
+  sectionIndex: number;
+}
+
+/**
+ * Converts clicked wall corners into oriented modular wall pieces.
+ * Each section is evenly subdivided so the 2.85-unit wall mesh slightly overlaps its neighbours.
+ */
+export function layoutWallChain(
+  points: readonly WallChainPoint[],
+  maxSpacing = WALL_SEGMENT_SPACING
+): WallSegmentPlacement[] {
+  if (points.length < 2 || !Number.isFinite(maxSpacing) || maxSpacing <= 0) return [];
+
+  const placements: WallSegmentPlacement[] = [];
+  for (let sectionIndex = 0; sectionIndex < points.length - 1; sectionIndex++) {
+    const start = points[sectionIndex];
+    const end = points[sectionIndex + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (!Number.isFinite(length) || length < 0.75) continue;
+
+    const count = Math.max(1, Math.ceil(length / maxSpacing));
+    const rotationY = -Math.atan2(dz, dx);
+    for (let index = 0; index < count; index++) {
+      const t = (index + 0.5) / count;
+      placements.push({
+        x: start.x + dx * t,
+        z: start.z + dz * t,
+        rotationY,
+        sectionIndex,
+      });
+    }
+  }
+  return placements;
+}
+
+/** Wall costs scale by the number of modular segments, not by the number of clicks. */
+export function calculateWallChainCost(segmentCount: number, costPerSegment: Resources): Resources {
+  const count = Math.max(0, Math.floor(Number.isFinite(segmentCount) ? segmentCount : 0));
+  return {
+    food: (costPerSegment.food || 0) * count,
+    wood: (costPerSegment.wood || 0) * count,
+    gold: (costPerSegment.gold || 0) * count,
+    stone: (costPerSegment.stone || 0) * count,
+  };
+}
+
 /**
  * Per-second income from a captured strategic shrine.
  * The three shrine identities deliberately trade food, timber, gold and stone.
