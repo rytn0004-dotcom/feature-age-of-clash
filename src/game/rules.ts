@@ -25,6 +25,38 @@ export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
 
+export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
+export const WALL_BREACH_HP_RATIO = 0.32;
+export const WALL_TOWER_LINK_RANGE = 5.8;
+
+/** A siege hit opens a repairable breach once a wall segment falls below its structural threshold. */
+export function shouldBreachWallAfterSiegeHit(
+  building: Pick<BuildingEntity, 'buildingDef' | 'hp' | 'maxHp' | 'wallBreached'>
+): boolean {
+  return (
+    !!building.buildingDef.isWall &&
+    !building.wallBreached &&
+    building.hp > 0 &&
+    building.hp <= building.maxHp * WALL_BREACH_HP_RATIO
+  );
+}
+
+/** A completed friendly watchtower reinforces nearby wall sections and gates. */
+export function isWallLinkedToTower(
+  wall: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed' | 'wallBreached'>,
+  buildings: readonly Pick<BuildingEntity, 'buildingType' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed'>[]
+): boolean {
+  if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed || wall.wallBreached) return false;
+  return buildings.some(
+    (building) =>
+      building.buildingType === 'tower' &&
+      building.faction === wall.faction &&
+      building.hp > 0 &&
+      building.isConstructed &&
+      getDistance(wall.x, wall.z, building.x, building.z) <= WALL_TOWER_LINK_RANGE
+  );
+}
+
 export const WALL_SEGMENT_SPACING = 2.7;
 
 export interface WallChainPoint {
@@ -242,7 +274,7 @@ export function getUnitVsUnitDamage(
  * Returns effective building armor considering base armor, Age era reinforcement, and defensive techs.
  */
 export function getEffectiveBuildingArmor(
-  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType'>,
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'wallTowerLinked'>,
   defenderAge = 1,
   defenderTechIds: string[] = []
 ): number {
@@ -255,7 +287,8 @@ export function getEffectiveBuildingArmor(
       techBonus += tech.effect.buildingArmorBonus;
     }
   }
-  return baseArmor + ageBonus + techBonus;
+  const towerLinkBonus = building.wallTowerLinked ? 4 : 0;
+  return baseArmor + ageBonus + techBonus + towerLinkBonus;
 }
 
 
