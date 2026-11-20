@@ -55,7 +55,7 @@ export function shouldAiUnitSeekShelter(
     special: 0.34,
   };
   const personalityScale = personality === 'defensive'
-    ? 1.25
+    ? 1.3
     : personality === 'hard'
       ? 0.88
       : personality === 'easy'
