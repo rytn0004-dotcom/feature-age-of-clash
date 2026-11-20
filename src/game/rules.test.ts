@@ -2195,7 +2195,7 @@ test('siege tactics: select nearby frontline escorts and preserve units with act
   ];
 
   const escort = selectSiegeEscortUnits(siege, candidates, 2);
-  assert.deepEqual(escort.map((unit) => unit.id), ['far-melee', 'near-cavalry']);
+  assert.deepEqual(escort.map((unit) => unit.id), ['near-cavalry', 'far-melee']);
   assert.deepEqual(selectSiegeEscortUnits([], candidates, 2), []);
   assert.deepEqual(selectSiegeEscortUnits(siege, candidates, 0), []);
 });
