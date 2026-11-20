@@ -175,6 +175,9 @@ import {
   attachDeerAssetLod,
   updateDeerVisualLod,
   updateDeerAssetAnimation,
+  attachFishAssetLod,
+  updateFishVisualLod,
+  updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 
@@ -1558,6 +1561,7 @@ export class RtsEngine {
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
     if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
+    if (resolvedSubtype === 'shore_fish' || resolvedSubtype === 'deep_fish') attachFishAssetLod(mesh);
     if (type === 'wood' && nodeTier === 'standard') {
       const variantSeed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
       attachKayKitTreeLod(mesh, variantSeed % 2 === 0 ? 'A' : 'B');
@@ -3358,6 +3362,9 @@ export class RtsEngine {
       }
 
       this.updateUnitVisualLods(rawDt);
+      this.nodeMeshes.forEach((mesh) => {
+        if (mesh.userData.fishAssetLod) updateFishAssetAnimations(mesh, rawDt);
+      });
       this.renderer.render(this.scene, this.camera);
       this.updateAdaptiveQuality(now);
       this.updatePerformanceOverlay(now);
@@ -3764,6 +3771,9 @@ export class RtsEngine {
       if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
       if (mesh.userData.deerAssetLod) {
         updateDeerVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
+      }
+      if (mesh.userData.fishAssetLod) {
+        updateFishVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
       }
     });
   }

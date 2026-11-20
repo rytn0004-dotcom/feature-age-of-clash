@@ -282,3 +282,161 @@ export function updateTreeVisualLod(
     model.position.y = minY * (1 - scaleY);
   }
 }
+
+export type FishSchoolType = 'shore' | 'deep';
+type FishModelVariant = 'Fish1' | 'Fish2' | 'Fish3' | 'Shark' | 'Dolphin' | 'Manta_ray';
+interface FishPrototype {
+  scene: THREE.Group;
+  animations: THREE.AnimationClip[];
+}
+interface FishLodTransform {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch?: number;
+  scale: number;
+}
+const fishAssetUrls: Record<FishModelVariant, string> = {
+  Fish1: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Fish1.glb`,
+  Fish2: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Fish2.glb`,
+  Fish3: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Fish3.glb`,
+  Shark: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Shark.glb`,
+  Dolphin: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Dolphin.glb`,
+  Manta_ray: `${import.meta.env.BASE_URL}assets/models/quaternius/fish/Manta_ray.glb`,
+};
+const fishPrototypeCache = new Map<FishModelVariant, Promise<FishPrototype>>();
+const fishLodWorldCenter = new THREE.Vector3();
+const fishLodWorldScale = new THREE.Vector3();
+
+function loadFishPrototype(variant: FishModelVariant): Promise<FishPrototype> {
+  let pending = fishPrototypeCache.get(variant);
+  if (!pending) {
+    pending = gltfLoader.loadAsync(fishAssetUrls[variant]).then((gltf) => {
+      gltf.scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+      });
+      return { scene: gltf.scene, animations: gltf.animations };
+    });
+    fishPrototypeCache.set(variant, pending);
+    pending.catch(() => {
+      if (fishPrototypeCache.get(variant) === pending) fishPrototypeCache.delete(variant);
+    });
+  }
+  return pending;
+}
+
+/** Adds three animated Quaternius fish as a distant LOD without replacing water or hit-test meshes. */
+export function attachFishAssetLod(root: THREE.Group): void {
+  if (root.userData.fishAssetLoadStarted || !root.userData.fishDetailedVisual) return;
+  const schoolType = root.userData.fishVisualType as FishSchoolType | undefined;
+  const transforms = root.userData.fishAssetTransforms as FishLodTransform[] | undefined;
+  if (!schoolType || !transforms?.length) return;
+  root.userData.fishAssetLoadStarted = true;
+
+  const variants: FishModelVariant[] = schoolType === 'shore'
+    ? ['Fish1', 'Fish2', 'Fish3']
+    : ['Shark', 'Dolphin', 'Manta_ray'];
+
+  void Promise.all(variants.map(loadFishPrototype))
+    .then((prototypes) => {
+      if (!root.parent || root.userData.fishAssetLod) return;
+
+      const simplifiedVisual = new THREE.Group();
+      simplifiedVisual.name = 'fishAssetLod';
+      simplifiedVisual.visible = false;
+      const mixers: THREE.AnimationMixer[] = [];
+
+      prototypes.forEach((prototype, index) => {
+        const entry = transforms[index];
+        if (!entry) return;
+
+        const model = cloneSkeleton(prototype.scene) as THREE.Group;
+        // All fish assets use local -Z as their forward axis; the game school faces +X.
+        model.rotation.y = -Math.PI / 2;
+        model.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(model);
+        const horizontalLength = Math.max(
+          0.1,
+          bounds.max.x - bounds.min.x,
+          bounds.max.z - bounds.min.z
+        );
+        const targetLength = schoolType === 'shore' ? 0.52 : 0.72;
+        const scale = targetLength / horizontalLength;
+        model.scale.setScalar(scale);
+        model.position.y = -((bounds.min.y + bounds.max.y) * 0.5) * scale;
+
+        const fishRoot = new THREE.Group();
+        fishRoot.position.set(entry.x, entry.y, entry.z);
+        fishRoot.rotation.set(0, entry.yaw, entry.pitch || 0);
+        fishRoot.scale.setScalar(entry.scale);
+        fishRoot.add(model);
+        simplifiedVisual.add(fishRoot);
+
+        const swimClip = prototype.animations.find((clip) =>
+          clip.name.toLowerCase().includes('swim')
+        ) || prototype.animations[0];
+        if (swimClip) {
+          const mixer = new THREE.AnimationMixer(model);
+          const swim = mixer.clipAction(swimClip, model);
+          swim.setLoop(THREE.LoopRepeat, Infinity);
+          swim.play();
+          mixers.push(mixer);
+        }
+      });
+
+      if (mixers.length === 0) {
+        root.userData.fishAssetLoadStarted = false;
+        return;
+      }
+
+      root.add(simplifiedVisual);
+      root.userData.fishAssetLod = simplifiedVisual;
+      root.userData.fishAnimationMixers = mixers;
+      root.userData.fishLodUsingDetailed = true;
+    })
+    .catch(() => {
+      // The instanced procedural fish remain visible if any GLB cannot be fetched.
+      root.userData.fishAssetLoadStarted = false;
+    });
+}
+
+/** Swim animations continue while the scene is paused, but only for visible LOD models. */
+export function updateFishAssetAnimations(root: THREE.Group, dt: number): void {
+  const asset = root.userData.fishAssetLod as THREE.Group | undefined;
+  if (!asset?.visible) return;
+  const mixers = root.userData.fishAnimationMixers as THREE.AnimationMixer[] | undefined;
+  mixers?.forEach((mixer) => mixer.update(Math.max(0, Math.min(dt, 0.1))));
+}
+
+/** Switch fish geometry by projected size while keeping the water, ripples and raycast disc visible. */
+export function updateFishVisualLod(
+  root: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  viewportHeight: number,
+  forceHighDetail = false
+): void {
+  const detailedVisual = root.userData.fishDetailedVisual as THREE.Group | undefined;
+  const simplifiedVisual = root.userData.fishAssetLod as THREE.Group | undefined;
+  if (!detailedVisual || !simplifiedVisual) return;
+
+  root.updateMatrixWorld(true);
+  root.getWorldPosition(fishLodWorldCenter);
+  root.getWorldScale(fishLodWorldScale);
+  fishLodWorldCenter.y += 0.45 * fishLodWorldScale.y;
+
+  const distance = Math.max(0.001, camera.position.distanceTo(fishLodWorldCenter));
+  const safeHeight = Math.max(1, viewportHeight);
+  const focalPixels = safeHeight /
+    (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
+  const projectedRadius = (1.05 * fishLodWorldScale.x * focalPixels) / distance;
+  const wasDetailed = root.userData.fishLodUsingDetailed !== false;
+  const showDetailed = forceHighDetail || (wasDetailed ? projectedRadius >= 24 : projectedRadius >= 30);
+
+  if (detailedVisual.visible !== showDetailed) detailedVisual.visible = showDetailed;
+  if (simplifiedVisual.visible !== !showDetailed) simplifiedVisual.visible = !showDetailed;
+  root.userData.fishLodUsingDetailed = showDetailed;
+}

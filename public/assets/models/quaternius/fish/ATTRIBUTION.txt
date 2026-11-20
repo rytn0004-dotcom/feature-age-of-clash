@@ -1,0 +1,10 @@
+Models: Fish1.glb, Fish2.glb, Fish3.glb, Shark.glb, Dolphin.glb, Manta_ray.glb
+Author: Quaternius
+Pack: Animated Fish Pack
+Official pack page: https://quaternius.com/packs/animatedfish.html
+Source GLB copies: https://github.com/trebeljahr/quaternius-showcase/tree/main/public/glb/fish_pack
+License: CC0 1.0 Universal
+License deed: https://creativecommons.org/publicdomain/zero/1.0/
+
+Each model includes a rigged Swim animation.
+Used as distant animated fish for the shore and deep-water resource schools.
