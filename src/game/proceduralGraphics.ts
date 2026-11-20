@@ -1573,6 +1573,203 @@ export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
 }
 
 
+export function createStableMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const woodMaps = getTimberWoodMaps();
+  const stoneMaps = getStoneMasonryMaps();
+  const roofMaps = getRoofShingleMaps();
+  addContactShadow(group, 3.7);
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x64748b,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    roughnessMap: stoneMaps.roughnessMap || null,
+    roughness: 0.94,
+  });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: colors.civilization === 'anime' ? 0x7c2d12 : colors.civilization === 'fantasy' ? 0x166534 : 0x8b5a2b,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughnessMap: woodMaps.roughnessMap || null,
+    roughness: 0.86,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    map: roofMaps.map,
+    normalMap: roofMaps.normalMap,
+    roughnessMap: roofMaps.roughnessMap || null,
+    roughness: 0.7,
+    metalness: 0.08,
+  });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x292524, roughness: 0.92 });
+
+  const foundation = new THREE.Mesh(roundedBuildingBox(6.15, 0.48, 4.75), stoneMat);
+  foundation.position.y = 0.24;
+  foundation.receiveShadow = true;
+  group.add(foundation);
+
+  const rearWall = new THREE.Mesh(roundedBuildingBox(5.7, 2.2, 0.28), timberMat);
+  rearWall.position.set(0, 1.3, -1.95);
+  rearWall.castShadow = true;
+  group.add(rearWall);
+
+  // Three open stable bays with heavy timber posts and low stall dividers.
+  const postGeo = new THREE.BoxGeometry(0.3, 2.65, 0.3);
+  const railGeo = new THREE.BoxGeometry(2.45, 0.16, 0.14);
+  [-2.75, -0.95, 0.95, 2.75].forEach((x) => {
+    const post = new THREE.Mesh(postGeo, timberMat);
+    post.position.set(x, 1.48, 1.65);
+    post.castShadow = true;
+    group.add(post);
+  });
+  [-1.85, 0, 1.85].forEach((x) => {
+    const divider = new THREE.Mesh(railGeo, timberMat);
+    divider.position.set(x, 0.78, 0.78);
+    group.add(divider);
+  });
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.28, 0.34), timberMat);
+  lintel.position.set(0, 2.72, 1.65);
+  lintel.castShadow = true;
+  group.add(lintel);
+
+  const roof = new THREE.Mesh(sharedArcheryCanopyGeo, roofMat);
+  roof.scale.set(1.34, 1.0, 1.2);
+  roof.position.set(0, 2.95, -0.12);
+  roof.castShadow = true;
+  group.add(roof);
+  addGableRoofShingles(group, 3.15, 1.95, 2.95, 1.825, roofMat, 8);
+
+  // Feed troughs and hay bales make the stable readable from the RTS camera height.
+  [-1.85, 0, 1.85].forEach((x) => {
+    const trough = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.24, 0.42), darkMat);
+    trough.position.set(x, 0.56, 2.18);
+    group.add(trough);
+    const hay = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), new THREE.MeshStandardMaterial({ color: 0xd6a84b, roughness: 0.95 }));
+    hay.scale.set(1.25, 0.7, 0.8);
+    hay.position.set(x, 0.95, -1.05);
+    group.add(hay);
+  });
+
+  const badge = createBadgeSprite(colors.isHostile ? '軍馬廄' : '騎兵馬廄', '🐎', '1250', 1.0, colors.isHostile, false);
+  badge.position.set(0, 4.65, 0);
+  badge.name = 'bldgBadge';
+  group.add(badge);
+  return group;
+}
+
+export function createSiegeWorkshopMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const woodMaps = getTimberWoodMaps();
+  const stoneMaps = getStoneMasonryMaps();
+  const roofMaps = getRoofShingleMaps();
+  addContactShadow(group, 4.0);
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x64748b,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    roughnessMap: stoneMaps.roughnessMap || null,
+    roughness: 0.96,
+  });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: colors.civilization === 'anime' ? 0x7f1d1d : colors.civilization === 'fantasy' ? 0x365314 : 0x754521,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughnessMap: woodMaps.roughnessMap || null,
+    roughness: 0.88,
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    map: roofMaps.map,
+    normalMap: roofMaps.normalMap,
+    roughnessMap: roofMaps.roughnessMap || null,
+    roughness: 0.72,
+  });
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.82 });
+  const oakMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, map: woodMaps.map, roughness: 0.86 });
+
+  const foundation = new THREE.Mesh(roundedBuildingBox(6.7, 0.58, 5.35), stoneMat);
+  foundation.position.y = 0.29;
+  foundation.receiveShadow = true;
+  group.add(foundation);
+
+  const workShed = new THREE.Mesh(roundedBuildingBox(5.9, 2.2, 3.9), timberMat);
+  workShed.position.set(0, 1.48, -0.48);
+  workShed.castShadow = true;
+  group.add(workShed);
+  const frontOpening = new THREE.Mesh(roundedBuildingBox(3.3, 1.85, 0.16), darkMatForSiege);
+  frontOpening.position.set(0, 1.28, 1.52);
+  group.add(frontOpening);
+
+  const framePostGeo = new THREE.BoxGeometry(0.34, 3.35, 0.34);
+  [-2.85, 2.85].forEach((x) => {
+    const post = new THREE.Mesh(framePostGeo, timberMat);
+    post.position.set(x, 1.9, 1.65);
+    post.castShadow = true;
+    group.add(post);
+  });
+  const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.32, 0.34), timberMat);
+  crossBeam.position.set(0, 3.3, 1.65);
+  group.add(crossBeam);
+
+  // A compact timber A-frame and iron-rimmed wheel signal siege production at a glance.
+  const aBeamGeo = new THREE.BoxGeometry(0.22, 3.2, 0.24);
+  [-1, 1].forEach((side) => {
+    const beam = new THREE.Mesh(aBeamGeo, oakMat);
+    beam.position.set(side * 1.22, 2.05, 0.68);
+    beam.rotation.z = -side * 0.42;
+    beam.castShadow = true;
+    group.add(beam);
+  });
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 3.0, 10), ironMat);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.set(0, 1.1, 2.15);
+  group.add(axle);
+  [-1.35, 1.35].forEach((x) => {
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.12, 8, 18), oakMat);
+    wheel.position.set(x, 1.0, 2.18);
+    wheel.rotation.y = Math.PI / 2;
+    wheel.castShadow = true;
+    group.add(wheel);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.38, 10), ironMat);
+    hub.rotation.z = Math.PI / 2;
+    hub.position.copy(wheel.position);
+    group.add(hub);
+  });
+
+  const roof = new THREE.Mesh(sharedArcheryCanopyGeo, roofMat);
+  roof.scale.set(1.45, 1.12, 1.35);
+  roof.position.set(0, 3.42, -0.45);
+  roof.castShadow = true;
+  group.add(roof);
+  addGableRoofShingles(group, 3.6, 2.15, 3.42, 1.825, roofMat, 9);
+
+  // Prepared oak logs and iron bands stored beside the assembly frame.
+  const log = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.6, 10), oakMat);
+  log.rotation.z = Math.PI / 2;
+  log.position.set(0, 0.78, -2.1);
+  group.add(log);
+  const ironBand = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.045, 6, 12), ironMat);
+  ironBand.rotation.y = Math.PI / 2;
+  [-0.82, 0.82].forEach((x) => {
+    const band = ironBand.clone();
+    band.position.set(x, 0.78, -2.1);
+    group.add(band);
+  });
+
+  const badge = createBadgeSprite(colors.isHostile ? '攻城作坊' : '攻城器工坊', '⚙️', '1450', 1.0, colors.isHostile, false);
+  badge.position.set(0, 5.2, 0);
+  badge.name = 'bldgBadge';
+  group.add(badge);
+  return group;
+}
+
+const darkMatForSiege = new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.98 });
+
+
 export function createGranaryMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -4180,6 +4377,12 @@ export function createBuildingMesh(
       break;
     case 'archery_range':
       group = createArcheryRangeMesh(faction);
+      break;
+    case 'stable':
+      group = createStableMesh(faction);
+      break;
+    case 'siege_workshop':
+      group = createSiegeWorkshopMesh(faction);
       break;
     case 'dock':
       group = createDockMesh(faction);
