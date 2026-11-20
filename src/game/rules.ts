@@ -26,6 +26,44 @@ export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
 
 export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
+
+/**
+ * AI combat units withdraw to friendly garrisons when critically damaged.
+ * Ranged troops are protected earlier; siege engines and workers use their
+ * own specialist survival/economy routines and are deliberately excluded.
+ */
+export function shouldAiUnitSeekShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  personality: 'easy' | 'standard' | 'hard' | 'defensive' = 'standard'
+): boolean {
+  if (
+    category === 'worker' ||
+    category === 'siege' ||
+    !Number.isFinite(hp) ||
+    !Number.isFinite(maxHp) ||
+    maxHp <= 0
+  ) {
+    return false;
+  }
+
+  const roleThreshold: Partial<Record<UnitCategory, number>> = {
+    melee: 0.28,
+    ranged: 0.38,
+    cavalry: 0.32,
+    special: 0.34,
+  };
+  const personalityScale = personality === 'defensive'
+    ? 1.25
+    : personality === 'hard'
+      ? 0.88
+      : personality === 'easy'
+        ? 0.82
+        : 1;
+
+  return Math.max(0, hp) / maxHp <= (roleThreshold[category] || 0.3) * personalityScale;
+}
 export const WALL_BREACH_HP_RATIO = 0.32;
 export const WALL_TOWER_LINK_RANGE = 5.8;
 
