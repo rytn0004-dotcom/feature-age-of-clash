@@ -5827,6 +5827,8 @@ export function addResourceDepletionRemnant(
 
 const sharedBushClumpGeo = makeFoliageClusterGeo(0.56, 1);
 const sharedBerryDotGeo = new THREE.SphereGeometry(0.085, 8, 8);
+const sharedBerryStemGeo = new THREE.CylinderGeometry(0.035, 0.055, 0.5, 6);
+const sharedBerryBlossomGeo = new THREE.OctahedronGeometry(0.06, 0);
 const sharedBushLeafMat = new THREE.MeshStandardMaterial({
   color: 0x1e7e34,
   map: resFoliageMaps.map,
@@ -5849,45 +5851,64 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
   const group = new THREE.Group();
   addContactShadow(group, 1.15);
 
-  // Woody stems at shrub core
-  [-0.18, 0, 0.2].forEach((sx, i) => {
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, 0.5, 6), sharedTreeTrunkMat);
-    stem.position.set(sx, 0.22, (i - 1) * 0.1);
-    stem.rotation.z = sx * 0.6;
-    group.add(stem);
-  });
+  createResourceInstanceBatch(
+    group,
+    sharedBerryStemGeo,
+    sharedTreeTrunkMat,
+    [-0.18, 0, 0.2].map((sx, i) => ({
+      position: [sx, 0.22, (i - 1) * 0.1],
+      rotation: [0, 0, sx * 0.6],
+    })),
+    'instancedBerryBushStems'
+  );
 
-  // 5 clustered organic shrub lobes
-  [
+  const clumpConfigs: Array<[number, number, number, number, number, number]> = [
     [0, 0.56, 0, 1.25, 0.9, 1.15],
     [0.44, 0.42, 0.25, 0.85, 0.72, 0.85],
     [-0.42, 0.44, -0.18, 0.88, 0.75, 0.82],
     [0.12, 0.45, -0.42, 0.82, 0.72, 0.82],
     [-0.18, 0.4, 0.44, 0.8, 0.7, 0.8],
-  ].forEach(([cx, cy, cz, sx, sy, sz], i) => {
-    const clump = new THREE.Mesh(sharedBushClumpGeo, sharedBushLeafMat);
-    // Deterministic per-lobe variation breaks the repeated round silhouette without adding geometry.
-    const fullness = 1 + Math.sin(i * 2.17) * 0.055;
-    clump.position.set(cx, cy + Math.cos(i * 1.73) * 0.025, cz);
-    clump.scale.set(sx * fullness, sy * (1 + Math.cos(i * 1.31) * 0.045), sz * (1 - Math.sin(i * 1.91) * 0.05));
-    clump.rotation.set(Math.sin(i * 1.47) * 0.075, i * 0.8, Math.cos(i * 1.23) * 0.075);
-    clump.castShadow = true;
-    group.add(clump);
-  });
+  ];
+  const clumpTransforms: ResourceInstanceTransform[] = clumpConfigs.map(
+    ([cx, cy, cz, sx, sy, sz], i) => {
+      const fullness = 1 + Math.sin(i * 2.17) * 0.055;
+      return {
+        position: [cx, cy + Math.cos(i * 1.73) * 0.025, cz],
+        scale: [
+          sx * fullness,
+          sy * (1 + Math.cos(i * 1.31) * 0.045),
+          sz * (1 - Math.sin(i * 1.91) * 0.05),
+        ],
+        rotation: [
+          Math.sin(i * 1.47) * 0.075,
+          i * 0.8,
+          Math.cos(i * 1.23) * 0.075,
+        ],
+      };
+    }
+  );
+  createResourceInstanceBatch(
+    group,
+    sharedBushClumpGeo,
+    sharedBushLeafMat,
+    clumpTransforms,
+    'instancedBerryBushLeafClumps',
+    true
+  );
 
-  // Tiny cream shrub blossoms nestled between berries
-  [
-    [-0.36, 0.84, 0.15],
-    [0.36, 0.8, 0.24],
-    [0.08, 0.98, -0.22],
-    [-0.18, 0.72, 0.48],
-  ].forEach(([fx, fy, fz]) => {
-    const blossom = new THREE.Mesh(new THREE.OctahedronGeometry(0.06, 0), sharedBushBlossomMat);
-    blossom.position.set(fx, fy, fz);
-    group.add(blossom);
-  });
+  createResourceInstanceBatch(
+    group,
+    sharedBerryBlossomGeo,
+    sharedBushBlossomMat,
+    [
+      [-0.36, 0.84, 0.15],
+      [0.36, 0.8, 0.24],
+      [0.08, 0.98, -0.22],
+      [-0.18, 0.72, 0.48],
+    ].map(([fx, fy, fz]) => ({ position: [fx, fy, fz] })),
+    'instancedBerryBushBlossoms'
+  );
 
-  // Plump glossy wild berry racemes
   const berryOffsets: Array<[number, number, number]> = [
     [-0.3, 0.82, 0.42],
     [-0.22, 0.76, 0.52],
@@ -5902,14 +5923,15 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     [-0.08, 0.98, 0.16],
     [0.02, 0.68, 0.62],
   ];
-  const berryDots: THREE.Mesh[] = [];
-  berryOffsets.forEach(([bx, by, bz]) => {
-    const berry = new THREE.Mesh(sharedBerryDotGeo, sharedBerryFruitMat);
-    berry.position.set(bx, by, bz);
-    group.add(berry);
-    berryDots.push(berry);
-  });
-  group.userData.berryDots = berryDots;
+  const berryBatch = createResourceInstanceBatch(
+    group,
+    sharedBerryDotGeo,
+    sharedBerryFruitMat,
+    berryOffsets.map(([bx, by, bz]) => ({ position: [bx, by, bz] })),
+    'instancedBerryBushFruit'
+  );
+  group.userData.berryFruitBatch = berryBatch;
+  group.userData.berryFruitCount = berryOffsets.length;
 
   if (hasBadge) {
     const badge = createBadgeSprite('野生漿果', '🫐', `${amount}`, 1, false, true, '快速採集糧食');
@@ -5978,24 +6000,60 @@ export function updateResourceNodeDepletionVisual(
     return;
   }
 
-  if (subtype === 'berry' && Array.isArray(mesh.userData.berryDots)) {
-    const dots = mesh.userData.berryDots as THREE.Mesh[];
-    const visibleCount = Math.ceil(dots.length * ratio);
-    dots.forEach((dot, idx) => {
-      dot.visible = idx < visibleCount;
-    });
-    return;
+  if (subtype === 'berry') {
+    const berryBatch = mesh.userData.berryFruitBatch as THREE.InstancedMesh | undefined;
+    const berryCount = mesh.userData.berryFruitCount as number | undefined;
+    if (berryBatch && typeof berryCount === 'number') {
+      berryBatch.count = Math.ceil(berryCount * ratio);
+      return;
+    }
+
+    if (Array.isArray(mesh.userData.berryDots)) {
+      const dots = mesh.userData.berryDots as THREE.Mesh[];
+      const visibleCount = Math.ceil(dots.length * ratio);
+      dots.forEach((dot, idx) => {
+        dot.visible = idx < visibleCount;
+      });
+      return;
+    }
   }
 
   if (Array.isArray(mesh.userData.depletableParts)) {
-    const parts = mesh.userData.depletableParts as Array<{ mesh: THREE.Object3D; baseScale: THREE.Vector3 }>;
+    const parts = mesh.userData.depletableParts as DepletableVisualPart[];
     const factor = 0.42 + 0.58 * ratio;
-    parts.forEach((p) => {
-      p.mesh.scale.set(
-        p.baseScale.x * factor,
-        p.baseScale.y * factor,
-        p.baseScale.z * factor
-      );
+    const changedInstances = new Set<THREE.InstancedMesh>();
+
+    parts.forEach((part) => {
+      if (typeof part.instanceIndex === 'number' && part.baseMatrix) {
+        part.baseMatrix.decompose(
+          depletableInstancePosition,
+          depletableInstanceQuaternion,
+          depletableInstanceScale
+        );
+        depletableInstanceScale.set(
+          part.baseScale.x * factor,
+          part.baseScale.y * factor,
+          part.baseScale.z * factor
+        );
+        depletableInstanceMatrix.compose(
+          depletableInstancePosition,
+          depletableInstanceQuaternion,
+          depletableInstanceScale
+        );
+        const batch = part.mesh as THREE.InstancedMesh;
+        batch.setMatrixAt(part.instanceIndex, depletableInstanceMatrix);
+        changedInstances.add(batch);
+      } else {
+        part.mesh.scale.set(
+          part.baseScale.x * factor,
+          part.baseScale.y * factor,
+          part.baseScale.z * factor
+        );
+      }
+    });
+
+    changedInstances.forEach((batch) => {
+      batch.instanceMatrix.needsUpdate = true;
     });
   }
 }
