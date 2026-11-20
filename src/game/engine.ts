@@ -21,7 +21,6 @@ import {
   UnitDefinition,
   UnitEntity,
   ContestedPoint,
-  WallChainPoint,
 } from '../types/game';
 import {
   DEFAULT_BUILDINGS,
@@ -77,6 +76,7 @@ import {
   computeAiWorkerAllocation,
   selectAiWorkerReassignment,
   calculateWallChainCost,
+  WallChainPoint,
   layoutWallChain,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
