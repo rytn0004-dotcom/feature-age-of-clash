@@ -111,6 +111,8 @@ export type BuildingType =
   | 'house'
   | 'barracks'
   | 'archery_range'
+  | 'stable'
+  | 'siege_workshop'
   | 'dock'
   | 'farm'
   | 'granary'
@@ -263,7 +265,8 @@ export interface UnitEntity extends EntityCommon {
   targetX?: number;
   targetZ?: number;
   targetEntityId?: string;
-  state: 'idle' | 'moving' | 'attacking' | 'gathering' | 'returning_resource' | 'building' | 'garrisoning';
+  state: 'idle' | 'moving' | 'attacking' | 'gathering' | 'returning_resource' | 'building' | 'assembling' | 'garrisoning';
+  fieldAssemblyProjectId?: string;
   carryingResource?: { type: ResourceType; amount: number };
   targetResourceNodeId?: string;
   targetBuildingId?: string;
