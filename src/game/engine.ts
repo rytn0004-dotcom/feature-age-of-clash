@@ -68,6 +68,7 @@ import {
   canAfford,
   canAssembleFieldRam,
   shouldPrioritizeAiFieldEngineering,
+  shouldAiUnitSeekShelter,
   resolveAiKnightUnitId,
   selectSiegeEscortUnits,
   FIELD_RAM_COST,
@@ -3092,6 +3093,36 @@ export class RtsEngine {
     }
     this.onSelectionChange?.();
     return true;
+  }
+
+  /**
+   * AI workers return to work as soon as danger clears, while wounded military
+   * garrison members remain sheltered until they recover to the requested ratio.
+   */
+  private ungarrisonRecoveredAiUnits(buildingId: string, recoveryRatio = 0.72): number {
+    const bldg = this.buildings.find((b) => b.id === buildingId);
+    if (!bldg || !bldg.garrisonedUnitIds?.length) return 0;
+
+    const ids = [...bldg.garrisonedUnitIds];
+    const remaining: string[] = [];
+    let released = 0;
+    ids.forEach((unitId, index) => {
+      const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
+      if (!unit) return;
+
+      const isWorker = unit.unitDef.category === 'worker';
+      const healthRatio = unit.hp / Math.max(1, unit.maxHp);
+      if (!isWorker && healthRatio < recoveryRatio) {
+        remaining.push(unitId);
+        return;
+      }
+
+      this.releaseGarrisonedUnitEntity(bldg, unit, index);
+      released++;
+    });
+
+    bldg.garrisonedUnitIds = remaining;
+    return released;
   }
 
   public ungarrisonAll(buildingId: string): number {
@@ -7818,10 +7849,16 @@ export class RtsEngine {
       if (underAttack === 1 && aiTC) {
         const aiShelters = aiBuildings
           .filter((b) => b.isConstructed && getBuildingMaxGarrison(b) > 0)
-          .map((b) => ({
-            bldg: b,
-            freeSlots: Math.max(0, getBuildingMaxGarrison(b) - (b.garrisonedUnitIds?.length || 0)),
-          }))
+          .map((b) => {
+            const incoming = aiUnits.filter(
+              (unit) => unit.targetGarrisonBuildingId === b.id && !unit.garrisonedInBuildingId
+            ).length;
+            return {
+              bldg: b,
+              // Reserve capacity for units already walking toward shelter to avoid overbooking.
+              freeSlots: Math.max(0, getBuildingMaxGarrison(b) - (b.garrisonedUnitIds?.length || 0) - incoming),
+            };
+          })
           .filter((s) => s.freeSlots > 0);
         if (aiShelters.length > 0) {
           const exposed = aiActiveWorkers.filter(
@@ -7831,19 +7868,63 @@ export class RtsEngine {
               getDistance(anchorX, anchorZ, w.x, w.z) <= 22
           ).slice(0, 5);
           for (const ew of exposed) {
-            const open = aiShelters.find((s) => s.freeSlots > 0);
+            const open = aiShelters
+              .filter((s) => s.freeSlots > 0)
+              .sort((a, b) => getDistance(ew.x, ew.z, a.bldg.x, a.bldg.z) - getDistance(ew.x, ew.z, b.bldg.x, b.bldg.z))[0];
             if (!open) break;
             open.freeSlots--;
             ew.targetGarrisonBuildingId = open.bldg.id;
             ew.targetResourceNodeId = undefined;
+            ew.targetEntityId = undefined;
+            ew.targetBuildingId = undefined;
             ew.waypoints = undefined;
+            ew.pathGoal = undefined;
+            ew.attackMoveGoal = null;
             ew.state = 'garrisoning';
+            ew.currentActionText = '🔔 緊急避難';
           }
+        }
+
+        // Preserve expensive frontline troops: critically wounded non-siege units retreat
+        // to the nearest available friendly shelter instead of fighting to the last HP.
+        const vulnerableArmy = aiArmy
+          .filter(
+            (unit) =>
+              unit.state !== 'garrisoning' &&
+              !unit.garrisonedInBuildingId &&
+              shouldAiUnitSeekShelter(unit.hp, unit.maxHp, unit.unitDef.category, personality) &&
+              getDistance(anchorX, anchorZ, unit.x, unit.z) <= 28
+          )
+          .sort(
+            (a, b) =>
+              a.hp / Math.max(1, a.maxHp) - b.hp / Math.max(1, b.maxHp) ||
+              getDistance(a.x, a.z, anchorX, anchorZ) - getDistance(b.x, b.z, anchorX, anchorZ)
+          );
+
+        for (const wounded of vulnerableArmy) {
+          const open = aiShelters
+            .filter((s) => s.freeSlots > 0)
+            .sort((a, b) => getDistance(wounded.x, wounded.z, a.bldg.x, a.bldg.z) - getDistance(wounded.x, wounded.z, b.bldg.x, b.bldg.z))[0];
+          if (!open) break;
+          open.freeSlots--;
+
+          wounded.targetGarrisonBuildingId = open.bldg.id;
+          wounded.targetEntityId = undefined;
+          wounded.targetBuildingId = undefined;
+          wounded.targetResourceNodeId = undefined;
+          wounded.attackMoveGoal = null;
+          wounded.wallPatrolRoute = undefined;
+          wounded.wallPatrolIndex = undefined;
+          wounded.waypoints = undefined;
+          wounded.pathGoal = undefined;
+          wounded.pathCooldown = 0;
+          wounded.state = 'garrisoning';
+          wounded.currentActionText = '🛡️ 戰損撤退 · 尋找掩體';
         }
       } else if (nearestEnemyDist > 26 && !recentBaseDmg) {
         for (const b of aiBuildings) {
           if (b.garrisonedUnitIds && b.garrisonedUnitIds.length > 0) {
-            this.ungarrisonAll(b.id);
+            this.ungarrisonRecoveredAiUnits(b.id, 0.72);
           }
         }
       }
