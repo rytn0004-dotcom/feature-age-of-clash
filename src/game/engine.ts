@@ -1531,8 +1531,9 @@ export class RtsEngine {
         const yaw = wall.rotationY || 0;
         const dirX = Math.cos(yaw);
         const dirZ = -Math.sin(yaw);
-        route.unshift({ x: route[0].x - dirX * 1.15, z: route[0].z - dirZ * 1.15 });
-        route.push({ x: route[0].x + dirX * 1.15, z: route[0].z + dirZ * 1.15 });
+        const centerPoint = route[0];
+        route.unshift({ x: centerPoint.x - dirX * 1.15, z: centerPoint.z - dirZ * 1.15 });
+        route.push({ x: centerPoint.x + dirX * 1.15, z: centerPoint.z + dirZ * 1.15 });
       } else if (chain.length > 1) {
         const firstYaw = chain[0].rotationY || 0;
         const lastYaw = chain[chain.length - 1].rotationY || 0;
@@ -2663,6 +2664,12 @@ export class RtsEngine {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
+    const workers = this.selectedUnitIds
+      .map((id) => this.units.find((u) => u.id === id))
+      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
+
+    if (workers.length === 0) return;
+
     if (isWallRepair && !bldg.wallRepairPaid) {
       const resources = this.getResourcesForFaction(bldg.faction);
       if (!canAfford(resources, WALL_REPAIR_COST)) {
@@ -2675,12 +2682,6 @@ export class RtsEngine {
       if (this.isHumanControlled(bldg.faction)) this.onResourcesChange?.(this.playerResources);
       bldg.wallRepairPaid = true;
     }
-
-    const workers = this.selectedUnitIds
-      .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
-
-    if (workers.length === 0) return;
     sound.playOrder();
     this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
 
