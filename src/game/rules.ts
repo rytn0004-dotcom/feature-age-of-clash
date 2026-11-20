@@ -1474,6 +1474,108 @@ export function selectOptimalCombatTarget(
   return bestTarget;
 }
 
+
+/**
+ * Applies target-selection hysteresis so an AI unit does not abandon a valid target
+ * for a marginally better option on every strategic tick.
+ */
+export function shouldSwitchCombatTarget(
+  attacker: UnitEntity,
+  currentTarget: UnitEntity | BuildingEntity | null | undefined,
+  candidateTarget: UnitEntity | BuildingEntity | null | undefined,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {},
+  minimumScoreGain = 18
+): boolean {
+  if (
+    !candidateTarget ||
+    candidateTarget.hp <= 0 ||
+    (candidateTarget.type === 'unit' && !!(candidateTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, candidateTarget)
+  ) {
+    return false;
+  }
+
+  if (
+    !currentTarget ||
+    currentTarget.hp <= 0 ||
+    (currentTarget.type === 'unit' && !!(currentTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, currentTarget)
+  ) {
+    return true;
+  }
+
+  if (currentTarget.id === candidateTarget.id) return false;
+
+  const scoreGain =
+    scoreUnitMatchupTarget(attacker, candidateTarget, alliedUnits, context) -
+    scoreUnitMatchupTarget(attacker, currentTarget, alliedUnits, context);
+  const requiredGain = Number.isFinite(minimumScoreGain) ? Math.max(0, minimumScoreGain) : 18;
+  return scoreGain >= requiredGain;
+}
+
+export interface RaidTargetAssignment {
+  raiderId: string;
+  targetId: string;
+}
+
+/**
+ * Distributes raiders across exposed targets, caps focus-fire per target, and preserves
+ * still-valid existing assignments before allocating unassigned units by proximity.
+ */
+export function assignRaidTargets<
+  R extends { id: string; x: number; z: number; targetEntityId?: string },
+  T extends { id: string; x: number; z: number }
+>(
+  raiders: readonly R[],
+  targets: readonly T[],
+  maxAttackersPerTarget = 2
+): RaidTargetAssignment[] {
+  if (raiders.length === 0 || targets.length === 0 || !Number.isFinite(maxAttackersPerTarget)) return [];
+
+  const capacity = Math.max(1, Math.floor(maxAttackersPerTarget));
+  const orderedRaiders = [...raiders].sort((a, b) => a.id.localeCompare(b.id));
+  const orderedTargets = [...targets]
+    .filter((target) => target.id && Number.isFinite(target.x) && Number.isFinite(target.z))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const targetById = new Map(orderedTargets.map((target) => [target.id, target]));
+  const counts = new Map<string, number>();
+  const assigned = new Map<string, string>();
+
+  // Keep valid existing assignments first to avoid oscillation between nearby workers.
+  for (const raider of orderedRaiders) {
+    const current = raider.targetEntityId ? targetById.get(raider.targetEntityId) : undefined;
+    if (!current || (counts.get(current.id) || 0) >= capacity) continue;
+    assigned.set(raider.id, current.id);
+    counts.set(current.id, (counts.get(current.id) || 0) + 1);
+  }
+
+  // Fill remaining raiders with the nearest target that still has capacity.
+  for (const raider of orderedRaiders) {
+    if (assigned.has(raider.id)) continue;
+    let nearest: T | null = null;
+    let nearestDistance = Infinity;
+    for (const target of orderedTargets) {
+      if ((counts.get(target.id) || 0) >= capacity) continue;
+      const distance = getDistance(raider.x, raider.z, target.x, target.z);
+      if (
+        distance < nearestDistance - 0.0001 ||
+        (Math.abs(distance - nearestDistance) <= 0.0001 && (!nearest || target.id < nearest.id))
+      ) {
+        nearest = target;
+        nearestDistance = distance;
+      }
+    }
+    if (!nearest) continue;
+    assigned.set(raider.id, nearest.id);
+    counts.set(nearest.id, (counts.get(nearest.id) || 0) + 1);
+  }
+
+  return orderedRaiders
+    .filter((raider) => assigned.has(raider.id))
+    .map((raider) => ({ raiderId: raider.id, targetId: assigned.get(raider.id)! }));
+}
+
 /**
  * Picks a coordinated cluster focus-fire target for an entire squad based on squad centroid,
  * enemy concentration, threat priority, and siege fortifications.
