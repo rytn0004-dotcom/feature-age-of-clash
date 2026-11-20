@@ -4970,6 +4970,22 @@ const sharedBirchLeafMat = new THREE.MeshStandardMaterial({
   roughnessMap: resFoliageMaps.roughnessMap || null,
   roughness: 0.84,
 });
+const sharedTreeMossMoundGeo = new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8);
+const sharedRichTreeSapGeo = new THREE.OctahedronGeometry(0.22, 0);
+const sharedRichTreeSapMat = new THREE.MeshStandardMaterial({
+  color: 0xfacc15,
+  emissive: 0xd97706,
+  emissiveIntensity: 0.45,
+  roughness: 0.25,
+});
+const sharedRichTreeAmberHaloGeo = new THREE.RingGeometry(1.18, 1.52, 24);
+const sharedRichTreeAmberHaloMat = new THREE.MeshBasicMaterial({
+  color: 0xa3e635,
+  transparent: true,
+  opacity: 0.42,
+  side: THREE.DoubleSide,
+});
+
 const sharedTreeMossMat = new THREE.MeshStandardMaterial({
   color: 0x365314,
   map: resFoliageMaps.map,
@@ -5072,7 +5088,7 @@ export function createTreeMesh(
     });
   }
   addTreeInstanceBatch(detailedVisual, sharedTreeRootGeo, trunkMat, rootTransforms, 'instancedTreeRoots');
-  const mossMound = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8), sharedTreeMossMat);
+  const mossMound = new THREE.Mesh(sharedTreeMossMoundGeo, sharedTreeMossMat);
   mossMound.position.y = 0.08;
   mossMound.scale.set(1 + Math.sin(rootPhase) * 0.08, 1, 1 + Math.cos(rootPhase) * 0.08);
   mossMound.rotation.y = rootPhase * 0.35;
@@ -5150,27 +5166,21 @@ export function createTreeMesh(
   }
 
   if (isRich) {
-    // Glowing amber sap crystal clusters nestled at base of Ancient World-Tree
-    const sapMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      emissive: 0xd97706,
-      emissiveIntensity: 0.45,
-      roughness: 0.25,
-    });
-    const sapGeometry = new THREE.OctahedronGeometry(0.22, 0);
+    // Glowing amber sap crystal clusters share one static geometry and material.
     const sapTransforms: TreeInstanceTransform[] = [0.5, 2.6, 4.7].map((ang) => ({
       position: [Math.cos(ang) * 0.65, 0.24, Math.sin(ang) * 0.65],
       rotation: [0, 0, 0],
       scale: [0.8, 1.35, 0.8],
     }));
     addTreeInstanceBatch(
-      detailedVisual, sapGeometry, sapMat, sapTransforms, 'instancedAncientTreeSap'
+      detailedVisual,
+      sharedRichTreeSapGeo,
+      sharedRichTreeSapMat,
+      sapTransforms,
+      'instancedAncientTreeSap'
     );
 
-    const amberHalo = new THREE.Mesh(
-      new THREE.RingGeometry(1.18, 1.52, 24),
-      new THREE.MeshBasicMaterial({ color: 0xa3e635, transparent: true, opacity: 0.42, side: THREE.DoubleSide })
-    );
+    const amberHalo = new THREE.Mesh(sharedRichTreeAmberHaloGeo, sharedRichTreeAmberHaloMat);
     amberHalo.rotation.x = -Math.PI / 2;
     amberHalo.position.y = 0.04;
     detailedVisual.add(amberHalo);
