@@ -9,6 +9,7 @@ import {
   evaluateCondition,
   evaluateAiScript,
   getDistance,
+  findBalancedResourceNode,
   findClosestResourceNode,
   findClosestEnemy,
   getShrineIncome,
@@ -160,6 +161,19 @@ test('spatial: getDistance, findClosestResourceNode and findClosestEnemy', () =>
 
   const enemy = findClosestEnemy(0, 0, 'player', entities);
   assert.equal(enemy?.id, 'enemy1');
+});
+
+test('spatial: balanced resource selection distributes workers across available nodes', () => {
+  const nodes: ResourceNode[] = [
+    { id: 'wood-near', resourceType: 'wood', x: 4, z: 0, amount: 300, maxAmount: 300 },
+    { id: 'wood-free', resourceType: 'wood', x: 10, z: 0, amount: 300, maxAmount: 300 },
+    { id: 'gold-near', resourceType: 'gold', x: 2, z: 0, amount: 300, maxAmount: 300 },
+  ];
+  const assigned = new Map<string, number>([['wood-near', 2]]);
+
+  assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 30)?.id, 'wood-free');
+  assert.equal(findBalancedResourceNode(0, 0, nodes, 'gold', assigned, 30)?.id, 'gold-near');
+  assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 3), null);
 });
 
 test('collision: resolveUnitBuildingCollisions pushes units out of solid building core while leaving auto-channel', async () => {
