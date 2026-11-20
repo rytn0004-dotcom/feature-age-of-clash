@@ -1389,6 +1389,25 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
   return group;
 }
 
+const sharedArcheryPlatformGeo = new THREE.BoxGeometry(4.3, 0.35, 3.2);
+const sharedArcheryPillarGeo = new THREE.CylinderGeometry(0.14, 0.16, 2.35, 8);
+const sharedArcheryBraceGeo = new THREE.BoxGeometry(0.1, 0.72, 0.1);
+const sharedArcheryBackWallGeo = new THREE.BoxGeometry(3.8, 1.55, 0.18);
+const sharedArcheryBarrelGeo = new THREE.CylinderGeometry(0.24, 0.2, 0.65, 10);
+const sharedArcheryArrowGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.75, 5);
+const sharedArcheryCanopyGeo = (() => {
+  const shape = new THREE.Shape();
+  shape.moveTo(-2.45, 0);
+  shape.lineTo(2.45, 0);
+  shape.lineTo(0, 1.38);
+  shape.closePath();
+  return makeExtrudeGeo(shape, 3.65, 0.04, 0.04, 1, true);
+})();
+const sharedArcheryTargetStandGeo = new THREE.CylinderGeometry(0.055, 0.065, 1.38, 6);
+const sharedArcheryTargetDiscGeo = new THREE.CylinderGeometry(0.56, 0.56, 0.18, 16);
+const sharedArcheryTargetRingGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.195, 16);
+const sharedArcheryTargetBullGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.21, 16);
+
 export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -1419,83 +1438,124 @@ export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   const redMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.55 });
 
   // Timber deck platform
-  const platform = new THREE.Mesh(new THREE.BoxGeometry(4.3, 0.35, 3.2), woodMat);
+  const platform = new THREE.Mesh(sharedArcheryPlatformGeo, woodMat);
   platform.position.y = 0.175;
   platform.receiveShadow = true;
   group.add(platform);
 
   // Heavy corner pillars with diagonal knee braces + back timber rack wall
-  const pillarGeo = new THREE.CylinderGeometry(0.14, 0.16, 2.35, 8);
-  [
+  const archeryCornerPositions: Array<[number, number]> = [
     [-1.8, -1.25],
     [1.8, -1.25],
     [-1.8, 1.25],
     [1.8, 1.25],
-  ].forEach(([px, pz]) => {
-    const p = new THREE.Mesh(pillarGeo, woodMat);
-    p.position.set(px, 1.35, pz);
-    p.castShadow = true;
-    group.add(p);
-
-    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.72, 0.1), woodMat);
-    brace.position.set(px - Math.sign(px) * 0.22, 2.25, pz);
-    brace.rotation.z = Math.sign(px) * 0.68;
-    group.add(brace);
-  });
+  ];
+  createVisualInstanceBatch(
+    group,
+    sharedArcheryPillarGeo,
+    woodMat,
+    archeryCornerPositions.map(([px, pz]) => ({ position: [px, 1.35, pz] })),
+    'instancedArcheryRangePillars',
+    true
+  );
+  createVisualInstanceBatch(
+    group,
+    sharedArcheryBraceGeo,
+    woodMat,
+    archeryCornerPositions.map(([px, pz]) => ({
+      position: [px - Math.sign(px) * 0.22, 2.25, pz],
+      rotation: [0, 0, Math.sign(px) * 0.68],
+    })),
+    'instancedArcheryRangeKneeBraces'
+  );
 
   // Back range wall with mounted archery shields & quiver barrel
-  const backWall = new THREE.Mesh(new THREE.BoxGeometry(3.8, 1.55, 0.18), woodMat);
+  const backWall = new THREE.Mesh(sharedArcheryBackWallGeo, woodMat);
   backWall.position.set(0, 1.05, -1.28);
   backWall.castShadow = true;
   group.add(backWall);
 
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.2, 0.65, 10), woodMat);
+  const barrel = new THREE.Mesh(sharedArcheryBarrelGeo, woodMat);
   barrel.position.set(1.35, 0.62, 0.65);
   group.add(barrel);
-  [-0.08, 0, 0.08].forEach((ax) => {
-    const arrow = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.75, 5), strawMat);
-    arrow.position.set(1.35 + ax, 0.96, 0.65);
-    arrow.rotation.z = ax * 1.4;
-    group.add(arrow);
-  });
+  createVisualInstanceBatch(
+    group,
+    sharedArcheryArrowGeo,
+    strawMat,
+    [-0.08, 0, 0.08].map((ax) => ({
+      position: [1.35 + ax, 0.96, 0.65],
+      rotation: [0, 0, ax * 1.4],
+    })),
+    'instancedArcheryQuiverArrows'
+  );
 
   // Gabled overhanging pavilion canopy
-  const canopyShape = new THREE.Shape();
-  canopyShape.moveTo(-2.45, 0);
-  canopyShape.lineTo(2.45, 0);
-  canopyShape.lineTo(0, 1.38);
-  canopyShape.closePath();
-  const canopy = new THREE.Mesh(makeExtrudeGeo(canopyShape, 3.65, 0.04, 0.04, 1, true), roofMat);
+  const canopy = new THREE.Mesh(sharedArcheryCanopyGeo, roofMat);
   canopy.position.set(0, 2.45, 0);
   canopy.castShadow = true;
   group.add(canopy);
   addGableRoofShingles(group, 2.45, 1.38, 2.45, 1.825, roofMat, 7);
 
-  // Twin Straw Archery Targets tucked within collision footprint facing camera
-  [-1.02, 0.88].forEach((tx, idx) => {
-    const tz = idx === 0 ? 1.72 : 1.8;
-    const targetGrp = new THREE.Group();
-    targetGrp.position.set(tx, 0, tz);
-    targetGrp.rotation.y = 0.28;
+  // Twin straw targets use four batches; matrices include each former targetGrp transform.
+  const archeryTargetRoots = [
+    { x: -1.02, z: 1.72 },
+    { x: 0.88, z: 1.8 },
+  ];
+  const targetRootDummy = new THREE.Object3D();
+  const targetPartDummy = new THREE.Object3D();
+  const targetMatrices = (
+    localPositions: Array<[number, number, number]>,
+    localRotation: [number, number, number]
+  ): THREE.Matrix4[] => {
+    const matrices: THREE.Matrix4[] = [];
+    archeryTargetRoots.forEach((root) => {
+      targetRootDummy.position.set(root.x, 0, root.z);
+      targetRootDummy.rotation.set(0, 0.28, 0);
+      targetRootDummy.scale.set(1, 1, 1);
+      targetRootDummy.updateMatrix();
 
-    const stand1 = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 1.38, 6), woodMat);
-    stand1.position.set(-0.24, 0.64, -0.18);
-    stand1.rotation.x = 0.28;
-    const stand2 = stand1.clone();
-    stand2.position.set(0.24, 0.64, -0.18);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.18, 16), strawMat);
-    disc.rotation.x = Math.PI / 2.25;
-    disc.position.set(0, 0.94, 0);
-    const ringW = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.195, 16), whiteMat);
-    ringW.rotation.x = Math.PI / 2.25;
-    ringW.position.set(0, 0.94, 0);
-    const bull = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.21, 16), redMat);
-    bull.rotation.x = Math.PI / 2.25;
-    bull.position.set(0, 0.94, 0);
+      localPositions.forEach((position) => {
+        targetPartDummy.position.set(...position);
+        targetPartDummy.rotation.set(...localRotation);
+        targetPartDummy.scale.set(1, 1, 1);
+        targetPartDummy.updateMatrix();
+        matrices.push(new THREE.Matrix4().multiplyMatrices(targetRootDummy.matrix, targetPartDummy.matrix));
+      });
+    });
+    return matrices;
+  };
 
-    targetGrp.add(stand1, stand2, disc, ringW, bull);
-    group.add(targetGrp);
-  });
+  createMatrixInstanceBatch(
+    group,
+    sharedArcheryTargetStandGeo,
+    woodMat,
+    targetMatrices(
+      [[-0.24, 0.64, -0.18], [0.24, 0.64, -0.18]],
+      [0.28, 0, 0]
+    ),
+    'instancedArcheryTargetStands'
+  );
+  createMatrixInstanceBatch(
+    group,
+    sharedArcheryTargetDiscGeo,
+    strawMat,
+    targetMatrices([[0, 0.94, 0]], [Math.PI / 2.25, 0, 0]),
+    'instancedArcheryTargetDiscs'
+  );
+  createMatrixInstanceBatch(
+    group,
+    sharedArcheryTargetRingGeo,
+    whiteMat,
+    targetMatrices([[0, 0.94, 0]], [Math.PI / 2.25, 0, 0]),
+    'instancedArcheryTargetRings'
+  );
+  createMatrixInstanceBatch(
+    group,
+    sharedArcheryTargetBullGeo,
+    redMat,
+    targetMatrices([[0, 0.94, 0]], [Math.PI / 2.25, 0, 0]),
+    'instancedArcheryTargetBullseyes'
+  );
 
   const aBadge = createBadgeSprite(
     colors.isHostile ? `${colors.labelPrefix || ''}道場` : '射箭道場',
@@ -2311,6 +2371,21 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
   return group;
 }
 
+const sharedCastleTowerGeo = makeLatheGeo([
+  [1.35, 0.0],
+  [1.26, 1.2],
+  [1.08, 7.0],
+  [1.42, 7.45],
+  [1.42, 8.0],
+  [0.01, 8.0],
+], 10);
+const sharedCastleBastionSpireGeo = new THREE.ConeGeometry(1.56, 2.45, 10);
+const sharedCastleFlagPoleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.85, 6);
+const sharedCastleButtressGeo = new THREE.BoxGeometry(0.54, 5.4, 0.54);
+const sharedCastleCurtainWallGeo = new THREE.BoxGeometry(3.8, 3.4, 0.98);
+const sharedCastleCurtainMerlonGeo = new THREE.BoxGeometry(0.4, 0.44, 0.3);
+const sharedCastlePortcullisBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.75, 5);
+
 export function createCastleMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -2379,16 +2454,18 @@ export function createCastleMesh(faction: FactionId): THREE.Group {
   keep.castShadow = true;
   group.add(keep);
 
-  [
-    [-1.9, -1.9],
-    [1.9, -1.9],
-    [-1.9, 1.9],
-    [1.9, 1.9],
-  ].forEach(([bx, bz]) => {
-    const buttress = new THREE.Mesh(new THREE.BoxGeometry(0.54, 5.4, 0.54), darkStoneMat);
-    buttress.position.set(bx, 3.8, bz);
-    group.add(buttress);
-  });
+  createVisualInstanceBatch(
+    group,
+    sharedCastleButtressGeo,
+    darkStoneMat,
+    [
+      [-1.9, -1.9],
+      [1.9, -1.9],
+      [-1.9, 1.9],
+      [1.9, 1.9],
+    ].map(([bx, bz]) => ({ position: [bx, 3.8, bz] })),
+    'instancedCastleKeepButtresses'
+  );
 
   const keepCrown = new THREE.Mesh(new THREE.BoxGeometry(4.25, 0.65, 4.25), trimMat);
   keepCrown.position.y = 7.0;
@@ -2413,40 +2490,41 @@ export function createCastleMesh(faction: FactionId): THREE.Group {
   });
 
   // 3. Four Corner Bastion Towers with corbels, arrow slits & banners
-  const towerGeo = makeLatheGeo([
-    [1.35, 0.0],
-    [1.26, 1.2],
-    [1.08, 7.0],
-    [1.42, 7.45],
-    [1.42, 8.0],
-    [0.01, 8.0],
-  ], 10);
-  const spireGeo = new THREE.ConeGeometry(1.56, 2.45, 10);
-  const poleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.85, 6);
   const flagGeo = new THREE.PlaneGeometry(0.95, 0.52);
   flagGeo.translate(0.475, 0, 0);
   const flagMat = new THREE.MeshStandardMaterial({ color: colors.banner, side: THREE.DoubleSide, roughness: 0.88, metalness: 0.02 });
 
-  [
+  const castleTowerPositions: Array<[number, number]> = [
     [-2.62, -2.62],
     [2.62, -2.62],
     [-2.62, 2.62],
     [2.62, 2.62],
-  ].forEach(([tx, tz]) => {
-    const tower = new THREE.Mesh(towerGeo, stoneMat);
-    tower.position.set(tx, 0, tz);
-    tower.castShadow = true;
-    group.add(tower);
+  ];
+  createVisualInstanceBatch(
+    group,
+    sharedCastleTowerGeo,
+    stoneMat,
+    castleTowerPositions.map(([tx, tz]) => ({ position: [tx, 0, tz] })),
+    'instancedCastleBastionTowers',
+    true
+  );
+  createVisualInstanceBatch(
+    group,
+    sharedCastleBastionSpireGeo,
+    roofMat,
+    castleTowerPositions.map(([tx, tz]) => ({ position: [tx, 9.15, tz] })),
+    'instancedCastleBastionSpires',
+    true
+  );
+  createVisualInstanceBatch(
+    group,
+    sharedCastleFlagPoleGeo,
+    ironMat,
+    castleTowerPositions.map(([tx, tz]) => ({ position: [tx, 10.8, tz] })),
+    'instancedCastleFlagPoles'
+  );
 
-    const spire = new THREE.Mesh(spireGeo, roofMat);
-    spire.position.set(tx, 9.15, tz);
-    spire.castShadow = true;
-    group.add(spire);
-
-    const flagPole = new THREE.Mesh(poleGeo, ironMat);
-    flagPole.position.set(tx, 10.8, tz);
-    group.add(flagPole);
-
+  castleTowerPositions.forEach(([tx, tz]) => {
     const flag = new THREE.Mesh(flagGeo, flagMat);
     flag.position.set(tx, 11.2, tz);
     flag.name = 'animatedFlag';
@@ -2454,31 +2532,46 @@ export function createCastleMesh(faction: FactionId): THREE.Group {
   });
 
   // 4. Connecting Curtain Walls + Individual Parapet Merlons
-  const wallFront = new THREE.Mesh(new THREE.BoxGeometry(3.8, 3.4, 0.98), stoneMat);
-  wallFront.position.set(0, 2.45, 2.52);
-  wallFront.castShadow = true;
-  group.add(wallFront);
+  createVisualInstanceBatch(
+    group,
+    sharedCastleCurtainWallGeo,
+    stoneMat,
+    [
+      { position: [0, 2.45, 2.52] },
+      { position: [0, 2.45, -2.52] },
+    ],
+    'instancedCastleCurtainWalls',
+    true
+  );
 
-  const wallBack = new THREE.Mesh(new THREE.BoxGeometry(3.8, 3.4, 0.98), stoneMat);
-  wallBack.position.set(0, 2.45, -2.52);
-  wallBack.castShadow = true;
-  group.add(wallBack);
-
+  const castleCurtainMerlonTransforms: VisualInstanceTransform[] = [];
   for (let mx = -1.4; mx <= 1.41; mx += 0.7) {
-    const mf = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.44, 0.3), trimMat);
-    mf.position.set(mx, 4.35, 2.86);
-    const mb = mf.clone();
-    mb.position.set(mx, 4.35, -2.86);
-    group.add(mf, mb);
+    castleCurtainMerlonTransforms.push(
+      { position: [mx, 4.35, 2.86] },
+      { position: [mx, 4.35, -2.86] }
+    );
   }
+  createVisualInstanceBatch(
+    group,
+    sharedCastleCurtainMerlonGeo,
+    trimMat,
+    castleCurtainMerlonTransforms,
+    'instancedCastleCurtainMerlons'
+  );
 
   // 5. Barbican Arched Portcullis Gateway + Iron Grate + Lanterns
   addArchedDoorway(group, 0, 1.05, 3.02, 1.65, 2.15, trimMat, woodMat, ironMat);
+  const portcullisBarTransforms: VisualInstanceTransform[] = [];
   for (let gx = -0.5; gx <= 0.51; gx += 0.34) {
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.75, 5), ironMat);
-    bar.position.set(gx, 1.95, 3.16);
-    group.add(bar);
+    portcullisBarTransforms.push({ position: [gx, 1.95, 3.16] });
   }
+  createVisualInstanceBatch(
+    group,
+    sharedCastlePortcullisBarGeo,
+    ironMat,
+    portcullisBarTransforms,
+    'instancedCastlePortcullisBars'
+  );
   addWarmLantern(group, -1.15, 2.45, 3.14, ironMat);
   addWarmLantern(group, 1.15, 2.45, 3.14, ironMat);
 
