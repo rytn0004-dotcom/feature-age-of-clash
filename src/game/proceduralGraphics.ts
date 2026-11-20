@@ -6281,62 +6281,120 @@ const sharedDeepFishMat = new THREE.MeshStandardMaterial({
 const sharedFishTailGeo = new THREE.ConeGeometry(0.055, 0.12, 4);
 sharedFishTailGeo.rotateZ(-Math.PI / 2);
 
+const sharedDeepFishDorsalGeo = new THREE.ConeGeometry(0.04, 0.13, 3);
+const sharedShoreFishRippleOuterGeo = new THREE.RingGeometry(0.56, 0.78, 22);
+const sharedShoreFishRippleInnerGeo = new THREE.RingGeometry(0.24, 0.34, 18);
+const sharedDeepFishPoolGeo = new THREE.CircleGeometry(0.92, 22);
+const sharedDeepFishRippleGeo = new THREE.RingGeometry(0.68, 0.94, 24);
+const sharedShoreFishHitDiscGeo = new THREE.CylinderGeometry(1.0, 1.0, 0.35, 14);
+const sharedDeepFishHitDiscGeo = new THREE.CylinderGeometry(1.15, 1.15, 0.45, 14);
+const sharedFishHitDiscMat = new THREE.MeshBasicMaterial({ visible: false });
+const sharedShoreFishRippleOuterMat = new THREE.MeshBasicMaterial({
+  color: 0xbae6fd,
+  transparent: true,
+  opacity: 0.62,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const sharedShoreFishRippleInnerMat = new THREE.MeshBasicMaterial({
+  color: 0xe0f2fe,
+  transparent: true,
+  opacity: 0.7,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const sharedDeepFishPoolMat = new THREE.MeshBasicMaterial({
+  color: 0x0c4a6e,
+  transparent: true,
+  opacity: 0.55,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const sharedDeepFishRippleMat = new THREE.MeshBasicMaterial({
+  color: 0x38bdf8,
+  transparent: true,
+  opacity: 0.72,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+/** Build one batched mesh from the complete local matrices of a fish part. */
+function createMatrixInstanceBatch(
+  parent: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  matrices: THREE.Matrix4[],
+  name: string
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+  mesh.name = name;
+  matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  parent.add(mesh);
+  return mesh;
+}
+
+function createFishRootMatrices(
+  fish: Array<{ x: number; y: number; z: number; yaw: number; pitch?: number; scale: number }>
+): THREE.Matrix4[] {
+  const dummy = new THREE.Object3D();
+  return fish.map((entry) => {
+    dummy.position.set(entry.x, entry.y, entry.z);
+    dummy.rotation.set(0, entry.yaw, entry.pitch || 0);
+    dummy.scale.setScalar(entry.scale);
+    dummy.updateMatrix();
+    return dummy.matrix.clone();
+  });
+}
+
+function createFishPartMatrices(
+  rootMatrices: THREE.Matrix4[],
+  localPosition: [number, number, number],
+  localRotation: [number, number, number] = [0, 0, 0]
+): THREE.Matrix4[] {
+  const local = new THREE.Object3D();
+  local.position.set(...localPosition);
+  local.rotation.set(...localRotation);
+  local.updateMatrix();
+  return rootMatrices.map((root) => new THREE.Matrix4().multiplyMatrices(root, local.matrix));
+}
+
 export function createShoreFishMesh(amount = 450, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
 
-  // Gentle pale cyan water ripple ring around shallow fish shoal
-  const rippleOuter = new THREE.Mesh(
-    new THREE.RingGeometry(0.56, 0.78, 22),
-    new THREE.MeshBasicMaterial({
-      color: 0xbae6fd,
-      transparent: true,
-      opacity: 0.62,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
-  );
+  // Gentle pale cyan water ripple ring around shallow fish shoal.
+  const rippleOuter = new THREE.Mesh(sharedShoreFishRippleOuterGeo, sharedShoreFishRippleOuterMat);
   rippleOuter.rotation.x = -Math.PI / 2;
   rippleOuter.position.y = 0.11;
   group.add(rippleOuter);
 
-  const rippleInner = new THREE.Mesh(
-    new THREE.RingGeometry(0.24, 0.34, 18),
-    new THREE.MeshBasicMaterial({
-      color: 0xe0f2fe,
-      transparent: true,
-      opacity: 0.7,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
-  );
+  const rippleInner = new THREE.Mesh(sharedShoreFishRippleInnerGeo, sharedShoreFishRippleInnerMat);
   rippleInner.rotation.x = -Math.PI / 2;
   rippleInner.position.y = 0.115;
   group.add(rippleInner);
 
-  // Invisible raycast hit disc above water plane so clicking & hovering feels snappy
-  const hitDisc = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.0, 1.0, 0.35, 14),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
+  // Invisible raycast hit disc above water plane so clicking & hovering feels snappy.
+  const hitDisc = new THREE.Mesh(sharedShoreFishHitDiscGeo, sharedFishHitDiscMat);
   hitDisc.position.y = 0.18;
   group.add(hitDisc);
 
-  // 3 darting shore fish circling just at the water surface
-  [
+  // The school is static in the current simulation; instance bodies and tails separately.
+  const fish = [
     { x: 0.28, y: 0.14, z: 0.12, yaw: 0.4, scale: 1.0 },
     { x: -0.26, y: 0.13, z: -0.22, yaw: 2.3, scale: 0.88 },
     { x: -0.05, y: 0.16, z: 0.32, yaw: -1.4, scale: 0.82 },
-  ].forEach((f) => {
-    const fish = new THREE.Group();
-    const body = new THREE.Mesh(sharedFishBodyGeo, sharedShoreFishMat);
-    const tail = new THREE.Mesh(sharedFishTailGeo, sharedShoreFishMat);
-    tail.position.set(-0.24, 0, 0);
-    fish.add(body, tail);
-    fish.position.set(f.x, f.y, f.z);
-    fish.rotation.y = f.yaw;
-    fish.scale.setScalar(f.scale);
-    group.add(fish);
-  });
+  ];
+  const rootMatrices = createFishRootMatrices(fish);
+  createMatrixInstanceBatch(group, sharedFishBodyGeo, sharedShoreFishMat, rootMatrices, 'instancedShoreFishBodies');
+  createMatrixInstanceBatch(
+    group,
+    sharedFishTailGeo,
+    sharedShoreFishMat,
+    createFishPartMatrices(rootMatrices, [-0.24, 0, 0]),
+    'instancedShoreFishTails'
+  );
 
   if (hasBadge) {
     const badge = createBadgeSprite('沿岸魚群', '🐟', `${amount}`, 1, false, true, '沿岸捕魚 (×1.32)');
@@ -6350,62 +6408,43 @@ export function createShoreFishMesh(amount = 450, hasBadge = false): THREE.Group
 export function createDeepFishMesh(amount = 650, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
 
-  // Deeper sapphire water swirl pool + twin concentric ripples
-  const deepPool = new THREE.Mesh(
-    new THREE.CircleGeometry(0.92, 22),
-    new THREE.MeshBasicMaterial({
-      color: 0x0c4a6e,
-      transparent: true,
-      opacity: 0.55,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
-  );
+  // Deeper sapphire water swirl pool + twin concentric ripples.
+  const deepPool = new THREE.Mesh(sharedDeepFishPoolGeo, sharedDeepFishPoolMat);
   deepPool.rotation.x = -Math.PI / 2;
   deepPool.position.y = 0.105;
   group.add(deepPool);
 
-  const ripple = new THREE.Mesh(
-    new THREE.RingGeometry(0.68, 0.94, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
-      transparent: true,
-      opacity: 0.72,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
-  );
+  const ripple = new THREE.Mesh(sharedDeepFishRippleGeo, sharedDeepFishRippleMat);
   ripple.rotation.x = -Math.PI / 2;
   ripple.position.y = 0.12;
   group.add(ripple);
 
-  const hitDisc = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15, 1.15, 0.45, 14),
-    new THREE.MeshBasicMaterial({ visible: false })
-  );
+  const hitDisc = new THREE.Mesh(sharedDeepFishHitDiscGeo, sharedFishHitDiscMat);
   hitDisc.position.y = 0.22;
   group.add(hitDisc);
 
-  // 3 larger golden-cobalt deep-water tuna/marlin arcing near surface
-  [
+  // The school is static in the current simulation; body, tail and dorsal batches preserve each fish transform.
+  const fish = [
     { x: 0.05, y: 0.22, z: -0.05, yaw: 0.75, pitch: -0.25, scale: 1.45 },
     { x: -0.34, y: 0.16, z: 0.28, yaw: 2.5, pitch: 0.1, scale: 1.18 },
     { x: 0.36, y: 0.15, z: 0.25, yaw: -1.1, pitch: 0.08, scale: 1.12 },
-  ].forEach((f) => {
-    const fish = new THREE.Group();
-    const body = new THREE.Mesh(sharedFishBodyGeo, sharedDeepFishMat);
-    const tail = new THREE.Mesh(sharedFishTailGeo, sharedDeepFishMat);
-    tail.position.set(-0.24, 0, 0);
-    const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.13, 3), sharedDeepFishMat);
-    dorsal.position.set(0.02, 0.1, 0);
-    dorsal.rotation.z = 0.45;
-    fish.add(body, tail, dorsal);
-    fish.position.set(f.x, f.y, f.z);
-    fish.rotation.y = f.yaw;
-    fish.rotation.z = f.pitch;
-    fish.scale.setScalar(f.scale);
-    group.add(fish);
-  });
+  ];
+  const rootMatrices = createFishRootMatrices(fish);
+  createMatrixInstanceBatch(group, sharedFishBodyGeo, sharedDeepFishMat, rootMatrices, 'instancedDeepFishBodies');
+  createMatrixInstanceBatch(
+    group,
+    sharedFishTailGeo,
+    sharedDeepFishMat,
+    createFishPartMatrices(rootMatrices, [-0.24, 0, 0]),
+    'instancedDeepFishTails'
+  );
+  createMatrixInstanceBatch(
+    group,
+    sharedDeepFishDorsalGeo,
+    sharedDeepFishMat,
+    createFishPartMatrices(rootMatrices, [0.02, 0.1, 0], [0, 0, 0.45]),
+    'instancedDeepFishDorsalFins'
+  );
 
   if (hasBadge) {
     const badge = createBadgeSprite('深海魚群', '🐠', `${amount}`, 1, false, true, '深海捕撈 (最快 ×1.55)');
