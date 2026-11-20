@@ -1207,6 +1207,20 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
   return group;
 }
 
+const sharedBarracksGableRoofGeo = (() => {
+  const shape = new THREE.Shape();
+  shape.moveTo(-2.3, 0);
+  shape.lineTo(2.3, 0);
+  shape.lineTo(0, 1.7);
+  shape.closePath();
+  return makeExtrudeGeo(shape, 3.65, 0.04, 0.04, 1, true);
+})();
+const sharedBarracksToriiPillarGeo = new THREE.CylinderGeometry(0.11, 0.13, 2.4, 8);
+const sharedBarracksToriiRedMat = new THREE.MeshStandardMaterial({ color: 0xdc2626 });
+const sharedBarracksCrystalGeo = new THREE.OctahedronGeometry(0.32, 0);
+const sharedBarracksFantasySpireGeo = new THREE.OctahedronGeometry(0.45, 0);
+const sharedBarracksRackPostGeo = new THREE.CylinderGeometry(0.07, 0.08, 1.25, 6);
+
 export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -1263,11 +1277,13 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
   upper.castShadow = true;
   group.add(upper);
 
-  [-1.7, 0, 1.7].forEach((tx) => {
-    const beam = new THREE.Mesh(roundedBuildingBox(0.16, 1.4, 3.35), woodMat);
-    beam.position.set(tx, 2.28, 0);
-    group.add(beam);
-  });
+  createVisualInstanceBatch(
+    group,
+    roundedBuildingBox(0.16, 1.4, 3.35),
+    woodMat,
+    [-1.7, 0, 1.7].map((tx) => ({ position: [tx, 2.28, 0] })),
+    'instancedBarracksUpperBeams'
+  );
 
   // Warm garrison upper-floor windows + front stone threshold apron
   [-1.12, 1.12].forEach((wx) => {
@@ -1286,26 +1302,23 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     roof.castShadow = true;
     group.add(roof);
 
-    const toriiTop = new THREE.Mesh(roundedBuildingBox(2.6, 0.22, 0.28), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
+    const toriiTop = new THREE.Mesh(roundedBuildingBox(2.6, 0.22, 0.28), sharedBarracksToriiRedMat);
     toriiTop.position.set(0, 2.85, 1.88);
     group.add(toriiTop);
-    [-0.98, 0.98].forEach((px) => {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 2.4, 8), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
-      p.position.set(px, 1.65, 1.88);
-      group.add(p);
-    });
+    createVisualInstanceBatch(
+      group,
+      sharedBarracksToriiPillarGeo,
+      sharedBarracksToriiRedMat,
+      [-0.98, 0.98].map((px) => ({ position: [px, 1.65, 1.88] })),
+      'instancedBarracksToriiPillars'
+    );
 
-    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), new THREE.MeshBasicMaterial({ color: 0x38bdf8 }));
+    const crystal = new THREE.Mesh(sharedBarracksCrystalGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8 }));
     crystal.position.set(0, 5.0, 0);
     crystal.name = 'animatedCrystal';
     group.add(crystal);
   } else {
-    const roofShape = new THREE.Shape();
-    roofShape.moveTo(-2.3, 0);
-    roofShape.lineTo(2.3, 0);
-    roofShape.lineTo(0, 1.7);
-    roofShape.closePath();
-    const roof = new THREE.Mesh(makeExtrudeGeo(roofShape, 3.65, 0.04, 0.04, 1, true), roofMat);
+    const roof = new THREE.Mesh(sharedBarracksGableRoofGeo, roofMat);
     roof.position.set(0, 2.95, 0);
     roof.castShadow = true;
     group.add(roof);
@@ -1317,7 +1330,7 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
     group.add(ridge);
 
     if (civ === 'fantasy') {
-      const spire = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
+      const spire = new THREE.Mesh(sharedBarracksFantasySpireGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
       spire.position.set(0, 5.25, 0);
       spire.name = 'animatedCrystal';
       group.add(spire);
@@ -1329,21 +1342,31 @@ export function createBarracksMesh(faction: FactionId, civId?: CivilizationId): 
   addWarmLantern(group, 0.9, 1.75, 1.84, ironMat);
 
   // Crossed Broadswords Insignia above Door
-  [-Math.PI / 4, Math.PI / 4].forEach((rot) => {
-    const blade = new THREE.Mesh(roundedBuildingBox(0.11, 1.35, 0.07), steelMat);
-    blade.position.set(0, 2.55, 1.74);
-    blade.rotation.z = rot;
-    group.add(blade);
-  });
+  createVisualInstanceBatch(
+    group,
+    roundedBuildingBox(0.11, 1.35, 0.07),
+    steelMat,
+    [-Math.PI / 4, Math.PI / 4].map((rot) => ({
+      position: [0, 2.55, 1.74],
+      rotation: [0, 0, rot],
+    })),
+    'instancedBarracksSwordBlades'
+  );
 
   // Outdoor Training Weapon Rack + Shield (tucked tightly alongside barracks plinth)
-  const rackPost1 = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.25, 6), woodMat);
-  rackPost1.position.set(2.02, 0.62, 0.12);
-  const rackPost2 = rackPost1.clone();
-  rackPost2.position.set(2.02, 0.62, 0.95);
+  createVisualInstanceBatch(
+    group,
+    sharedBarracksRackPostGeo,
+    woodMat,
+    [
+      { position: [2.02, 0.62, 0.12] },
+      { position: [2.02, 0.62, 0.95] },
+    ],
+    'instancedBarracksRackPosts'
+  );
   const rackBar = new THREE.Mesh(roundedBuildingBox(0.1, 0.1, 1.0), woodMat);
   rackBar.position.set(2.02, 1.12, 0.54);
-  group.add(rackPost1, rackPost2, rackBar);
+  group.add(rackBar);
 
   const shieldProp = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.08, 12), roofMat);
   shieldProp.rotation.z = Math.PI / 2.3;
@@ -2196,6 +2219,13 @@ export function createTowerMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+const sharedWallSillGeo = new THREE.BoxGeometry(2.85, 0.42, 1.15);
+const sharedWallCurtainGeo = new THREE.BoxGeometry(2.7, 1.55, 0.88);
+const sharedWallButtressGeo = new THREE.BoxGeometry(0.56, 2.25, 1.06);
+const sharedWallWalkwayGeo = new THREE.BoxGeometry(2.75, 0.2, 1.08);
+const sharedWallMerlonGeo = new THREE.BoxGeometry(0.48, 0.42, 0.34);
+const sharedWallStakeGeo = new THREE.ConeGeometry(0.085, 0.62, 6);
+
 export function createWallMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -2229,46 +2259,54 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
   });
 
   // Ground stone sill (tier1)
-  const sill = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.42, 1.15), stoneMat);
+  const sill = new THREE.Mesh(sharedWallSillGeo, stoneMat);
   sill.position.y = 0.21;
   sill.castShadow = true;
   sill.receiveShadow = true;
   group.add(sill);
 
   // Main fortified wall curtain (tier2)
-  const curtain = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.55, 0.88), civ === 'anime' ? trimMat : stoneMat);
+  const curtain = new THREE.Mesh(sharedWallCurtainGeo, civ === 'anime' ? trimMat : stoneMat);
   curtain.position.y = 1.18;
   curtain.castShadow = true;
   curtain.receiveShadow = true;
   group.add(curtain);
 
-  // Corner heavy buttresses
-  [-1.22, 1.22].forEach((px) => {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.56, 2.25, 1.06), stoneMat);
-    pillar.position.set(px, 1.12, 0);
-    pillar.castShadow = true;
-    group.add(pillar);
-  });
+  // Corner heavy buttresses share one instanced batch.
+  createVisualInstanceBatch(
+    group,
+    sharedWallButtressGeo,
+    stoneMat,
+    [-1.22, 1.22].map((px) => ({ position: [px, 1.12, 0] })),
+    'instancedWallButtresses',
+    true
+  );
 
   // Top palisade / battlements & walkway (tier3)
-  const walkway = new THREE.Mesh(new THREE.BoxGeometry(2.75, 0.2, 1.08), woodMat);
+  const walkway = new THREE.Mesh(sharedWallWalkwayGeo, woodMat);
   walkway.position.y = 2.02;
   group.add(walkway);
 
-  [-0.85, 0, 0.85].forEach((mx) => {
-    const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.42, 0.34), civ === 'fantasy' ? bannerMat : stoneMat);
-    merlon.position.set(mx, 2.32, 0.34);
-    merlon.castShadow = true;
-    group.add(merlon);
-  });
+  createVisualInstanceBatch(
+    group,
+    sharedWallMerlonGeo,
+    civ === 'fantasy' ? bannerMat : stoneMat,
+    [-0.85, 0, 0.85].map((mx) => ({ position: [mx, 2.32, 0.34] })),
+    'instancedWallMerlons',
+    true
+  );
 
-  // Sharpened palisade stakes on outer face
+  // Sharpened palisade stakes on outer face share one instanced batch.
+  const stakeTransforms: VisualInstanceTransform[] = [];
   for (let i = -2; i <= 2; i++) {
-    const stake = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.62, 6), woodMat);
-    stake.position.set(i * 0.48, 0.72, 0.62);
-    stake.rotation.x = Math.PI * 0.22;
-    group.add(stake);
+    stakeTransforms.push({
+      position: [i * 0.48, 0.72, 0.62],
+      rotation: [Math.PI * 0.22, 0, 0],
+    });
   }
+  createVisualInstanceBatch(
+    group, sharedWallStakeGeo, woodMat, stakeTransforms, 'instancedWallPalisadeStakes'
+  );
 
   return group;
 }
@@ -6234,11 +6272,15 @@ const sharedAntlerMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughn
 export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
   addContactShadow(group, 0.9);
+  const detailedVisual = new THREE.Group();
+  detailedVisual.name = 'deerDetailedVisual';
+  group.add(detailedVisual);
+  group.userData.deerDetailedVisual = detailedVisual;
 
   // Articulated upper body pivot centered near chest/hip midpoint so bounding tilts naturally
   const bodyPivot = new THREE.Group();
   bodyPivot.position.set(0, 0.7, 0);
-  group.add(bodyPivot);
+  detailedVisual.add(bodyPivot);
 
   const body = new THREE.Mesh(sharedDeerTorsoGeo, sharedDeerMat);
   body.castShadow = true;
@@ -6336,7 +6378,7 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
     const hoof = new THREE.Mesh(sharedDeerHoofGeo, sharedHoofMat);
     hoof.position.set(0, -0.515, 0);
     legPivot.add(upper, lower, hoof);
-    group.add(legPivot);
+    detailedVisual.add(legPivot);
     return legPivot;
   };
 
