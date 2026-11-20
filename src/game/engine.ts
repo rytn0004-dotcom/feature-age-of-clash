@@ -66,6 +66,10 @@ import {
   getBuildingAssaultProfile,
   getSiegeChannelMultiplier,
   canAfford,
+  canAssembleFieldRam,
+  FIELD_RAM_COST,
+  FIELD_RAM_TECH_ID,
+  isAgeUnlocked,
   canUnitGatherNode,
   computeAiWorkerAllocation,
   computeBuildingVisualState,
@@ -210,7 +214,6 @@ interface FieldSiegeProject {
   progressRing: THREE.Mesh;
 }
 
-const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
 
 export class RtsEngine {
   public container: HTMLElement;
@@ -3057,7 +3060,7 @@ export class RtsEngine {
     if (!def) return false;
 
     const currentAge = this.ageByFaction[bldg.faction] || 1;
-    if (def.requiredAge && currentAge < def.requiredAge) {
+    if (!isAgeUnlocked(def.requiredAge, currentAge)) {
       if (this.isHumanControlled(bldg.faction)) {
         sound.playInvalid();
         this.addFloatingText(bldg.x, 3.0, bldg.z, `🔒 需先晉升至時代 ${def.requiredAge} 才能建造`, '#ef4444');
@@ -3132,7 +3135,7 @@ export class RtsEngine {
   public startPlacement(type: BuildingType) {
     const bDef = DEFAULT_BUILDINGS[type];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
-    if (bDef.requiredAge && currentAge < bDef.requiredAge) {
+    if (!isAgeUnlocked(bDef.requiredAge, currentAge)) {
       sound.playInvalid();
       this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
       return;
@@ -4925,13 +4928,6 @@ export class RtsEngine {
       return false;
     };
     const age = this.ageByFaction[faction] || 1;
-    if (age < 2) return fail('🔒 野戰工程隊需要時代 II');
-    if (!this.getResearchedTechs(faction).includes('shared_field_engineering')) {
-      return fail('🔒 請先在兵營研發「野戰工程隊」');
-    }
-    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
-      return fail('🪵 這支軍團已有一輛衝車正在組裝');
-    }
     const builders = selected
       .filter(
         (unit) =>
@@ -4942,11 +4938,13 @@ export class RtsEngine {
           (unit.state === 'idle' || unit.state === 'moving')
       )
       .slice(0, 4);
-    if (builders.length < 4) return fail('🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵');
-    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
-
     const resources = this.getResourcesForFaction(faction);
-    if (!canAfford(resources, FIELD_RAM_COST)) return fail('⚠️ 野戰衝車需要 140 木材與 60 黃金');
+    const assemblyCheck = canAssembleFieldRam(age, this.getResearchedTechs(faction), builders.length, resources);
+    if (!assemblyCheck.ok) return fail(assemblyCheck.reason || '⚠️ 目前無法組裝野戰衝車');
+    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
+      return fail('🪵 這支軍團已有一輛衝車正在組裝');
+    }
+    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
     const x = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.x, 0) / builders.length));
     const z = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.z, 0) / builders.length));
     const visual = this.createFieldRamAssemblyVisual(x, z);
@@ -7064,7 +7062,8 @@ export class RtsEngine {
   ): boolean {
     const bDef = DEFAULT_BUILDINGS[bType];
     const aiRes = this.getResourcesForFaction(aiId);
-    if (!bDef || !canAfford(aiRes, bDef.cost)) return false;
+    const currentAge = this.ageByFaction[aiId] || 1;
+    if (!bDef || !isAgeUnlocked(bDef.requiredAge, currentAge) || !canAfford(aiRes, bDef.cost)) return false;
 
     const builder =
       aiWorkers.find((w) => w.hp > 0 && w.state === 'idle') ||
@@ -7165,6 +7164,8 @@ export class RtsEngine {
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
       const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
+      const aiStableList = aiBuildings.filter((b) => b.buildingType === 'stable');
+      const aiSiegeWorkshopList = aiBuildings.filter((b) => b.buildingType === 'siege_workshop');
       const aiDocks = aiBuildings.filter((b) => b.buildingType === 'dock');
       const aiUniqueBldg = aiBuildings.find((b) => b.buildingType === aiCiv.uniqueBuildingType);
 
@@ -7593,6 +7594,10 @@ export class RtsEngine {
       const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
+        const buildCmdDef =
+          buildCmd?.type === 'build' && buildCmd.targetId
+            ? DEFAULT_BUILDINGS[buildCmd.targetId as BuildingType]
+            : undefined;
         if (needsHouse && aiRes.wood >= DEFAULT_BUILDINGS.house.cost.wood) {
           this.tryAiConstructBuilding(
             aiId,
@@ -7629,12 +7634,29 @@ export class RtsEngine {
             anchorZ,
             toCenterAngle + 0.5
           );
-        } else if (buildCmd?.type === 'build' && buildCmd.targetId) {
+        } else if (buildCmd?.type === 'build' && buildCmd.targetId && buildCmdDef && isAgeUnlocked(buildCmdDef.requiredAge, aiAge)) {
           this.tryAiConstructBuilding(aiId, buildCmd.targetId as BuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
         } else if (aiBarracksList.length === 0 && aiWorkers.length >= 4 && aiRes.wood >= 150 && this.stats.gameDuration > 10) {
           this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
-        } else if (!aiArcheryList.length && this.stats.gameDuration > 16) {
+        } else if (aiAge >= 2 && !aiArcheryList.length && this.stats.gameDuration > 16) {
           this.tryAiConstructBuilding(aiId, 'archery_range', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.65);
+        } else if (
+          aiAge >= 2 &&
+          aiStableList.length === 0 &&
+          aiWorkers.length >= 5 &&
+          aiRes.wood >= DEFAULT_BUILDINGS.stable.cost.wood &&
+          this.stats.gameDuration > 26
+        ) {
+          this.tryAiConstructBuilding(aiId, 'stable', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.9);
+        } else if (
+          aiAge >= 3 &&
+          aiSiegeWorkshopList.length === 0 &&
+          aiWorkers.length >= 6 &&
+          aiRes.wood >= DEFAULT_BUILDINGS.siege_workshop.cost.wood &&
+          aiRes.gold >= DEFAULT_BUILDINGS.siege_workshop.cost.gold &&
+          this.stats.gameDuration > 55
+        ) {
+          this.tryAiConstructBuilding(aiId, 'siege_workshop', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.95);
         } else if (!aiUniqueBldg && this.stats.gameDuration > 24) {
           this.tryAiConstructBuilding(aiId, aiCiv.uniqueBuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.75);
         } else {
