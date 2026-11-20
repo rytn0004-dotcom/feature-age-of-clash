@@ -546,6 +546,54 @@ function finalizeBuildingWindowBatches(parent: THREE.Group): void {
   }
 }
 
+interface ArchedDoorwayGeometrySet {
+  door: THREE.BufferGeometry;
+  frame: THREE.BufferGeometry;
+  hinge: THREE.BufferGeometry;
+}
+
+const archedDoorwayGeometryCache = new Map<string, ArchedDoorwayGeometrySet>();
+const archedDoorwayHingeDummy = new THREE.Object3D();
+
+function getArchedDoorwayGeometries(width: number, height: number): ArchedDoorwayGeometrySet {
+  const key = `${width.toFixed(4)}|${height.toFixed(4)}`;
+  const cached = archedDoorwayGeometryCache.get(key);
+  if (cached) return cached;
+
+  const hw = width * 0.5;
+  const radius = hw;
+  const archShape = new THREE.Shape();
+  archShape.moveTo(-hw, 0);
+  archShape.lineTo(hw, 0);
+  archShape.lineTo(hw, height - radius);
+  archShape.absarc(0, height - radius, radius, 0, Math.PI, false);
+  archShape.lineTo(-hw, 0);
+  const door = makeExtrudeGeo(archShape, 0.24, 0.02, 0.02, 1, true);
+
+  // Stone surround arch voussoir with an exact doorway-sized through-hole.
+  const frameShape = new THREE.Shape();
+  const fw = hw + 0.18;
+  frameShape.moveTo(-fw, 0);
+  frameShape.lineTo(fw, 0);
+  frameShape.lineTo(fw, height - radius);
+  frameShape.absarc(0, height - radius, fw, 0, Math.PI, false);
+  frameShape.lineTo(-fw, 0);
+
+  const hole = new THREE.Path();
+  hole.moveTo(-hw, 0);
+  hole.lineTo(hw, 0);
+  hole.lineTo(hw, height - radius);
+  hole.absarc(0, height - radius, hw, 0, Math.PI, false);
+  hole.lineTo(-hw, 0);
+  frameShape.holes.push(hole);
+
+  const frame = makeExtrudeGeo(frameShape, 0.34, 0.03, 0.03, 1, true);
+  const hinge = new THREE.BoxGeometry(width * 0.9, 0.07, 0.28);
+  const geometrySet = { door, frame, hinge };
+  archedDoorwayGeometryCache.set(key, geometrySet);
+  return geometrySet;
+}
+
 function addArchedDoorway(
   parent: THREE.Group,
   x: number,
@@ -557,56 +605,35 @@ function addArchedDoorway(
   woodMat: THREE.Material,
   ironMat: THREE.Material
 ) {
-  const archShape = new THREE.Shape();
-  const hw = width * 0.5;
-  const r = hw;
-  archShape.moveTo(-hw, 0);
-  archShape.lineTo(hw, 0);
-  archShape.lineTo(hw, height - r);
-  archShape.absarc(0, height - r, r, 0, Math.PI, false);
-  archShape.lineTo(-hw, 0);
+  const geometries = getArchedDoorwayGeometries(width, height);
 
-  const doorGeo = makeExtrudeGeo(archShape, 0.24, 0.02, 0.02, 1, true);
-  const door = new THREE.Mesh(doorGeo, woodMat);
+  const door = new THREE.Mesh(geometries.door, woodMat);
   door.position.set(x, y, z);
   parent.add(door);
 
-  // Stone surround arch voussoir
-  const frameShape = new THREE.Shape();
-  const fw = hw + 0.18;
-  frameShape.moveTo(-fw, 0);
-  frameShape.lineTo(fw, 0);
-  frameShape.lineTo(fw, height - r);
-  frameShape.absarc(0, height - r, fw, 0, Math.PI, false);
-  frameShape.lineTo(-fw, 0);
-  const hole = new THREE.Path();
-  hole.moveTo(-hw, 0);
-  hole.lineTo(hw, 0);
-  hole.lineTo(hw, height - r);
-  hole.absarc(0, height - r, hw, 0, Math.PI, false);
-  hole.lineTo(-hw, 0);
-  frameShape.holes.push(hole);
-
-  const frameGeo = makeExtrudeGeo(frameShape, 0.34, 0.03, 0.03, 1, true);
-  const frame = new THREE.Mesh(frameGeo, stoneMat);
+  const frame = new THREE.Mesh(geometries.frame, stoneMat);
   frame.position.set(x, y, z + 0.02);
   parent.add(frame);
 
-  // Iron hinge bands across double doors
-  [0.35, 0.85].forEach((hy) => {
-    const band = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.07, 0.28), ironMat);
-    band.position.set(x, y + hy, z + 0.02);
-    parent.add(band);
+  // Two identical hinge bands share one instance batch per doorway.
+  const hinges = new THREE.InstancedMesh(geometries.hinge, ironMat, 2);
+  hinges.name = 'instancedArchedDoorHinges';
+  [0.35, 0.85].forEach((hingeY, index) => {
+    archedDoorwayHingeDummy.position.set(x, y + hingeY, z + 0.02);
+    archedDoorwayHingeDummy.rotation.set(0, 0, 0);
+    archedDoorwayHingeDummy.scale.set(1, 1, 1);
+    archedDoorwayHingeDummy.updateMatrix();
+    hinges.setMatrixAt(index, archedDoorwayHingeDummy.matrix);
   });
+  hinges.instanceMatrix.needsUpdate = true;
+  hinges.computeBoundingBox();
+  hinges.computeBoundingSphere();
+  parent.add(hinges);
 }
 
 const sharedMerlonGeometry = new THREE.BoxGeometry(0.38, 0.36, 0.28);
 const sharedMerlonDummy = new THREE.Object3D();
 
-/**
- * Build every crenellation around a rectangular tower/keep crown as one
- * instanced batch instead of creating four Mesh objects for each merlon slot.
- */
 function addMerlonsAroundBox(
   parent: THREE.Group,
   halfW: number,
