@@ -8,6 +8,7 @@ import {
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  selectSiegeEscortUnits,
   deductCost,
   addResources,
   calculateDamage,
@@ -2179,4 +2180,22 @@ test('AI army composition: every personality has role-aware military training ca
       assert.ok(trainingRules.some((rule) => rule.action.targetId === 'catapult' && rule.conditions.some((c) => c.field === 'siegeCount' && c.value === item.siege)), 'siege needs a role cap');
     }
   }
+});
+
+
+test('siege tactics: select nearby frontline escorts and preserve units with active orders', () => {
+  const siege = [{ x: 10, z: 10 }, { x: 12, z: 10 }];
+  const candidates = [
+    { id: 'far-melee', x: 19, z: 10, state: 'idle', unitDef: { category: 'melee' as const } },
+    { id: 'near-ranged', x: 11, z: 10, state: 'idle', unitDef: { category: 'ranged' as const } },
+    { id: 'near-cavalry', x: 12, z: 12, state: 'idle', unitDef: { category: 'cavalry' as const } },
+    { id: 'busy-melee', x: 10, z: 10, state: 'attacking', unitDef: { category: 'melee' as const } },
+    { id: 'other-siege', x: 10, z: 11, state: 'idle', unitDef: { category: 'siege' as const } },
+    { id: 'worker', x: 10, z: 11, state: 'idle', unitDef: { category: 'worker' as const } },
+  ];
+
+  const escort = selectSiegeEscortUnits(siege, candidates, 2);
+  assert.deepEqual(escort.map((unit) => unit.id), ['far-melee', 'near-cavalry']);
+  assert.deepEqual(selectSiegeEscortUnits([], candidates, 2), []);
+  assert.deepEqual(selectSiegeEscortUnits(siege, candidates, 0), []);
 });
