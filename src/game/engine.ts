@@ -8678,11 +8678,11 @@ export class RtsEngine {
               idx % 3 === 0 ||
               unit.unitDef.stats.speed >= 3.6
           );
-          const raidTargetByUnit = new Map(
+          const raidTargetByUnit = new Map<string, string>(
             assignRaidTargets(raiderUnits, exposedWorkers, 2).map((assignment) => [
               assignment.raiderId,
               assignment.targetId,
-            ])
+            ] as const)
           );
 
           const ecoBuilding =
