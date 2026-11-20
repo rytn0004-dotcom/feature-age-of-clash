@@ -4867,7 +4867,7 @@ export class RtsEngine {
       unit.velocity = { x: 0, z: 0 };
       unit.currentActionText = '💤 野戰組裝中止';
     });
-    if (activeBuilders.length > 0 && refundRatio > 0) {
+    if (projectBuilders.length > 0 && refundRatio > 0) {
       const resources = this.getResourcesForFaction(project.faction);
       this.resourcesByFaction[project.faction] = addResources(resources, {
         wood: Math.floor(FIELD_RAM_COST.wood * refundRatio),
@@ -5012,6 +5012,10 @@ export class RtsEngine {
       this.onSelectionChange?.();
     }
     return true;
+  }
+
+  public hasActiveFieldRamAssembly(faction: FactionId = this.humanPlayerId): boolean {
+    return this.fieldSiegeProjects.some((project) => project.faction === faction);
   }
 
   public startFieldRamAssembly(): boolean {
