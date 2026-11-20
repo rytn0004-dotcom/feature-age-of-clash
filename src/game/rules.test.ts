@@ -596,7 +596,8 @@ test('hotkeys: worker build, training slots, and tech slots map cleanly without 
   } = await import('./hotkeys');
   const { getBuildableTypesForCiv } = await import('./civilizations');
 
-  const wasdReserved = new Set(['W', 'A', 'S', 'D', 'Q', 'F', 'X', 'H', 'B', 'I', 'M', 'P']);
+  // M is intentionally context-sensitive: with workers selected it builds the Siege Workshop; otherwise it toggles mute.
+  const wasdReserved = new Set(['W', 'A', 'S', 'D', 'Q', 'F', 'X', 'H', 'B', 'I', 'P']);
   Object.values(BUILDING_HOTKEYS).forEach((k) => {
     assert.ok(k && !wasdReserved.has(k), `Building hotkey ${k} conflicts with camera/global keys`);
   });
