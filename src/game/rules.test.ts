@@ -2311,3 +2311,27 @@ test('wall defence: siege thresholds create breaches, linked towers add armor, a
   const linkedArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: true }, 1, []);
   assert.equal(linkedArmor - baseArmor, 4);
 });
+
+
+test('gate and breached wall collision: opening a gate or breaking a wall creates a real navigation passage', async () => {
+  const { getBuildingCollisionRadius } = await import('./collision');
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+
+  const closedGate = {
+    buildingType: 'gate' as const,
+    buildingDef: DEFAULT_BUILDINGS.gate,
+    gateOpen: false,
+    wallBreached: false,
+  };
+  assert.equal(getBuildingCollisionRadius(closedGate), DEFAULT_BUILDINGS.gate.size);
+  assert.equal(getBuildingCollisionRadius({ ...closedGate, gateOpen: true }), 0);
+  assert.equal(getBuildingCollisionRadius({ ...closedGate, wallBreached: true }), 0);
+
+  const repairedWall = {
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    wallBreached: false,
+  };
+  assert.equal(getBuildingCollisionRadius(repairedWall), DEFAULT_BUILDINGS.wall.size);
+  assert.equal(getBuildingCollisionRadius({ ...repairedWall, wallBreached: true }), 0);
+});
