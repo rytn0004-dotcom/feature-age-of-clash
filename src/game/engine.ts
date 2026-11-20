@@ -69,6 +69,7 @@ import {
   canAssembleFieldRam,
   shouldPrioritizeAiFieldEngineering,
   shouldAiUnitSeekShelter,
+  shouldAiUnitLeaveShelter,
   resolveAiKnightUnitId,
   selectSiegeEscortUnits,
   FIELD_RAM_COST,
@@ -3110,9 +3111,7 @@ export class RtsEngine {
       const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
       if (!unit) return;
 
-      const isWorker = unit.unitDef.category === 'worker';
-      const healthRatio = unit.hp / Math.max(1, unit.maxHp);
-      if (!isWorker && healthRatio < recoveryRatio) {
+      if (!shouldAiUnitLeaveShelter(unit.hp, unit.maxHp, unit.unitDef.category, recoveryRatio)) {
         remaining.push(unitId);
         return;
       }
