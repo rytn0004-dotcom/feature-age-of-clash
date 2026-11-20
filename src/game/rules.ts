@@ -1306,6 +1306,45 @@ export function selectOptimalCombatTarget(
  * Picks a coordinated cluster focus-fire target for an entire squad based on squad centroid,
  * enemy concentration, threat priority, and siege fortifications.
  */
+/**
+ * Selects available frontline escorts near a siege group without overriding units with active orders.
+ * Melee and cavalry are preferred as screens, while proximity keeps the escort from being left behind.
+ */
+export function selectSiegeEscortUnits<
+  T extends { id: string; x: number; z: number; state: string; unitDef: { category: UnitCategory } }
+>(
+  siegeUnits: readonly { x: number; z: number }[],
+  candidates: readonly T[],
+  maxEscortCount: number
+): T[] {
+  if (siegeUnits.length === 0 || maxEscortCount <= 0) return [];
+
+  const centerX = siegeUnits.reduce((sum, unit) => sum + unit.x, 0) / siegeUnits.length;
+  const centerZ = siegeUnits.reduce((sum, unit) => sum + unit.z, 0) / siegeUnits.length;
+  const rolePenalty: Partial<Record<UnitCategory, number>> = {
+    melee: 0,
+    cavalry: 2.2,
+    ranged: 4.4,
+  };
+
+  return candidates
+    .filter(
+      (unit) =>
+        unit.state === 'idle' &&
+        unit.unitDef.category !== 'siege' &&
+        unit.unitDef.category !== 'worker'
+    )
+    .map((unit) => ({
+      unit,
+      score:
+        getDistance(centerX, centerZ, unit.x, unit.z) +
+        (rolePenalty[unit.unitDef.category] ?? 6),
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, Math.floor(maxEscortCount))
+    .map((entry) => entry.unit);
+}
+
 export function selectClusterFocusTarget(
   squadUnits: UnitEntity[],
   hostileUnits: UnitEntity[],
