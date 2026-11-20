@@ -600,6 +600,13 @@ function addArchedDoorway(
   });
 }
 
+const sharedMerlonGeometry = new THREE.BoxGeometry(0.38, 0.36, 0.28);
+const sharedMerlonDummy = new THREE.Object3D();
+
+/**
+ * Build every crenellation around a rectangular tower/keep crown as one
+ * instanced batch instead of creating four Mesh objects for each merlon slot.
+ */
 function addMerlonsAroundBox(
   parent: THREE.Group,
   halfW: number,
@@ -608,30 +615,37 @@ function addMerlonsAroundBox(
   countPerSide: number,
   mat: THREE.Material
 ) {
-  const mGeo = new THREE.BoxGeometry(0.38, 0.36, 0.28);
-  for (let i = 0; i < countPerSide; i++) {
-    const t = countPerSide === 1 ? 0 : (i / (countPerSide - 1)) * 2 - 1;
+  const sideCount = Math.max(0, Math.floor(countPerSide));
+  if (sideCount === 0) return;
+
+  const totalCount = sideCount * 4;
+  const merlons = new THREE.InstancedMesh(sharedMerlonGeometry, mat, totalCount);
+  merlons.name = 'instancedBuildingMerlons';
+  let instanceIndex = 0;
+
+  const writeMerlon = (x: number, z: number, rotationY: number) => {
+    sharedMerlonDummy.position.set(x, y, z);
+    sharedMerlonDummy.rotation.set(0, rotationY, 0);
+    sharedMerlonDummy.scale.set(1, 1, 1);
+    sharedMerlonDummy.updateMatrix();
+    merlons.setMatrixAt(instanceIndex++, sharedMerlonDummy.matrix);
+  };
+
+  for (let i = 0; i < sideCount; i++) {
+    const t = sideCount === 1 ? 0 : (i / (sideCount - 1)) * 2 - 1;
     const xPos = t * (halfW - 0.28);
     const zPos = t * (halfD - 0.28);
 
-    const f = new THREE.Mesh(mGeo, mat);
-    f.position.set(xPos, y, halfD - 0.1);
-    parent.add(f);
-
-    const b = new THREE.Mesh(mGeo, mat);
-    b.position.set(xPos, y, -halfD + 0.1);
-    parent.add(b);
-
-    const l = new THREE.Mesh(mGeo, mat);
-    l.rotation.y = Math.PI / 2;
-    l.position.set(-halfW + 0.1, y, zPos);
-    parent.add(l);
-
-    const r = new THREE.Mesh(mGeo, mat);
-    r.rotation.y = Math.PI / 2;
-    r.position.set(halfW - 0.1, y, zPos);
-    parent.add(r);
+    writeMerlon(xPos, halfD - 0.1, 0);
+    writeMerlon(xPos, -halfD + 0.1, 0);
+    writeMerlon(-halfW + 0.1, zPos, Math.PI / 2);
+    writeMerlon(halfW - 0.1, zPos, Math.PI / 2);
   }
+
+  merlons.instanceMatrix.needsUpdate = true;
+  merlons.computeBoundingBox();
+  merlons.computeBoundingSphere();
+  parent.add(merlons);
 }
 
 function addWarmLantern(parent: THREE.Group, x: number, y: number, z: number, frameMat: THREE.Material) {
