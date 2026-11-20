@@ -1871,7 +1871,7 @@ export const HUD: React.FC<HUDProps> = ({
                     <div className="space-y-1.5 min-w-[230px]">
                       <div className="text-xs font-bold text-slate-400">作戰指令與主動奧義 (Tactics)</div>
                       <div className="flex flex-wrap gap-1.5">
-                        {engine.buildings.some((building) => building.faction === humanPlayerId && building.buildingDef.isWall && building.isConstructed && building.hp > 0 && !building.wallBreached) && (
+                        {engine.buildings.some((building) => building.faction === engine.humanPlayerId && building.buildingDef.isWall && building.isConstructed && building.hp > 0 && !building.wallBreached) && (
                           <button
                             data-cmd-wall-patrol="true"
                             onClick={() => engine.issueWallPatrolOrder()}
