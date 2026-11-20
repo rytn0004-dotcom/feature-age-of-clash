@@ -4724,6 +4724,274 @@ export class RtsEngine {
     }
   }
 
+
+  private stepUnitFieldAssembly(unit: UnitEntity, dt: number) {
+    const project = this.fieldSiegeProjects.find(
+      (entry) => entry.id === unit.fieldAssemblyProjectId && entry.faction === unit.faction
+    );
+    if (!project) {
+      unit.fieldAssemblyProjectId = undefined;
+      unit.state = 'idle';
+      unit.currentActionText = '💤 待命中 (組裝中止)';
+      return;
+    }
+
+    const builderIndex = project.builderUnitIds.indexOf(unit.id);
+    const angle = (Math.max(0, builderIndex) / Math.max(1, project.builderUnitIds.length)) * Math.PI * 2;
+    const slotX = project.x + Math.cos(angle) * 2.65;
+    const slotZ = project.z + Math.sin(angle) * 2.65;
+    const distance = getDistance(unit.x, unit.z, slotX, slotZ);
+    if (distance > 0.72) {
+      this.moveUnitAlongPath(unit, slotX, slotZ, dt);
+      unit.currentActionText = '🪵 集結組裝位置 (' + Math.round(project.progress * 100) + '%)';
+    } else {
+      unit.velocity = { x: 0, z: 0 };
+      (unit as any)._desiredYaw = Math.atan2(project.x - unit.x, project.z - unit.z);
+      unit.currentActionText = '🪵 組裝野戰衝車 (' + Math.round(project.progress * 100) + '%)';
+    }
+  }
+
+  private createFieldRamAssemblyVisual(x: number, z: number): { mesh: THREE.Group; progressRing: THREE.Mesh } {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    const timber = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+    const darkTimber = new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.94 });
+    const iron = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.38, metalness: 0.78 });
+
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.28, 1.75), darkTimber);
+    chassis.position.y = 0.68;
+    chassis.castShadow = true;
+    group.add(chassis);
+    [-0.72, 0.72].forEach((zOffset) => {
+      const sideBeam = new THREE.Mesh(new THREE.BoxGeometry(4.55, 0.24, 0.24), timber);
+      sideBeam.position.set(0, 0.86, zOffset);
+      sideBeam.castShadow = true;
+      group.add(sideBeam);
+    });
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.18, 1.8), timber);
+    canopy.position.set(-0.25, 1.72, 0);
+    canopy.castShadow = true;
+    group.add(canopy);
+    [-1.45, 1.2].forEach((xOffset) => {
+      const cross = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.0, 1.78), darkTimber);
+      cross.position.set(xOffset, 1.22, 0);
+      group.add(cross);
+    });
+    const ram = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 3.65, 10), timber);
+    ram.rotation.z = Math.PI / 2;
+    ram.position.set(0.35, 1.17, 0);
+    ram.castShadow = true;
+    group.add(ram);
+    const ramHead = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.78, 8), iron);
+    ramHead.rotation.z = -Math.PI / 2;
+    ramHead.position.set(2.3, 1.17, 0);
+    group.add(ramHead);
+    [-1.55, 1.55].forEach((xOffset) => {
+      [-0.9, 0.9].forEach((zOffset) => {
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.09, 7, 14), darkTimber);
+        wheel.rotation.y = Math.PI / 2;
+        wheel.position.set(xOffset, 0.42, zOffset);
+        group.add(wheel);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.25, 8), iron);
+        hub.rotation.z = Math.PI / 2;
+        hub.position.copy(wheel.position);
+        group.add(hub);
+      });
+    });
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.45, 2.7, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0xfbbf24,
+        transparent: true,
+        opacity: 0.38,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.09;
+    group.add(ring);
+    this.scene.add(group);
+    return { mesh: group, progressRing: ring };
+  }
+
+  private disposeFieldSiegeProject(project: FieldSiegeProject) {
+    this.scene.remove(project.mesh);
+    project.mesh.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry?.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      materials.forEach((material) => material?.dispose());
+    });
+  }
+
+  private cancelFieldSiegeProject(project: FieldSiegeProject, refundRatio = 0.5) {
+    const aliveBuilders = project.builderUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0);
+    aliveBuilders.forEach((unit) => {
+      unit.fieldAssemblyProjectId = undefined;
+      unit.state = 'idle';
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.velocity = { x: 0, z: 0 };
+      unit.currentActionText = '💤 野戰組裝中止';
+    });
+    if (aliveBuilders.length > 0 && refundRatio > 0) {
+      const resources = this.getResourcesForFaction(project.faction);
+      this.resourcesByFaction[project.faction] = addResources(resources, {
+        wood: Math.floor(FIELD_RAM_COST.wood * refundRatio),
+        gold: Math.floor(FIELD_RAM_COST.gold * refundRatio),
+      });
+      this.syncHumanResourcesAlias();
+      if (this.isHumanControlled(project.faction)) this.onResourcesChange?.(this.playerResources);
+    }
+    this.disposeFieldSiegeProject(project);
+    this.fieldSiegeProjects = this.fieldSiegeProjects.filter((entry) => entry.id !== project.id);
+    if (this.isHumanControlled(project.faction)) {
+      this.addFloatingText(project.x, 2.4, project.z, '⚠️ 步兵不足，野戰衝車組裝中止', '#f59e0b');
+      this.onSelectionChange?.();
+    }
+  }
+
+  private updateFieldSiegeProjects(dt: number) {
+    for (let i = this.fieldSiegeProjects.length - 1; i >= 0; i--) {
+      const project = this.fieldSiegeProjects[i];
+      const builders = project.builderUnitIds
+        .map((id) => this.units.find((unit) => unit.id === id))
+        .filter(
+          (unit): unit is UnitEntity =>
+            !!unit &&
+            unit.hp > 0 &&
+            unit.state === 'assembling' &&
+            unit.fieldAssemblyProjectId === project.id
+        );
+      if (builders.length < 3) {
+        this.cancelFieldSiegeProject(project, builders.length > 0 ? 0.5 : 0);
+        continue;
+      }
+
+      const readyBuilders = builders.filter((unit) => getDistance(unit.x, unit.z, project.x, project.z) <= 4.1);
+      if (readyBuilders.length >= 3) {
+        project.progress = Math.min(1, project.progress + (dt * readyBuilders.length) / (4 * project.duration));
+      }
+      const pct = Math.round(project.progress * 100);
+      project.progressRing.scale.setScalar(0.9 + project.progress * 0.3);
+      (project.progressRing.material as THREE.MeshBasicMaterial).opacity = 0.28 + project.progress * 0.58;
+      builders.forEach((unit) => {
+        unit.currentActionText = readyBuilders.includes(unit)
+          ? '🪵 組裝野戰衝車 (' + pct + '%)'
+          : '🪵 集結組裝位置 (' + pct + '%)';
+      });
+
+      if (project.progress < 1) continue;
+      const ramDef = this.findUnitDef('battering_ram', project.faction);
+      if (!ramDef) {
+        this.cancelFieldSiegeProject(project, 1);
+        continue;
+      }
+
+      const consumedIds = new Set(project.builderUnitIds);
+      this.units = this.units.filter((unit) => !consumedIds.has(unit.id));
+      consumedIds.forEach((id) => {
+        const mesh = this.unitMeshes.get(id);
+        if (mesh) this.scene.remove(mesh);
+        this.unitMeshes.delete(id);
+      });
+      this.selectedUnitIds = this.selectedUnitIds.filter((id) => !consumedIds.has(id));
+      this.disposeFieldSiegeProject(project);
+      this.fieldSiegeProjects.splice(i, 1);
+      const ram = this.addUnit(ramDef, project.faction, project.x, project.z);
+      if (this.isHumanControlled(project.faction)) {
+        this.selectedUnitIds.push(ram.id);
+        sound.playConstruct(this.getSpatialAudioScale(project.x, project.z));
+        this.addFloatingText(project.x, 3.0, project.z, '🛡️ 野戰衝車組裝完成！', '#fbbf24');
+        this.onResourcesChange?.(this.playerResources);
+        this.onSelectionChange?.();
+      }
+      const aliveIds = new Set(this.units.filter((unit) => unit.hp > 0).map((unit) => unit.id));
+      this.controlGroups = pruneControlGroups(this.controlGroups, aliveIds);
+    }
+  }
+
+  private beginFieldRamAssembly(faction: FactionId, selected: UnitEntity[], showFeedback: boolean): boolean {
+    const fail = (message: string) => {
+      if (showFeedback) {
+        sound.playInvalid();
+        this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, message, '#f59e0b');
+      }
+      return false;
+    };
+    const age = this.ageByFaction[faction] || 1;
+    if (age < 2) return fail('🔒 野戰工程隊需要時代 II');
+    if (!this.getResearchedTechs(faction).includes('shared_field_engineering')) {
+      return fail('🔒 請先在兵營研發「野戰工程隊」');
+    }
+    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
+      return fail('🪵 這支軍團已有一輛衝車正在組裝');
+    }
+    const builders = selected
+      .filter(
+        (unit) =>
+          unit.hp > 0 &&
+          unit.faction === faction &&
+          unit.unitDef.category === 'melee' &&
+          !unit.garrisonedInBuildingId &&
+          (unit.state === 'idle' || unit.state === 'moving')
+      )
+      .slice(0, 4);
+    if (builders.length < 4) return fail('🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵');
+    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
+
+    const resources = this.getResourcesForFaction(faction);
+    if (!canAfford(resources, FIELD_RAM_COST)) return fail('⚠️ 野戰衝車需要 140 木材與 60 黃金');
+    const x = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.x, 0) / builders.length));
+    const z = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.z, 0) / builders.length));
+    const visual = this.createFieldRamAssemblyVisual(x, z);
+    const project: FieldSiegeProject = {
+      id: 'field_ram_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      faction,
+      x,
+      z,
+      progress: 0,
+      duration: 18,
+      builderUnitIds: builders.map((unit) => unit.id),
+      mesh: visual.mesh,
+      progressRing: visual.progressRing,
+    };
+    this.resourcesByFaction[faction] = deductCost(resources, FIELD_RAM_COST);
+    this.syncHumanResourcesAlias();
+    this.fieldSiegeProjects.push(project);
+    builders.forEach((unit) => {
+      unit.state = 'assembling';
+      unit.fieldAssemblyProjectId = project.id;
+      unit.targetBuildingId = undefined;
+      unit.targetResourceNodeId = undefined;
+      unit.targetEntityId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.currentActionText = '🪵 前往組裝野戰衝車';
+    });
+    if (showFeedback) {
+      sound.playConstruct();
+      this.spawnCommandIndicator(x, z, 'build');
+      this.addFloatingText(x, 2.6, z, '🪵 步兵開始組裝野戰衝車', '#fbbf24');
+      this.onResourcesChange?.(this.playerResources);
+      this.onSelectionChange?.();
+    }
+    return true;
+  }
+
+  public startFieldRamAssembly(): boolean {
+    const selected = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity => !!unit && this.isHumanControlled(unit.faction));
+    return this.beginFieldRamAssembly(this.humanPlayerId, selected, true);
+  }
+
   private stepUnitBuilding(unit: UnitEntity, dt: number) {
     if (!unit.targetBuildingId) {
       unit.state = 'idle';
