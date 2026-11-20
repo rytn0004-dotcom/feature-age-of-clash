@@ -50,6 +50,7 @@ import {
 } from './civilizations';
 import {
   AGE_ADVANCE_HOTKEY,
+  FIELD_ENGINEERING_HOTKEY,
   eventCodeToHotkeyLabel,
   findBuildingTypeByHotkey,
   findTechIdByHotkey,
@@ -197,6 +198,20 @@ interface PooledParticle {
   active: boolean;
 }
 
+interface FieldSiegeProject {
+  id: string;
+  faction: FactionId;
+  x: number;
+  z: number;
+  progress: number;
+  duration: number;
+  builderUnitIds: string[];
+  mesh: THREE.Group;
+  progressRing: THREE.Mesh;
+}
+
+const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+
 export class RtsEngine {
   public container: HTMLElement;
   public renderer!: THREE.WebGLRenderer;
@@ -290,6 +305,7 @@ export class RtsEngine {
   private projectileAssets: Record<Projectile['type'], { geo: THREE.BufferGeometry; mat: THREE.Material }> | null = null;
   private selectionRings = new Map<string, THREE.Mesh>();
   private commandIndicators: Array<{ mesh: THREE.Mesh; age: number; maxAge: number }> = [];
+  private fieldSiegeProjects: FieldSiegeProject[] = [];
   private rallyFlagMesh: THREE.Group | null = null;
   private rallyLineMesh: THREE.Line | null = null;
 
@@ -936,6 +952,8 @@ export class RtsEngine {
     this.gameOverWinner = null;
 
     // Clear old objects
+    this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
+    this.fieldSiegeProjects = [];
     this.unitMeshes.forEach((m) => this.scene.remove(m));
     this.buildingMeshes.forEach((m) => {
       disposeBuildingVisualResources(m);
@@ -3470,6 +3488,7 @@ export class RtsEngine {
 
     // 2. Units simulation
     this.updateUnits(dt);
+    this.updateFieldSiegeProjects(dt);
 
     // 2.5 Layer-based Collision Resolution (Prevents clipping & overlapping)
     resolveUnitUnitCollisions(this.units);
@@ -3904,6 +3923,9 @@ export class RtsEngine {
           break;
         case 'building':
           this.stepUnitBuilding(unit, dt);
+          break;
+        case 'assembling':
+          this.stepUnitFieldAssembly(unit, dt);
           break;
         case 'garrisoning':
           this.stepUnitGarrisoning(unit, dt);
@@ -8177,6 +8199,8 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
+    this.fieldSiegeProjects = [];
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
     this.cleanupWindowListeners.forEach((fn) => fn());
