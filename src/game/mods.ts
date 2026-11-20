@@ -1443,18 +1443,6 @@ export const HARD_AI_RULES: AiRule[] = [
     action: { type: 'train_unit', targetId: 'villager', priority: 82 },
   },
   {
-    id: 'hard_train_siege_ram',
-    name: '困難·衝車',
-    enabled: true,
-    conditions: [
-      { field: 'age', operator: '>=', value: 2 },
-      { field: 'wood', operator: '>=', value: 110 },
-      { field: 'gold', operator: '>=', value: 45 },
-      { field: 'armyCount', operator: '>=', value: 2 },
-    ],
-    action: { type: 'train_unit', targetId: 'battering_ram', priority: 72 },
-  },
-  {
     id: 'hard_train_siege_catapult',
     name: '困難·投石',
     enabled: true,
