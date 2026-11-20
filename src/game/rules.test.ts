@@ -840,10 +840,10 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   assert.equal(clusterTarget?.id, 'eaLow');
 
   // Target hysteresis: retain a sound target, but switch decisively to a wounded high-value counter.
-  const woundedArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
+  const criticalArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
   assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, enemyMelee), false);
-  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, woundedArcher), true);
-  assert.equal(shouldSwitchCombatTarget(swordsman, { ...enemyMelee, hp: 0 }, woundedArcher), true);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, criticalArcher), true);
+  assert.equal(shouldSwitchCombatTarget(swordsman, { ...enemyMelee, hp: 0 }, criticalArcher), true);
   const friendlyArcher = mkUnit('friendly', 'ai1', 1, 'ranged', 1, 0);
   assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, friendlyArcher), false);
 
