@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canAfford,
+  canAssembleFieldRam,
+  FIELD_RAM_COST,
+  FIELD_RAM_TECH_ID,
+  isAgeUnlocked,
   deductCost,
   addResources,
   calculateDamage,
@@ -1981,4 +1985,46 @@ test('unit-portraits: distinct portrait specs for all 20 built-in units and all 
     const fallbackSpec = getUnitPortraitSpec(`custom_${mt}`, mt);
     assert.equal(fallbackSpec.key, `fallback_${mt}`);
   }
+});
+
+
+test('era progression: age gates are shared across all construction and training callers', () => {
+  assert.equal(isAgeUnlocked(undefined, 1), true);
+  assert.equal(isAgeUnlocked(1, 1), true);
+  assert.equal(isAgeUnlocked(2, 1), false);
+  assert.equal(isAgeUnlocked(2, 2), true);
+  assert.equal(isAgeUnlocked(3, 2), false);
+  assert.equal(isAgeUnlocked(3, 3), true);
+});
+
+test('field engineering: ram assembly requires Age II, research, four infantry and the full cost', () => {
+  const resources = { food: 0, wood: 180, gold: 80, stone: 0 };
+  assert.deepEqual(FIELD_RAM_COST, { food: 0, wood: 140, gold: 60, stone: 0 });
+  assert.equal(canAssembleFieldRam(1, [FIELD_RAM_TECH_ID], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 3, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, { ...resources, wood: 139 }).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, resources).ok, true);
+});
+
+test('era progression: ranged and cavalry units plus siege workshops unlock in the intended ages', async () => {
+  const { DEFAULT_BUILDINGS, SHARED_UNITS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
+  assert.equal(DEFAULT_BUILDINGS.barracks.requiredAge, 1);
+  assert.equal(DEFAULT_BUILDINGS.archery_range.requiredAge, 2);
+  assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
+  assert.equal(DEFAULT_BUILDINGS.siege_workshop.requiredAge, 3);
+
+  const builtInUnits = [...SHARED_UNITS, ...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS];
+  const earlyRangedOrCavalry = builtInUnits.filter(
+    (unit) =>
+      (unit.category === 'ranged' || unit.category === 'cavalry') &&
+      (!unit.requiredAge || unit.requiredAge < 2)
+  );
+  assert.deepEqual(earlyRangedOrCavalry.map((unit) => unit.id), []);
+
+  const earlyNonRamSiege = builtInUnits.filter(
+    (unit) => unit.category === 'siege' && unit.id !== 'battering_ram' && (!unit.requiredAge || unit.requiredAge < 3)
+  );
+  assert.deepEqual(earlyNonRamSiege.map((unit) => unit.id), []);
+  assert.equal(builtInUnits.find((unit) => unit.id === 'battering_ram')?.requiredAge, 2);
 });
