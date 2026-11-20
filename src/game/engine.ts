@@ -74,6 +74,7 @@ import {
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   computeAiWorkerAllocation,
+  selectAiWorkerReassignment,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
   computeGarrisonDefenseProfile,
@@ -7518,10 +7519,12 @@ export class RtsEngine {
       const plan = evaluateAiPlan(activeRules, snapshot);
       const gatherFocus = plan.gatherAction?.targetId || (aiWorkers.length >= 8 ? 'military_eco' : 'balanced_eco');
 
-      // 2. Dynamic Worker Allocation & Rebalancing (never pulls active builders or garrisoned workers)
+      // 2. Dynamic Worker Allocation & Rebalancing.
+      // Builders are excluded from the gatherer target; they are never reassigned from construction.
+      const aiEconomicWorkers = aiActiveWorkers.filter((worker) => worker.state !== 'building');
       const desiredAlloc = computeAiWorkerAllocation(
         aiRes,
-        aiActiveWorkers.length,
+        aiEconomicWorkers.length,
         gatherFocus,
         aiAge
       );
@@ -7563,7 +7566,7 @@ export class RtsEngine {
       };
 
       const resourcePriorityOrder: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
-      for (const w of aiActiveWorkers) {
+      for (const w of aiEconomicWorkers) {
         if (w.state !== 'idle') continue;
         // Contest forward gold: if we are poor on gold, claim nodes closer to map center / contested
         if (aiRes.gold < 120 && activeCounts.gold < desiredAlloc.gold) {
@@ -7601,25 +7604,22 @@ export class RtsEngine {
         assignWorkerToType(w, bestType);
       }
 
-      // Gently rebalance 1 surplus gatherer per tick if AI is starving for food/wood
-      if (aiRes.food < 75 && activeCounts.food < desiredAlloc.food) {
-        const surplusType = (['stone', 'gold', 'wood'] as ResourceType[]).find(
-          (t) => activeCounts[t] > desiredAlloc[t] + 1
-        );
-        if (surplusType) {
-          const reassignable = aiActiveWorkers.find((w) => {
-            if (w.state !== 'gathering' || !w.targetResourceNodeId) return false;
-            const n = this.resourceNodes.find((rn) => rn.id === w.targetResourceNodeId);
-            return n?.resourceType === surplusType;
-          });
-          if (reassignable) {
-            activeCounts[surplusType]--;
-            if (reassignable.targetResourceNodeId) {
-              const previousCount = nodeWorkerCounts.get(reassignable.targetResourceNodeId) || 0;
-              nodeWorkerCounts.set(reassignable.targetResourceNodeId, Math.max(0, previousCount - 1));
-            }
-            assignWorkerToType(reassignable, 'food');
+      // Gradually rebalance one gatherer per decision when a resource has a clear surplus
+      // and another has a clear deficit. Carrying workers and builders keep their current task.
+      const workerReassignment = selectAiWorkerReassignment(activeCounts, desiredAlloc);
+      if (workerReassignment) {
+        const reassignable = aiEconomicWorkers.find((worker) => {
+          if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
+          const node = resourceNodeById.get(worker.targetResourceNodeId);
+          return node?.resourceType === workerReassignment.from;
+        });
+        if (reassignable) {
+          activeCounts[workerReassignment.from]--;
+          if (reassignable.targetResourceNodeId) {
+            const previousCount = nodeWorkerCounts.get(reassignable.targetResourceNodeId) || 0;
+            nodeWorkerCounts.set(reassignable.targetResourceNodeId, Math.max(0, previousCount - 1));
           }
+          assignWorkerToType(reassignable, workerReassignment.to);
         }
       }
 
