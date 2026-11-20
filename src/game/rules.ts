@@ -64,6 +64,21 @@ export function shouldAiUnitSeekShelter(
 
   return Math.max(0, hp) / maxHp <= (roleThreshold[category] || 0.3) * personalityScale;
 }
+
+/** Workers resume their economy immediately; military units stay sheltered until recovered. */
+export function shouldAiUnitLeaveShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  recoveryRatio = 0.72
+): boolean {
+  if (category === 'worker') return true;
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  const threshold = Number.isFinite(recoveryRatio)
+    ? Math.max(0, Math.min(1, recoveryRatio))
+    : 0.72;
+  return Math.max(0, hp) / maxHp >= threshold;
+}
 export const WALL_BREACH_HP_RATIO = 0.32;
 export const WALL_TOWER_LINK_RANGE = 5.8;
 
