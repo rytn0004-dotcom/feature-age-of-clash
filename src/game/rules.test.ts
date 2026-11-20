@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canAfford,
+  canAssembleFieldRam,
+  FIELD_RAM_COST,
+  FIELD_RAM_TECH_ID,
+  isAgeUnlocked,
   deductCost,
   addResources,
   calculateDamage,
@@ -2039,4 +2043,17 @@ test('unit-portraits: distinct portrait specs for all 20 built-in units and all 
     const fallbackSpec = getUnitPortraitSpec(`custom_${mt}`, mt);
     assert.equal(fallbackSpec.key, `fallback_${mt}`);
   }
+});
+
+
+test('field engineering: ram assembly uses one shared Age II, research, infantry and resource gate', () => {
+  const resources = { food: 0, wood: 180, gold: 80, stone: 0 };
+  assert.deepEqual(FIELD_RAM_COST, { food: 0, wood: 140, gold: 60, stone: 0 });
+  assert.equal(isAgeUnlocked(2, 1), false);
+  assert.equal(isAgeUnlocked(2, 2), true);
+  assert.equal(canAssembleFieldRam(1, [FIELD_RAM_TECH_ID], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 3, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, { ...resources, wood: 139 }).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, resources).ok, true);
 });
