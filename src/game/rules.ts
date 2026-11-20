@@ -95,6 +95,13 @@ export interface AiFieldEngineeringReadiness {
   techCost: Resources;
 }
 
+/** Maps the generic AI "knight" request to an actual cavalry unit in every civilization. */
+export function resolveAiKnightUnitId(civilizationId: string): string {
+  if (civilizationId === 'anime') return 'scout_rider';
+  if (civilizationId === 'fantasy') return 'fantasy_paladin';
+  return 'knight';
+}
+
 /** Prioritizes the Age II field-engineering unlock over optional research once the AI can afford it safely. */
 export function shouldPrioritizeAiFieldEngineering(input: AiFieldEngineeringReadiness): boolean {
   if (
@@ -538,6 +545,10 @@ export interface AiEvaluationSnapshot {
   gold: number;
   stone: number;
   armyCount: number;
+  meleeCount?: number;
+  rangedCount?: number;
+  cavalryCount?: number;
+  siegeCount?: number;
   workerCount: number;
   underAttack: number; // 1 or 0
   enemyProximity: number; // distance to closest enemy
