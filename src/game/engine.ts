@@ -4851,18 +4851,23 @@ export class RtsEngine {
   }
 
   private cancelFieldSiegeProject(project: FieldSiegeProject, refundRatio = 0.5) {
-    const aliveBuilders = project.builderUnitIds
+    const projectBuilders = project.builderUnitIds
       .map((id) => this.units.find((unit) => unit.id === id))
       .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0);
-    aliveBuilders.forEach((unit) => {
-      unit.fieldAssemblyProjectId = undefined;
+    const activeBuilders = projectBuilders.filter(
+      (unit) => unit.state === 'assembling' && unit.fieldAssemblyProjectId === project.id
+    );
+    projectBuilders.forEach((unit) => {
+      if (unit.fieldAssemblyProjectId === project.id) unit.fieldAssemblyProjectId = undefined;
+    });
+    activeBuilders.forEach((unit) => {
       unit.state = 'idle';
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.velocity = { x: 0, z: 0 };
       unit.currentActionText = '💤 野戰組裝中止';
     });
-    if (aliveBuilders.length > 0 && refundRatio > 0) {
+    if (activeBuilders.length > 0 && refundRatio > 0) {
       const resources = this.getResourcesForFaction(project.faction);
       this.resourcesByFaction[project.faction] = addResources(resources, {
         wood: Math.floor(FIELD_RAM_COST.wood * refundRatio),
