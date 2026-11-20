@@ -2233,3 +2233,32 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
     'Do not churn workers for one-worker differences'
   );
 });
+
+
+test('wall-chain planning: creates modular segments for each polyline edge and scales costs by distance', async () => {
+  const { layoutWallChain, calculateWallChainCost, WALL_SEGMENT_SPACING } = await import('./rules');
+  const layout = layoutWallChain([
+    { x: 0, z: 0 },
+    { x: 5.4, z: 0 },
+    { x: 5.4, z: 5.4 },
+  ]);
+
+  assert.equal(WALL_SEGMENT_SPACING, 2.7);
+  assert.equal(layout.length, 4);
+  assert.deepEqual(
+    layout.map((segment) => [Number(segment.x.toFixed(2)), Number(segment.z.toFixed(2))]),
+    [[1.35, 0], [4.05, 0], [5.4, 1.35], [5.4, 4.05]]
+  );
+  assert.ok(layout.slice(0, 2).every((segment) => Math.abs(segment.rotationY) < 0.001));
+  assert.ok(layout.slice(2).every((segment) => Math.abs(segment.rotationY + Math.PI / 2) < 0.001));
+  assert.deepEqual(calculateWallChainCost(layout.length, { food: 0, wood: 25, gold: 0, stone: 10 }), {
+    food: 0,
+    wood: 100,
+    gold: 0,
+    stone: 40,
+  });
+  assert.deepEqual(layoutWallChain([{ x: 0, z: 0 }, { x: 0.5, z: 0 }]), []);
+  assert.deepEqual(calculateWallChainCost(-3, { food: 0, wood: 25, gold: 0, stone: 10 }), {
+    food: 0, wood: 0, gold: 0, stone: 0,
+  });
+});
