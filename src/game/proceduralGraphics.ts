@@ -6767,56 +6767,74 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     deck.receiveShadow = true;
     bridgeGroup.add(deck);
 
-    // Beveled side arch beams & cobble approach ramps
-    [-br.halfLength - 0.55, br.halfLength + 0.55].forEach((rz) => {
-      const rampGeo = new THREE.BoxGeometry(fullW * 0.94, 0.14, 1.2);
-      scalePlanarBoxUVs(rampGeo, 1.4, 0.6);
-      const ramp = new THREE.Mesh(rampGeo, bridgeStoneMat);
-      ramp.position.set(0, 0.08, rz);
-      ramp.receiveShadow = true;
-      bridgeGroup.add(ramp);
-    });
+    // The two approach ramps share a single geometry and one instanced batch.
+    const rampGeo = new THREE.BoxGeometry(fullW * 0.94, 0.14, 1.2);
+    scalePlanarBoxUVs(rampGeo, 1.4, 0.6);
+    const rampTransforms: VisualInstanceTransform[] = [-br.halfLength - 0.55, br.halfLength + 0.55].map((rz) => ({
+      position: [0, 0.08, rz],
+    }));
+    createVisualInstanceBatch(
+      bridgeGroup,
+      rampGeo,
+      bridgeStoneMat,
+      rampTransforms,
+      'instancedBridgeApproachRamps',
+      false,
+      true
+    );
 
-    [-br.halfWidth * 0.92, br.halfWidth * 0.92].forEach((px) => {
-      const curb = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, idx === 0 ? 0.48 : 0.34, fullLen * 0.98),
-        bridgeParapetMat
-      );
-      curb.position.set(px, idx === 0 ? 0.42 : 0.34, 0);
-      curb.castShadow = true;
-      bridgeGroup.add(curb);
+    // Repeated curbs, crenellations, corner pillars and river piers are batched
+    // by material/geometry while their individual world-space layout is preserved.
+    const curbGeo = new THREE.BoxGeometry(0.42, idx === 0 ? 0.48 : 0.34, fullLen * 0.98);
+    const merlonGeo = new THREE.BoxGeometry(0.46, idx === 0 ? 0.38 : 0.24, 0.65);
+    const pillarGeo = new THREE.BoxGeometry(0.68, idx === 0 ? 1.25 : 0.9, 0.68);
+    const pierGeo = new THREE.BoxGeometry(0.56, 0.42, 1.1);
+    const curbTransforms: VisualInstanceTransform[] = [];
+    const merlonTransforms: VisualInstanceTransform[] = [];
+    const pillarTransforms: VisualInstanceTransform[] = [];
+    const pierTransforms: VisualInstanceTransform[] = [];
+    const merlonCount = idx === 0 ? 7 : 5;
+    const sidePositions = [-br.halfWidth * 0.92, br.halfWidth * 0.92];
 
-      // Periodic stone merlons along primary & secondary stone bridges
-      const merlonCount = idx === 0 ? 7 : 5;
+    for (const px of sidePositions) {
+      curbTransforms.push({
+        position: [px, idx === 0 ? 0.42 : 0.34, 0],
+      });
+
       for (let m = 0; m < merlonCount; m++) {
         const mz = ((m / (merlonCount - 1)) * 2 - 1) * (br.halfLength * 0.85);
-        const merlon = new THREE.Mesh(
-          new THREE.BoxGeometry(0.46, idx === 0 ? 0.38 : 0.24, 0.65),
-          bridgeStoneMat
-        );
-        merlon.position.set(px, idx === 0 ? 0.84 : 0.62, mz);
-        merlon.castShadow = true;
-        bridgeGroup.add(merlon);
+        merlonTransforms.push({
+          position: [px, idx === 0 ? 0.84 : 0.62, mz],
+        });
       }
 
-      // Corner stone anchor pillars + warm glowing iron bridge lanterns
+      const pillarY = idx === 0 ? 0.68 : 0.5;
       [-br.halfLength * 0.92, br.halfLength * 0.92].forEach((pz) => {
-        const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.68, idx === 0 ? 1.25 : 0.9, 0.68), bridgeParapetMat);
-        pillar.position.set(px, idx === 0 ? 0.68 : 0.5, pz);
-        pillar.castShadow = true;
-        bridgeGroup.add(pillar);
+        pillarTransforms.push({ position: [px, pillarY, pz] });
         if (idx === 0) {
           addWarmLantern(bridgeGroup, px, 1.44, pz, bridgeIronMat);
         }
       });
 
-      // River cutwater piers anchoring the bridge into the riverbed
       [-br.halfLength * 0.45, br.halfLength * 0.45].forEach((pierZ) => {
-        const pier = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.42, 1.1), bridgeParapetMat);
-        pier.position.set(px * 0.98, 0.14, pierZ);
-        bridgeGroup.add(pier);
+        pierTransforms.push({
+          position: [px * 0.98, 0.14, pierZ],
+        });
       });
-    });
+    }
+
+    createVisualInstanceBatch(
+      bridgeGroup, curbGeo, bridgeParapetMat, curbTransforms, 'instancedBridgeCurbs', true
+    );
+    createVisualInstanceBatch(
+      bridgeGroup, merlonGeo, bridgeStoneMat, merlonTransforms, 'instancedBridgeMerlons', true
+    );
+    createVisualInstanceBatch(
+      bridgeGroup, pillarGeo, bridgeParapetMat, pillarTransforms, 'instancedBridgePillars', true
+    );
+    createVisualInstanceBatch(
+      bridgeGroup, pierGeo, bridgeParapetMat, pierTransforms, 'instancedBridgeCutwaterPiers'
+    );
 
     envGroup.add(bridgeGroup);
   });
