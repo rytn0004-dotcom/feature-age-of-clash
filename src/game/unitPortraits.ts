@@ -17,6 +17,7 @@ export type UnitPortraitKey =
   | 'anime_saiyan_brawler'
   | 'anime_katana_shinigami'
   | 'anime_spirit_harvester'
+  | 'fantasy_footman'
   | 'fantasy_paladin'
   | 'fantasy_mage'
   | 'fantasy_treant'
@@ -152,6 +153,13 @@ const BUILTIN_PORTRAIT_SPECS: Record<string, UnitPortraitSpec> = {
     label: '狐面采靈巫',
     accentHex: '#2dd4bf',
     bgFrom: '#134e4a',
+    bgTo: '#0f172a',
+  },
+  fantasy_footman: {
+    key: 'fantasy_footman',
+    label: '秘銀森林步兵',
+    accentHex: '#6ee7b7',
+    bgFrom: '#064e3b',
     bgTo: '#0f172a',
   },
   fantasy_paladin: {
