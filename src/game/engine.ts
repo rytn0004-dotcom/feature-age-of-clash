@@ -1488,6 +1488,7 @@ export class RtsEngine {
     const gate = this.buildings.find((building) => building.id === buildingId);
     if (!gate || gate.buildingType !== 'gate' || gate.hp <= 0 || !gate.isConstructed || gate.wallBreached || !this.isHumanControlled(gate.faction)) return false;
     gate.gateOpen = !gate.gateOpen;
+    this.refreshWallTowerConnections();
     this.navGridDirty = true;
     this.waterNavGridDirty = true;
     sound.playOrder();
@@ -1500,7 +1501,7 @@ export class RtsEngine {
   public issueWallPatrolOrder(): number {
     const selected = this.selectedUnitIds
       .map((id) => this.units.find((unit) => unit.id === id))
-      .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0 && !unit.garrisonedInBuildingId && unit.unitDef.category !== 'worker' && unit.unitDef.category !== 'siege' && this.isHumanControlled(unit.faction));
+      .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0 && !unit.garrisonedInBuildingId && !unit.unitDef.isNaval && unit.unitDef.category !== 'worker' && unit.unitDef.category !== 'siege' && this.isHumanControlled(unit.faction));
     const availableWalls = this.buildings.filter((building) => building.faction === this.humanPlayerId && building.buildingDef.isWall && building.hp > 0 && building.isConstructed && !building.wallBreached && !(building.buildingType === 'gate' && building.gateOpen));
     if (selected.length === 0 || availableWalls.length === 0) {
       sound.playInvalid();
@@ -2244,6 +2245,8 @@ export class RtsEngine {
       unit.targetX = gx;
       unit.targetZ = gz;
       unit.attackMoveGoal = { x: gx, z: gz };
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
@@ -2529,6 +2532,8 @@ export class RtsEngine {
 
     playerUnits.forEach((unit) => {
       unit.attackMoveGoal = null;
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetEntityId = targetId;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
