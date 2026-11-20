@@ -1475,7 +1475,8 @@ export class RtsEngine {
     x: number,
     z: number,
     instant = false,
-    rotationY = 0
+    rotationY = 0,
+    refreshEnvironment = true
   ): BuildingEntity {
     const baseDef = DEFAULT_BUILDINGS[type];
     const civ = this.getCivilizationForFaction(faction);
@@ -1533,7 +1534,7 @@ export class RtsEngine {
     );
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
-    this.refreshSettlementEnvironment();
+    if (refreshEnvironment) this.refreshSettlementEnvironment();
 
     if (this.isHumanControlled(faction) && instant) {
       this.stats.buildingsConstructed++;
@@ -2536,6 +2537,13 @@ export class RtsEngine {
     }
     if (next.type === 'build') {
       unit.targetBuildingId = next.buildingId;
+      unit.targetResourceNodeId = undefined;
+      unit.targetEntityId = undefined;
+      unit.targetGarrisonBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'building';
       unit.currentActionText = '🔨 佇列建造';
       return true;
@@ -2560,6 +2568,7 @@ export class RtsEngine {
       worker.targetBuildingId = buildingId;
       worker.targetResourceNodeId = undefined;
       worker.targetEntityId = undefined;
+      worker.commandQueue = undefined;
       worker.waypoints = undefined;
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
@@ -3355,12 +3364,13 @@ export class RtsEngine {
 
     const chainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const segments = placements.map((placement, index) => {
-      const building = this.addBuilding('wall', this.humanPlayerId, placement.x, placement.z, false, placement.rotationY);
+      const building = this.addBuilding('wall', this.humanPlayerId, placement.x, placement.z, false, placement.rotationY, false);
       building.wallChainId = chainId;
       building.wallChainIndex = index;
       building.wallChainSize = placements.length;
       return building;
     });
+    this.refreshSettlementEnvironment();
 
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((unit) => unit.id === id))
