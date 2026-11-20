@@ -313,6 +313,12 @@ export interface BuildingEntity extends EntityCommon {
   buildingType: BuildingType;
   buildingDef: BuildingDefinition;
   civilization?: CivilizationId;
+  /** Wall chain metadata keeps all segments from one drawing operation grouped. */
+  wallChainId?: string;
+  wallChainIndex?: number;
+  wallChainSize?: number;
+  /** World-space yaw for directional wall modules. */
+  rotationY?: number;
   isConstructed: boolean;
   buildProgress: number; // 0 to 1
   queue: string[]; // queue of unitDefIds
