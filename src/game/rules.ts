@@ -82,6 +82,40 @@ export function canAssembleFieldRam(
   return { ok: true };
 }
 
+export interface AiFieldEngineeringReadiness {
+  age: number;
+  researched: boolean;
+  researchInProgress: boolean;
+  meleeUnitCount: number;
+  hasAvailableBarracks: boolean;
+  prerequisitesMet: boolean;
+  resources: Resources;
+  reserveFood: number;
+  reserveGold: number;
+  techCost: Resources;
+}
+
+/** Prioritizes the Age II field-engineering unlock over optional research once the AI can afford it safely. */
+export function shouldPrioritizeAiFieldEngineering(input: AiFieldEngineeringReadiness): boolean {
+  if (
+    input.age < 2 ||
+    input.researched ||
+    input.researchInProgress ||
+    input.meleeUnitCount < FIELD_RAM_REQUIRED_INFANTRY ||
+    !input.hasAvailableBarracks ||
+    !input.prerequisitesMet
+  ) {
+    return false;
+  }
+
+  const spendable: Resources = {
+    ...input.resources,
+    food: Math.max(0, input.resources.food - input.reserveFood),
+    gold: Math.max(0, input.resources.gold - input.reserveGold),
+  };
+  return canAfford(spendable, input.techCost);
+}
+
 /**
  * Deducts cost from resources without negative values.
  */
