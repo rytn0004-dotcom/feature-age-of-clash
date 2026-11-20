@@ -385,7 +385,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         hasWorkersSelected &&
         hit.hitType === 'building' &&
         hit.building &&
-        !hit.building.isConstructed &&
+        (!hit.building.isConstructed || hit.building.wallBreached) &&
         !engine.isHostileToPlayer(hit.building)
       ) {
         engine.issueBuildOrder(hit.building.id);
