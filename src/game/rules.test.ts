@@ -2306,6 +2306,8 @@ test('wall defence: siege thresholds create breaches, linked towers add armor, a
     isConstructed: true,
   };
   assert.equal(isWallLinkedToTower(wall, [tower]), true);
+  assert.equal(isWallLinkedToTower({ ...wall, buildingType: 'gate' as const, gateOpen: true }, [tower]), false);
+  assert.equal(isWallLinkedToTower({ ...wall, buildingType: 'gate' as const, gateOpen: false }, [tower]), true);
   assert.equal(isWallLinkedToTower(wall, [{ ...tower, faction: 'enemy' as const }]), false);
   assert.equal(isWallLinkedToTower(wall, [{ ...tower, x: 12 }]), false);
   const baseArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: false }, 1, []);
