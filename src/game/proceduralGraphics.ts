@@ -5242,6 +5242,86 @@ const sharedRichQuartzMat = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.42,
 });
 
+interface ResourceInstanceTransform {
+  position: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+}
+
+interface DepletableVisualPart {
+  mesh: THREE.Object3D;
+  baseScale: THREE.Vector3;
+  instanceIndex?: number;
+  baseMatrix?: THREE.Matrix4;
+}
+
+const resourceInstanceDummy = new THREE.Object3D();
+
+function createResourceInstanceBatch(
+  parent: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  transforms: ResourceInstanceTransform[],
+  name: string,
+  castShadow = false,
+  receiveShadow = false
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
+  mesh.name = name;
+  mesh.castShadow = castShadow;
+  mesh.receiveShadow = receiveShadow;
+
+  transforms.forEach((transform, index) => {
+    resourceInstanceDummy.position.set(...transform.position);
+    const rotation = transform.rotation || [0, 0, 0];
+    const scale = transform.scale || [1, 1, 1];
+    resourceInstanceDummy.rotation.set(rotation[0], rotation[1], rotation[2]);
+    resourceInstanceDummy.scale.set(scale[0], scale[1], scale[2]);
+    resourceInstanceDummy.updateMatrix();
+    mesh.setMatrixAt(index, resourceInstanceDummy.matrix);
+  });
+
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  parent.add(mesh);
+  return mesh;
+}
+
+function createDepletableInstanceParts(
+  parent: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  transforms: ResourceInstanceTransform[],
+  name: string,
+  castShadow = false,
+  receiveShadow = false
+): DepletableVisualPart[] {
+  const mesh = createResourceInstanceBatch(
+    parent, geometry, material, transforms, name, castShadow, receiveShadow
+  );
+
+  return transforms.map((transform, instanceIndex) => {
+    const rotation = transform.rotation || [0, 0, 0];
+    const scale = transform.scale || [1, 1, 1];
+    const position = new THREE.Vector3(...transform.position);
+    const quaternion = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(rotation[0], rotation[1], rotation[2])
+    );
+    const baseScale = new THREE.Vector3(...scale);
+    const baseMatrix = new THREE.Matrix4().compose(position, quaternion, baseScale);
+    return { mesh, baseScale, instanceIndex, baseMatrix };
+  });
+}
+
+const depletableInstancePosition = new THREE.Vector3();
+const depletableInstanceQuaternion = new THREE.Quaternion();
+const depletableInstanceScale = new THREE.Vector3();
+const depletableInstanceMatrix = new THREE.Matrix4();
+const sharedGoldSleeperGeo = new THREE.BoxGeometry(0.95, 0.06, 0.14);
+const sharedGoldRailGeo = new THREE.BoxGeometry(0.07, 0.08, 1.55);
+const sharedGoldCartWheelGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 10);
+
 export function createGoldMineMesh(
   amount = 1400,
   nodeTier: 'standard' | 'rich' = 'standard'
@@ -5250,22 +5330,22 @@ export function createGoldMineMesh(
   const isRich = nodeTier === 'rich';
   addContactShadow(group, isRich ? 2.55 : 2.3);
 
-  const depletableParts: Array<{ mesh: THREE.Object3D; baseScale: THREE.Vector3 }> = [];
+  const depletableParts: DepletableVisualPart[] = [];
 
-  // Multi-rock stratified slate outcrop
-  [
-    { x: 0, y: 0.68, z: -0.1, sx: 1.45, sy: 0.78, sz: 1.25, ry: 0.2 },
-    { x: -0.85, y: 0.45, z: 0.45, sx: 0.85, sy: 0.55, sz: 0.8, ry: 1.1 },
-    { x: 0.95, y: 0.5, z: -0.55, sx: 0.9, sy: 0.65, sz: 0.85, ry: -0.6 },
-  ].forEach((r) => {
-    const rock = new THREE.Mesh(sharedGoldRockGeo, sharedGoldRockMat);
-    rock.scale.set(r.sx, r.sy, r.sz);
-    rock.position.set(r.x, r.y, r.z);
-    rock.rotation.y = r.ry;
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    group.add(rock);
-  });
+  // Multi-rock stratified slate outcrop; three matching rocks share one draw batch.
+  createResourceInstanceBatch(
+    group,
+    sharedGoldRockGeo,
+    sharedGoldRockMat,
+    [
+      { position: [0, 0.68, -0.1], rotation: [0, 0.2, 0], scale: [1.45, 0.78, 1.25] },
+      { position: [-0.85, 0.45, 0.45], rotation: [0, 1.1, 0], scale: [0.85, 0.55, 0.8] },
+      { position: [0.95, 0.5, -0.55], rotation: [0, -0.6, 0], scale: [0.9, 0.65, 0.85] },
+    ],
+    'instancedGoldOutcropRocks',
+    true,
+    true
+  );
 
   // Faceted hexagonal crystalline gold quartz veins jutting from strata seams
   const oreMat = isRich ? sharedRichGoldOreMat : sharedGoldOreMat;
@@ -5282,25 +5362,33 @@ export function createGoldMineMesh(
         ] as Array<[number, number, number, number, number, number]>)
       : []),
   ];
-  veinConfigs.forEach(([vx, vy, vz, rx, rz, sc]) => {
-    const spire = new THREE.Mesh(sharedGoldCrystalGeo, oreMat);
-    spire.position.set(vx, vy, vz);
-    spire.rotation.set(rx, vx, rz);
-    spire.scale.setScalar(sc);
-    spire.castShadow = true;
-    group.add(spire);
-    depletableParts.push({ mesh: spire, baseScale: spire.scale.clone() });
-  });
-
-  // Exposed raw gold ore nuggets along base
-  const nug1 = new THREE.Mesh(sharedGoldNuggetGeo, oreMat);
-  nug1.position.set(-0.92, 0.55, 1.22);
-  const nug2 = new THREE.Mesh(sharedGoldNuggetGeo, oreMat);
-  nug2.position.set(0.95, 0.62, 1.05);
-  group.add(nug1, nug2);
   depletableParts.push(
-    { mesh: nug1, baseScale: nug1.scale.clone() },
-    { mesh: nug2, baseScale: nug2.scale.clone() }
+    ...createDepletableInstanceParts(
+      group,
+      sharedGoldCrystalGeo,
+      oreMat,
+      veinConfigs.map(([vx, vy, vz, rx, rz, sc]) => ({
+        position: [vx, vy, vz],
+        rotation: [rx, vx, rz],
+        scale: [sc, sc, sc],
+      })),
+      'instancedGoldVeins',
+      true
+    )
+  );
+
+  // Exposed raw gold ore nuggets along base, depleted by updating individual instances.
+  depletableParts.push(
+    ...createDepletableInstanceParts(
+      group,
+      sharedGoldNuggetGeo,
+      oreMat,
+      [
+        { position: [-0.92, 0.55, 1.22] },
+        { position: [0.95, 0.62, 1.05] },
+      ],
+      'instancedGoldNuggets'
+    )
   );
 
   // Mine Adit Timber Portal + Wooden Track Sleepers + Iron Rails + Ore Cart
@@ -5314,17 +5402,21 @@ export function createGoldMineMesh(
   beam.position.set(0, 2.28, 1.28);
   group.add(post1, post2, beam);
 
-  // Rail sleepers & twin iron rails
-  [1.15, 1.55, 1.95, 2.35].forEach((tz) => {
-    const sleeper = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 0.14), sharedWoodScaffoldMat);
-    sleeper.position.set(0, 0.03, tz);
-    group.add(sleeper);
-  });
-  [-0.32, 0.32].forEach((rx) => {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 1.55), sharedIronRailMat);
-    rail.position.set(rx, 0.08, 1.75);
-    group.add(rail);
-  });
+  // Rail sleepers & twin iron rails share one batch each.
+  createResourceInstanceBatch(
+    group,
+    sharedGoldSleeperGeo,
+    sharedWoodScaffoldMat,
+    [1.15, 1.55, 1.95, 2.35].map((tz) => ({ position: [0, 0.03, tz] })),
+    'instancedGoldMineSleepers'
+  );
+  createResourceInstanceBatch(
+    group,
+    sharedGoldRailGeo,
+    sharedIronRailMat,
+    [-0.32, 0.32].map((rx) => ({ position: [rx, 0.08, 1.75] })),
+    'instancedGoldMineRails'
+  );
 
   // Rolling Wooden Ore Cart loaded with gold nuggets
   const cartGroup = new THREE.Group();
@@ -5332,24 +5424,33 @@ export function createGoldMineMesh(
   const cartBody = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.44, 0.92), sharedWoodScaffoldMat);
   cartBody.castShadow = true;
   cartGroup.add(cartBody);
-  [
-    [-0.4, -0.26],
-    [0.4, -0.26],
-    [-0.4, 0.26],
-    [0.4, 0.26],
-  ].forEach(([wx, wz]) => {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.06, 10), sharedIronRailMat);
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(wx, -0.2, wz);
-    cartGroup.add(wheel);
-  });
-  [-0.14, 0.12].forEach((nx, i) => {
-    const cNug = new THREE.Mesh(sharedGoldNuggetGeo, oreMat);
-    cNug.scale.setScalar(0.55);
-    cNug.position.set(nx, 0.24, i === 0 ? -0.1 : 0.14);
-    cartGroup.add(cNug);
-    depletableParts.push({ mesh: cNug, baseScale: cNug.scale.clone() });
-  });
+  createResourceInstanceBatch(
+    cartGroup,
+    sharedGoldCartWheelGeo,
+    sharedIronRailMat,
+    [
+      [-0.4, -0.26],
+      [0.4, -0.26],
+      [-0.4, 0.26],
+      [0.4, 0.26],
+    ].map(([wx, wz]) => ({
+      position: [wx, -0.2, wz],
+      rotation: [0, 0, Math.PI / 2],
+    })),
+    'instancedGoldCartWheels'
+  );
+  depletableParts.push(
+    ...createDepletableInstanceParts(
+      cartGroup,
+      sharedGoldNuggetGeo,
+      oreMat,
+      [-0.14, 0.12].map((nx, i) => ({
+        position: [nx, 0.24, i === 0 ? -0.1 : 0.14],
+        scale: [0.55, 0.55, 0.55],
+      })),
+      'instancedGoldCartNuggets'
+    )
+  );
   group.add(cartGroup);
 
   addWarmLantern(group, 0.88, 1.96, 1.32, sharedIronRailMat);
@@ -5410,7 +5511,7 @@ export function createStoneQuarryMesh(
   const isRich = nodeTier === 'rich';
   addContactShadow(group, isRich ? 2.35 : 2.1);
 
-  const depletableParts: Array<{ mesh: THREE.Object3D; baseScale: THREE.Vector3 }> = [];
+  const depletableParts: DepletableVisualPart[] = [];
 
   // Multi-tiered granite quarry cliff shelves
   const baseCliff = new THREE.Mesh(sharedGoldRockGeo, sharedStoneDarkMat);
@@ -5426,18 +5527,20 @@ export function createStoneQuarryMesh(
   depletableParts.push({ mesh: upperCliff, baseScale: upperCliff.scale.clone() });
 
   // Neatly chiseled ashlar stone blocks stacked at base
-  [
-    [-0.55, 0.25, 0.95, 0.1],
-    [0.42, 0.25, 0.92, -0.15],
-    [-0.08, 0.72, 0.92, 0.05],
-  ].forEach(([bx, by, bz, ry]) => {
-    const block = new THREE.Mesh(sharedQuarryBlockGeo, sharedStoneLightMat);
-    block.position.set(bx, by, bz);
-    block.rotation.y = ry;
-    block.castShadow = true;
-    group.add(block);
-    depletableParts.push({ mesh: block, baseScale: block.scale.clone() });
-  });
+  depletableParts.push(
+    ...createDepletableInstanceParts(
+      group,
+      sharedQuarryBlockGeo,
+      sharedStoneLightMat,
+      [
+        { position: [-0.55, 0.25, 0.95], rotation: [0, 0.1, 0] },
+        { position: [0.42, 0.25, 0.92], rotation: [0, -0.15, 0] },
+        { position: [-0.08, 0.72, 0.92], rotation: [0, 0.05, 0] },
+      ],
+      'instancedQuarryAshlarBlocks',
+      true
+    )
+  );
 
   // Quarry iron crowbar wedge & mason's wooden mallet leaning on blocks
   const crowbar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.05, 6), sharedIronRailMat);
@@ -5453,17 +5556,22 @@ export function createStoneQuarryMesh(
 
   if (isRich) {
     // Gleaming marble-quartz mineral seams on rich stone quarry
-    [
-      [-0.35, 1.48, -0.15, 0.15, -0.2, 0.95],
-      [0.32, 1.15, -0.32, -0.28, 0.3, 0.85],
-    ].forEach(([qx, qy, qz, rx, rz, sc]) => {
-      const quartz = new THREE.Mesh(sharedGoldCrystalGeo, sharedRichQuartzMat);
-      quartz.position.set(qx, qy, qz);
-      quartz.rotation.set(rx, qx, rz);
-      quartz.scale.setScalar(sc);
-      group.add(quartz);
-      depletableParts.push({ mesh: quartz, baseScale: quartz.scale.clone() });
-    });
+    depletableParts.push(
+      ...createDepletableInstanceParts(
+        group,
+        sharedGoldCrystalGeo,
+        sharedRichQuartzMat,
+        [
+          [-0.35, 1.48, -0.15, 0.15, -0.2, 0.95],
+          [0.32, 1.15, -0.32, -0.28, 0.3, 0.85],
+        ].map(([qx, qy, qz, rx, rz, sc]) => ({
+          position: [qx, qy, qz],
+          rotation: [rx, qx, rz],
+          scale: [sc, sc, sc],
+        })),
+        'instancedQuarryQuartz'
+      )
+    );
 
     const stoneHalo = new THREE.Mesh(
       new THREE.RingGeometry(1.6, 1.95, 28),
