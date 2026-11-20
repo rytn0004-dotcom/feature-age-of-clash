@@ -69,6 +69,7 @@ import {
   canAssembleFieldRam,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  selectSiegeEscortUnits,
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
@@ -7891,10 +7892,12 @@ export class RtsEngine {
               s.currentActionText = '攻城推進';
             }
           }
-          // Escort: send a few non-siege with them
-          const escort = aiArmy
-            .filter((u) => u.unitDef.category !== 'siege')
-            .slice(0, Math.min(4, Math.max(2, siegeUnits.length * 2)));
+          // Escort with nearby idle frontline units; do not steal units from active orders.
+          const escort = selectSiegeEscortUnits(
+            siegeUnits,
+            aiArmy,
+            Math.min(4, Math.max(2, siegeUnits.length * 2))
+          );
           for (const e of escort) {
             if (e.state === 'idle') {
               e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
