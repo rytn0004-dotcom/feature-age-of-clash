@@ -1833,6 +1833,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 {bType === 'house' && '🏠'}
                                 {bType === 'castle' && '🏰'}
                                 {bType === 'dock' && '⚓'}
+                                {bType === 'gate' && '🚪'}
                                 {bDef.name.split(' ')[0]}
                               </span>
                               <span className="text-[9px] text-amber-400 font-mono">
@@ -1870,6 +1871,16 @@ export const HUD: React.FC<HUDProps> = ({
                     <div className="space-y-1.5 min-w-[230px]">
                       <div className="text-xs font-bold text-slate-400">作戰指令與主動奧義 (Tactics)</div>
                       <div className="flex flex-wrap gap-1.5">
+                        {engine.buildings.some((building) => building.faction === humanPlayerId && building.buildingDef.isWall && building.isConstructed && building.hp > 0 && !building.wallBreached) && (
+                          <button
+                            data-cmd-wall-patrol="true"
+                            onClick={() => engine.issueWallPatrolOrder()}
+                            className="px-2.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 rounded text-xs font-bold border border-emerald-500/50 cursor-pointer"
+                            title="讓選取的步兵、弓兵與騎兵沿最近友軍城牆巡邏，發現敵軍會自動迎擊"
+                          >
+                            🛡️ 沿城牆巡邏
+                          </button>
+                        )}
                         <button
                           data-cmd-attack-move="true"
                           onClick={() => {
@@ -2077,6 +2088,42 @@ export const HUD: React.FC<HUDProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {selectedBuilding.buildingDef.isWall && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      {selectedBuilding.wallTowerLinked && (
+                        <span className="px-2 py-1 rounded bg-sky-950/70 text-sky-200 border border-sky-500/40 font-bold">
+                          🏹 箭塔聯防 +4 城甲
+                        </span>
+                      )}
+                      {selectedBuilding.wallBreached && (
+                        <span className="px-2 py-1 rounded bg-red-950/70 text-red-200 border border-red-500/50 font-bold">
+                          💥 防線缺口 · 可通行
+                        </span>
+                      )}
+                      {selectedBuilding.wallBreached && engine.isHumanControlled(selectedBuilding.faction) && (
+                        <span className="text-amber-300">選取工人後右鍵此處修復（🪵12 / 🪨5）</span>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedBuilding.buildingType === 'gate' && selectedBuilding.isConstructed && (
+                    <div data-gate-control="true" className="flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-slate-950/75 border border-amber-500/30">
+                      <span className={selectedBuilding.wallBreached ? 'text-red-300 font-bold text-xs' : selectedBuilding.gateOpen ? 'text-emerald-300 font-bold text-xs' : 'text-amber-200 font-bold text-xs'}>
+                        {selectedBuilding.wallBreached ? '💥 城門被攻破 · 通道開放' : selectedBuilding.gateOpen ? '🚪 城門已開啟 · 通道暢通' : '🛡️ 城門已關閉 · 防線封鎖'}
+                      </span>
+                      {engine.isHumanControlled(selectedBuilding.faction) && !isSpectator && (
+                        <button
+                          data-cmd-toggle-gate="true"
+                          disabled={!!selectedBuilding.wallBreached || selectedBuilding.hp <= 0}
+                          onClick={() => engine.toggleGate(selectedBuilding.id)}
+                          className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 text-[11px] font-black cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          {selectedBuilding.wallBreached ? '等待修復' : selectedBuilding.gateOpen ? '關閉城門' : '開啟城門'}
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* Rally Point Marker Indicator */}
                   {selectedBuilding.buildingDef.trainableUnits.length > 0 && (
