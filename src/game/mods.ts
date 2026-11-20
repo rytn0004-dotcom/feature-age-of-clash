@@ -378,6 +378,7 @@ export const SHARED_UNITS: UnitDefinition[] = [
       modelType: 'knight',
       scale: 1.08,
     },
+    requiredAge: 2,
   },
 ];
 
@@ -551,6 +552,7 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
       scale: 1,
       projectileType: 'arrow',
     },
+    requiredAge: 2,
   },
   {
     id: 'knight',
@@ -700,6 +702,7 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
       scale: 1.05,
       projectileType: 'fireball',
     },
+    requiredAge: 3,
   },
 ];
 
@@ -736,6 +739,7 @@ export const ANIME_UNITS: UnitDefinition[] = [
       potency: 1.4,
       description: '釋放煙幕加速友軍，並短暫打斷附近敵軍對己方的攻擊鎖定。',
     },
+    requiredAge: 2,
   },
   {
     id: 'anime_saiyan_brawler',
@@ -834,11 +838,34 @@ export const ANIME_UNITS: UnitDefinition[] = [
 
 export const FANTASY_UNITS: UnitDefinition[] = [
   {
+    id: 'fantasy_footman',
+    name: '森靈守望者 (Grove Warden)',
+    factionPack: 'fantasy',
+    category: 'melee',
+    description: '【時代 I】以古木盾與石刃守護聖域的基礎步兵，能穩定守住前線，並在時代 II 學會野戰工程。',
+    stats: {
+      maxHp: 96,
+      attack: 8,
+      buildingAttack: 6,
+      defense: 1,
+      rangedDefense: 0,
+      range: 1.55,
+      speed: 3.0,
+      attackRate: 1.3,
+      cost: { food: 70, wood: 15, gold: 0, stone: 0 },
+      trainTime: 13,
+      gatherSpeed: 0,
+      carryCapacity: 0,
+    },
+    visual: { color: '#15803d', modelType: 'swordsman', scale: 1.12, weaponColor: '#a3e635' },
+    requiredAge: 1,
+  },
+  {
     id: 'fantasy_paladin',
     name: '聖光聖騎士 (Holy Paladin)',
     factionPack: 'fantasy',
-    category: 'melee',
-    description: '【時代 II】高貴的聖職騎士，手持光芒戰錘，能在戰鬥中治癒周圍盟友。',
+    category: 'cavalry',
+    description: '【時代 II】騎乘靈駒的聖職重騎兵，手持光芒戰錘，能在衝鋒時治癒周圍盟友。',
     stats: {
       maxHp: 140,
       attack: 11,
@@ -899,13 +926,14 @@ export const FANTASY_UNITS: UnitDefinition[] = [
       potency: 38,
       description: '召喚天外熾熱巨石轟擊目標區域。',
     },
+    requiredAge: 2,
   },
   {
     id: 'fantasy_treant',
     name: '遠古樹精 (Ancient Treant)',
     factionPack: 'fantasy',
-    category: 'melee',
-    description: '【時代 III】巨大的守護古樹，擁有優秀體魄與無視城甲的破城重擊。',
+    category: 'siege',
+    description: '【時代 III】由攻城器工坊培育的遠古樹精攻城器，能以無視城甲的重擊摧毀防禦工事。',
     stats: {
       maxHp: 230,
       attack: 16,
