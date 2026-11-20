@@ -737,6 +737,42 @@ export function findClosestResourceNode(
 }
 
 /**
+ * Selects a resource node while accounting for current workers already assigned to each node.
+ * The congestion penalty spreads new workers across nearby deposits without ignoring travel distance
+ * or the higher yield of rich / preferred food sources.
+ */
+export function findBalancedResourceNode(
+  x: number,
+  z: number,
+  nodes: ResourceNode[],
+  type: ResourceType | undefined,
+  assignedCounts: ReadonlyMap<string, number> = new Map(),
+  maxDistance = Infinity
+): ResourceNode | null {
+  let best: ResourceNode | null = null;
+  let bestScore = Infinity;
+
+  for (const node of nodes) {
+    if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
+    const distance = getDistance(x, z, node.x, node.z);
+    if (distance > maxDistance) continue;
+
+    const assigned = Math.max(0, assignedCounts.get(node.id) || 0);
+    const congestionPenalty = assigned * 5.5;
+    const foodYieldBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
+    const richNodeBonus = node.nodeTier === 'rich' ? 4 : 0;
+    const score = distance + congestionPenalty - foodYieldBonus - richNodeBonus;
+
+    if (score < bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  }
+
+  return best;
+}
+
+/**
  * Enforces land vs naval gathering rules:
  * - Land villagers CANNOT harvest offshore `deep_fish`.
  * - Naval Fishing Boats can harvest both `deep_fish` and `shore_fish`, and cannot harvest land nodes.
