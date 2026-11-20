@@ -733,6 +733,35 @@ export function computeAiWorkerAllocation(
   return result;
 }
 
+/** Moves at most one worker from a clear surplus to a clear resource deficit. */
+export function selectAiWorkerReassignment(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>
+): { from: ResourceType; to: ResourceType } | null {
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  let donor: ResourceType | null = null;
+  let donorSurplus = 1;
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 1;
+
+  for (const type of types) {
+    const surplus = activeCounts[type] - desiredAlloc[type];
+    if (surplus > donorSurplus) {
+      donor = type;
+      donorSurplus = surplus;
+    }
+
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  if (!donor || !recipient) return null;
+  return { from: donor, to: recipient };
+}
+
 /**
  * 2D Euclidean distance.
  */
