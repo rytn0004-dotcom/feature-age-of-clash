@@ -55,6 +55,7 @@ import {
 } from '../game/civilizations';
 import {
   AGE_ADVANCE_HOTKEY,
+  FIELD_ENGINEERING_HOTKEY,
   BUILDING_HOTKEYS,
   HOTKEY_REFERENCE_GROUPS,
   TECH_SLOT_HOTKEYS,
@@ -671,6 +672,11 @@ export const HUD: React.FC<HUDProps> = ({
   }, []);
 
   const isWorkerSelected = selectedUnits.some((u) => u.unitDef.category === 'worker');
+  const selectedInfantryCount = selectedUnits.filter(
+    (u) => u.hp > 0 && u.unitDef.category === 'melee' && !u.garrisonedInBuildingId && engine.isHumanControlled(u.faction)
+  ).length;
+  const hasFieldEngineering = researchedTechs.includes('shared_field_engineering');
+  const fieldRamAffordable = canAfford(engine.playerResources, { food: 0, wood: 140, gold: 60, stone: 0 });
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
   const humanCiv = getCivilizationConfig(humanCivId);
   const researchedTechs = engine.getResearchedTechs(observedFactionId);
@@ -1907,6 +1913,27 @@ export const HUD: React.FC<HUDProps> = ({
                         })()}
                       </div>
 
+
+                      {selectedInfantryCount >= 4 && (
+                        <button
+                          type="button"
+                          data-cmd-field-ram="true"
+                          disabled={isSpectator || observedAge < 2 || !hasFieldEngineering || !fieldRamAffordable}
+                          onClick={() => engine.startFieldRamAssembly()}
+                          className="px-2.5 py-1.5 rounded text-xs font-bold border border-amber-500/50 bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                          title={
+                            observedAge < 2
+                              ? '需先晉升至時代 II'
+                              : !hasFieldEngineering
+                              ? '需先在兵營研發「野戰工程隊」'
+                              : !fieldRamAffordable
+                              ? '需要 140 木材與 60 黃金'
+                              : '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
+                          }
+                        >
+                          [{FIELD_ENGINEERING_HOTKEY}] 野戰組裝衝車 · 4 步兵
+                        </button>
+                      )}
 
                       {primary.unitDefId === 'transport_boat' && (
                         <div className="text-[10px] text-sky-300">
