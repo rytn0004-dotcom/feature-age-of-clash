@@ -4916,19 +4916,20 @@ export class RtsEngine {
         continue;
       }
 
-      const consumedIds = new Set(project.builderUnitIds);
-      this.units = this.units.filter((unit) => !consumedIds.has(unit.id));
-      consumedIds.forEach((id) => {
-        const mesh = this.unitMeshes.get(id);
-        if (mesh) this.scene.remove(mesh);
-        this.unitMeshes.delete(id);
+      const completedBuilders = builders.slice();
+      completedBuilders.forEach((unit) => {
+        unit.fieldAssemblyProjectId = undefined;
+        unit.state = 'idle';
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.velocity = { x: 0, z: 0 };
+        unit.currentActionText = '🛡️ 衝車護衛';
       });
-      this.selectedUnitIds = this.selectedUnitIds.filter((id) => !consumedIds.has(id));
       this.disposeFieldSiegeProject(project);
       this.fieldSiegeProjects.splice(i, 1);
       const ram = this.addUnit(ramDef, project.faction, project.x, project.z);
       if (this.isHumanControlled(project.faction)) {
-        this.selectedUnitIds.push(ram.id);
+        this.selectedUnitIds = Array.from(new Set([...this.selectedUnitIds, ...completedBuilders.map((unit) => unit.id), ram.id]));
         sound.playConstruct(this.getSpatialAudioScale(project.x, project.z));
         this.addFloatingText(project.x, 3.0, project.z, '🛡️ 野戰衝車組裝完成！', '#fbbf24');
         this.onResourcesChange?.(this.playerResources);
@@ -7656,7 +7657,13 @@ export class RtsEngine {
             anchorZ,
             toCenterAngle + 0.5
           );
-        } else if (buildCmd?.type === 'build' && buildCmd.targetId) {
+        } else if (
+          buildCmd?.type === 'build' &&
+          buildCmd.targetId &&
+          aiCiv.buildableBuildings.includes(buildCmd.targetId as BuildingType) &&
+          (!(DEFAULT_BUILDINGS[buildCmd.targetId as BuildingType]?.requiredAge) ||
+            aiAge >= (DEFAULT_BUILDINGS[buildCmd.targetId as BuildingType]?.requiredAge || 1))
+        ) {
           this.tryAiConstructBuilding(aiId, buildCmd.targetId as BuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
         } else if (aiBarracksList.length === 0 && aiWorkers.length >= 4 && aiRes.wood >= 150 && this.stats.gameDuration > 10) {
           this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
