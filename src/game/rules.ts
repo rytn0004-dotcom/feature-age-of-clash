@@ -1324,7 +1324,7 @@ export function selectSiegeEscortUnits<
   const rolePenalty: Partial<Record<UnitCategory, number>> = {
     melee: 0,
     cavalry: 2.2,
-    ranged: 4.4,
+    ranged: 7.5,
   };
 
   return candidates
@@ -1337,8 +1337,8 @@ export function selectSiegeEscortUnits<
     .map((unit) => ({
       unit,
       score:
-        getDistance(centerX, centerZ, unit.x, unit.z) +
-        (rolePenalty[unit.unitDef.category] ?? 6),
+        getDistance(centerX, centerZ, unit.x, unit.z) * 0.75 +
+        (rolePenalty[unit.unitDef.category] ?? 9),
     }))
     .sort((a, b) => a.score - b.score)
     .slice(0, Math.floor(maxEscortCount))
