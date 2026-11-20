@@ -4473,6 +4473,10 @@ const buildingGroundProfile = (type: BuildingType): BuildingGroundProfile | null
       return { halfWidth: 2.75, halfDepth: 2.45, pathLength: 3.2, pathWidth: 1.65 };
     case 'archery_range':
       return { halfWidth: 2.85, halfDepth: 2.7, pathLength: 3.25, pathWidth: 1.6 };
+    case 'stable':
+      return { halfWidth: 3.55, halfDepth: 2.95, pathLength: 3.5, pathWidth: 1.7 };
+    case 'siege_workshop':
+      return { halfWidth: 3.85, halfDepth: 3.35, pathLength: 4.05, pathWidth: 1.8 };
     case 'house':
       return { halfWidth: 1.88, halfDepth: 1.7, pathLength: 2.7, pathWidth: 1.15 };
     case 'granary':
