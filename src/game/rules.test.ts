@@ -6,6 +6,7 @@ import {
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   isAgeUnlocked,
+  shouldPrioritizeAiFieldEngineering,
   deductCost,
   addResources,
   calculateDamage,
@@ -2077,4 +2078,44 @@ test('AI siege: all personalities field-assemble battering rams instead of train
     (rule) => rule.action.type === 'train_unit' && rule.action.targetId === 'battering_ram'
   );
   assert.deepEqual(invalidRamTrainRules.map((rule) => rule.id), []);
+});
+
+
+test('AI progression: mandatory field engineering takes priority only when safe and ready', () => {
+  const base = {
+    age: 2,
+    researched: false,
+    researchInProgress: false,
+    meleeUnitCount: 4,
+    hasAvailableBarracks: true,
+    prerequisitesMet: true,
+    resources: { food: 1400, wood: 180, gold: 700, stone: 0 },
+    reserveFood: 1200,
+    reserveGold: 600,
+    techCost: { food: 80, wood: 120, gold: 60, stone: 0 },
+  };
+
+  assert.equal(shouldPrioritizeAiFieldEngineering(base), true);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, age: 1 }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, researched: true }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, researchInProgress: true }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, meleeUnitCount: 3 }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, hasAvailableBarracks: false }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, prerequisitesMet: false }), false);
+  assert.equal(
+    shouldPrioritizeAiFieldEngineering({
+      ...base,
+      resources: { ...base.resources, food: 1279 },
+    }),
+    false,
+    'AI must preserve the next landmark food reserve'
+  );
+  assert.equal(
+    shouldPrioritizeAiFieldEngineering({
+      ...base,
+      resources: { ...base.resources, gold: 659 },
+    }),
+    false,
+    'AI must preserve the next landmark gold reserve'
+  );
 });
