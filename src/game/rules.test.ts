@@ -2262,3 +2262,47 @@ test('wall-chain planning: creates modular segments for each polyline edge and s
     food: 0, wood: 0, gold: 0, stone: 0,
   });
 });
+
+
+test('wall defence: siege thresholds create breaches, linked towers add armor, and repair uses fixed materials', async () => {
+  const { WALL_BREACH_HP_RATIO, WALL_REPAIR_COST, isWallLinkedToTower, shouldBreachWallAfterSiegeHit, getEffectiveBuildingArmor } = await import('./rules');
+  const wall = {
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: 250,
+    maxHp: DEFAULT_BUILDINGS.wall.maxHp,
+    isConstructed: true,
+    wallBreached: false,
+  };
+  assert.equal(WALL_BREACH_HP_RATIO, 0.32);
+  assert.equal(shouldBreachWallAfterSiegeHit(wall), true);
+  assert.deepEqual(WALL_REPAIR_COST, { food: 0, wood: 12, gold: 0, stone: 5 });
+  assert.equal(
+    shouldBreachWallAfterSiegeHit({ ...wall, hp: 500 }),
+    false,
+    'a wall above the threshold stays sealed'
+  );
+  assert.equal(
+    shouldBreachWallAfterSiegeHit({ ...wall, wallBreached: true }),
+    false,
+    'an already open breach is not repeatedly re-triggered'
+  );
+
+  const tower = {
+    buildingType: 'tower' as const,
+    faction: 'player' as const,
+    x: 4.5,
+    z: 0,
+    hp: 700,
+    isConstructed: true,
+  };
+  assert.equal(isWallLinkedToTower(wall, [tower]), true);
+  assert.equal(isWallLinkedToTower(wall, [{ ...tower, faction: 'enemy' as const }]), false);
+  assert.equal(isWallLinkedToTower(wall, [{ ...tower, x: 12 }]), false);
+  const baseArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: false }, 1, []);
+  const linkedArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: true }, 1, []);
+  assert.equal(linkedArmor - baseArmor, 4);
+});
