@@ -2266,6 +2266,11 @@ test('wall-chain planning: creates modular segments for each polyline edge and s
 
 test('wall defence: siege thresholds create breaches, linked towers add armor, and repair uses fixed materials', async () => {
   const { WALL_BREACH_HP_RATIO, WALL_REPAIR_COST, isWallLinkedToTower, shouldBreachWallAfterSiegeHit, getEffectiveBuildingArmor } = await import('./rules');
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+  const { getBuildableTypesForCiv } = await import('./civilizations');
+  const { BUILDING_HOTKEYS } = await import('./hotkeys');
+  assert.equal(BUILDING_HOTKEYS.gate, 'P');
+  assert.ok(['medieval', 'anime', 'fantasy'].every((civ) => getBuildableTypesForCiv(civ as any).includes('gate')));
   const wall = {
     buildingType: 'wall' as const,
     buildingDef: DEFAULT_BUILDINGS.wall,
