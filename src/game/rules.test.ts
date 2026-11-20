@@ -8,6 +8,7 @@ import {
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  selectAiWorkerReassignment,
   selectSiegeEscortUnits,
   deductCost,
   addResources,
@@ -2198,4 +2199,37 @@ test('siege tactics: select nearby frontline escorts and preserve units with act
   assert.deepEqual(escort.map((unit) => unit.id), ['near-cavalry', 'far-melee']);
   assert.deepEqual(selectSiegeEscortUnits([], candidates, 2), []);
   assert.deepEqual(selectSiegeEscortUnits(siege, candidates, 0), []);
+});
+
+
+test('AI economy: rebalance one worker from a clear surplus into the largest resource deficit', () => {
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 1 }
+    ),
+    { from: 'wood', to: 'food' }
+  );
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 1, wood: 1, gold: 4, stone: 0 },
+      { food: 1, wood: 3, gold: 1, stone: 1 }
+    ),
+    { from: 'gold', to: 'wood' }
+  );
+  assert.equal(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 2, gold: 1, stone: 1 },
+      { food: 2, wood: 2, gold: 1, stone: 1 }
+    ),
+    null
+  );
+  assert.equal(
+    selectAiWorkerReassignment(
+      { food: 3, wood: 1, gold: 1, stone: 1 },
+      { food: 2, wood: 2, gold: 1, stone: 1 }
+    ),
+    null,
+    'Do not churn workers for one-worker differences'
+  );
 });
