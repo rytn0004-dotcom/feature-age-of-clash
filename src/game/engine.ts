@@ -68,6 +68,7 @@ import {
   canAfford,
   canAssembleFieldRam,
   shouldPrioritizeAiFieldEngineering,
+  resolveAiKnightUnitId,
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
@@ -7136,12 +7137,7 @@ export class RtsEngine {
     } else if (rawTargetId === 'longbowman') {
       unitDefId = aiCiv.starterRangedUnitId;
     } else if (rawTargetId === 'knight') {
-      unitDefId =
-        aiCiv.id === 'anime'
-          ? 'anime_saiyan_brawler'
-          : aiCiv.id === 'fantasy'
-          ? 'fantasy_paladin'
-          : 'knight';
+      unitDefId = resolveAiKnightUnitId(aiCiv.id);
     } else if (rawTargetId === 'battering_ram') {
       unitDefId = 'battering_ram';
     } else if (rawTargetId === 'bombard_cannon') {
@@ -7481,12 +7477,34 @@ export class RtsEngine {
         }
       }
 
+      // Role counters include units already in production queues. Without queued reservations,
+      // the AI can request the same missing role every decision tick and overfill one unit type.
+      const queuedRoleCounts = { melee: 0, ranged: 0, cavalry: 0, siege: 0 };
+      for (const building of aiBuildings) {
+        for (const queuedUnitId of building.queue) {
+          const queuedDef = this.findUnitDef(queuedUnitId, aiId);
+          if (queuedDef && queuedDef.category in queuedRoleCounts) {
+            queuedRoleCounts[queuedDef.category as keyof typeof queuedRoleCounts]++;
+          }
+        }
+      }
+      const roleCounts = {
+        melee: aiUnits.filter((unit) => unit.unitDef.category === 'melee').length + queuedRoleCounts.melee,
+        ranged: aiUnits.filter((unit) => unit.unitDef.category === 'ranged').length + queuedRoleCounts.ranged,
+        cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
+        siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
+      };
+
       const snapshot = {
         food: aiRes.food,
         wood: aiRes.wood,
         gold: aiRes.gold,
         stone: aiRes.stone,
         armyCount: aiArmy.length,
+        meleeCount: roleCounts.melee,
+        rangedCount: roleCounts.ranged,
+        cavalryCount: roleCounts.cavalry,
+        siegeCount: roleCounts.siege,
         workerCount: aiWorkers.length,
         underAttack,
         enemyProximity: nearestEnemyDist,
