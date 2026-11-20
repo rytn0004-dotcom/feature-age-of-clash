@@ -43,10 +43,10 @@ export function shouldBreachWallAfterSiegeHit(
 
 /** A completed friendly watchtower reinforces nearby wall sections and gates. */
 export function isWallLinkedToTower(
-  wall: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed' | 'wallBreached'>,
+  wall: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed' | 'wallBreached' | 'gateOpen'>,
   buildings: readonly Pick<BuildingEntity, 'buildingType' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed'>[]
 ): boolean {
-  if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed || wall.wallBreached) return false;
+  if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed || wall.wallBreached || (wall.buildingType === 'gate' && wall.gateOpen)) return false;
   return buildings.some(
     (building) =>
       building.buildingType === 'tower' &&
