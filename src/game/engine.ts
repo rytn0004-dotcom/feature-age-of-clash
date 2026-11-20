@@ -7920,7 +7920,7 @@ export class RtsEngine {
           wounded.state = 'garrisoning';
           wounded.currentActionText = '🛡️ 戰損撤退 · 尋找掩體';
         }
-      } else if (nearestEnemyDist > 26 && !recentBaseDmg) {
+      } else if (nearestEnemyDist > 26 && !recentBaseDmg && !recentUnitDmg) {
         for (const b of aiBuildings) {
           if (b.garrisonedUnitIds && b.garrisonedUnitIds.length > 0) {
             this.ungarrisonRecoveredAiUnits(b.id, 0.72);
