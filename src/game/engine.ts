@@ -79,6 +79,7 @@ import {
   evaluateAiTechChoice,
   FactionResourceTelemetry,
   FARM_RESEED_WOOD_COST,
+  findBalancedResourceNode,
   findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
@@ -3406,7 +3407,7 @@ export class RtsEngine {
 
     // 0. World environmental animations (water ripples, fluttering banners, gentle tree/deer sway)
     const waterNorm = getWaterRippleNormalMap();
-    waterNorm.offset.x = (this.simTime * 0.036) % 1;
+    waterNorm.offset.x = (this.simTime * 0.038) % 1;
     waterNorm.offset.y = (this.simTime * 0.022) % 1;
 
     let flagIdx = 0;
@@ -3448,11 +3449,6 @@ export class RtsEngine {
       }
       envIdx++;
     });
-
-    // Subtle flowing river & lake surface ripple drift
-    const waterNormal = getWaterRippleNormalMap();
-    waterNormal.offset.x = (waterNormal.offset.x + dt * 0.038) % 1;
-    waterNormal.offset.y = (waterNormal.offset.y + dt * 0.022) % 1;
 
     // 1. Camera Input pan & smooth camera focus damping
     this.handleCameraMovement(dt);
@@ -3569,6 +3565,8 @@ export class RtsEngine {
       const p = sr.age / sr.maxAge;
       if (p >= 1) {
         this.scene.remove(sr.mesh);
+        // Each shockwave owns its RingGeometry and cloned material; release both after the effect.
+        sr.mesh.geometry.dispose();
         (sr.mesh.material as THREE.Material).dispose();
         this.shockwaveRings.splice(i, 1);
       } else {
@@ -7179,28 +7177,37 @@ export class RtsEngine {
         aiAge
       );
       const activeCounts: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
+      const resourceNodeById = new Map(this.resourceNodes.map((node) => [node.id, node]));
+      const nodeWorkerCounts = new Map<string, number>();
       for (const w of aiActiveWorkers) {
         if (w.state === 'returning_resource' && w.carryingResource) {
           activeCounts[w.carryingResource.type]++;
         } else if (w.state === 'gathering' && w.targetResourceNodeId) {
-          const n = this.resourceNodes.find((rn) => rn.id === w.targetResourceNodeId && rn.amount > 0);
-          if (n) activeCounts[n.resourceType]++;
+          const n = resourceNodeById.get(w.targetResourceNodeId);
+          if (n && n.amount > 0) activeCounts[n.resourceType]++;
+        }
+
+        if ((w.state === 'gathering' || w.state === 'returning_resource') && w.targetResourceNodeId) {
+          const targetNode = resourceNodeById.get(w.targetResourceNodeId);
+          if (targetNode && targetNode.amount > 0) {
+            nodeWorkerCounts.set(targetNode.id, (nodeWorkerCounts.get(targetNode.id) || 0) + 1);
+          }
         }
       }
 
       const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
+        const preferredRange = prefType === 'food' ? 38 : 36;
         const node =
-          (prefType === 'food'
-            ? findBestFoodResourceNode(anchorX, anchorZ, landNodes, 38, false)
-            : findClosestResourceNode(anchorX, anchorZ, landNodes, prefType, 36)) ||
-          findClosestResourceNode(anchorX, anchorZ, landNodes, undefined, 54) ||
-          findClosestResourceNode(worker.x, worker.z, landNodes);
+          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, preferredRange) ||
+          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, 54) ||
+          findBalancedResourceNode(worker.x, worker.z, landNodes, undefined, nodeWorkerCounts);
         if (node) {
           worker.targetResourceNodeId = node.id;
           worker.waypoints = undefined;
           worker.state = 'gathering';
           activeCounts[node.resourceType]++;
+          nodeWorkerCounts.set(node.id, (nodeWorkerCounts.get(node.id) || 0) + 1);
         }
       };
 
@@ -7215,7 +7222,8 @@ export class RtsEngine {
               const dHome = getDistance(anchorX, anchorZ, n.x, n.z);
               const dCenter = getDistance(0, 0, n.x, n.z);
               // Prefer somewhat forward mines (not only safest)
-              return { n, score: n.amount * 0.02 - dHome * 0.4 - dCenter * 0.15 };
+              const congestion = nodeWorkerCounts.get(n.id) || 0;
+              return { n, score: n.amount * 0.02 - dHome * 0.4 - dCenter * 0.15 - congestion * 8 };
             })
             .sort((a, b) => b.score - a.score)[0];
           if (forwardGold && forwardGold.score > -30) {
@@ -7223,6 +7231,10 @@ export class RtsEngine {
             w.waypoints = undefined;
             w.state = 'gathering';
             activeCounts.gold++;
+            nodeWorkerCounts.set(
+              forwardGold.n.id,
+              (nodeWorkerCounts.get(forwardGold.n.id) || 0) + 1
+            );
             continue;
           }
         }
@@ -7251,6 +7263,10 @@ export class RtsEngine {
           });
           if (reassignable) {
             activeCounts[surplusType]--;
+            if (reassignable.targetResourceNodeId) {
+              const previousCount = nodeWorkerCounts.get(reassignable.targetResourceNodeId) || 0;
+              nodeWorkerCounts.set(reassignable.targetResourceNodeId, Math.max(0, previousCount - 1));
+            }
             assignWorkerToType(reassignable, 'food');
           }
         }
