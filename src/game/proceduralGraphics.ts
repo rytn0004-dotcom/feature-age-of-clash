@@ -359,6 +359,98 @@ const sharedWarmWindowMat = new THREE.MeshStandardMaterial({
   metalness: 0.15,
 });
 
+interface BuildingWindowInstanceBatch {
+  mesh: THREE.InstancedMesh;
+  nextIndex: number;
+}
+
+interface BuildingWindowBatchSet {
+  paneGeometry: THREE.BufferGeometry;
+  verticalGeometry: THREE.BufferGeometry;
+  horizontalGeometry: THREE.BufferGeometry;
+  sillGeometry: THREE.BufferGeometry;
+  frameMaterial: THREE.Material;
+  panes: BuildingWindowInstanceBatch[];
+  verticalFrames: BuildingWindowInstanceBatch[];
+  horizontalFrames: BuildingWindowInstanceBatch[];
+  sills: BuildingWindowInstanceBatch[];
+}
+
+interface BuildingWindowBatchState {
+  group: THREE.Group;
+  batches: Map<string, BuildingWindowBatchSet>;
+}
+
+const buildingWindowBatchStates = new WeakMap<THREE.Group, BuildingWindowBatchState>();
+const buildingWindowGeometryCache = new Map<string, THREE.BufferGeometry>();
+const BUILDING_WINDOW_INSTANCE_CAPACITY = 16;
+const buildingWindowPosition = new THREE.Vector3();
+const buildingWindowQuaternion = new THREE.Quaternion();
+const buildingWindowUnitScale = new THREE.Vector3(1, 1, 1);
+const buildingWindowBaseMatrix = new THREE.Matrix4();
+const buildingWindowLocalMatrix = new THREE.Matrix4();
+const buildingWindowInstanceMatrix = new THREE.Matrix4();
+const buildingWindowUp = new THREE.Vector3(0, 1, 0);
+
+function getBuildingWindowGeometry(key: string, width: number, height: number, depth: number): THREE.BufferGeometry {
+  let geometry = buildingWindowGeometryCache.get(key);
+  if (!geometry) {
+    geometry = new THREE.BoxGeometry(width, height, depth);
+    buildingWindowGeometryCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+function getBuildingWindowBatchState(parent: THREE.Group): BuildingWindowBatchState {
+  let state = buildingWindowBatchStates.get(parent);
+  if (state) return state;
+
+  const group = new THREE.Group();
+  group.name = 'instancedBuildingWindows';
+  group.userData.isBuildingWindowBatch = true;
+  parent.add(group);
+
+  state = { group, batches: new Map() };
+  buildingWindowBatchStates.set(parent, state);
+  return state;
+}
+
+function createBuildingWindowInstanceBatch(
+  parent: THREE.Group,
+  name: string,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material
+): BuildingWindowInstanceBatch {
+  const mesh = new THREE.InstancedMesh(geometry, material, BUILDING_WINDOW_INSTANCE_CAPACITY);
+  mesh.name = name;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.frustumCulled = true;
+  // Only populated instances are rendered and included in the computed bounds.
+  mesh.count = 0;
+  parent.add(mesh);
+  return { mesh, nextIndex: 0 };
+}
+
+function getNextBuildingWindowBatch(
+  batches: BuildingWindowInstanceBatch[],
+  parent: THREE.Group,
+  name: string,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material
+): BuildingWindowInstanceBatch {
+  let batch = batches[batches.length - 1];
+  if (!batch || batch.nextIndex >= BUILDING_WINDOW_INSTANCE_CAPACITY) {
+    batch = createBuildingWindowInstanceBatch(parent, name, geometry, material);
+    batches.push(batch);
+  }
+  return batch;
+}
+
+/**
+ * Batch static mullioned-window panes, frames and sills into four draw calls
+ * per unique window size/material instead of four separate meshes per window.
+ */
 function addMullionedWindow(
   parent: THREE.Group,
   x: number,
@@ -369,16 +461,89 @@ function addMullionedWindow(
   rotY: number,
   frameMat: THREE.Material
 ) {
-  const winGroup = new THREE.Group();
-  winGroup.position.set(x, y, z);
-  winGroup.rotation.y = rotY;
-  const pane = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.08), sharedWarmWindowMat);
-  const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.05, h + 0.06, 0.12), frameMat);
-  const hBar = new THREE.Mesh(new THREE.BoxGeometry(w + 0.06, 0.05, 0.12), frameMat);
-  const sill = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.08, 0.16), frameMat);
-  sill.position.y = -h * 0.52;
-  winGroup.add(pane, vBar, hBar, sill);
-  parent.add(winGroup);
+  const state = getBuildingWindowBatchState(parent);
+  const widthKey = w.toFixed(4);
+  const heightKey = h.toFixed(4);
+  const key = `${widthKey}|${heightKey}|${frameMat.uuid}`;
+  let set = state.batches.get(key);
+
+  if (!set) {
+    set = {
+      paneGeometry: getBuildingWindowGeometry(`pane|${widthKey}|${heightKey}`, w, h, 0.08),
+      verticalGeometry: getBuildingWindowGeometry(`vertical|${heightKey}`, 0.05, h + 0.06, 0.12),
+      horizontalGeometry: getBuildingWindowGeometry(`horizontal|${widthKey}`, w + 0.06, 0.05, 0.12),
+      sillGeometry: getBuildingWindowGeometry(`sill|${widthKey}`, w + 0.14, 0.08, 0.16),
+      frameMaterial: frameMat,
+      panes: [],
+      verticalFrames: [],
+      horizontalFrames: [],
+      sills: [],
+    };
+    state.batches.set(key, set);
+  }
+
+  const pane = getNextBuildingWindowBatch(
+    set.panes, state.group, 'mullionedWindowPanes', set.paneGeometry, sharedWarmWindowMat
+  );
+  const vertical = getNextBuildingWindowBatch(
+    set.verticalFrames, state.group, 'mullionedWindowVerticalFrames', set.verticalGeometry, set.frameMaterial
+  );
+  const horizontal = getNextBuildingWindowBatch(
+    set.horizontalFrames, state.group, 'mullionedWindowHorizontalFrames', set.horizontalGeometry, set.frameMaterial
+  );
+  const sill = getNextBuildingWindowBatch(
+    set.sills, state.group, 'mullionedWindowSills', set.sillGeometry, set.frameMaterial
+  );
+
+  const instanceIndex = pane.nextIndex;
+  if (
+    vertical.nextIndex !== instanceIndex ||
+    horizontal.nextIndex !== instanceIndex ||
+    sill.nextIndex !== instanceIndex
+  ) {
+    throw new Error('Building window instance batches lost synchronization.');
+  }
+
+  buildingWindowPosition.set(x, y, z);
+  buildingWindowQuaternion.setFromAxisAngle(buildingWindowUp, rotY);
+  buildingWindowBaseMatrix.compose(buildingWindowPosition, buildingWindowQuaternion, buildingWindowUnitScale);
+
+  pane.mesh.setMatrixAt(instanceIndex, buildingWindowBaseMatrix);
+  vertical.mesh.setMatrixAt(instanceIndex, buildingWindowBaseMatrix);
+  horizontal.mesh.setMatrixAt(instanceIndex, buildingWindowBaseMatrix);
+
+  buildingWindowLocalMatrix.makeTranslation(0, -h * 0.52, 0);
+  buildingWindowInstanceMatrix.multiplyMatrices(buildingWindowBaseMatrix, buildingWindowLocalMatrix);
+  sill.mesh.setMatrixAt(instanceIndex, buildingWindowInstanceMatrix);
+
+  pane.nextIndex++;
+  vertical.nextIndex++;
+  horizontal.nextIndex++;
+  sill.nextIndex++;
+
+  pane.mesh.count = pane.nextIndex;
+  vertical.mesh.count = vertical.nextIndex;
+  horizontal.mesh.count = horizontal.nextIndex;
+  sill.mesh.count = sill.nextIndex;
+
+  pane.mesh.instanceMatrix.needsUpdate = true;
+  vertical.mesh.instanceMatrix.needsUpdate = true;
+  horizontal.mesh.instanceMatrix.needsUpdate = true;
+  sill.mesh.instanceMatrix.needsUpdate = true;
+}
+
+function finalizeBuildingWindowBatches(parent: THREE.Group): void {
+  const state = buildingWindowBatchStates.get(parent);
+  if (!state) return;
+
+  for (const set of state.batches.values()) {
+    for (const batches of [set.panes, set.verticalFrames, set.horizontalFrames, set.sills]) {
+      for (const batch of batches) {
+        batch.mesh.computeBoundingBox();
+        batch.mesh.computeBoundingSphere();
+      }
+    }
+  }
 }
 
 function addArchedDoorway(
@@ -3764,6 +3929,7 @@ export function createBuildingMesh(
       break;
   }
 
+  finalizeBuildingWindowBatches(group);
   attachBuildingConstructionRig(group, type);
   addBuildingGroundDetails(group, type);
   prepareBuildingVisualLod(group);
