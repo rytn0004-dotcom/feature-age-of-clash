@@ -5242,7 +5242,7 @@ const sharedRichQuartzMat = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.42,
 });
 
-interface ResourceInstanceTransform {
+interface VisualInstanceTransform {
   position: [number, number, number];
   rotation?: [number, number, number];
   scale?: [number, number, number];
@@ -5257,11 +5257,11 @@ interface DepletableVisualPart {
 
 const resourceInstanceDummy = new THREE.Object3D();
 
-function createResourceInstanceBatch(
+function createVisualInstanceBatch(
   parent: THREE.Group,
   geometry: THREE.BufferGeometry,
   material: THREE.Material,
-  transforms: ResourceInstanceTransform[],
+  transforms: VisualInstanceTransform[],
   name: string,
   castShadow = false,
   receiveShadow = false
@@ -5292,12 +5292,12 @@ function createDepletableInstanceParts(
   parent: THREE.Group,
   geometry: THREE.BufferGeometry,
   material: THREE.Material,
-  transforms: ResourceInstanceTransform[],
+  transforms: VisualInstanceTransform[],
   name: string,
   castShadow = false,
   receiveShadow = false
 ): DepletableVisualPart[] {
-  const mesh = createResourceInstanceBatch(
+  const mesh = createVisualInstanceBatch(
     parent, geometry, material, transforms, name, castShadow, receiveShadow
   );
 
@@ -5333,7 +5333,7 @@ export function createGoldMineMesh(
   const depletableParts: DepletableVisualPart[] = [];
 
   // Multi-rock stratified slate outcrop; three matching rocks share one draw batch.
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedGoldRockGeo,
     sharedGoldRockMat,
@@ -5403,14 +5403,14 @@ export function createGoldMineMesh(
   group.add(post1, post2, beam);
 
   // Rail sleepers & twin iron rails share one batch each.
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedGoldSleeperGeo,
     sharedWoodScaffoldMat,
     [1.15, 1.55, 1.95, 2.35].map((tz) => ({ position: [0, 0.03, tz] })),
     'instancedGoldMineSleepers'
   );
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedGoldRailGeo,
     sharedIronRailMat,
@@ -5424,7 +5424,7 @@ export function createGoldMineMesh(
   const cartBody = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.44, 0.92), sharedWoodScaffoldMat);
   cartBody.castShadow = true;
   cartGroup.add(cartBody);
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     cartGroup,
     sharedGoldCartWheelGeo,
     sharedIronRailMat,
@@ -5851,7 +5851,7 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
   const group = new THREE.Group();
   addContactShadow(group, 1.15);
 
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedBerryStemGeo,
     sharedTreeTrunkMat,
@@ -5869,7 +5869,7 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     [0.12, 0.45, -0.42, 0.82, 0.72, 0.82],
     [-0.18, 0.4, 0.44, 0.8, 0.7, 0.8],
   ];
-  const clumpTransforms: ResourceInstanceTransform[] = clumpConfigs.map(
+  const clumpTransforms: VisualInstanceTransform[] = clumpConfigs.map(
     ([cx, cy, cz, sx, sy, sz], i) => {
       const fullness = 1 + Math.sin(i * 2.17) * 0.055;
       return {
@@ -5887,7 +5887,7 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
       };
     }
   );
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedBushClumpGeo,
     sharedBushLeafMat,
@@ -5896,7 +5896,7 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     true
   );
 
-  createResourceInstanceBatch(
+  createVisualInstanceBatch(
     group,
     sharedBerryBlossomGeo,
     sharedBushBlossomMat,
@@ -5923,7 +5923,7 @@ export function createBerryBushMesh(amount = 350, hasBadge = false): THREE.Group
     [-0.08, 0.98, 0.16],
     [0.02, 0.68, 0.62],
   ];
-  const berryBatch = createResourceInstanceBatch(
+  const berryBatch = createVisualInstanceBatch(
     group,
     sharedBerryDotGeo,
     sharedBerryFruitMat,
@@ -6098,6 +6098,12 @@ const sharedDeerAntlerTineGeo = makeTubeGeo([
   [0.07, 0.24, 0.06],
 ], 0.016, 5, 4);
 
+const sharedDeerBellyGeo = new THREE.SphereGeometry(0.18, 8, 8);
+const sharedDeerSpotGeo = new THREE.SphereGeometry(0.035, 6, 6);
+const sharedDeerTailGeo = new THREE.ConeGeometry(0.06, 0.16, 6);
+const sharedDeerNoseGeo = new THREE.SphereGeometry(0.032, 6, 6);
+const sharedDeerEarGeo = new THREE.ConeGeometry(0.04, 0.14, 5);
+
 const sharedDeerMat = new THREE.MeshStandardMaterial({
   color: 0xb9621f,
   map: resFurMaps.map,
@@ -6126,29 +6132,34 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   body.castShadow = true;
   bodyPivot.add(body);
 
-  // Pale cream chest/belly & subtle dappled coat spots + articulated white tail tuft
-  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), sharedDeerCreamMat);
+  // Pale cream chest/belly & subtle dappled coat spots + articulated white tail tuft.
+  // Repeated static details use shared geometry/instances; animated pivots stay independent.
+  const belly = new THREE.Mesh(sharedDeerBellyGeo, sharedDeerCreamMat);
   belly.scale.set(1.9, 0.7, 0.85);
   belly.position.set(0, -0.12, 0);
   bodyPivot.add(belly);
 
-  const spotGeo = new THREE.SphereGeometry(0.035, 6, 6);
-  [
+  const deerSpotOffsets: Array<[number, number, number]> = [
     [-0.16, 0.14, 0.17],
     [0.05, 0.16, 0.16],
     [-0.06, 0.12, -0.17],
     [0.12, 0.15, -0.16],
-  ].forEach(([sx, sy, sz]) => {
-    const spot = new THREE.Mesh(spotGeo, sharedDeerCreamMat);
-    spot.scale.set(1.1, 0.8, 0.4);
-    spot.position.set(sx, sy, sz);
-    bodyPivot.add(spot);
-  });
+  ];
+  createVisualInstanceBatch(
+    bodyPivot,
+    sharedDeerSpotGeo,
+    sharedDeerCreamMat,
+    deerSpotOffsets.map(([sx, sy, sz]) => ({
+      position: [sx, sy, sz],
+      scale: [1.1, 0.8, 0.4],
+    })),
+    'instancedDeerCoatSpots'
+  );
 
   const tailPivot = new THREE.Group();
   tailPivot.position.set(-0.46, 0.02, 0);
   bodyPivot.add(tailPivot);
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 6), sharedDeerCreamMat);
+  const tail = new THREE.Mesh(sharedDeerTailGeo, sharedDeerCreamMat);
   tail.position.set(-0.04, 0.04, 0);
   tail.rotation.z = 0.9;
   tailPivot.add(tail);
@@ -6171,18 +6182,27 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   head.castShadow = true;
   headPivot.add(head);
 
-  // Dark muzzle nose + Twin alert ears + Branched 2-tine Antlers
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 6), sharedHoofMat);
+  // Dark muzzle nose + twin alert ears + branched 2-tine antlers.
+  const nose = new THREE.Mesh(sharedDeerNoseGeo, sharedHoofMat);
   nose.position.set(0.43, 0.32, 0);
   headPivot.add(nose);
 
+  const earTransforms: VisualInstanceTransform[] = [-0.08, 0.08].map((sideZ, idx) => ({
+    position: [0.06, 0.47, sideZ * 1.15],
+    rotation: [idx === 0 ? -0.45 : 0.45, 0, 0.5],
+  }));
+  createVisualInstanceBatch(
+    headPivot,
+    sharedDeerEarGeo,
+    sharedDeerMat,
+    earTransforms,
+    'instancedDeerEars'
+  );
+
+  // Keep the mirrored antlers as regular meshes; InstancedMesh does not support
+  // negative-determinant transforms reliably, and this exact Z mirror matters.
   [-0.08, 0.08].forEach((sideZ, idx) => {
     const sideSign = idx === 0 ? -1 : 1;
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.14, 5), sharedDeerMat);
-    ear.position.set(0.06, 0.47, sideZ * 1.15);
-    ear.rotation.set(sideSign * 0.45, 0, 0.5);
-    headPivot.add(ear);
-
     const antGrp = new THREE.Group();
     antGrp.position.set(0.1, 0.44, sideZ * 0.75);
     antGrp.scale.z = sideSign;
@@ -6192,7 +6212,7 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
     headPivot.add(antGrp);
   });
 
-  // 4 Articulated Hip/Shoulder Pivots with Hooves grounded at y=0
+  // 4 Articulated Hip/Shoulder Pivots with Hooves grounded at y=0.
   const makeLegPivot = (lx: number, lz: number): THREE.Group => {
     const legPivot = new THREE.Group();
     legPivot.position.set(lx, 0.54, lz);
