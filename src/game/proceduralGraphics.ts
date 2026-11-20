@@ -6234,11 +6234,15 @@ const sharedAntlerMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughn
 export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
   addContactShadow(group, 0.9);
+  const detailedVisual = new THREE.Group();
+  detailedVisual.name = 'deerDetailedVisual';
+  group.add(detailedVisual);
+  group.userData.deerDetailedVisual = detailedVisual;
 
   // Articulated upper body pivot centered near chest/hip midpoint so bounding tilts naturally
   const bodyPivot = new THREE.Group();
   bodyPivot.position.set(0, 0.7, 0);
-  group.add(bodyPivot);
+  detailedVisual.add(bodyPivot);
 
   const body = new THREE.Mesh(sharedDeerTorsoGeo, sharedDeerMat);
   body.castShadow = true;
@@ -6336,7 +6340,7 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
     const hoof = new THREE.Mesh(sharedDeerHoofGeo, sharedHoofMat);
     hoof.position.set(0, -0.515, 0);
     legPivot.add(upper, lower, hoof);
-    group.add(legPivot);
+    detailedVisual.add(legPivot);
     return legPivot;
   };
 

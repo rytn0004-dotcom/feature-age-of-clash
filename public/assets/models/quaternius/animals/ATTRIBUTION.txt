@@ -1,0 +1,10 @@
+Model: Deer.glb
+Author: Quaternius
+Pack: Ultimate Animated Animal Pack
+Official pack page: https://quaternius.com/packs/ultimateanimatedanimals.html
+Source GLB copy: https://github.com/trebeljahr/quaternius-showcase/blob/main/public/glb/animals_pack/Deer.glb
+License: CC0 1.0 Universal
+License deed: https://creativecommons.org/publicdomain/zero/1.0/
+
+This model is used as a distant visual LOD for wild deer resources.
+The original procedural deer remains the close-range fallback and gameplay rig.

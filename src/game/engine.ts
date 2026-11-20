@@ -169,7 +169,13 @@ import {
   updateFarmCropVisual,
   updateResourceNodeDepletionVisual,
 } from './proceduralGraphics';
-import { attachKayKitTreeLod, updateTreeVisualLod } from './modelAssets';
+import {
+  attachKayKitTreeLod,
+  updateTreeVisualLod,
+  attachDeerAssetLod,
+  updateDeerVisualLod,
+  updateDeerAssetAnimation,
+} from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
@@ -1551,6 +1557,7 @@ export class RtsEngine {
     mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
+    if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
     if (type === 'wood' && nodeTier === 'standard') {
       const variantSeed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
       attachKayKitTreeLod(mesh, variantSeed % 2 === 0 ? 'A' : 'B');
@@ -3755,6 +3762,9 @@ export class RtsEngine {
 
     this.nodeMeshes.forEach((mesh) => {
       if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
+      if (mesh.userData.deerAssetLod) {
+        updateDeerVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
+      }
     });
   }
 
@@ -5012,6 +5022,7 @@ export class RtsEngine {
       const mesh = this.nodeMeshes.get(node.id);
       if (!node.animalAlive) {
         if (mesh) {
+          updateDeerAssetAnimation(mesh, 'death', dt);
           mesh.position.set(node.x, 0, node.z);
           mesh.rotation.x = 0.55;
           const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
@@ -5040,6 +5051,10 @@ export class RtsEngine {
       const step = stepWildAnimalState(node, nearest, this.simTime, dt, isDeerBlocked);
 
       if (mesh) {
+        const animationState = step.moveBlend > 0.02
+          ? (step.actualSpeed >= 2.2 ? 'gallop' : 'walk')
+          : (step.isGrazing ? 'graze' : 'idle');
+        updateDeerAssetAnimation(mesh, animationState, dt);
         mesh.position.set(node.x, step.hopY, node.z);
         mesh.rotation.y = step.yaw;
         mesh.rotation.x = 0;
