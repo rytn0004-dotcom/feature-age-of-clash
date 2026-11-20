@@ -974,7 +974,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
               <span>牆段 {wallPlacementInfo.segmentCount}</span>
               <span>長度 {wallPlacementInfo.distance.toFixed(1)}</span>
               <span className={wallPlacementInfo.isValid ? 'text-emerald-300' : 'text-rose-300'}>
-                {wallPlacementInfo.isValid ? '路線可建造' : wallPlacementInfo.pointCount === 0 ? '等待起點' : wallPlacementInfo.invalidCount > 0 ? `無效位置 ${wallPlacementInfo.invalidCount}` : '距離太短或資源不足'}
+                {wallPlacementInfo.isValid
+                  ? '路線可建造'
+                  : wallPlacementInfo.pointCount === 0
+                    ? '等待起點'
+                    : wallPlacementInfo.segmentCount === 0
+                      ? '移動滑鼠拉出牆線'
+                      : wallPlacementInfo.invalidCount > 0
+                        ? `無效位置 ${wallPlacementInfo.invalidCount}`
+                        : wallPlacementInfo.segmentCount > 120
+                          ? '超過單次牆段上限'
+                          : '資源不足'}
               </span>
               <span>🪵 {wallPlacementInfo.cost.wood}</span>
               <span>🪨 {wallPlacementInfo.cost.stone}</span>
