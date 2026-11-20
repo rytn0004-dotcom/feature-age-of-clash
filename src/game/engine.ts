@@ -78,7 +78,6 @@ import {
   selectAiWorkerReassignment,
   calculateWallChainCost,
   layoutWallChain,
-  WallSegmentPlacement,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
   computeGarrisonDefenseProfile,
@@ -949,6 +948,7 @@ export class RtsEngine {
     mapPreset?: MapPresetId,
     resourceRichness?: ResourceRichness
   ) {
+    this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
 
@@ -3556,6 +3556,7 @@ export class RtsEngine {
       this.scene.remove(this.placementGhostMesh);
       this.placementGhostMesh = null;
     }
+    this.onSelectionChange?.();
   }
 
   // ------------------ PERFORMANCE DIAGNOSTICS ------------------
