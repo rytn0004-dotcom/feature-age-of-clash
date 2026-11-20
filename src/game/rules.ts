@@ -21,6 +21,10 @@ import {
 } from '../types/game';
 import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
 
+export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
+export const FIELD_RAM_REQUIRED_INFANTRY = 4;
+export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+
 /**
  * Per-second income from a captured strategic shrine.
  * The three shrine identities deliberately trade food, timber, gold and stone.
@@ -49,6 +53,33 @@ export function canAfford(current: Resources, cost: Resources): boolean {
     current.gold >= (cost.gold || 0) &&
     current.stone >= (cost.stone || 0)
   );
+}
+
+/** Shared age gate used by player, AI, construction and unit production paths. */
+export function isAgeUnlocked(requiredAge: AgeLevel | undefined, currentAge: AgeLevel | number): boolean {
+  return requiredAge === undefined || currentAge >= requiredAge;
+}
+
+/** Centralized validation for the field-built battering ram so HUD and simulation cannot drift. */
+export function canAssembleFieldRam(
+  currentAge: AgeLevel | number,
+  researchedTechIds: readonly string[],
+  eligibleInfantryCount: number,
+  resources: Resources
+): { ok: boolean; reason?: string } {
+  if (!isAgeUnlocked(2, currentAge)) {
+    return { ok: false, reason: '🔒 野戰工程隊需要時代 II' };
+  }
+  if (!researchedTechIds.includes(FIELD_RAM_TECH_ID)) {
+    return { ok: false, reason: '🔒 請先在兵營研發「野戰工程隊」' };
+  }
+  if (eligibleInfantryCount < FIELD_RAM_REQUIRED_INFANTRY) {
+    return { ok: false, reason: '🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵' };
+  }
+  if (!canAfford(resources, FIELD_RAM_COST)) {
+    return { ok: false, reason: '⚠️ 野戰衝車需要 140 木材與 60 黃金' };
+  }
+  return { ok: true };
 }
 
 /**
