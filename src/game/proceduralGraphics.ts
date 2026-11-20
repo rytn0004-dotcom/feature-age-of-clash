@@ -1896,7 +1896,10 @@ export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): T
   return group;
 }
 
-export function createDockMesh(faction: FactionId): THREE.Group {
+export const sharedDockPilingGeometry = new THREE.CylinderGeometry(0.14, 0.16, 1.35, 8);
+const sharedDockPilingDummy = new THREE.Object3D();
+
+function createDockMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
 
@@ -1950,15 +1953,30 @@ export function createDockMesh(faction: FactionId): THREE.Group {
   deck.receiveShadow = true;
   group.add(deck);
 
-  // Support pilings down into water bed
-  [-1.9, -0.65, 0.65, 1.9].forEach((px) => {
-    [-0.6, 1.1, 2.75].forEach((pz) => {
-      const piling = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 1.35, 8), timberMat);
-      piling.position.set(px, 0.52, pz);
-      piling.castShadow = true;
-      group.add(piling);
-    });
-  });
+  // Support pilings down into water bed; twelve identical posts share one draw call.
+  const pilingPositionsX = [-1.9, -0.65, 0.65, 1.9];
+  const pilingPositionsZ = [-0.6, 1.1, 2.75];
+  const pilings = new THREE.InstancedMesh(
+    sharedDockPilingGeometry,
+    timberMat,
+    pilingPositionsX.length * pilingPositionsZ.length
+  );
+  pilings.name = 'instancedDockPilings';
+  pilings.castShadow = true;
+  let pilingIndex = 0;
+  for (const px of pilingPositionsX) {
+    for (const pz of pilingPositionsZ) {
+      sharedDockPilingDummy.position.set(px, 0.52, pz);
+      sharedDockPilingDummy.rotation.set(0, 0, 0);
+      sharedDockPilingDummy.scale.set(1, 1, 1);
+      sharedDockPilingDummy.updateMatrix();
+      pilings.setMatrixAt(pilingIndex++, sharedDockPilingDummy.matrix);
+    }
+  }
+  pilings.instanceMatrix.needsUpdate = true;
+  pilings.computeBoundingBox();
+  pilings.computeBoundingSphere();
+  group.add(pilings);
 
   // Harbor boathouse / fish-market warehouse on landward side
   const house = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.9, 2.2), plankMat);
