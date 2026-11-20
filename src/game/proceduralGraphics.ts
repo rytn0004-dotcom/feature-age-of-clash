@@ -7649,6 +7649,105 @@ export function updateBuildingVisualLod(
   }
 }
 
+
+interface DistanceShadowLodPart {
+  mesh: THREE.Mesh;
+  castShadow: boolean;
+  receiveShadow: boolean;
+}
+
+interface DistanceShadowLodCache {
+  parts: DistanceShadowLodPart[];
+  localCenter: THREE.Vector3;
+  localRadius: number;
+}
+
+const distanceShadowLodWorldCenter = new THREE.Vector3();
+const distanceShadowLodWorldScale = new THREE.Vector3();
+const distanceShadowLodBounds = new THREE.Box3();
+const distanceShadowLodSphere = new THREE.Sphere();
+
+/**
+ * Stop distant meshes from entering the shadow map and skip their shadow
+ * reception once their projected silhouette is too small to read.
+ * Original per-mesh flags are cached once and restored when close again or selected.
+ */
+export function updateDistanceShadowLod(
+  group: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  viewportHeight: number,
+  forceShadows = false
+): void {
+  let cache = group.userData.distanceShadowLodCache as DistanceShadowLodCache | undefined;
+  if (!cache) {
+    group.updateMatrixWorld(true);
+    const parts: DistanceShadowLodPart[] = [];
+    group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || (!mesh.castShadow && !mesh.receiveShadow)) return;
+      parts.push({
+        mesh,
+        castShadow: mesh.castShadow,
+        receiveShadow: mesh.receiveShadow,
+      });
+    });
+
+    // Some resource visuals (for example fish schools) have no shadow participants.
+    if (parts.length === 0) {
+      group.userData.distanceShadowLodCache = {
+        parts,
+        localCenter: new THREE.Vector3(),
+        localRadius: 0,
+      } satisfies DistanceShadowLodCache;
+      return;
+    }
+
+    distanceShadowLodBounds.setFromObject(group);
+    distanceShadowLodBounds.getBoundingSphere(distanceShadowLodSphere);
+    group.getWorldScale(distanceShadowLodWorldScale);
+    const worldScale = Math.max(
+      0.0001,
+      Math.abs(distanceShadowLodWorldScale.x),
+      Math.abs(distanceShadowLodWorldScale.y),
+      Math.abs(distanceShadowLodWorldScale.z)
+    );
+    const localCenter = group.worldToLocal(distanceShadowLodSphere.center.clone());
+    cache = {
+      parts,
+      localCenter,
+      localRadius: Math.max(0.01, distanceShadowLodSphere.radius / worldScale),
+    };
+    group.userData.distanceShadowLodCache = cache;
+  }
+
+  if (cache.parts.length === 0) return;
+
+  group.updateMatrixWorld(true);
+  distanceShadowLodWorldCenter.copy(cache.localCenter).applyMatrix4(group.matrixWorld);
+  group.getWorldScale(distanceShadowLodWorldScale);
+  const worldScale = Math.max(
+    0.0001,
+    Math.abs(distanceShadowLodWorldScale.x),
+    Math.abs(distanceShadowLodWorldScale.y),
+    Math.abs(distanceShadowLodWorldScale.z)
+  );
+  const distance = Math.max(0.001, camera.position.distanceTo(distanceShadowLodWorldCenter));
+  const safeHeight = Math.max(1, viewportHeight);
+  const focalPixels = safeHeight /
+    (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
+  const projectedRadius = (cache.localRadius * worldScale * focalPixels) / distance;
+  const wasCasting = group.userData.distanceShadowLodEnabled !== false;
+  const shouldCast = forceShadows || (wasCasting ? projectedRadius >= 15 : projectedRadius >= 20);
+
+  if (group.userData.distanceShadowLodEnabled === shouldCast) return;
+  cache.parts.forEach((part) => {
+    part.mesh.castShadow = shouldCast && part.castShadow;
+    part.mesh.receiveShadow = shouldCast && part.receiveShadow;
+  });
+  group.userData.distanceShadowLodEnabled = shouldCast;
+}
+
+
 export interface UnitVisualContext {
   age?: number;
   researchedTechIds?: string[];

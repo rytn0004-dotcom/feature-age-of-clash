@@ -161,6 +161,7 @@ import {
   createUnitMesh,
   updateUnitVisualLod,
   updateBuildingVisualLod,
+  updateDistanceShadowLod,
   disposeBuildingVisualResources,
   registerFactionVisual,
   DeerAnimParts,
@@ -3755,6 +3756,7 @@ export class RtsEngine {
         this.selectedUnitIds.includes(unit.id) ||
         (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
       updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
 
     for (const building of this.buildings) {
@@ -3765,9 +3767,12 @@ export class RtsEngine {
         this.selectedBuildingId === building.id ||
         (this.inspectedEntity?.type === 'building' && this.inspectedEntity.id === building.id);
       updateBuildingVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
 
     this.nodeMeshes.forEach((mesh) => {
+      const forceHighDetail = this.selectedNodeId === mesh.userData.id;
+      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
       if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
       if (mesh.userData.deerAssetLod) {
         updateDeerVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
