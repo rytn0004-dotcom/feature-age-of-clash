@@ -119,6 +119,7 @@ export type BuildingType =
   | 'lumber_camp'
   | 'mining_camp'
   | 'wall'
+  | 'gate'
   | 'tower'
   | 'castle'
   | 'armory_forge'
@@ -285,6 +286,9 @@ export interface UnitEntity extends EntityCommon {
   buffSpeedUntil?: number;
   buffDefenseBonus?: number;
   attackMoveGoal?: { x: number; z: number } | null;
+  /** Repeating route used by guards assigned to patrol a friendly wall chain. */
+  wallPatrolRoute?: Array<{ x: number; z: number }>;
+  wallPatrolIndex?: number;
   hitFlashTimer?: number;
   recoilTimer?: number;
   lastDamagedTime?: number;
@@ -319,6 +323,13 @@ export interface BuildingEntity extends EntityCommon {
   wallChainSize?: number;
   /** World-space yaw for directional wall modules. */
   rotationY?: number;
+  /** Gate state: open gates have no movement collision until closed again. */
+  gateOpen?: boolean;
+  /** Siege-breached wall segments remain repairable but allow units through. */
+  wallBreached?: boolean;
+  wallRepairPaid?: boolean;
+  /** Linked nearby watchtower grants this segment additional armor. */
+  wallTowerLinked?: boolean;
   isConstructed: boolean;
   buildProgress: number; // 0 to 1
   queue: string[]; // queue of unitDefIds
