@@ -5021,17 +5021,53 @@ export function createTreeMesh(
 
   // Flared root spurs + mossy root mound gripping the soil.
   // Small deterministic offsets make each root system feel grown into the terrain.
+  type TreeInstanceTransform = {
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  };
+  const addTreeInstanceBatch = (
+    parent: THREE.Group,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    transforms: TreeInstanceTransform[],
+    name: string,
+    castShadow = false
+  ) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
+    mesh.name = name;
+    mesh.castShadow = castShadow;
+    const dummy = new THREE.Object3D();
+    transforms.forEach((transform, index) => {
+      dummy.position.set(...transform.position);
+      dummy.rotation.set(...transform.rotation);
+      dummy.scale.set(...transform.scale);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingBox();
+    mesh.computeBoundingSphere();
+    parent.add(mesh);
+  };
+
   const rootCount = isRich ? 4 : 3;
   const rootPhase = Math.random() * Math.PI * 2;
+  const rootTransforms: TreeInstanceTransform[] = [];
   for (let r = 0; r < rootCount; r++) {
-    const root = new THREE.Mesh(sharedTreeRootGeo, trunkMat);
     const angle = (r * Math.PI * 2) / rootCount + 0.3 + Math.sin(r * 2.1 + rootPhase) * 0.11;
     const length = (isRich ? 1.22 : 1) * (0.9 + (Math.sin(r * 1.7 + rootPhase) + 1) * 0.065);
-    root.rotation.y = angle;
-    root.position.set(Math.cos(angle) * 0.025, Math.sin(r * 1.9 + rootPhase) * 0.012, -Math.sin(angle) * 0.025);
-    root.scale.set(length, 0.92 + Math.cos(r * 2.3 + rootPhase) * 0.07, length);
-    detailedVisual.add(root);
+    rootTransforms.push({
+      position: [
+        Math.cos(angle) * 0.025,
+        Math.sin(r * 1.9 + rootPhase) * 0.012,
+        -Math.sin(angle) * 0.025,
+      ],
+      rotation: [0, angle, 0],
+      scale: [length, 0.92 + Math.cos(r * 2.3 + rootPhase) * 0.07, length],
+    });
   }
+  addTreeInstanceBatch(detailedVisual, sharedTreeRootGeo, trunkMat, rootTransforms, 'instancedTreeRoots');
   const mossMound = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8), sharedTreeMossMat);
   mossMound.position.y = 0.08;
   mossMound.scale.set(1 + Math.sin(rootPhase) * 0.08, 1, 1 + Math.cos(rootPhase) * 0.08);
@@ -5051,12 +5087,14 @@ export function createTreeMesh(
 
   if (species === 'oak' || species === 'birch' || species === 'rich') {
     // Broadleaf Canopy: 3 exposed lower forked limbs + 7 organically clustered displaced leaf boughs
-    [-0.4, 1.8, 3.9].forEach((ang, idx) => {
-      const bough = new THREE.Mesh(sharedTreeBranchGeo, trunkMat);
-      bough.position.y = 0.24 + idx * 0.18;
-      bough.rotation.y = ang;
-      canopyPivot.add(bough);
-    });
+    const branchTransforms: TreeInstanceTransform[] = [-0.4, 1.8, 3.9].map((ang, idx) => ({
+      position: [0, 0.24 + idx * 0.18, 0],
+      rotation: [0, ang, 0],
+      scale: [1, 1, 1],
+    }));
+    addTreeInstanceBatch(
+      canopyPivot, sharedTreeBranchGeo, trunkMat, branchTransforms, 'instancedTreeBranches'
+    );
 
     const crownOffsets: Array<[number, number, number, number]> = [
       [0, 1.58, 0, 1.28],
@@ -5067,14 +5105,14 @@ export function createTreeMesh(
       [0.44, 1.82, 0.34, 0.86],
       [0.02, 2.15, -0.04, 0.74],
     ];
-    crownOffsets.forEach(([ox, oy, oz, sc], idx) => {
-      const cl = new THREE.Mesh(sharedOakBoughGeo, leafMat);
-      cl.position.set(ox, oy, oz);
-      cl.scale.set(sc * 1.14, sc * 0.84, sc * 1.08);
-      cl.rotation.set(idx * 0.45, idx * 1.15, idx * 0.22);
-      cl.castShadow = true;
-      canopyPivot.add(cl);
-    });
+    const leafTransforms: TreeInstanceTransform[] = crownOffsets.map(([ox, oy, oz, sc], idx) => ({
+      position: [ox, oy, oz],
+      scale: [sc * 1.14, sc * 0.84, sc * 1.08],
+      rotation: [idx * 0.45, idx * 1.15, idx * 0.22],
+    }));
+    addTreeInstanceBatch(
+      canopyPivot, sharedOakBoughGeo, leafMat, leafTransforms, 'instancedTreeLeafClusters', true
+    );
   } else {
     // Natural 5-Tier Asymmetric Alpine Conifer Pine
     const tiers: Array<[THREE.BufferGeometry, number, number, number, number, number]> = [
@@ -5084,13 +5122,26 @@ export function createTreeMesh(
       [sharedPineSkirt3Geo, -0.02, 1.98, 0.03, 2.4, 0.88],
       [sharedPineSkirt3Geo, 0.0, 2.58, 0.0, 0.4, 0.62],
     ];
+    const pineBatches = new Map<THREE.BufferGeometry, TreeInstanceTransform[]>();
     tiers.forEach(([geo, px, py, pz, ry, sc]) => {
-      const tier = new THREE.Mesh(geo, leafMat);
-      tier.position.set(px, py, pz);
-      tier.rotation.set(0.02, ry, -0.02);
-      tier.scale.setScalar(sc);
-      tier.castShadow = true;
-      canopyPivot.add(tier);
+      const transforms = pineBatches.get(geo) || [];
+      transforms.push({
+        position: [px, py, pz],
+        rotation: [0.02, ry, -0.02],
+        scale: [sc, sc, sc],
+      });
+      pineBatches.set(geo, transforms);
+    });
+    let pineBatchIndex = 0;
+    pineBatches.forEach((transforms, geometry) => {
+      addTreeInstanceBatch(
+        canopyPivot,
+        geometry,
+        leafMat,
+        transforms,
+        `instancedPineCanopyTier${pineBatchIndex++}`,
+        true
+      );
     });
   }
 
@@ -5102,12 +5153,15 @@ export function createTreeMesh(
       emissiveIntensity: 0.45,
       roughness: 0.25,
     });
-    [0.5, 2.6, 4.7].forEach((ang) => {
-      const sap = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), sapMat);
-      sap.position.set(Math.cos(ang) * 0.65, 0.24, Math.sin(ang) * 0.65);
-      sap.scale.set(0.8, 1.35, 0.8);
-      detailedVisual.add(sap);
-    });
+    const sapGeometry = new THREE.OctahedronGeometry(0.22, 0);
+    const sapTransforms: TreeInstanceTransform[] = [0.5, 2.6, 4.7].map((ang) => ({
+      position: [Math.cos(ang) * 0.65, 0.24, Math.sin(ang) * 0.65],
+      rotation: [0, 0, 0],
+      scale: [0.8, 1.35, 0.8],
+    }));
+    addTreeInstanceBatch(
+      detailedVisual, sapGeometry, sapMat, sapTransforms, 'instancedAncientTreeSap'
+    );
 
     const amberHalo = new THREE.Mesh(
       new THREE.RingGeometry(1.18, 1.52, 24),
