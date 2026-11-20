@@ -30,6 +30,7 @@ import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
 import {
   canAfford,
+  canAssembleFieldRam,
   FARM_RESEED_WOOD_COST,
   GAME_SPEED_OPTIONS,
   getBuildingCombatStats,
@@ -671,6 +672,19 @@ export const HUD: React.FC<HUDProps> = ({
   }, []);
 
   const isWorkerSelected = selectedUnits.some((u) => u.unitDef.category === 'worker');
+  const selectedFieldBuilders = selectedUnits.filter(
+    (u) =>
+      u.hp > 0 &&
+      u.unitDef.category === 'melee' &&
+      !u.garrisonedInBuildingId &&
+      (u.state === 'idle' || u.state === 'moving')
+  );
+  const fieldRamCheck = canAssembleFieldRam(
+    engine.ageByFaction[observedFactionId] || 1,
+    engine.getResearchedTechs(observedFactionId),
+    selectedFieldBuilders.length,
+    engine.playerResources
+  );
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
   const humanCiv = getCivilizationConfig(humanCivId);
   const researchedTechs = engine.getResearchedTechs(observedFactionId);
@@ -1441,6 +1455,18 @@ export const HUD: React.FC<HUDProps> = ({
                         })}
                       </div>
                     )}
+                    {!isWorkerSelected &&
+                      !engine.isSpectatorMode &&
+                      selectedUnits.some((u) => u.unitDef.category === 'melee') && (
+                        <button
+                          onClick={() => engine.startFieldRamAssembly()}
+                          disabled={!fieldRamCheck.ok}
+                          title={fieldRamCheck.ok ? '消耗 140 木材與 60 黃金，使用 4 名近戰步兵組裝野戰衝車' : fieldRamCheck.reason}
+                          className="ml-auto px-2 py-1 disabled:opacity-40 text-[10px] font-bold rounded border border-amber-500/60 bg-amber-950 hover:bg-amber-900 text-amber-200 cursor-pointer shrink-0"
+                        >
+                          🪵 組裝衝車 (E)
+                        </button>
+                      )}
                   </div>
                 )}
                 {!selectedUnits.length && selectedBuilding && (
