@@ -1797,6 +1797,7 @@ export class RtsEngine {
     const tech = findTechDef(techId);
     if (!tech) return false;
     if (tech.buildingType !== bldg.buildingType) return false;
+    if (this.buildings.some((other) => other.faction === bldg.faction && other.activeTechId === techId)) return false;
 
     const researched = this.getResearchedTechs(bldg.faction);
     const age = (this.ageByFaction[bldg.faction] || 1) as AgeLevel;
@@ -4922,6 +4923,10 @@ export class RtsEngine {
       }
 
       const completedBuilders = builders.slice();
+      project.builderUnitIds.forEach((id) => {
+        const unit = this.units.find((entry) => entry.id === id);
+        if (unit && unit.fieldAssemblyProjectId === project.id) unit.fieldAssemblyProjectId = undefined;
+      });
       completedBuilders.forEach((unit) => {
         unit.fieldAssemblyProjectId = undefined;
         unit.state = 'idle';
@@ -7788,6 +7793,7 @@ export class RtsEngine {
         aiAge >= 2 &&
         fieldEngineeringTech &&
         !researched.includes('shared_field_engineering') &&
+        !aiBuildings.some((b) => b.activeTechId === fieldEngineeringTech.id) &&
         aiArmy.filter((u) => u.unitDef.category === 'melee').length >= 4 &&
         fieldResearchHall &&
         canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok &&
