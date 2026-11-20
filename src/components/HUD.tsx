@@ -676,6 +676,7 @@ export const HUD: React.FC<HUDProps> = ({
     (u) => u.hp > 0 && u.unitDef.category === 'melee' && !u.garrisonedInBuildingId && engine.isHumanControlled(u.faction)
   ).length;
   const hasFieldEngineering = researchedTechs.includes('shared_field_engineering');
+  const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
   const fieldRamAffordable = canAfford(engine.playerResources, { food: 0, wood: 140, gold: 60, stone: 0 });
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
   const humanCiv = getCivilizationConfig(humanCivId);
@@ -1918,7 +1919,7 @@ export const HUD: React.FC<HUDProps> = ({
                         <button
                           type="button"
                           data-cmd-field-ram="true"
-                          disabled={isSpectator || observedAge < 2 || !hasFieldEngineering || !fieldRamAffordable}
+                          disabled={isSpectator || observedAge < 2 || !hasFieldEngineering || !fieldRamAffordable || fieldRamInProgress}
                           onClick={() => engine.startFieldRamAssembly()}
                           className="px-2.5 py-1.5 rounded text-xs font-bold border border-amber-500/50 bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
                           title={
@@ -1928,6 +1929,8 @@ export const HUD: React.FC<HUDProps> = ({
                               ? '需先在兵營研發「野戰工程隊」'
                               : !fieldRamAffordable
                               ? '需要 140 木材與 60 黃金'
+                              : fieldRamInProgress
+                              ? '已有野戰衝車正在組裝'
                               : '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
                           }
                         >
