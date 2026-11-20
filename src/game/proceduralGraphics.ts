@@ -198,7 +198,14 @@ function makeTubeGeo(
  * Curved upturned pagoda eave profile rotated in 4-sided hipped roof geometry.
  * Ordered bottom-to-top (increasing Y) so LatheGeometry faces wind outward.
  */
+// Pagoda roof profiles are shared between all instances with matching dimensions.
+const pagodaRoofGeometryCache = new Map<string, THREE.LatheGeometry>();
+
 function makePagodaRoofGeo(baseRadius: number, height: number): THREE.LatheGeometry {
+  const key = `${baseRadius}|${height}`;
+  const cached = pagodaRoofGeometryCache.get(key);
+  if (cached) return cached;
+
   const pts = [
     [baseRadius * 1.04, 0.14], // classic upturned tip
     [baseRadius * 0.96, 0.02],
@@ -209,6 +216,7 @@ function makePagodaRoofGeo(baseRadius: number, height: number): THREE.LatheGeome
   ] as Array<[number, number]>;
   const geo = makeLatheGeo(pts, 4);
   geo.rotateY(Math.PI / 4);
+  pagodaRoofGeometryCache.set(key, geo);
   return geo;
 }
 
@@ -709,10 +717,20 @@ export function addContactShadow(group: THREE.Group, radius: number): THREE.Mesh
 }
 
 // Subtle architectural edge rounding; radius is kept small to preserve silhouette.
+// Rounded building blocks are immutable after creation; cache by exact dimensions
+// so repeated houses/towers reuse one vertex/index buffer instead of rebuilding it.
+const roundedBuildingGeometryCache = new Map<string, THREE.BufferGeometry>();
+
 function roundedBuildingBox(width: number, height: number, depth: number): THREE.BufferGeometry {
+  const key = `${width}|${height}|${depth}`;
+  const cached = roundedBuildingGeometryCache.get(key);
+  if (cached) return cached;
+
   const smallest = Math.min(Math.abs(width), Math.abs(height), Math.abs(depth));
   const radius = Math.max(0.006, Math.min(smallest * 0.045, 0.075));
-  return new RoundedBoxGeometry(width, height, depth, 1, radius);
+  const geometry = new RoundedBoxGeometry(width, height, depth, 1, radius);
+  roundedBuildingGeometryCache.set(key, geometry);
+  return geometry;
 }
 
 
