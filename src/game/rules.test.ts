@@ -23,7 +23,7 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
-import { DEFAULT_BUILDINGS } from './mods';
+import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS } from './mods';
 import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
 
 test('progression: military production buildings unlock at the intended ages', () => {
@@ -43,12 +43,23 @@ test('progression: military production buildings unlock at the intended ages', (
     const barracksUnits = civ.trainableByBuilding.barracks || [];
     assert.ok(barracksUnits.length > 0, civId + ' must have Age I infantry');
     assert.equal(barracksUnits.some((id) => ['longbowman', 'anime_ninja_assassin', 'anime_saiyan_brawler', 'fantasy_mage', 'knight', 'scout_rider', 'fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon'].includes(id)), false, civId + ' barracks must not bypass later-age production');
-    assert.ok((civ.trainableByBuilding.stable || []).every((id) => ['knight', 'scout_rider', 'fantasy_paladin'].includes(id)), civId + ' stable may only train cavalry');
+    const stableUnits = civ.trainableByBuilding.stable || [];
+    assert.ok(stableUnits.length > 0, civId + ' must have a cavalry production path');
+    assert.ok(stableUnits.every((id) => ['knight', 'scout_rider', 'fantasy_paladin'].includes(id)), civId + ' stable may only train cavalry');
   }
 
   assert.deepEqual(getCivilizationConfig('medieval').trainableByBuilding.siege_workshop, ['catapult', 'bombard_cannon', 'greek_fire_siphon']);
   assert.deepEqual(getCivilizationConfig('anime').trainableByBuilding.siege_workshop, ['catapult', 'bombard_cannon']);
   assert.deepEqual(getCivilizationConfig('fantasy').trainableByBuilding.barracks, ['fantasy_footman']);
+
+  const allUnitDefs = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS, ...SHARED_UNITS];
+  allUnitDefs
+    .filter((unit) => unit.category === 'ranged' || unit.category === 'cavalry')
+    .forEach((unit) => assert.ok((unit.requiredAge || 1) >= 2, unit.id + ' ranged/cavalry unit must be Age II+'));
+  allUnitDefs
+    .filter((unit) => unit.category === 'siege' && unit.id !== 'battering_ram')
+    .forEach((unit) => assert.ok((unit.requiredAge || 1) >= 3, unit.id + ' advanced siege unit must be Age III+'));
+  assert.equal(allUnitDefs.find((unit) => unit.id === 'battering_ram')?.requiredAge, 2);
 });
 
 test('progression: field engineering is an Age II barracks technology', () => {
@@ -58,6 +69,8 @@ test('progression: field engineering is an Age II barracks technology', () => {
   assert.equal(canResearchTech(fieldTech, [], 1).ok, false);
   assert.equal(canResearchTech(fieldTech, [], 2).ok, true);
   assert.match(fieldTech.description, /至少 4 名步兵/);
+  const siegeTech = getAllTechsForBuilding('siege_workshop', 'medieval').find((tech) => tech.id === 'shared_siege_engineers');
+  assert.ok(siegeTech, 'Advanced siege improvements belong to the siege workshop');
 });
 
 test('economy: canAfford accurately checks resource amounts', () => {
