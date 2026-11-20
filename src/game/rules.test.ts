@@ -7,6 +7,7 @@ import {
   FIELD_RAM_TECH_ID,
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
+  resolveAiKnightUnitId,
   deductCost,
   addResources,
   calculateDamage,
@@ -2118,4 +2119,64 @@ test('AI progression: mandatory field engineering takes priority only when safe 
     false,
     'AI must preserve the next landmark gold reserve'
   );
+});
+
+
+test('AI army composition: role counters prevent single-unit-type overproduction', async () => {
+  const { evaluateCondition } = await import('./rules');
+  const cavalryUnderCap = { field: 'cavalryCount', operator: '<', value: 4 } as const;
+  const rangedUnderCap = { field: 'rangedCount', operator: '<', value: 8 } as const;
+  const meleeUnderCap = { field: 'meleeCount', operator: '<', value: 10 } as const;
+  const siegeUnderCap = { field: 'siegeCount', operator: '<', value: 2 } as const;
+
+  const snapshot = {
+    food: 500,
+    wood: 500,
+    gold: 500,
+    stone: 200,
+    armyCount: 18,
+    workerCount: 12,
+    underAttack: 0,
+    enemyProximity: 40,
+    gameTime: 180,
+    age: 3,
+    cavalryCount: 4,
+    rangedCount: 3,
+    meleeCount: 9,
+    siegeCount: 1,
+  };
+
+  assert.equal(evaluateCondition(cavalryUnderCap, snapshot), false);
+  assert.equal(evaluateCondition(rangedUnderCap, snapshot), true);
+  assert.equal(evaluateCondition(meleeUnderCap, snapshot), true);
+  assert.equal(evaluateCondition(siegeUnderCap, snapshot), true);
+  assert.equal(resolveAiKnightUnitId('anime'), 'scout_rider');
+  assert.equal(resolveAiKnightUnitId('fantasy'), 'fantasy_paladin');
+  assert.equal(resolveAiKnightUnitId('medieval'), 'knight');
+});
+
+test('AI army composition: every personality has role-aware military training caps', async () => {
+  const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
+  const cases = [
+    { rules: DEFAULT_AI_RULES, melee: 10, ranged: 8, cavalry: 4, siege: 2 },
+    { rules: DEFENSIVE_AI_RULES, melee: 8, ranged: 6, cavalry: null, siege: null },
+    { rules: EASY_AI_RULES, melee: 6, ranged: 6, cavalry: null, siege: null },
+    { rules: HARD_AI_RULES, melee: 10, ranged: 10, cavalry: 5, siege: 2 },
+  ] as const;
+
+  for (const item of cases) {
+    const trainingRules = item.rules.filter((rule) => rule.action.type === 'train_unit');
+    const hasCap = (targetId: string, field: string, value: number) =>
+      trainingRules.some(
+        (rule) =>
+          rule.action.targetId === targetId &&
+          rule.conditions.some((condition) => condition.field === field && condition.operator === '<' && condition.value === value)
+      );
+    assert.ok(hasCap('swordsman', 'meleeCount', item.melee), 'melee needs a role cap');
+    assert.ok(hasCap('longbowman', 'rangedCount', item.ranged), 'ranged needs a role cap');
+    if (item.cavalry !== null) assert.ok(hasCap('knight', 'cavalryCount', item.cavalry), 'cavalry needs a role cap');
+    if (item.siege !== null) {
+      assert.ok(trainingRules.some((rule) => rule.action.targetId === 'catapult' && rule.conditions.some((c) => c.field === 'siegeCount' && c.value === item.siege)), 'siege needs a role cap');
+    }
+  }
 });
