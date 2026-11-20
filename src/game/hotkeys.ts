@@ -20,7 +20,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   spirit_shrine: 'K',
   mana_well: 'K',
   wall: 'O',
-  gate: 'P',
+  gate: '0',
   tower: 'T',
   castle: 'N',
 };
@@ -37,6 +37,7 @@ export function eventCodeToHotkeyLabel(code: string): string | null {
   if (/^Key[A-Z]$/.test(code)) {
     return code.slice(3);
   }
+  if (code === 'Digit0') return '0';
   return null;
 }
 
@@ -104,7 +105,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
     items: [
       { keys: 'E / R / L / G / J', desc: '房屋 / 農田 / 伐木場 / 採礦營 / 碼頭' },
       { keys: 'V / Y / Z / M / K', desc: '兵營 / 射箭場 / 馬廄 / 攻城器工坊 / 文明專屬建築' },
-      { keys: 'O / P / T / N / C', desc: '防禦圍牆 / 城門 / 警戒箭塔 / 要塞城堡 / 主堡' },
+      { keys: 'O / 0 / T / N / C', desc: '防禦圍牆 / 城門 / 警戒箭塔 / 要塞城堡 / 主堡' },
       { keys: 'U', desc: '開啟時代地標晉升選單' },
       { keys: 'E (選取步兵；非村民)', desc: '已研發野戰工程後，集結至少 4 名步兵組裝衝車' },
     ],
