@@ -498,9 +498,12 @@ test('civilizations: each civ has distinct workers, buildable structures, traini
   assert.ok(getBuildableTypesForCiv('fantasy').includes('mana_well'));
 
   // Building training rosters are tailored per civilization
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'knight', 'battering_ram', 'catapult']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_footman']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'medieval'), ['knight', 'scout_rider']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'anime'), ['scout_rider']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'fantasy'), ['fantasy_paladin', 'scout_rider']);
 
   // Tech research filtering and stat application
   const shrineTechs = getAvailableTechsForBuilding('spirit_shrine', 'anime', [], 1);
@@ -603,6 +606,7 @@ test('hotkeys: worker build, training slots, and tech slots map cleanly without 
   assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('anime')), 'spirit_shrine');
   assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('fantasy')), 'mana_well');
   assert.equal(findBuildingTypeByHotkey('V', getBuildableTypesForCiv('medieval')), 'barracks');
+  assert.equal(findBuildingTypeByHotkey('Z', getBuildableTypesForCiv('medieval')), 'stable');
   assert.equal(findTrainingUnitByHotkey('C', ['swordsman', 'knight', 'catapult']), 'knight');
   assert.equal(findTechIdByHotkey('R', ['tech_a', 'tech_b']), 'tech_a');
   assert.equal(findTechIdByHotkey('T', ['tech_a', 'tech_b']), 'tech_b');
@@ -1822,7 +1826,7 @@ test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter 
   assert.equal(aggDoctrine?.tech.id, 'med_doctrine_crusade');
 });
 
-test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and shared scout parity', async () => {
+test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and Age II stable scout parity', async () => {
   const {
     INITIAL_POPULATION_CAP,
     HOUSE_POPULATION_BONUS,
@@ -1838,6 +1842,7 @@ test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reser
   assert.equal(DEFAULT_BUILDINGS.house.populationProvided, 5);
   assert.equal(DEFAULT_BUILDINGS.barracks.populationProvided, undefined);
   assert.equal(DEFAULT_BUILDINGS.archery_range.populationProvided, undefined);
+  assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
   assert.equal(BUILDING_HOTKEYS.house, 'E');
 
   const scout = SHARED_UNITS.find((u) => u.id === 'scout_rider');
@@ -1845,8 +1850,8 @@ test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reser
   for (const civ of ['medieval', 'anime', 'fantasy'] as const) {
     assert.ok(getBuildableTypesForCiv(civ).includes('house'), `${civ} must be able to build House`);
     assert.ok(
-      getTrainableUnitsForBuilding('town_center', civ).includes('scout_rider'),
-      `${civ} TC must be able to train shared scout_rider`
+      getTrainableUnitsForBuilding('stable', civ).includes('scout_rider'),
+      `${civ} stable must be able to train shared Age II scout_rider`
     );
   }
 
@@ -2009,12 +2014,12 @@ test('high-speed-presets-and-continuous-construction: 10x/20x speeds, substeppin
   assert.equal(finished.planksOpacity, 0);
 });
 
-test('unit-portraits: distinct portrait specs for all 20 built-in units and all modelType fallbacks', async () => {
+test('unit-portraits: every built-in unit has a distinct portrait spec and all modelType fallbacks exist', async () => {
   const { getUnitPortraitSpec } = await import('./unitPortraits');
   const { SHARED_UNITS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
 
   const allUnits = [...SHARED_UNITS, ...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS];
-  assert.equal(allUnits.length, 20, `Expected 20 built-in units, found ${allUnits.length}`);
+  assert.ok(allUnits.length >= 20, `Expected at least 20 built-in units, found ${allUnits.length}`);
 
   const seenKeys = new Set<string>();
   for (const unit of allUnits) {
@@ -2024,7 +2029,7 @@ test('unit-portraits: distinct portrait specs for all 20 built-in units and all 
     assert.ok(spec.accentHex.startsWith('#'));
     seenKeys.add(spec.key);
   }
-  assert.equal(seenKeys.size, 20);
+  assert.equal(seenKeys.size, allUnits.length, 'Every built-in unit needs its own dedicated portrait');
 
   const modelTypes = [
     'villager',
