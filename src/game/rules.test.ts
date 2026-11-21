@@ -2662,7 +2662,7 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(mirroredHand.scale.x, -1, 'off-hand anatomy mirrors without regenerating geometry');
   const handMesh = rightHand.children[0] as import('three').Mesh;
   assert.ok(handMesh.geometry.getAttribute('color').count > 100, 'five-digit grip geometry is merged into one draw call');
-  assert.equal(handMesh.geometry, mirroredHand.children[0].geometry, 'matching grip identities reuse cached hand geometry');
+  assert.equal(handMesh.geometry, (mirroredHand.children[0] as import('three').Mesh).geometry, 'matching grip identities reuse cached hand geometry');
 
   for (const civilization of civilizations) {
     const crown = createBuildingHeritageKit(
