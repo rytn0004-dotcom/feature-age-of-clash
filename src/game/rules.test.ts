@@ -2624,6 +2624,34 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(face.children.length, 1);
   assert.ok((face.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100);
 
+  const animeFace = createCharacterFaceDetails(0x38bdf8, {
+    civilization: 'anime',
+    modelType: 'ninja',
+    unitId: 'anime-ninja-hair-01',
+  });
+  assert.equal(animeFace.children.length, 2, 'anime identity includes one independent long-hair pivot');
+  const hairPivot = animeFace.children[1] as import('three').Group;
+  assert.equal(hairPivot.name, 'secondaryMotion:hair');
+  assert.equal(hairPivot.userData.secondaryMotion.axis, 'x');
+  assert.ok(hairPivot.userData.secondaryMotion.amplitude > 0);
+  const sameAnimeFace = createCharacterFaceDetails(0x38bdf8, {
+    civilization: 'anime',
+    modelType: 'ninja',
+    unitId: 'anime-ninja-hair-01',
+  });
+  assert.equal(
+    (animeFace.children[0] as import('three').Mesh).geometry,
+    (sameAnimeFace.children[0] as import('three').Mesh).geometry,
+    'identical unit identities should share cached face/hairline geometry'
+  );
+  const fantasyFace = createCharacterFaceDetails(0x67e8f9, {
+    civilization: 'fantasy',
+    modelType: 'oracle',
+    unitId: 'fantasy-oracle-hair-02',
+  });
+  assert.equal(fantasyFace.userData.artCivilization, 'fantasy');
+  assert.equal(fantasyFace.children[1].name, 'secondaryMotion:hair');
+
   for (const civilization of civilizations) {
     const crown = createBuildingHeritageKit(
       'town_center',
