@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
-import { createCharacterFaceDetails, createUnitSignatureKit } from './artDirection';
+import { createBuildingHeritageKit, createCharacterFaceDetails, createUnitSignatureKit } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -4549,6 +4549,42 @@ export function createBuildingMesh(
   }
 
   finalizeBuildingWindowBatches(group);
+
+  // Anchor the original civilization crown to real roof geometry, not to the old badge or flag height.
+  if (
+    type === 'town_center' ||
+    type === 'tower' ||
+    type === 'castle' ||
+    type === 'armory_forge' ||
+    type === 'spirit_shrine' ||
+    type === 'mana_well' ||
+    type.startsWith('landmark')
+  ) {
+    group.updateMatrixWorld(true);
+    const baseBounds = new THREE.Box3();
+    group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry || object.name === 'bldgBadge' || object.name === 'animatedFlag') return;
+      baseBounds.expandByObject(mesh);
+    });
+    if (!baseBounds.isEmpty()) {
+      const dimensions = baseBounds.getSize(new THREE.Vector3());
+      const center = baseBounds.getCenter(new THREE.Vector3());
+      const heritageKit = createBuildingHeritageKit(
+        type,
+        resolvedCiv,
+        {
+          primary: getFactionPalette(faction).primary,
+          secondary: getFactionPalette(faction).secondary,
+          banner: getFactionPalette(faction).banner,
+        },
+        Math.min(dimensions.x, dimensions.z)
+      );
+      heritageKit.position.set(center.x, baseBounds.max.y - 0.16, center.z);
+      group.add(heritageKit);
+    }
+  }
+
   attachBuildingConstructionRig(group, type);
   addBuildingGroundDetails(group, type);
   prepareBuildingVisualLod(group);
