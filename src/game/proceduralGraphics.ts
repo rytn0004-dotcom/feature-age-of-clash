@@ -10106,7 +10106,6 @@ export function createUnitMesh(
         side === 'left'
       );
       hand.position.set(position[0], position[1], position[2]);
-      hand.scale.multiplyScalar(s);
       hand.userData.unitId = unitId;
       hand.userData.handSide = side;
       pivot.add(hand);
