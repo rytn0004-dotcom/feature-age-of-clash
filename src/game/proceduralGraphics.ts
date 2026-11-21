@@ -8144,7 +8144,17 @@ interface UnitDistanceLodPart {
   radius: number;
 }
 
+interface UnitIdentityLodPart {
+  object: THREE.Object3D;
+  baseVisible: boolean;
+  localCenter: THREE.Vector3;
+  localRadius: number;
+  wasVisible: boolean;
+}
+
 const unitLodWorldCenter = new THREE.Vector3();
+const unitIdentityLodWorldCenter = new THREE.Vector3();
+const unitIdentityLodWorldScale = new THREE.Vector3();
 const UNIT_LOD_MIN_RADIUS = 0.012;
 const UNIT_LOD_MAX_RADIUS = 0.105;
 const UNIT_LOD_MIN_PIXEL_RADIUS = 1.45;
@@ -8156,9 +8166,28 @@ const UNIT_LOD_MIN_PIXEL_RADIUS = 1.45;
  */
 export function prepareUnitVisualLod(group: THREE.Group): void {
   const parts: UnitDistanceLodPart[] = [];
+  const identityParts: UnitIdentityLodPart[] = [];
   group.updateMatrixWorld(true);
 
   group.traverse((object) => {
+    if (object.name === 'sculptedCharacterFace') {
+      const bounds = new THREE.Box3().setFromObject(object);
+      if (!bounds.isEmpty()) {
+        const sphere = new THREE.Sphere();
+        bounds.getBoundingSphere(sphere);
+        const localCenter = group.worldToLocal(sphere.center.clone());
+        const groupScale = group.getWorldScale(new THREE.Vector3());
+        const worldScale = Math.max(0.0001, Math.abs(groupScale.x), Math.abs(groupScale.y), Math.abs(groupScale.z));
+        identityParts.push({
+          object,
+          baseVisible: object.visible,
+          localCenter,
+          localRadius: Math.max(0.01, sphere.radius / worldScale),
+          wasVisible: object.visible,
+        });
+      }
+    }
+
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry || mesh.name === 'contactShadow') return;
 
@@ -8171,6 +8200,7 @@ export function prepareUnitVisualLod(group: THREE.Group): void {
   });
 
   group.userData.distanceLodParts = parts;
+  group.userData.identityLodParts = identityParts;
 }
 
 /**
@@ -8184,13 +8214,14 @@ export function updateUnitVisualLod(
   forceHighDetail = false
 ): void {
   const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
-  if (!parts?.length) return;
+  const identityParts = group.userData.identityLodParts as UnitIdentityLodPart[] | undefined;
+  if (!parts?.length && !identityParts?.length) return;
 
   group.updateMatrixWorld(true);
   const safeHeight = Math.max(1, viewportHeight);
   const focalPixels = safeHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
 
-  for (const part of parts) {
+  for (const part of parts || []) {
     if (!part.baseVisible) continue;
     let shouldShow = true;
 
@@ -8205,6 +8236,24 @@ export function updateUnitVisualLod(
     }
 
     if (part.mesh.visible !== shouldShow) part.mesh.visible = shouldShow;
+  }
+
+  for (const part of identityParts || []) {
+    if (!part.baseVisible) continue;
+    unitIdentityLodWorldCenter.copy(part.localCenter).applyMatrix4(group.matrixWorld);
+    group.getWorldScale(unitIdentityLodWorldScale);
+    const worldScale = Math.max(
+      0.0001,
+      Math.abs(unitIdentityLodWorldScale.x),
+      Math.abs(unitIdentityLodWorldScale.y),
+      Math.abs(unitIdentityLodWorldScale.z)
+    );
+    const distance = Math.max(0.001, camera.position.distanceTo(unitIdentityLodWorldCenter));
+    const projectedRadius = (part.localRadius * worldScale * focalPixels) / distance;
+    const threshold = part.wasVisible ? 5.5 : 8.5;
+    const shouldShow = forceHighDetail || projectedRadius >= threshold;
+    if (part.object.visible !== shouldShow) part.object.visible = shouldShow;
+    part.wasVisible = shouldShow;
   }
 }
 
