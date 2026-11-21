@@ -125,6 +125,7 @@ import {
   MatchWinnerSummary,
   resolveMatchOutcome,
   assignRaidTargets,
+  layoutCombatFormation,
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
   shouldSwitchCombatTarget,
@@ -4436,7 +4437,7 @@ export class RtsEngine {
           }
           if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: 13,
+              maxSearchRange: Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
             });
             if (enemy) {
               unit.targetEntityId = enemy.id;
@@ -4478,7 +4479,7 @@ export class RtsEngine {
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
           if (unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: 14,
+              maxSearchRange: Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
             });
             if (enemy) {
               unit.targetEntityId = enemy.id;
@@ -4769,7 +4770,7 @@ export class RtsEngine {
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
       const followUp = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-        maxSearchRange: unit.attackMoveGoal ? 15 : 12,
+        maxSearchRange: Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
       });
       if (followUp && (!this.isHumanControlled(unit.faction) || !!unit.attackMoveGoal)) {
         unit.targetEntityId = followUp.id;
@@ -8711,23 +8712,65 @@ export class RtsEngine {
 
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
+          const formationSlots = new Map(
+            layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry])
+          );
 
           strikeUnits.forEach((unit, idx) => {
-            // Siege: always commit to TC / buildings
-            if (unit.unitDef.category === 'siege') {
-              const bTarget =
-                enemyTc ||
-                selectOptimalCombatTarget(unit, [], this.buildings, this.units, {
-                  maxSearchRange: 40,
-                }) ||
-                stronghold;
-              unit.targetEntityId = bTarget.id;
-              unit.attackMoveGoal = { x: bTarget.x, z: bTarget.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
-              unit.currentActionText = '攻城主力';
+            const slot = formationSlots.get(unit.id);
+            // Siege also stages behind the army; its extended acquisition radius lets it fire from the rear.
+            const currentTarget =
+              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
+              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              null;
+            const targetIsNear =
+              !!currentTarget &&
+              currentTarget.hp > 0 &&
+              getDistance(unit.x, unit.z, currentTarget.x, currentTarget.z) <=
+                Math.max(13, Math.min(24, unit.unitDef.stats.range + 2));
+            const distanceToSlot = slot
+              ? getDistance(unit.x, unit.z, slot.x, slot.z)
+              : 0;
+
+            // Preserve an active nearby fight; otherwise rally into the role's lane without stacking at the same point.
+            if (slot && distanceToSlot > 1.8 && !targetIsNear) {
+              const slotChanged =
+                unit.targetX === undefined ||
+                unit.targetZ === undefined ||
+                getDistance(unit.targetX, unit.targetZ, slot.x, slot.z) > 1.5;
+              const objectiveChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
+              if (
+                unit.state !== 'moving' ||
+                unit.currentActionText !== '陣型推進' ||
+                slotChanged ||
+                objectiveChanged
+              ) {
+                unit.targetEntityId = undefined;
+                unit.targetX = slot.x;
+                unit.targetZ = slot.z;
+                unit.attackMoveGoal = { x: goalX, z: goalZ };
+                unit.waypoints = undefined;
+                unit.pathGoal = undefined;
+                unit.pathCooldown = 0;
+                unit.state = 'moving';
+                unit.currentActionText =
+                  slot.role === 'frontline'
+                    ? '前排集結'
+                    : slot.role === 'backline'
+                      ? '遠程就位'
+                      : slot.role === 'flank'
+                        ? '騎兵包抄'
+                        : slot.role === 'siege'
+                          ? '攻城後列'
+                          : '支援就位';
+                unit.currentActionText = `陣型推進 · ${unit.currentActionText}`;
+              }
               return;
             }
+
+            // Fast units / every 3rd unit: harass workers & eco
 
             // Fast units / every 3rd unit: harass workers & eco
             const isRaider =
