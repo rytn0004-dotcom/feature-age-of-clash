@@ -2728,3 +2728,86 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
   assert.ok(variantA === 0 || variantA === 1 || variantA === 2);
 });
+
+
+test('art-direction: building architecture visibly evolves by age and faction with cached geometry', async () => {
+  const THREE = await import('three');
+  const { createBuildingAgeEvolutionKit } = await import('./artDirection');
+  const palette = { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 };
+  const civilizations = ['medieval', 'anime', 'fantasy'] as const;
+  for (const civilization of civilizations) {
+    const age1 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 1);
+    const age2 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 2);
+    const age3 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 3);
+    const age4 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 4);
+    assert.equal(age1.children.length, 0, 'Age I should retain the original early-game silhouette');
+    assert.equal(age2.userData.ageTier, 2);
+    assert.equal(age2.children.length, 1);
+    assert.equal(age3.children.length, 1);
+    assert.equal(age4.children.length, 1);
+    const eraMesh = age4.children[0] as THREE.Mesh;
+    assert.ok(eraMesh.geometry.getAttribute('color').count > 500, civilization + ' Age IV structure needs a rich merged crown');
+    const sameAge = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 4);
+    assert.equal(eraMesh.geometry, (sameAge.children[0] as THREE.Mesh).geometry, 'age modules should reuse cached geometry');
+  }
+  assert.equal(createBuildingAgeEvolutionKit('farm', 'medieval', palette, 4, 4, 2, 4).children.length, 0);
+  assert.equal(createBuildingAgeEvolutionKit('wall', 'anime', palette, 3, 1, 1, 4).children.length, 0);
+});
+
+test('art-direction: existing buildings can swap era kits without replacing their structural meshes', async () => {
+  const THREE = await import('three');
+  const { updateBuildingAgeVisuals } = await import('./proceduralGraphics');
+  const group = new THREE.Group();
+  const structuralMesh = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+  group.add(structuralMesh);
+  group.userData.buildingArchitecture = {
+    type: 'barracks',
+    civilization: 'fantasy',
+    palette: { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 },
+    width: 3, depth: 3, height: 3,
+    centerX: 0, centerY: 1.5, centerZ: 0, topY: 3,
+  };
+  updateBuildingAgeVisuals(group, 2);
+  const firstStructural = group.children[0];
+  assert.equal(firstStructural, structuralMesh);
+  assert.equal(group.getObjectByName('buildingAgeEvolutionKit')?.userData.ageTier, 2);
+  updateBuildingAgeVisuals(group, 4);
+  assert.equal(group.children[0], structuralMesh);
+  assert.equal(group.getObjectByName('buildingAgeEvolutionKit')?.userData.ageTier, 4);
+  assert.equal(group.userData.buildingAgeTier, 4);
+});
+
+test('visuals: woodland species and wind seeds are stable for the same resource node id', async () => {
+  const { createTreeMesh } = await import('./proceduralGraphics');
+  const a = createTreeMesh(false, 'standard', 320, 'forest-node-17');
+  const b = createTreeMesh(false, 'standard', 320, 'forest-node-17');
+  const c = createTreeMesh(false, 'standard', 320, 'forest-node-18');
+  assert.equal(a.userData.treeSpecies, b.userData.treeSpecies);
+  assert.deepEqual(a.userData.treeWind, b.userData.treeWind);
+  assert.equal(a.userData.treeSeed, 'forest-node-17');
+  assert.notDeepEqual(a.userData.treeWind, c.userData.treeWind, 'different nodes should have different wind phases and sway');
+  const canopyA = a.userData.treeCanopy as import('three').Object3D;
+  const canopyB = b.userData.treeCanopy as import('three').Object3D;
+  assert.deepEqual(canopyA.rotation.toArray(), canopyB.rotation.toArray());
+});
+
+test('visuals: heavily damaged buildings reveal structural cracks and base debris without mutating shared materials', async () => {
+  const THREE = await import('three');
+  const { applyBuildingDamageVisuals, disposeBuildingVisualResources } = await import('./proceduralGraphics');
+  const group = new THREE.Group();
+  const originalMaterial = new THREE.MeshStandardMaterial({ color: 0x9ca3af });
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(4, 3, 3), originalMaterial));
+  group.userData.buildingArchitecture = {
+    width: 4, depth: 3, height: 3, centerX: 0, centerY: 1.5, centerZ: 0,
+  };
+  applyBuildingDamageVisuals(group, 0.72, false, 0.012, 3.5);
+  const layer = group.getObjectByName('buildingDamageDetailLayer') as THREE.Group;
+  assert.ok(layer, 'critical structures should receive a localized damage layer');
+  assert.equal(layer.getObjectByName('buildingDamageCrackPrimary')?.visible, true);
+  assert.equal(layer.getObjectByName('buildingDamageCrackSecondary')?.visible, true);
+  assert.equal(layer.getObjectByName('buildingDamageDebris')?.visible, true);
+  assert.equal((group.children[0] as THREE.Mesh).material === originalMaterial, false, 'per-building damage tint must clone the shared material');
+  assert.equal(originalMaterial.color.getHex(), 0x9ca3af, 'shared material remains untouched');
+  disposeBuildingVisualResources(group);
+  assert.equal(group.getObjectByName('buildingDamageDetailLayer'), undefined);
+});

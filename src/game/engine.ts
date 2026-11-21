@@ -155,6 +155,7 @@ import { sound } from './audio';
 import {
   applyBuildingConstructionVisuals,
   applyBuildingDamageVisuals,
+  updateBuildingAgeVisuals,
   applyWallBreachVisuals,
   updateGateDoorAnimation,
   applyTerrainBiomeMaterial,
@@ -1632,7 +1633,7 @@ export class RtsEngine {
     this.navGridDirty = true;
     this.waterNavGridDirty = true;
 
-    const mesh = createBuildingMesh(type, faction, civ);
+    const mesh = createBuildingMesh(type, faction, civ, this.ageByFaction[faction] || 1);
     mesh.position.set(x, 0, z);
     mesh.rotation.y = rotationY;
     mesh.userData = { ...mesh.userData, type: 'building', id, faction, team };
@@ -1681,7 +1682,7 @@ export class RtsEngine {
 
     let mesh: THREE.Group;
     if (type === 'wood') {
-      mesh = createTreeMesh(hasBadge, nodeTier, amount);
+      mesh = createTreeMesh(hasBadge, nodeTier, amount, id);
     } else if (type === 'gold') {
       mesh = createGoldMineMesh(amount, nodeTier);
     } else if (type === 'stone') {
@@ -3357,7 +3358,7 @@ export class RtsEngine {
       return;
     }
 
-    this.placementGhostMesh = createBuildingMesh(type, this.humanPlayerId, this.getCivilizationForFaction(this.humanPlayerId));
+    this.placementGhostMesh = createBuildingMesh(type, this.humanPlayerId, this.getCivilizationForFaction(this.humanPlayerId), this.playerAge);
     const clonedGhostMats = new Map<THREE.Material, THREE.Material>();
     this.placementGhostMesh.traverse((child) => {
       if (child.name === 'bldgBadge' || child.name === 'scaffoldGroup') {
@@ -3983,15 +3984,21 @@ export class RtsEngine {
 
     let envIdx = 0;
     this.nodeMeshes.forEach((nMesh) => {
+      const wind = nMesh.userData.treeWind as { phase?: number; amplitude?: number; frequency?: number } | undefined;
+      const phase = Number.isFinite(wind?.phase) ? wind!.phase! : envIdx * 0.7;
+      const amplitude = Number.isFinite(wind?.amplitude) ? wind!.amplitude! : 0.035;
+      const frequency = Number.isFinite(wind?.frequency) ? wind!.frequency! : 1.6;
+      const swayZ = Math.sin(this.simTime * frequency + phase) * amplitude;
+      const swayX = Math.cos(this.simTime * frequency * 0.76 + phase * 0.71) * amplitude * 0.58;
       const canopy = nMesh.userData.treeCanopy as THREE.Object3D | undefined;
       if (canopy) {
-        canopy.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
-        canopy.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
+        canopy.rotation.z = swayZ;
+        canopy.rotation.x = swayX;
       }
       const distanceLodTree = nMesh.userData.treeAssetLod as THREE.Object3D | undefined;
       if (distanceLodTree) {
-        distanceLodTree.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
-        distanceLodTree.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
+        distanceLodTree.rotation.z = swayZ;
+        distanceLodTree.rotation.x = swayX;
       }
       envIdx++;
     });
@@ -9166,6 +9173,11 @@ export class RtsEngine {
     const currentAge = this.ageByFaction[faction] || 1;
     const targetAge = landmarkDef?.landmarkAgeAdvance || ((currentAge + 1) as AgeLevel);
     this.ageByFaction[faction] = targetAge;
+    for (const building of this.buildings) {
+      if (building.faction !== faction || building.hp <= 0) continue;
+      const buildingMesh = this.buildingMeshes.get(building.id);
+      if (buildingMesh) updateBuildingAgeVisuals(buildingMesh, targetAge);
+    }
     this.refreshFactionUnitMeshes(faction);
     if (!this.landmarksByFaction[faction]) this.landmarksByFaction[faction] = [];
     if (!this.landmarksByFaction[faction].includes(landmarkType)) {

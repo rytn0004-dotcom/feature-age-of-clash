@@ -995,3 +995,159 @@ export function createBuildingHeritageKit(
   group.userData.buildingType = type;
   return group;
 }
+
+
+const buildingEraGeometryCache = new Map<string, THREE.BufferGeometry>();
+const buildingEraMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+const BUILDING_ERA_EXCLUDED_TYPES = new Set<BuildingType>(['farm', 'wall', 'gate', 'dock']);
+
+function createBuildingEraGeometry(
+  type: BuildingType,
+  civilization: CivilizationId,
+  palette: UnitArtPalette,
+  width: number,
+  depth: number,
+  height: number,
+  age: number
+): THREE.BufferGeometry {
+  const parts: SculptPart[] = [];
+  const add = (
+    geometry: THREE.BufferGeometry,
+    color: number,
+    position: [number, number, number],
+    scale: [number, number, number] = [1, 1, 1],
+    rotation: [number, number, number] = [0, 0, 0]
+  ) => parts.push(makePart(geometry, color, position, scale, rotation));
+
+  const w = THREE.MathUtils.clamp(width, 1.1, 12);
+  const d = THREE.MathUtils.clamp(depth, 1.1, 12);
+  const h = THREE.MathUtils.clamp(height, 0.9, 12);
+  const s = THREE.MathUtils.clamp(Math.min(w, d) / 4, 0.58, 1.42);
+  const post = Math.max(0.075, Math.min(0.17, s * 0.09));
+  const rail = Math.max(0.055, Math.min(0.12, s * 0.065));
+  const x = Math.max(post, w * 0.39);
+  const z = Math.max(post, d * 0.39);
+  const top = Math.max(0.1, h * 0.025);
+
+  // Age II: stone/wood reinforcement at the roof corners and a visible civilization-specific fascia.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      add(
+        new RoundedBoxGeometry(post * 1.6, 0.28 * s, post * 1.6, 3, post * 0.22),
+        civilization === 'fantasy' ? palette.secondary : palette.primary,
+        [sx * x, top + 0.12 * s, sz * z]
+      );
+      add(
+        new THREE.OctahedronGeometry(post * 0.7, 0),
+        palette.banner,
+        [sx * x, top + 0.29 * s, sz * z],
+        [1, 1.12, 0.8]
+      );
+    }
+  }
+
+  if (civilization === 'anime') {
+    add(new RoundedBoxGeometry(w * 0.9, rail * 1.35, rail * 1.5, 3, rail * 0.24), palette.primary, [0, top + 0.13 * s, z]);
+    add(new RoundedBoxGeometry(w * 0.78, rail, rail * 1.35, 3, rail * 0.2), palette.secondary, [0, top + 0.23 * s, z]);
+    add(new RoundedBoxGeometry(rail * 1.25, 0.27 * s, rail, 2, rail * 0.15), palette.banner, [0, top + 0.05 * s, z + rail]);
+  } else if (civilization === 'fantasy') {
+    add(new THREE.TorusGeometry(0.22 * s, 0.025 * s, 6, 18), palette.secondary, [0, top + 0.2 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.OctahedronGeometry(0.12 * s, 1), palette.banner, [0, top + 0.31 * s, z * 0.72], [0.82, 1.35, 0.72]);
+  } else {
+    add(new RoundedBoxGeometry(w * 0.86, rail, rail * 1.45, 3, rail * 0.18), palette.secondary, [0, top + 0.16 * s, z]);
+    for (const sx of [-1, 1]) {
+      add(new THREE.BoxGeometry(post * 0.75, rail * 2.2, rail * 1.3), palette.banner, [sx * x, top + 0.26 * s, z]);
+    }
+  }
+
+  if (age >= 3) {
+    // Age III: taller corner turrets/pinnacles make castles and military buildings read as fortified.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        add(
+          new THREE.ConeGeometry(post * (civilization === 'fantasy' ? 1.05 : 0.82), 0.42 * s, civilization === 'anime' ? 4 : 6),
+          civilization === 'anime' ? palette.primary : palette.secondary,
+          [sx * x, top + 0.48 * s, sz * z],
+          [1, 1, 1],
+          [0, sx * 0.12, sz * -0.12]
+        );
+      }
+    }
+    if (civilization === 'anime') {
+      add(new RoundedBoxGeometry(w * 0.58, rail * 1.4, rail * 1.7, 3, rail * 0.25), palette.banner, [0, top + 0.45 * s, z * 0.83]);
+    } else {
+      add(new THREE.TorusGeometry(0.3 * s, 0.027 * s, 6, 20), palette.banner, [0, top + 0.35 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0, 0]);
+    }
+  }
+
+  if (age >= 4) {
+    // Age IV: an unmistakable imperial / sacred crown, deliberately restrained to one merged mesh.
+    const apexY = top + 0.82 * s;
+    if (civilization === 'fantasy') {
+      add(new THREE.OctahedronGeometry(0.19 * s, 1), palette.banner, [0, apexY, 0], [0.82, 1.55, 0.76]);
+      add(new THREE.TorusGeometry(0.38 * s, 0.028 * s, 6, 24), palette.secondary, [0, apexY - 0.12 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0.15, 0]);
+      for (const sx of [-1, 1]) {
+        add(new THREE.ConeGeometry(0.065 * s, 0.34 * s, 5), palette.banner, [sx * 0.3 * s, apexY + 0.08 * s, 0], [1, 1, 1], [0, 0, sx * -0.22]);
+      }
+    } else if (civilization === 'anime') {
+      add(new RoundedBoxGeometry(w * 0.42, rail * 1.8, rail * 1.8, 3, rail * 0.3), palette.primary, [0, apexY - 0.12 * s, 0]);
+      add(new THREE.OctahedronGeometry(0.14 * s, 1), palette.banner, [0, apexY + 0.12 * s, 0.02 * s], [0.8, 1.5, 0.7]);
+    } else {
+      add(new THREE.CylinderGeometry(0.035 * s, 0.07 * s, 0.56 * s, 8), palette.secondary, [0, apexY, 0]);
+      add(new THREE.OctahedronGeometry(0.14 * s, 1), palette.banner, [0, apexY + 0.31 * s, 0], [0.86, 1.35, 0.74]);
+      add(new RoundedBoxGeometry(0.3 * s, 0.06 * s, 0.045 * s, 3, 0.014 * s), palette.primary, [0, apexY - 0.16 * s, 0]);
+    }
+  }
+
+  return mergeSculptParts(parts);
+}
+
+/**
+ * Age-specific roofline modules are separate from structural collision/build meshes.
+ * They are cached by footprint, palette, civilization and age, then swapped on age-up.
+ */
+export function createBuildingAgeEvolutionKit(
+  type: BuildingType,
+  civilization: CivilizationId,
+  palette: UnitArtPalette,
+  width: number,
+  depth: number,
+  height: number,
+  age: number
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'buildingAgeEvolutionKit';
+  const ageTier = THREE.MathUtils.clamp(Math.floor(Number.isFinite(age) ? age : 1), 1, 4);
+  group.userData.ageTier = ageTier;
+  group.userData.artDirection = civilization;
+  if (ageTier <= 1 || BUILDING_ERA_EXCLUDED_TYPES.has(type)) return group;
+
+  const w = THREE.MathUtils.clamp(width, 1.1, 12);
+  const d = THREE.MathUtils.clamp(depth, 1.1, 12);
+  const h = THREE.MathUtils.clamp(height, 0.9, 12);
+  const paletteKey = [palette.primary, palette.secondary, palette.banner].map(v => v.toString(16)).join('-');
+  const sizeKey = [w, d, h].map(v => v.toFixed(2)).join('|');
+  const key = [type, civilization, ageTier, paletteKey, sizeKey].join('|');
+  let geometry = buildingEraGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createBuildingEraGeometry(type, civilization, palette, w, d, h, ageTier);
+    buildingEraGeometryCache.set(key, geometry);
+  }
+  const materialKey = [civilization, paletteKey].join('|');
+  let material = buildingEraMaterialCache.get(materialKey);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      metalness: civilization === 'fantasy' ? 0.48 : 0.62,
+      roughness: civilization === 'anime' ? 0.38 : 0.48,
+    });
+    buildingEraMaterialCache.set(materialKey, material);
+  }
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'buildingAgeEvolutionDetails';
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.distanceLodMinPixels = 4.2;
+  group.add(mesh);
+  return group;
+}

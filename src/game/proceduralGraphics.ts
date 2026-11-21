@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
-import { createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
+import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -3950,6 +3950,107 @@ const SCORCH_TARGET_COLOR = new THREE.Color(0x2a1f1d);
 const EMBER_GLOW_COLOR = new THREE.Color(0xb45309);
 const HIT_FLASH_COLOR = new THREE.Color(0xfdba74);
 
+
+const sharedBuildingDamageChipGeo = new THREE.DodecahedronGeometry(0.14, 0);
+const sharedBuildingDamageChipMat = new THREE.MeshStandardMaterial({
+  color: 0x4b4037,
+  roughness: 0.98,
+  metalness: 0.02,
+});
+const sharedBuildingDamageCrackMat = new THREE.MeshStandardMaterial({
+  color: 0x211a18,
+  roughness: 1,
+  metalness: 0,
+  side: THREE.DoubleSide,
+});
+
+function createBuildingDamageDetailLayer(group: THREE.Group): THREE.Group | null {
+  const meta = group.userData.buildingArchitecture as {
+    width: number; depth: number; height: number; centerX: number; centerY: number; centerZ: number;
+  } | undefined;
+  if (!meta) return null;
+
+  const width = Math.max(1.2, meta.width);
+  const depth = Math.max(1.2, meta.depth);
+  const height = Math.max(1, meta.height);
+  const frontZ = meta.centerZ + depth * 0.5 + 0.035;
+  const topY = meta.centerY + height * 0.34;
+  const lowY = Math.max(0.22, meta.centerY - height * 0.28);
+  const layer = new THREE.Group();
+  layer.name = 'buildingDamageDetailLayer';
+  layer.visible = false;
+  layer.userData.distanceLodMinPixels = 2.8;
+
+  const crackPaths = [
+    [
+      new THREE.Vector3(meta.centerX - width * 0.16, topY, frontZ),
+      new THREE.Vector3(meta.centerX - width * 0.11, topY - height * 0.16, frontZ + 0.008),
+      new THREE.Vector3(meta.centerX - width * 0.18, meta.centerY + height * 0.02, frontZ + 0.014),
+      new THREE.Vector3(meta.centerX - width * 0.1, lowY, frontZ + 0.018),
+    ],
+    [
+      new THREE.Vector3(meta.centerX + width * 0.2, meta.centerY + height * 0.21, frontZ),
+      new THREE.Vector3(meta.centerX + width * 0.12, meta.centerY + height * 0.08, frontZ + 0.01),
+      new THREE.Vector3(meta.centerX + width * 0.22, meta.centerY - height * 0.04, frontZ + 0.016),
+      new THREE.Vector3(meta.centerX + width * 0.16, lowY + 0.12, frontZ + 0.02),
+    ],
+  ];
+  crackPaths.forEach((points, index) => {
+    const curve = new THREE.CatmullRomCurve3(points);
+    const crack = new THREE.Mesh(new THREE.TubeGeometry(curve, 18, Math.max(0.009, Math.min(0.018, width * 0.004)), 5, false), sharedBuildingDamageCrackMat);
+    crack.name = index === 0 ? 'buildingDamageCrackPrimary' : 'buildingDamageCrackSecondary';
+    crack.visible = false;
+    crack.castShadow = false;
+    crack.raycast = () => {};
+    layer.add(crack);
+  });
+
+  const debris = new THREE.InstancedMesh(sharedBuildingDamageChipGeo, sharedBuildingDamageChipMat, 4);
+  debris.name = 'buildingDamageDebris';
+  debris.visible = false;
+  debris.castShadow = false;
+  debris.receiveShadow = false;
+  const dummy = new THREE.Object3D();
+  const offsets = [-0.23, -0.07, 0.11, 0.27];
+  offsets.forEach((offset, index) => {
+    dummy.position.set(
+      meta.centerX + offset * width,
+      0.08 + (index % 2) * 0.035,
+      meta.centerZ + depth * 0.5 + 0.16 + (index % 2) * 0.05
+    );
+    dummy.rotation.set(index * 0.37, index * 0.81, index * 0.29);
+    const chipScale = 0.58 + (index % 3) * 0.23;
+    dummy.scale.set(chipScale, chipScale * (0.7 + (index % 2) * 0.3), chipScale);
+    dummy.updateMatrix();
+    debris.setMatrixAt(index, dummy.matrix);
+  });
+  debris.instanceMatrix.needsUpdate = true;
+  debris.computeBoundingSphere();
+  layer.add(debris);
+
+  group.add(layer);
+  group.userData.buildingDamageDetailLayer = layer;
+  group.userData.buildingLodParts = undefined;
+  group.userData.distanceShadowLodCache = undefined;
+  prepareBuildingVisualLod(group);
+  return layer;
+}
+
+function updateBuildingDamageDetailLayer(group: THREE.Group, damageSeverity: number): void {
+  let layer = group.userData.buildingDamageDetailLayer as THREE.Group | undefined;
+  if (!layer && damageSeverity >= 0.18) layer = createBuildingDamageDetailLayer(group) || undefined;
+  if (!layer) return;
+  layer.visible = damageSeverity >= 0.18;
+  const primary = layer.getObjectByName('buildingDamageCrackPrimary');
+  const secondary = layer.getObjectByName('buildingDamageCrackSecondary');
+  const debris = layer.getObjectByName('buildingDamageDebris');
+  if (primary) primary.visible = damageSeverity >= 0.18;
+  if (secondary) secondary.visible = damageSeverity >= 0.43;
+  if (debris) debris.visible = damageSeverity >= 0.66;
+}
+
+
+
 /**
  * Lazily clones materials for an individual damaged/hit-flashing building (leaving shared scene materials untouched),
  * applies progressive charcoal scorch tint, ember glow at critical HP, and subtle structural sag from the base.
@@ -3965,6 +4066,7 @@ export function applyBuildingDamageVisuals(
   const needsEffects = damageSeverity > 0.01 || hitFlashActive || sagTiltRad > 0.001;
 
   if (!entries && !needsEffects) return;
+  updateBuildingDamageDetailLayer(mesh, damageSeverity);
 
   if (!entries) {
     entries = [];
@@ -4037,6 +4139,17 @@ export function disposeBuildingVisualResources(mesh: THREE.Group): void {
       e.mat.dispose();
     }
     mesh.userData.damageMatEntries = undefined;
+  }
+  const damageLayer = mesh.userData.buildingDamageDetailLayer as THREE.Group | undefined;
+  if (damageLayer) {
+    damageLayer.traverse((child) => {
+      const item = child as THREE.Mesh;
+      if (item.isMesh && item.name.startsWith('buildingDamageCrack')) item.geometry.dispose();
+    });
+    mesh.remove(damageLayer);
+    mesh.userData.buildingDamageDetailLayer = undefined;
+    mesh.userData.buildingLodParts = undefined;
+    mesh.userData.distanceShadowLodCache = undefined;
   }
 }
 
@@ -4489,7 +4602,8 @@ export function createContestedShrineMesh(label = '爭奪點', shrineType: Shrin
 export function createBuildingMesh(
   type: BuildingType,
   faction: FactionId,
-  civId?: CivilizationId
+  civId?: CivilizationId,
+  age: number = 1
 ): THREE.Group {
   const resolvedCiv = civId || getFactionPalette(faction).civilization || 'medieval';
   let group: THREE.Group;
@@ -4585,6 +4699,32 @@ export function createBuildingMesh(
   if (!architectureBounds.isEmpty()) {
     const dimensions = architectureBounds.getSize(new THREE.Vector3());
     const center = architectureBounds.getCenter(new THREE.Vector3());
+    group.userData.buildingArchitecture = {
+      type,
+      civilization: resolvedCiv,
+      palette,
+      width: dimensions.x,
+      depth: dimensions.z,
+      height: dimensions.y,
+      centerX: center.x,
+      centerY: center.y,
+      centerZ: center.z,
+      topY: architectureBounds.max.y,
+    };
+
+    const eraKit = createBuildingAgeEvolutionKit(
+      type,
+      resolvedCiv,
+      palette,
+      dimensions.x,
+      dimensions.z,
+      dimensions.y,
+      age
+    );
+    if (eraKit.children.length > 0) {
+      eraKit.position.set(center.x, architectureBounds.max.y - 0.16, center.z);
+      group.add(eraKit);
+    }
 
     if (needsHeritage) {
       const heritageKit = createBuildingHeritageKit(
@@ -4629,6 +4769,46 @@ export function createBuildingMesh(
   group.userData.bldgBadge = bldgBadge;
   return group;
 }
+
+
+/** Update the age-specific ornament layer without rebuilding structural or animated meshes. */
+export function updateBuildingAgeVisuals(group: THREE.Group, age: number): void {
+  const meta = group.userData.buildingArchitecture as {
+    type: BuildingType;
+    civilization: CivilizationId;
+    palette: { primary: number; secondary: number; banner: number };
+    width: number;
+    depth: number;
+    height: number;
+    centerX: number;
+    centerZ: number;
+    topY: number;
+  } | undefined;
+  if (!meta) return;
+
+  const oldKit = group.getObjectByName('buildingAgeEvolutionKit');
+  if (oldKit) group.remove(oldKit);
+  const nextKit = createBuildingAgeEvolutionKit(
+    meta.type,
+    meta.civilization,
+    meta.palette,
+    meta.width,
+    meta.depth,
+    meta.height,
+    age
+  );
+  if (nextKit.children.length > 0) {
+    nextKit.position.set(meta.centerX, meta.topY - 0.16, meta.centerZ);
+    group.add(nextKit);
+  }
+  group.userData.buildingAgeTier = THREE.MathUtils.clamp(Math.floor(age), 1, 4);
+  // Refresh both caches because the new era detail adds shadow participants and optional LOD parts.
+  group.userData.buildingLodParts = undefined;
+  group.userData.distanceShadowLodCache = undefined;
+  prepareBuildingVisualLod(group);
+}
+
+
 
 // Subtle ground apron and entrance stepping stones shared by every building of a type.
 // Each building receives one compact mesh; geometry and material are cached to avoid
@@ -5569,6 +5749,15 @@ const sharedBirchLeafMat = new THREE.MeshStandardMaterial({
   roughnessMap: resFoliageMaps.roughnessMap || null,
   roughness: 0.84,
 });
+const sharedMapleLeafMat = new THREE.MeshStandardMaterial({
+  color: 0xb45336,
+  map: resFoliageMaps.map,
+  normalMap: resFoliageMaps.normalMap,
+  normalScale: new THREE.Vector2(1.14, 1.14),
+  roughnessMap: resFoliageMaps.roughnessMap || null,
+  roughness: 0.88,
+});
+
 const sharedTreeMossMoundGeo = new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8);
 const sharedRichTreeSapGeo = new THREE.OctahedronGeometry(0.22, 0);
 const sharedRichTreeSapMat = new THREE.MeshStandardMaterial({
@@ -5602,11 +5791,30 @@ const sharedRichTreeLeafMat = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.25,
 });
 
+function createTreeSeededRandom(seed: string): () => number {
+  let state = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    state ^= seed.charCodeAt(i);
+    state = Math.imul(state, 16777619);
+  }
+  if (state === 0) state = 0x6d2b79f5;
+  return () => {
+    state |= 0;
+    state = (state + 0x6d2b79f5) | 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export function createTreeMesh(
   hasBadge = false,
   nodeTier: 'standard' | 'rich' = 'standard',
-  amount = 320
+  amount = 320,
+  seedId = `${nodeTier}:${amount}`
 ): THREE.Group {
+  const random = createTreeSeededRandom(seedId);
   const group = new THREE.Group();
   const isRich = nodeTier === 'rich';
   addContactShadow(group, isRich ? 1.95 : 1.62);
@@ -5614,13 +5822,15 @@ export function createTreeMesh(
   detailedVisual.name = 'treeDetailedVisual';
   group.add(detailedVisual);
 
-  const roll = Math.random();
-  const species: 'rich' | 'oak' | 'birch' | 'pine' = isRich
+  const roll = random();
+  const species: 'rich' | 'oak' | 'birch' | 'maple' | 'pine' = isRich
     ? 'rich'
-    : roll < 0.36
+    : roll < 0.29
     ? 'oak'
-    : roll < 0.56
+    : roll < 0.48
     ? 'birch'
+    : roll < 0.66
+    ? 'maple'
     : 'pine';
 
   const trunkMat = species === 'birch' ? sharedBirchTrunkMat : sharedTreeTrunkMat;
@@ -5629,7 +5839,9 @@ export function createTreeMesh(
       ? sharedRichTreeLeafMat
       : species === 'birch'
       ? sharedBirchLeafMat
-      : sharedTreeLeafMats[Math.floor(Math.random() * sharedTreeLeafMats.length)];
+      : species === 'maple'
+      ? sharedMapleLeafMat
+      : sharedTreeLeafMats[Math.floor(random() * sharedTreeLeafMats.length)];
 
   const trunk = new THREE.Mesh(sharedTreeTrunkGeo, trunkMat);
   trunk.castShadow = true;
@@ -5670,8 +5882,12 @@ export function createTreeMesh(
     parent.add(mesh);
   };
 
+  group.userData.treeSpecies = species;
+  group.userData.treeSeed = seedId;
+  group.userData.treeWind = { phase: random() * Math.PI * 2, amplitude: 0.026 + random() * 0.018, frequency: 1.25 + random() * 0.45 };
+
   const rootCount = isRich ? 4 : 3;
-  const rootPhase = Math.random() * Math.PI * 2;
+  const rootPhase = random() * Math.PI * 2;
   const rootTransforms: TreeInstanceTransform[] = [];
   for (let r = 0; r < rootCount; r++) {
     const angle = (r * Math.PI * 2) / rootCount + 0.3 + Math.sin(r * 2.1 + rootPhase) * 0.11;
@@ -5698,13 +5914,13 @@ export function createTreeMesh(
   // Raised above unit eye-level so low conifer boughs never swallow nearby soldiers
   canopyPivot.position.y = isRich ? 2.18 : 1.94;
   // Slight per-tree lean and yaw break the repeated silhouettes while keeping the canopy above unit eye level.
-  canopyPivot.rotation.set((Math.random() - 0.5) * 0.045, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.045);
+  canopyPivot.rotation.set((random() - 0.5) * 0.045, random() * Math.PI * 2, (random() - 0.5) * 0.045);
   if (isRich) canopyPivot.scale.setScalar(1.22);
   detailedVisual.add(canopyPivot);
   group.userData.treeCanopy = canopyPivot;
   group.userData.baseCanopyScale = isRich ? 1.22 : 1.0;
 
-  if (species === 'oak' || species === 'birch' || species === 'rich') {
+  if (species === 'oak' || species === 'birch' || species === 'maple' || species === 'rich') {
     // Broadleaf Canopy: 3 exposed lower forked limbs + 7 organically clustered displaced leaf boughs
     const branchTransforms: TreeInstanceTransform[] = [-0.4, 1.8, 3.9].map((ang, idx) => ({
       position: [0, 0.24 + idx * 0.18, 0],
@@ -5725,8 +5941,8 @@ export function createTreeMesh(
       [0.02, 2.15, -0.04, 0.74],
     ];
     const leafTransforms: TreeInstanceTransform[] = crownOffsets.map(([ox, oy, oz, sc], idx) => ({
-      position: [ox, oy, oz],
-      scale: [sc * 1.14, sc * 0.84, sc * 1.08],
+      position: [ox * (species === 'maple' ? 1.12 : 1), oy, oz * (species === 'maple' ? 1.12 : 1)],
+      scale: [sc * (species === 'maple' ? 1.22 : 1.14), sc * 0.84, sc * (species === 'maple' ? 1.18 : 1.08)],
       rotation: [idx * 0.45, idx * 1.15, idx * 0.22],
     }));
     addTreeInstanceBatch(
