@@ -10,6 +10,19 @@ export interface PerformanceSample {
   geometries: number;
   textures: number;
   aliveUnits: number;
+  aiAliveUnits: number;
+  aiIdleUnits: number;
+  aiMovingUnits: number;
+  aiAttackingUnits: number;
+  aiGatheringUnits: number;
+  aiReturningUnits: number;
+  aiBuildingUnits: number;
+  aiAssemblingUnits: number;
+  aiGarrisoningUnits: number;
+  aiQueuedUnits: number;
+  aiResearchingBuildings: number;
+  aiDecisionCount: number;
+  aiDecisionAccumulatorSeconds: number;
   projectileCount: number;
   activeParticles: number;
   particleCapacity: number;
@@ -40,6 +53,19 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'geometries',
   'textures',
   'aliveUnits',
+  'aiAliveUnits',
+  'aiIdleUnits',
+  'aiMovingUnits',
+  'aiAttackingUnits',
+  'aiGatheringUnits',
+  'aiReturningUnits',
+  'aiBuildingUnits',
+  'aiAssemblingUnits',
+  'aiGarrisoningUnits',
+  'aiQueuedUnits',
+  'aiResearchingBuildings',
+  'aiDecisionCount',
+  'aiDecisionAccumulatorSeconds',
   'projectileCount',
   'activeParticles',
   'particleCapacity',
