@@ -459,6 +459,270 @@ export function createCharacterFaceDetails(
 }
 
 
+
+// ----------------- CHARACTER GRIP HANDS -----------------
+
+const handGeometryCache = new Map<string, THREE.BufferGeometry>();
+const handMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+
+function createCharacterHandGeometry(
+  skinColor: number,
+  trimColor: number,
+  variant: ArtVariant
+): THREE.BufferGeometry {
+  const parts: SculptPart[] = [];
+  const add = (
+    geometry: THREE.BufferGeometry,
+    color: number,
+    position: [number, number, number],
+    scale: [number, number, number] = [1, 1, 1],
+    rotation: [number, number, number] = [0, 0, 0]
+  ) => parts.push(makePart(geometry, color, position, scale, rotation));
+
+  // A compact palm, tapered wrist cuff, four curled fingers and a separately shaped thumb.
+  // The open end faces the forearm so the hand can be positioned at each rig's wrist pivot.
+  add(new THREE.CylinderGeometry(0.052, 0.061, 0.055, 10), trimColor, [0, 0.105, 0]);
+  add(new RoundedBoxGeometry(0.115, 0.135, 0.074, 3, 0.025), skinColor, [0, 0.012, 0.012]);
+  const fingerSpread = variant === 1 ? 0.023 : 0.022;
+  for (let i = 0; i < 4; i++) {
+    const x = (i - 1.5) * fingerSpread;
+    const length = 0.071 + (i === 1 || i === 2 ? 0.008 : 0);
+    add(
+      new THREE.CapsuleGeometry(0.012, length, 3, 6),
+      skinColor,
+      [x, -0.078 - (i === 0 || i === 3 ? 0.004 : 0), 0.031],
+      [1, 1, 0.9],
+      [0, 0, (i - 1.5) * 0.035]
+    );
+    add(
+      new THREE.SphereGeometry(0.014, 7, 6),
+      0xd8a995,
+      [x, -0.034, 0.052],
+      [1, 0.82, 0.62]
+    );
+  }
+  add(
+    new THREE.CapsuleGeometry(0.017, 0.064, 3, 7),
+    skinColor,
+    [0.067, -0.018, 0.015],
+    [1, 1, 0.92],
+    [0, 0, -0.72]
+  );
+  add(new THREE.SphereGeometry(0.017, 7, 6), skinColor, [0.071, -0.047, 0.035], [1, 0.82, 0.78]);
+  return mergeSculptParts(parts);
+}
+
+/**
+ * One cached draw call for a sculpted, five-digit grip. The caller parents it to
+ * the animated forearm pivot, so swords, bows, tools and shields remain attached.
+ */
+export function createCharacterHandDetails(
+  skinColor: number,
+  trimColor: number,
+  civilization: CivilizationId,
+  unitId: string,
+  mirrored = false
+): THREE.Group {
+  const variant = getDeterministicArtVariant(unitId);
+  const key = [skinColor.toString(16), trimColor.toString(16), civilization, variant].join('|');
+  let geometry = handGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createCharacterHandGeometry(skinColor, trimColor, variant);
+    handGeometryCache.set(key, geometry);
+  }
+  let material = handMaterialCache.get(key);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.68,
+      metalness: 0.08,
+    });
+    handMaterialCache.set(key, material);
+  }
+  const group = new THREE.Group();
+  group.name = mirrored ? 'sculptedGripHand:left' : 'sculptedGripHand:right';
+  const hand = new THREE.Mesh(geometry, material);
+  hand.name = 'sculptedFiveDigitHand';
+  hand.castShadow = true;
+  hand.receiveShadow = true;
+  group.add(hand);
+  if (mirrored) group.scale.x = -1;
+  group.userData.artCivilization = civilization;
+  group.userData.artVariant = variant;
+  return group;
+}
+
+
+// ----------------- ARCHITECTURAL FACADE MODULES -----------------
+
+const facadeGeometryCache = new Map<string, THREE.BufferGeometry>();
+const facadeMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+
+const FACADE_BUILDING_TYPES = new Set<BuildingType>([
+  'town_center',
+  'house',
+  'barracks',
+  'archery_range',
+  'stable',
+  'siege_workshop',
+  'granary',
+  'lumber_camp',
+  'mining_camp',
+  'tower',
+  'castle',
+  'armory_forge',
+  'spirit_shrine',
+  'mana_well',
+  'landmark_aachen',
+  'landmark_barracks',
+  'landmark_guildhall',
+  'landmark_citadel',
+  'landmark_observatory',
+  'landmark_arsenal',
+]);
+
+function createBuildingFacadeGeometry(
+  civilization: CivilizationId,
+  palette: UnitArtPalette,
+  width: number,
+  depth: number,
+  height: number
+): THREE.BufferGeometry {
+  const parts: SculptPart[] = [];
+  const add = (
+    geometry: THREE.BufferGeometry,
+    color: number,
+    position: [number, number, number],
+    scale: [number, number, number] = [1, 1, 1],
+    rotation: [number, number, number] = [0, 0, 0]
+  ) => parts.push(makePart(geometry, color, position, scale, rotation));
+
+  const w = THREE.MathUtils.clamp(width, 1.1, 12);
+  const d = THREE.MathUtils.clamp(depth, 1.1, 12);
+  const h = THREE.MathUtils.clamp(height, 0.9, 12);
+  const stone = palette.secondary;
+  const main = civilization === 'anime' ? 0xb91c1c : palette.primary;
+  const highlight = civilization === 'fantasy' ? 0x67e8f9 : palette.banner;
+  const trim = THREE.MathUtils.clamp(Math.min(w, d) * 0.045, 0.075, 0.22);
+  const band = THREE.MathUtils.clamp(h * 0.045, 0.07, 0.2);
+  const halfW = w * 0.46;
+  const halfD = d * 0.46;
+
+  // Continuous foundation course and upper string course: the wall reads as masonry,
+  // not as a stack of unrelated props.
+  add(new RoundedBoxGeometry(w * 0.94, band, trim, 3, trim * 0.16), stone, [0, band * 0.62, halfD]);
+  add(new RoundedBoxGeometry(w * 0.94, band, trim, 3, trim * 0.16), stone, [0, band * 0.62, -halfD]);
+  add(new RoundedBoxGeometry(trim, band, d * 0.92, 3, trim * 0.16), stone, [halfW, band * 0.62, 0]);
+  add(new RoundedBoxGeometry(trim, band, d * 0.92, 3, trim * 0.16), stone, [-halfW, band * 0.62, 0]);
+  add(new RoundedBoxGeometry(w * 0.91, band * 0.72, trim * 0.72, 3, trim * 0.12), main, [0, h * 0.68, halfD]);
+  add(new RoundedBoxGeometry(trim * 0.72, band * 0.72, d * 0.9, 3, trim * 0.12), main, [halfW, h * 0.68, 0]);
+  add(new RoundedBoxGeometry(trim * 0.72, band * 0.72, d * 0.9, 3, trim * 0.12), main, [-halfW, h * 0.68, 0]);
+
+  // Four corner piers provide visible wall thickness and a readable load-bearing rhythm.
+  const pierHeight = h * 0.58;
+  const pierWidth = trim * 1.28;
+  for (const x of [-1, 1]) {
+    for (const z of [-1, 1]) {
+      add(
+        new RoundedBoxGeometry(pierWidth, pierHeight, pierWidth, 3, pierWidth * 0.16),
+        stone,
+        [x * (halfW - pierWidth * 0.38), h * 0.36, z * (halfD - pierWidth * 0.38)]
+      );
+      if (civilization === 'fantasy') {
+        add(
+          new THREE.OctahedronGeometry(trim * 0.25, 0),
+          highlight,
+          [x * (halfW - pierWidth * 0.38), h * 0.67, z * (halfD - pierWidth * 0.38)],
+          [0.78, 1.25, 0.78]
+        );
+      }
+    }
+  }
+
+  // A framed entrance on the front (+Z) side; the lintel and side posts adapt to footprint.
+  const portalHalf = Math.min(w * 0.2, 0.62);
+  const portalHeight = h * 0.43;
+  const portalZ = halfD + trim * 0.22;
+  const portalPost = Math.max(0.085, trim * 0.62);
+  for (const x of [-portalHalf, portalHalf]) {
+    add(
+      new RoundedBoxGeometry(portalPost, portalHeight, trim * 0.72, 3, portalPost * 0.18),
+      civilization === 'anime' ? main : stone,
+      [x, portalHeight * 0.48, portalZ]
+    );
+  }
+  add(
+    new RoundedBoxGeometry(portalHalf * 2 + portalPost, portalPost, trim * 0.92, 3, portalPost * 0.18),
+    civilization === 'anime' ? palette.secondary : main,
+    [0, portalHeight, portalZ]
+  );
+
+  if (civilization === 'medieval') {
+    add(new THREE.OctahedronGeometry(trim * 0.58, 0), highlight, [0, portalHeight + portalPost * 0.38, portalZ + trim * 0.36], [0.85, 1.2, 0.45]);
+    add(new RoundedBoxGeometry(portalHalf * 1.3, trim * 0.22, trim * 0.18, 2, trim * 0.04), stone, [0, band * 1.4, portalZ + trim * 0.36]);
+  } else if (civilization === 'anime') {
+    // A compact torii beam and hanging seal give the entrance a faction-specific silhouette.
+    add(new RoundedBoxGeometry(portalHalf * 2.35, trim * 0.42, trim * 0.5, 3, trim * 0.12), main, [0, portalHeight + portalPost * 0.82, portalZ]);
+    add(new RoundedBoxGeometry(trim * 0.72, h * 0.13, trim * 0.48, 2, trim * 0.08), palette.secondary, [0, portalHeight * 0.55, portalZ + trim * 0.55]);
+    add(new THREE.OctahedronGeometry(trim * 0.34, 0), highlight, [0, band * 1.8, portalZ + trim * 0.62]);
+  } else {
+    // Fantasy entrances use an illuminated keystone and paired crystal fins.
+    add(new THREE.OctahedronGeometry(trim * 0.8, 1), highlight, [0, portalHeight + portalPost * 0.55, portalZ + trim * 0.45], [0.85, 1.45, 0.62]);
+    for (const x of [-1, 1]) {
+      add(new THREE.ConeGeometry(trim * 0.34, h * 0.18, 5), palette.secondary, [x * portalHalf * 1.55, portalHeight + h * 0.08, portalZ], [1, 1, 1], [0, 0, -x * 0.18]);
+    }
+  }
+  return mergeSculptParts(parts);
+}
+
+/**
+ * Adds one cached vertex-coloured structural layer around a building's bounding footprint.
+ * Farms, wall segments, gates and docks deliberately keep their functional silhouettes.
+ */
+export function createBuildingFacadeKit(
+  type: BuildingType,
+  civilization: CivilizationId,
+  palette: UnitArtPalette,
+  width: number,
+  depth: number,
+  height: number
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'originalArchitectureFacadeKit';
+  if (!FACADE_BUILDING_TYPES.has(type)) return group;
+
+  const w = THREE.MathUtils.clamp(Number.isFinite(width) ? width : 3, 1.1, 12);
+  const d = THREE.MathUtils.clamp(Number.isFinite(depth) ? depth : 3, 1.1, 12);
+  const h = THREE.MathUtils.clamp(Number.isFinite(height) ? height : 3, 0.9, 12);
+  const paletteKey = colorKey(palette);
+  const dimensionKey = [w, d, h].map(value => value.toFixed(2)).join('|');
+  const key = [type, civilization, paletteKey, dimensionKey].join('|');
+  let geometry = facadeGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createBuildingFacadeGeometry(civilization, palette, w, d, h);
+    facadeGeometryCache.set(key, geometry);
+  }
+  const materialKey = [civilization, paletteKey].join('|');
+  let material = facadeMaterialCache.get(materialKey);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      metalness: civilization === 'fantasy' ? 0.42 : 0.3,
+      roughness: civilization === 'anime' ? 0.52 : 0.64,
+    });
+    facadeMaterialCache.set(materialKey, material);
+  }
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'originalArchitectureFacade';
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.distanceLodMinPixels = 4.5;
+  group.add(mesh);
+  group.userData.artDirection = civilization;
+  group.userData.buildingType = type;
+  return group;
+}
+
 const buildingGeometryCache = new Map<string, THREE.BufferGeometry>();
 const buildingMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 
