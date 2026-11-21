@@ -40,7 +40,8 @@ import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS } from './mods';
 import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
 
-test('progression: military production buildings unlock at the intended ages', () => {
+test('progression: military production buildings unlock at the intended ages', async () => {
+  const { getBuildableTypesForCiv, isBuildingBuildableForCiv } = await import('./civilizations');
   assert.equal(DEFAULT_BUILDINGS.barracks.requiredAge, 1);
   assert.equal(DEFAULT_BUILDINGS.archery_range.requiredAge, 2);
   assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
@@ -60,6 +61,22 @@ test('progression: military production buildings unlock at the intended ages', (
     assert.ok(civ.buildableBuildings.includes('archery_range'));
     assert.ok(civ.buildableBuildings.includes('stable'));
     assert.ok(civ.buildableBuildings.includes('siege_workshop'));
+
+    const ageOneBuildings = getBuildableTypesForCiv(civId, 1);
+    const ageTwoBuildings = getBuildableTypesForCiv(civId, 2);
+    const ageThreeBuildings = getBuildableTypesForCiv(civId, 3);
+    assert.ok(ageOneBuildings.includes('barracks'), civId + ' can build its infantry barracks in Age I');
+    for (const lockedType of ['archery_range', 'stable', 'siege_workshop'] as const) {
+      assert.equal(ageOneBuildings.includes(lockedType), false, civId + ' must not expose ' + lockedType + ' in Age I');
+      assert.equal(isBuildingBuildableForCiv(lockedType, civId, 1), false, civId + ' must reject ' + lockedType + ' for Age I');
+    }
+    assert.ok(ageTwoBuildings.includes('archery_range'), civId + ' unlocks ranged production in Age II');
+    assert.ok(ageTwoBuildings.includes('stable'), civId + ' unlocks cavalry production in Age II');
+    assert.equal(ageTwoBuildings.includes('siege_workshop'), false, civId + ' keeps advanced siege locked until Age III');
+    assert.ok(ageThreeBuildings.includes('siege_workshop'), civId + ' unlocks the siege workshop in Age III');
+    assert.equal(isBuildingBuildableForCiv('archery_range', civId, 2), true);
+    assert.equal(isBuildingBuildableForCiv('stable', civId, 2), true);
+    assert.equal(isBuildingBuildableForCiv('siege_workshop', civId, 3), true);
 
     const barracksUnits = civ.trainableByBuilding.barracks || [];
     assert.ok(barracksUnits.length > 0, civId + ' must have Age I infantry');

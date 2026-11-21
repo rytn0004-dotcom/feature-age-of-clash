@@ -43,6 +43,7 @@ import {
   getAvailableTechsForBuilding,
   getBuildableTypesForCiv,
   getCivilizationConfig,
+  isBuildingBuildableForCiv,
   getLevelTitle,
   getResourceGatherTechMultiplier,
   getTrainableUnitsForBuilding,
@@ -3535,14 +3536,13 @@ export class RtsEngine {
     const bDef = DEFAULT_BUILDINGS[type];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     const civ = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
-    if (!civ.buildableBuildings.includes(type)) {
+    if (!isBuildingBuildableForCiv(type, civ.id, currentAge)) {
       sound.playInvalid();
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築不屬於目前文明的可建造清單', '#ef4444');
-      return;
-    }
-    if (bDef.requiredAge && currentAge < bDef.requiredAge) {
-      sound.playInvalid();
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
+      const requiredAge = bDef.requiredAge ?? 1;
+      const message = currentAge < requiredAge
+        ? `🔒 需先晉升至時代 ${requiredAge} 才能建造`
+        : '🔒 此建築不屬於目前文明的可建造清單';
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, message, '#ef4444');
       return;
     }
     if (!canAfford(this.playerResources, bDef.cost)) {
@@ -3880,8 +3880,12 @@ export class RtsEngine {
     const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     const humanCiv = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
-    if (!humanCiv.buildableBuildings.includes(this.placementBuildingType) || (bDef.requiredAge && currentAge < bDef.requiredAge)) {
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築尚未解鎖或不屬於目前文明', '#ef4444');
+    if (!isBuildingBuildableForCiv(this.placementBuildingType, humanCiv.id, currentAge)) {
+      const requiredAge = bDef.requiredAge ?? 1;
+      const message = currentAge < requiredAge
+        ? `🔒 需先晉升至時代 ${requiredAge} 才能完成建造`
+        : '🔒 此建築尚未解鎖或不屬於目前文明';
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, message, '#ef4444');
       sound.playInvalid();
       this.cancelPlacement();
       return false;
@@ -7965,7 +7969,7 @@ export class RtsEngine {
     const aiRes = this.getResourcesForFaction(aiId);
     const aiAge = this.ageByFaction[aiId] || 1;
     const aiCiv = getCivilizationConfig(this.getCivilizationForFaction(aiId));
-    if (!bDef || !aiCiv.buildableBuildings.includes(bType) || (bDef.requiredAge && aiAge < bDef.requiredAge) || !canAfford(aiRes, bDef.cost)) return false;
+    if (!bDef || !isBuildingBuildableForCiv(bType, aiCiv.id, aiAge) || !canAfford(aiRes, bDef.cost)) return false;
 
     const builder =
       aiWorkers.find((w) => w.hp > 0 && w.state === 'idle') ||
@@ -9226,7 +9230,8 @@ export class RtsEngine {
                 return;
               }
               const humanCiv = this.getCivilizationForFaction(this.humanPlayerId);
-              const buildableTypes = getBuildableTypesForCiv(humanCiv);
+              const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+              const buildableTypes = getBuildableTypesForCiv(humanCiv, currentAge);
               const bType = findBuildingTypeByHotkey(keyLabel, buildableTypes);
               if (bType) {
                 this.startPlacement(bType);

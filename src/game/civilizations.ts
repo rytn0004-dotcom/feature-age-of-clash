@@ -7,6 +7,7 @@ import {
   UnitCategory,
   UnitStats,
 } from '../types/game';
+import { DEFAULT_BUILDINGS } from './mods';
 
 export interface CivilizationConfig {
   id: CivilizationId;
@@ -916,8 +917,30 @@ export function getCivilizationConfig(civId?: CivilizationId): CivilizationConfi
   return CIVILIZATIONS.medieval;
 }
 
-export function getBuildableTypesForCiv(civId?: CivilizationId): BuildingType[] {
-  return [...getCivilizationConfig(civId).buildableBuildings];
+/**
+ * Shared authority for military/economy building availability.
+ * Buildings with no explicit age gate are available from Age I.
+ */
+export function isBuildingBuildableForCiv(
+  buildingType: BuildingType,
+  civId: CivilizationId | undefined,
+  currentAge: number
+): boolean {
+  const civ = getCivilizationConfig(civId);
+  const building = DEFAULT_BUILDINGS[buildingType];
+  if (!building || !Number.isFinite(currentAge)) return false;
+  return civ.buildableBuildings.includes(buildingType) &&
+    currentAge >= (building.requiredAge ?? 1);
+}
+
+/** Returns only buildings this civilization can construct in the current age. */
+export function getBuildableTypesForCiv(
+  civId?: CivilizationId,
+  currentAge = 4
+): BuildingType[] {
+  return getCivilizationConfig(civId).buildableBuildings.filter(
+    (buildingType) => isBuildingBuildableForCiv(buildingType, civId, currentAge)
+  );
 }
 
 export function getTrainableUnitsForBuilding(

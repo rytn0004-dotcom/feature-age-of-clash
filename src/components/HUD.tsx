@@ -688,7 +688,7 @@ export const HUD: React.FC<HUDProps> = ({
   const fieldRamCheck = canAssembleFieldRam(observedAge, researchedTechs, selectedInfantryCount, engine.playerResources);
   const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
   const allCivTechs = getAllTechsForCiv(humanCivId);
-  const buildableTypes = getBuildableTypesForCiv(humanCivId);
+  const buildableTypes = getBuildableTypesForCiv(humanCivId, observedAge);
   const compactBuildTypes: BuildingType[] = [
     'house',
     humanCiv.uniqueBuildingType,
