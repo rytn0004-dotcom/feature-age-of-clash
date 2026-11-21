@@ -19,6 +19,8 @@ import {
   getDistance,
   getTeamVisualColor,
   shouldShowUnitHealthBar,
+  getBattlefieldVisualProfile,
+  computeParticleBurstCount,
   DEFAULT_PARTICIPANT_PALETTE,
   findBalancedResourceNode,
   findClosestResourceNode,
@@ -2842,4 +2844,40 @@ test('visual allocation: unit health bars are hidden at full HP and shown only a
   assert.equal(shouldShowUnitHealthBar(25, 100), true);
   assert.equal(shouldShowUnitHealthBar(0, 100), false, 'dead units do not retain a live health bar');
   assert.equal(shouldShowUnitHealthBar(20, 0), false);
+});
+
+test('battlefield visual hierarchy: workers stay compact while champions and signature roles remain readable', () => {
+  const worker = getBattlefieldVisualProfile('worker', 'villager', false, 1, false);
+  const infantry = getBattlefieldVisualProfile('melee', 'swordsman', false, 1, false);
+  const special = getBattlefieldVisualProfile('special', 'oracle', false, 1, true);
+  const champion = getBattlefieldVisualProfile('melee', 'swordsman', false, 3, false);
+  const siege = getBattlefieldVisualProfile('siege', 'ram', false, 1, false);
+  const naval = getBattlefieldVisualProfile('siege', 'boat', true, 1, false);
+
+  assert.equal(worker.tier, 'worker');
+  assert.equal(worker.roleMarker, null);
+  assert.ok(worker.badgeScale < infantry.badgeScale);
+  assert.ok(worker.badgeThresholdPx > infantry.badgeThresholdPx);
+  assert.equal(special.tier, 'special');
+  assert.equal(special.roleMarker, 'crest');
+  assert.ok(special.badgeThresholdPx < infantry.badgeThresholdPx);
+  assert.equal(champion.tier, 'champion');
+  assert.ok(champion.badgeThresholdPx < special.badgeThresholdPx);
+  assert.equal(siege.tier, 'siege');
+  assert.equal(siege.roleMarker, 'siege');
+  assert.equal(naval.tier, 'naval');
+});
+
+test('battlefield particle budget: preserve key combat cues and reduce decorative bursts under load', () => {
+  assert.equal(computeParticleBurstCount(12, 2, 40, 'dust'), 12);
+  assert.equal(computeParticleBurstCount(0, 0, 500, 'hit'), 0);
+
+  const lowQualityHit = computeParticleBurstCount(18, 0, 520, 'hit');
+  const lowQualityDust = computeParticleBurstCount(18, 0, 520, 'dust');
+  const highQualityDust = computeParticleBurstCount(18, 2, 520, 'dust');
+
+  assert.ok(lowQualityHit > lowQualityDust);
+  assert.ok(highQualityDust > lowQualityDust);
+  assert.ok(lowQualityDust >= 1);
+  assert.ok(lowQualityHit <= 18);
 });

@@ -1079,6 +1079,99 @@ export function shouldShowUnitHealthBar(hp: number, maxHp: number): boolean {
   return hp > 0 && hp < maxHp - 0.5;
 }
 
+export type BattlefieldVisualTier =
+  | 'worker'
+  | 'frontline'
+  | 'ranged'
+  | 'cavalry'
+  | 'siege'
+  | 'special'
+  | 'champion'
+  | 'naval';
+
+export interface BattlefieldVisualProfile {
+  tier: BattlefieldVisualTier;
+  badgeThresholdPx: number;
+  badgeScale: number;
+  roleMarker: 'crest' | 'siege' | null;
+  roleMarkerThresholdPx: number;
+}
+
+/**
+ * Stable visual hierarchy for zoomed-out RTS readability.
+ * Workers use compact labels; signature units, champions and siege engines
+ * retain a clearer battlefield identity without changing combat statistics.
+ */
+export function getBattlefieldVisualProfile(
+  category: UnitCategory,
+  modelType: UnitDefinition['visual']['modelType'],
+  isNaval = false,
+  level = 1,
+  hasSpecialAbility = false
+): BattlefieldVisualProfile {
+  let tier: BattlefieldVisualTier;
+  if (isNaval || modelType === 'boat') {
+    tier = 'naval';
+  } else if (category === 'worker') {
+    tier = 'worker';
+  } else if (category === 'siege') {
+    tier = 'siege';
+  } else if (level >= 3) {
+    tier = 'champion';
+  } else if (
+    category === 'special' ||
+    hasSpecialAbility ||
+    modelType === 'guardian' ||
+    modelType === 'oracle' ||
+    modelType === 'artificer'
+  ) {
+    tier = 'special';
+  } else if (category === 'cavalry') {
+    tier = 'cavalry';
+  } else if (category === 'ranged') {
+    tier = 'ranged';
+  } else {
+    tier = 'frontline';
+  }
+
+  const profiles: Record<BattlefieldVisualTier, Omit<BattlefieldVisualProfile, 'tier'>> = {
+    worker: { badgeThresholdPx: 39, badgeScale: 0.88, roleMarker: null, roleMarkerThresholdPx: 0 },
+    frontline: { badgeThresholdPx: 34, badgeScale: 0.96, roleMarker: null, roleMarkerThresholdPx: 0 },
+    ranged: { badgeThresholdPx: 32, badgeScale: 1, roleMarker: null, roleMarkerThresholdPx: 0 },
+    cavalry: { badgeThresholdPx: 29, badgeScale: 1.03, roleMarker: null, roleMarkerThresholdPx: 0 },
+    siege: { badgeThresholdPx: 25, badgeScale: 1.1, roleMarker: 'siege', roleMarkerThresholdPx: 23 },
+    special: { badgeThresholdPx: 22, badgeScale: 1.16, roleMarker: 'crest', roleMarkerThresholdPx: 19 },
+    champion: { badgeThresholdPx: 18, badgeScale: 1.24, roleMarker: 'crest', roleMarkerThresholdPx: 16 },
+    naval: { badgeThresholdPx: 25, badgeScale: 1.08, roleMarker: null, roleMarkerThresholdPx: 0 },
+  };
+  return { tier, ...profiles[tier] };
+}
+
+export type ParticleBudgetKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
+
+/** Preserve combat feedback while trimming decorative bursts during low quality or large battles. */
+export function computeParticleBurstCount(
+  requestedCount: number,
+  qualityLevel: 0 | 1 | 2,
+  aliveUnitCount: number,
+  kind: ParticleBudgetKind
+): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(requestedCount) ? requestedCount : 0));
+  if (count === 0) return 0;
+
+  const safeUnitCount = Math.max(0, Number.isFinite(aliveUnitCount) ? aliveUnitCount : 0);
+  const critical = kind === 'hit' || kind === 'spark' || kind === 'ember';
+  const qualityScale = critical
+    ? ([0.68, 0.86, 1] as const)[qualityLevel]
+    : ([0.42, 0.72, 1] as const)[qualityLevel];
+  const densityStart = critical ? 100 : 72;
+  const densityRange = critical ? 520 : 300;
+  const densityFloor = critical ? 0.55 : 0.3;
+  const densityScale = Math.max(densityFloor, 1 - Math.max(0, safeUnitCount - densityStart) / densityRange);
+  const materialScale = kind === 'leaf' || kind === 'dust' || kind === 'smoke' ? 0.9 : 1;
+  return Math.max(1, Math.min(count, Math.floor(count * qualityScale * densityScale * materialScale)));
+}
+
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   colorHex: number;
   colorCss: string;

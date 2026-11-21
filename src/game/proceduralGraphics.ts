@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
-import type { BuildingVisualState } from './rules';
+import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
@@ -8379,6 +8379,7 @@ export function updateDistanceShadowLod(
 
 export interface UnitVisualContext {
   age?: number;
+  level?: number;
   researchedTechIds?: string[];
   /** Unit definition id used for gameplay-specific model selection. */
   unitId?: string;
@@ -8464,7 +8465,8 @@ export function updateUnitVisualLod(
   const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
   const identityParts = group.userData.identityLodParts as UnitIdentityLodPart[] | undefined;
   const badge = group.userData.unitBadge as THREE.Sprite | undefined;
-  if (!parts?.length && !identityParts?.length && !badge) return;
+  const roleMarker = group.userData.battlefieldRoleMarker as THREE.Mesh | undefined;
+  if (!parts?.length && !identityParts?.length && !badge && !roleMarker) return;
 
   group.updateMatrixWorld(true);
   const safeHeight = Math.max(1, viewportHeight);
@@ -8505,7 +8507,7 @@ export function updateUnitVisualLod(
     part.wasVisible = shouldShow;
   }
 
-  if (badge) {
+  if (badge || roleMarker) {
     group.getWorldPosition(unitLodWorldCenter);
     group.getWorldScale(unitIdentityLodWorldScale);
     const worldScale = Math.max(
@@ -8516,9 +8518,19 @@ export function updateUnitVisualLod(
     );
     const distance = Math.max(0.001, camera.position.distanceTo(unitLodWorldCenter));
     const projectedHeight = (2.55 * worldScale * focalPixels) / distance;
-    const requested = group.userData.overheadBadgesEnabled !== false;
-    const shouldShow = requested && (forceHighDetail || projectedHeight >= 30);
-    if (badge.visible !== shouldShow) badge.visible = shouldShow;
+    if (badge) {
+      const requested = group.userData.overheadBadgesEnabled !== false;
+      const baseThreshold = Number(group.userData.badgeLodThresholdPx) || 30;
+      const level = Number(group.userData.battlefieldVisualLevel) || 1;
+      const championThreshold = level >= 3 ? Math.min(baseThreshold, 18) : baseThreshold;
+      const shouldShow = requested && (forceHighDetail || projectedHeight >= championThreshold);
+      if (badge.visible !== shouldShow) badge.visible = shouldShow;
+    }
+    if (roleMarker) {
+      const markerThreshold = Number(group.userData.roleMarkerLodThresholdPx) || 22;
+      const shouldShow = forceHighDetail || projectedHeight >= markerThreshold;
+      if (roleMarker.visible !== shouldShow) roleMarker.visible = shouldShow;
+    }
   }
 }
 
@@ -8526,6 +8538,28 @@ export function updateUnitVisualLod(
 
 const sharedUnitFactionRingGeometry = new THREE.RingGeometry(0.55, 0.7, 20);
 sharedUnitFactionRingGeometry.rotateX(-Math.PI / 2);
+const sharedUnitRoleRingGeometry: Record<'crest' | 'siege', THREE.RingGeometry> = {
+  crest: new THREE.RingGeometry(0.74, 0.88, 8),
+  siege: new THREE.RingGeometry(0.74, 0.88, 4),
+};
+sharedUnitRoleRingGeometry.crest.rotateX(-Math.PI / 2);
+sharedUnitRoleRingGeometry.siege.rotateX(-Math.PI / 2);
+const sharedUnitRoleRingMaterials: Record<'crest' | 'siege', THREE.MeshBasicMaterial> = {
+  crest: new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false,
+  }),
+  siege: new THREE.MeshBasicMaterial({
+    color: 0xf97316,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false,
+  }),
+};
 const unitFactionRingMaterialCache = new Map<number, THREE.MeshBasicMaterial>();
 
 function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
@@ -8568,6 +8602,17 @@ export function createUnitMesh(
   const unitId = visualCtx?.unitId || unitDef.id;
   const artSeed = visualCtx?.visualSeed || unitId;
   const flags = getUnitVisualFlags(visualCtx);
+  const visualProfile = getBattlefieldVisualProfile(
+    unitDef.category,
+    unitDef.visual.modelType,
+    !!unitDef.isNaval,
+    visualCtx?.level || 1,
+    !!unitDef.specialAbility
+  );
+  group.userData.battlefieldVisualTier = visualProfile.tier;
+  group.userData.battlefieldVisualLevel = visualCtx?.level || 1;
+  group.userData.badgeLodThresholdPx = visualProfile.badgeThresholdPx;
+  group.userData.roleMarkerLodThresholdPx = visualProfile.roleMarkerThresholdPx;
 
   addContactShadow(group, 0.72 * s);
 
@@ -8575,6 +8620,17 @@ export function createUnitMesh(
   factionRing.scale.setScalar(s);
   factionRing.position.y = 0.025;
   group.add(factionRing);
+
+  if (visualProfile.roleMarker) {
+    const roleMarker = new THREE.Mesh(
+      sharedUnitRoleRingGeometry[visualProfile.roleMarker],
+      sharedUnitRoleRingMaterials[visualProfile.roleMarker]
+    );
+    roleMarker.name = 'battlefieldRoleMarker';
+    roleMarker.position.y = 0.034;
+    group.add(roleMarker);
+    group.userData.battlefieldRoleMarker = roleMarker;
+  }
 
   const buffRingGeo = new THREE.RingGeometry(0.74 * s, 0.9 * s, 20);
   buffRingGeo.rotateX(-Math.PI / 2);
@@ -8645,6 +8701,7 @@ export function createUnitMesh(
     false
   );
   badge.position.set(0, 2.55 * s, 0);
+  badge.scale.multiplyScalar(visualProfile.badgeScale);
   badge.name = 'unitBadge';
   group.add(badge);
   group.userData.unitBadge = badge;

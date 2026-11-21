@@ -119,6 +119,7 @@ import {
   getShrineBlessingHoldTime,
   getTeamVisualColor,
   shouldShowUnitHealthBar,
+  computeParticleBurstCount,
   evaluateContestedPresence,
   getContestedShrineSummary,
   stepWildAnimalState,
@@ -689,7 +690,8 @@ export class RtsEngine {
     if (!this.particleMaterials || this.particlePool.length === 0) return;
     const mat = this.particleMaterials[kind];
     const isBuoyant = kind === 'smoke' || kind === 'ember';
-    for (let i = 0; i < count; i++) {
+    const budgetedCount = computeParticleBurstCount(count, this.qualityLevel, this.units.length, kind);
+    for (let i = 0; i < budgetedCount; i++) {
       const p = this.particlePool[this.particleCursor];
       this.particleCursor = (this.particleCursor + 1) % this.particlePool.length;
       const angle = (i / count) * Math.PI * 2 + Math.random() * 0.65;
@@ -1449,6 +1451,7 @@ export class RtsEngine {
       age: this.ageByFaction[faction] || 1,
       researchedTechIds: this.getResearchedTechs(faction),
       unitId: unit.unitDefId,
+      level: unit.level || 1,
       visualSeed: unit.id,
     });
     mesh.position.set(x, 0, z);
@@ -4310,7 +4313,7 @@ export class RtsEngine {
       const forceHighDetail =
         this.selectedUnitIds.includes(unit.id) ||
         (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
-      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
       updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
 
@@ -7384,9 +7387,13 @@ export class RtsEngine {
     }
     const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
     if (parts.veteranHalo) {
-      const isVet = xpEligible && (unit.level || 1) >= 2;
+      const veteranLevel = unit.level || 1;
+      const isVet = xpEligible && veteranLevel >= 2;
       parts.veteranHalo.visible = isVet;
-      if (isVet) parts.veteranHalo.rotation.z = t * 1.9;
+      if (isVet) {
+        parts.veteranHalo.rotation.z = t * 1.9;
+        parts.veteranHalo.scale.setScalar(1 + Math.min(0.24, Math.max(0, veteranLevel - 2) * 0.08));
+      }
     }
     if (parts.buffRing) {
       const hasBuff = !!(unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime);
@@ -9163,7 +9170,8 @@ export class RtsEngine {
         age,
         researchedTechIds: techs,
         unitId: unit.unitDefId,
-        visualSeed: unit.id,
+        level: unit.level || 1,
+      visualSeed: unit.id,
       });
       next.position.copy(pos);
       next.rotation.y = rotY;
