@@ -8274,6 +8274,9 @@ export function createUnitMesh(
     ninja: '🥷',
     saiyan: '⚡',
     mage: '🔮',
+    guardian: '🛡️',
+    oracle: '✨',
+    artificer: '⚙️',
     ram: '🐏',
     cannon: '💣',
     golem: unitDef.category === 'siege' ? '🪨' : '🪵',
@@ -9693,6 +9696,204 @@ export function createUnitMesh(
       netPole.position.set(-0.22, 0.12, 0.18);
       rightArmPivot.add(netPole);
     }
+  } else if (mType === 'guardian') {
+    // Original Vanguard Guardian: broad plate silhouette, layered faulds, full sallet and tower shield.
+    const guardianPlateMat = new THREE.MeshStandardMaterial({
+      color: flags.imperial ? 0xf1f5f9 : colors.primary,
+      map: unitArmorMaps.map,
+      normalMap: unitArmorMaps.normalMap,
+      normalScale: new THREE.Vector2(1.15, 1.15),
+      roughnessMap: unitArmorMaps.roughnessMap || null,
+      roughness: 0.34,
+      metalness: 0.9,
+    });
+    animParts.hitMaterials.push(guardianPlateMat);
+    addBipedLegs(chainmailMat, steelMat, true);
+
+    const undercoat = new THREE.Mesh(unitTunicGeo, darkMat);
+    undercoat.scale.set(1.06, 1.08, 1.04);
+    const cuirass = new THREE.Mesh(unitBreastplateGeo, guardianPlateMat);
+    cuirass.scale.set(1.14, 1.1, 1.12);
+    cuirass.castShadow = true;
+    const layeredFauld = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.28, 12), chainmailMat);
+    layeredFauld.position.y = 0.06;
+    const tabard = new THREE.Mesh(unitCapeGeo, armorMat);
+    tabard.position.set(0, 0.24, -0.25);
+    tabard.scale.set(1.18, 1.1, 1);
+    bodyPivot.add(undercoat, cuirass, layeredFauld, tabard);
+
+    [-1, 1].forEach((dir) => {
+      const pauldron = new THREE.Mesh(unitPauldronGeo, guardianPlateMat);
+      pauldron.scale.set(1.25, 1.08, 1.2);
+      pauldron.position.set(dir * 0.29, 0.56, 0.015);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.018, 5, 12), goldTrimMat);
+      rim.position.set(dir * 0.29, 0.58, 0.045);
+      bodyPivot.add(pauldron, rim);
+    });
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 0.78;
+    const helm = new THREE.Mesh(unitHelmGeo, guardianPlateMat);
+    helm.position.y = 0.8;
+    helm.scale.set(1.16, 1.03, 1.14);
+    const cheekGuards = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.18, 12, 1, true), steelMat);
+    cheekGuards.position.y = 0.72;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.05, 0.09), darkMat);
+    visor.position.set(0, 0.82, 0.17);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.055, 0.11), goldTrimMat);
+    brow.position.set(0, 0.87, 0.17);
+    const crest = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.42, 6), goldTrimMat);
+    crest.position.set(0, 1.13, -0.02);
+    crest.rotation.x = -0.3;
+    bodyPivot.add(head, helm, cheekGuards, visor, brow, crest);
+
+    leftArmPivot.position.set(-0.32, 0.5, 0.04);
+    bodyPivot.add(leftArmPivot);
+    const shield = new THREE.Mesh(unitHeaterShieldGeo, guardianPlateMat);
+    shield.scale.set(1.28, 1.48, 1.15);
+    shield.rotation.y = -Math.PI / 2.25;
+    shield.position.set(-0.1, -0.08, 0.13);
+    const shieldBoss = new THREE.Mesh(new THREE.OctahedronGeometry(0.095, 1), goldTrimMat);
+    shieldBoss.position.set(-0.15, -0.08, 0.19);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, chainmailMat), shield, shieldBoss);
+
+    rightArmPivot.position.set(0.33, 0.5, 0.05);
+    bodyPivot.add(rightArmPivot);
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.052, 1.32, 10), hullOakMat);
+    haft.rotation.x = Math.PI / 3.5;
+    haft.position.set(0.03, -0.02, 0.38);
+    const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.32, 0.46), guardianPlateMat);
+    hammerHead.rotation.x = Math.PI / 3.5;
+    hammerHead.position.set(0.03, 0.48, 0.78);
+    const hammerCap = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.24, 6), goldTrimMat);
+    hammerCap.rotation.x = Math.PI / 3.5;
+    hammerCap.position.set(0.03, 0.49, 1.13);
+    rightArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, chainmailMat), haft, hammerHead, hammerCap);
+  } else if (mType === 'oracle') {
+    // Original Astral Oracle: layered silhouette robe, halo architecture and a suspended focus crystal.
+    addBipedLegs(darkMat, leatherMat, false);
+    bodyPivot.position.y = 0.24;
+    const oracleRobeMat = new THREE.MeshStandardMaterial({
+      color: unitDef.visual.color,
+      map: unitClothMaps.map,
+      normalMap: unitClothMaps.normalMap,
+      roughnessMap: unitClothMaps.roughnessMap || null,
+      roughness: 0.7,
+    });
+    animParts.hitMaterials.push(oracleRobeMat);
+    const robe = new THREE.Mesh(unitMageRobeGeo, oracleRobeMat);
+    robe.position.y = 0.02;
+    robe.scale.set(1.06, 1.08, 1.04);
+    robe.castShadow = true;
+    const overRobe = new THREE.Mesh(unitCapeGeo, armorMat);
+    overRobe.position.set(0, 0.25, -0.2);
+    overRobe.scale.set(1.18, 1.22, 1.08);
+    bodyPivot.add(robe, overRobe);
+    animParts.robeSkirt = robe;
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 1.09;
+    const circlet = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.035, 8, 20), goldTrimMat);
+    circlet.position.set(0, 1.23, -0.015);
+    circlet.rotation.x = Math.PI / 2;
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 8, 28), goldTrimMat);
+    halo.position.set(0, 1.55, -0.12);
+    halo.rotation.set(0.35, 0, 0);
+    const crystalCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 1), new THREE.MeshBasicMaterial({ color: 0x67e8f9 }));
+    crystalCore.position.set(0, 0.9, 0.3);
+    bodyPivot.add(head, circlet, halo, crystalCore);
+    animParts.auraMesh = crystalCore;
+
+    [-1, 1].forEach((dir) => {
+      const floatingShard = new THREE.Mesh(new THREE.OctahedronGeometry(0.105, 1), goldTrimMat);
+      floatingShard.position.set(dir * 0.34, 1.06, -0.06);
+      floatingShard.rotation.z = dir * 0.35;
+      bodyPivot.add(floatingShard);
+    });
+
+    leftArmPivot.position.set(-0.31, 0.76, 0.06);
+    bodyPivot.add(leftArmPivot);
+    const openGrimoire = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.17, 0.08), goldTrimMat);
+    openGrimoire.position.set(0, -0.2, 0.17);
+    const pageGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.13), new THREE.MeshBasicMaterial({ color: 0xfef3c7, side: THREE.DoubleSide }));
+    pageGlow.position.set(0, -0.19, 0.22);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, oracleRobeMat), openGrimoire, pageGlow);
+
+    rightArmPivot.position.set(0.32, 0.76, 0.08);
+    bodyPivot.add(rightArmPivot);
+    const staff = new THREE.Mesh(unitStaffGeo, hullOakMat);
+    staff.position.set(0.02, 0.05, 0.12);
+    const staffRing = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.025, 6, 16), goldTrimMat);
+    staffRing.position.set(0.06, 0.79, 0.16);
+    const staffCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 1), new THREE.MeshBasicMaterial({ color: 0xa5f3fc }));
+    staffCrystal.position.set(0.06, 0.86, 0.16);
+    rightArmPivot.add(staff, staffRing, staffCrystal);
+  } else if (mType === 'artificer') {
+    // Original Arcane Artificer: reinforced leather coat, brass optics, field tool pack and articulated gauntlet.
+    addBipedLegs(darkMat, leatherMat, false);
+    const coatMat = new THREE.MeshStandardMaterial({
+      color: unitDef.visual.color,
+      map: unitClothMaps.map,
+      normalMap: unitClothMaps.normalMap,
+      roughnessMap: unitClothMaps.roughnessMap || null,
+      roughness: 0.82,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xc58a36, roughness: 0.3, metalness: 0.82 });
+    animParts.hitMaterials.push(coatMat, brassMat);
+
+    const coat = new THREE.Mesh(unitTunicGeo, coatMat);
+    coat.scale.set(1.02, 1.06, 1.02);
+    coat.castShadow = true;
+    const apron = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.055), leatherMat);
+    apron.position.set(0, 0.28, 0.22);
+    apron.rotation.x = -0.08;
+    const utilityBelt = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.1, 12), brassMat);
+    utilityBelt.position.y = 0.2;
+    bodyPivot.add(coat, apron, utilityBelt);
+
+    const backpack = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.42, 10), hullOakMat);
+    backpack.position.set(0, 0.38, -0.29);
+    backpack.rotation.x = 0.12;
+    const pressureGauge = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.045, 12), brassMat);
+    pressureGauge.rotation.x = Math.PI / 2;
+    pressureGauge.position.set(0.12, 0.52, -0.07);
+    const gaugeFace = new THREE.Mesh(new THREE.CircleGeometry(0.058, 12), new THREE.MeshBasicMaterial({ color: 0x67e8f9 }));
+    gaugeFace.position.set(0.12, 0.52, -0.043);
+    const valve = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 5, 12), brassMat);
+    valve.position.set(-0.17, 0.54, -0.27);
+    valve.rotation.x = Math.PI / 2;
+    bodyPivot.add(backpack, pressureGauge, gaugeFace, valve);
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 0.76;
+    const goggles = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.024, 6, 16), brassMat);
+    goggles.position.set(0, 0.8, 0.16);
+    const gogglesLens = new THREE.Mesh(new THREE.CircleGeometry(0.085, 12), new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.72 }));
+    gogglesLens.position.set(0, 0.8, 0.17);
+    const foreheadBand = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.055, 0.045), leatherMat);
+    foreheadBand.position.set(0, 0.91, 0.015);
+    bodyPivot.add(head, goggles, gogglesLens, foreheadBand);
+
+    rightArmPivot.position.set(0.29, 0.5, 0.05);
+    bodyPivot.add(rightArmPivot);
+    const gauntlet = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.24, 8), brassMat);
+    gauntlet.position.set(0, -0.19, 0.08);
+    const wrenchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.032, 0.5, 8), hullOakMat);
+    wrenchHandle.rotation.x = Math.PI / 3;
+    wrenchHandle.position.set(0, -0.18, 0.3);
+    const wrenchJaw = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.025, 5, 10, Math.PI * 1.35), steelMat);
+    wrenchJaw.position.set(0, 0.05, 0.55);
+    wrenchJaw.rotation.set(Math.PI / 2, 0, 0.3);
+    rightArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, leatherMat), gauntlet, wrenchHandle, wrenchJaw);
+
+    leftArmPivot.position.set(-0.29, 0.5, 0.05);
+    bodyPivot.add(leftArmPivot);
+    const leftTool = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.52, 8), steelMat);
+    leftTool.rotation.x = Math.PI / 2;
+    leftTool.position.set(0, -0.18, 0.2);
+    const toolGrip = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 5, 10), brassMat);
+    toolGrip.position.set(0, -0.18, 0.2);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, coatMat), leftTool, toolGrip);
   } else {
     // Ancient Living Treant / Guardian Colossus (Root Legs, Heartwood Rune Core, Stag Antler Crown & Leafy Shoulders)
     const barkMat = new THREE.MeshStandardMaterial({
@@ -9792,7 +9993,10 @@ export function createUnitMesh(
     mType === 'knight' ||
     mType === 'ninja' ||
     mType === 'saiyan' ||
-    mType === 'mage';
+    mType === 'mage' ||
+    mType === 'guardian' ||
+    mType === 'oracle' ||
+    mType === 'artificer';
 
   if (organicHumanoid) {
     const signatureKit = createUnitSignatureKit({
@@ -9811,9 +10015,17 @@ export function createUnitMesh(
   }
 
   // Exposed faces are now sculpted with eyes, brows and a dimensional nose instead of a blank sphere.
-  if (mType === 'villager' || mType === 'archer' || mType === 'ninja' || mType === 'saiyan' || mType === 'mage') {
+  if (
+    mType === 'villager' ||
+    mType === 'archer' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage' ||
+    mType === 'oracle' ||
+    mType === 'artificer'
+  ) {
     const faceDetails = createCharacterFaceDetails(colors.banner);
-    faceDetails.position.y = mType === 'mage' ? 1.09 : 0.76;
+    faceDetails.position.y = mType === 'mage' || mType === 'oracle' ? 1.09 : 0.76;
     bodyPivot.add(faceDetails);
   }
 
