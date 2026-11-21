@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
+import { createCharacterFaceDetails, createUnitSignatureKit } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -7732,7 +7733,17 @@ const unitBootGeo = new RoundedBoxGeometry(0.125, 0.085, 0.22, 2, 0.022);
 const unitPoleynGeo = new THREE.SphereGeometry(0.068, 12, 8);
 const unitArmSegmentGeo = new THREE.CapsuleGeometry(0.054, 0.18, 7, 14);
 const unitHandGeo = new THREE.SphereGeometry(0.066, 12, 8);
-const unitHeadGeo = new THREE.SphereGeometry(0.185, 24, 18);
+// Sculpted tapered jaw and fuller brow silhouette; shared by all organic humanoid rigs.
+const unitHeadGeo = makeLatheGeo([
+  [0.018, -0.19],
+  [0.082, -0.176],
+  [0.132, -0.112],
+  [0.164, -0.018],
+  [0.17, 0.075],
+  [0.145, 0.15],
+  [0.095, 0.198],
+  [0.012, 0.212],
+], 24);
 
 const unitTunicGeo = makeLatheGeo([
   [0.245, 0.0],
@@ -9735,6 +9746,39 @@ export function createUnitMesh(
       eye.position.set(ex, 0.94, 0.35);
       bodyPivot.add(eye);
     });
+  }
+
+  // --- Original faction art direction layer (shared procedural rig, new authored silhouette) ---
+  const organicHumanoid =
+    mType === 'villager' ||
+    mType === 'swordsman' ||
+    mType === 'archer' ||
+    mType === 'knight' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage';
+
+  if (organicHumanoid) {
+    const signatureKit = createUnitSignatureKit({
+      unitId,
+      civilization: colors.civilization || 'medieval',
+      category: unitDef.category,
+      modelType: mType,
+      age: flags.age,
+      palette: {
+        primary: colors.primary,
+        secondary: colors.secondary,
+        banner: colors.banner,
+      },
+    });
+    bodyPivot.add(signatureKit);
+  }
+
+  // Exposed faces are now sculpted with eyes, brows and a dimensional nose instead of a blank sphere.
+  if (mType === 'villager' || mType === 'archer' || mType === 'ninja' || mType === 'saiyan' || mType === 'mage') {
+    const faceDetails = createCharacterFaceDetails(colors.banner);
+    faceDetails.position.y = mType === 'mage' ? 1.09 : 0.76;
+    bodyPivot.add(faceDetails);
   }
 
   // --- Age / tech silhouette upgrades (shared accents) ---
