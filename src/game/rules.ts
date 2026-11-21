@@ -1326,11 +1326,12 @@ const MILITARY_BUILDING_TYPES = new Set([
  * Scores how suitable a hostile unit or building is as a 1v1 matchup or focus-fire target
  * for `attacker`. Higher score = better tactical choice.
  */
-export function scoreUnitMatchupTarget(
+function scoreUnitMatchupTargetInternal(
   attacker: UnitEntity,
   target: UnitEntity | BuildingEntity,
   alliedUnits: UnitEntity[] = [],
-  context: CombatTargetContext = {}
+  context: CombatTargetContext = {},
+  nearbyAlliesOnly = false
 ): number {
   const dist = getDistance(attacker.x, attacker.z, target.x, target.z);
   const attackerCat = attacker.unitDef.category;
@@ -1355,7 +1356,7 @@ export function scoreUnitMatchupTarget(
       ally.hp > 0 &&
       ally.faction === attacker.faction &&
       ally.targetEntityId === target.id &&
-      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+      (nearbyAlliesOnly || getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16)
     ) {
       alliesOnSameTarget++;
     }
@@ -1433,6 +1434,16 @@ export function scoreUnitMatchupTarget(
   return score;
 }
 
+export function scoreUnitMatchupTarget(
+  attacker: UnitEntity,
+  target: UnitEntity | BuildingEntity,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {}
+): number {
+  return scoreUnitMatchupTargetInternal(attacker, target, alliedUnits, context, false);
+}
+
+
 /**
  * Selects the single highest-value combat target for an individual unit using 1v1 counter scoring.
  */
@@ -1446,6 +1457,13 @@ export function selectOptimalCombatTarget(
   const maxRange = context.maxSearchRange ?? Infinity;
   const selfRef = { faction: attacker.faction, team: attacker.team };
 
+  const nearbyAllies = alliedUnits.filter(
+    (ally) =>
+      ally.id !== attacker.id &&
+      ally.hp > 0 &&
+      ally.faction === attacker.faction &&
+      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+  );
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
@@ -1453,8 +1471,8 @@ export function selectOptimalCombatTarget(
     if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
     const d = getDistance(attacker.x, attacker.z, u.x, u.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, u, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || u.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = u;
     }
@@ -1464,8 +1482,8 @@ export function selectOptimalCombatTarget(
     if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
     const d = getDistance(attacker.x, attacker.z, b.x, b.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, b, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || b.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = b;
     }
@@ -1544,15 +1562,20 @@ export function layoutCombatFormation(
     return [];
   }
 
-  const members = units
-    .filter(
-      (unit) =>
-        !!unit.id &&
-        Number.isFinite(unit.x) &&
-        Number.isFinite(unit.z) &&
-        unit.unitDef.category !== 'worker'
-    )
-    .filter((unit, index, all) => all.findIndex((candidate) => candidate.id === unit.id) === index);
+  const seenUnitIds = new Set<string>();
+  const members = units.filter((unit) => {
+    if (
+      !unit.id ||
+      !Number.isFinite(unit.x) ||
+      !Number.isFinite(unit.z) ||
+      unit.unitDef.category === 'worker' ||
+      seenUnitIds.has(unit.id)
+    ) {
+      return false;
+    }
+    seenUnitIds.add(unit.id);
+    return true;
+  });
 
   if (members.length === 0) return [];
 
