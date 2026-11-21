@@ -2546,6 +2546,7 @@ test('gate and breached wall collision: opening a gate or breaking a wall create
 
 test('art-direction: new original faction character kits add sculpted silhouette and face detail without external model files', async () => {
   const {
+    createBuildingHeritageKit,
     createCharacterFaceDetails,
     createUnitSignatureKit,
     getDeterministicArtVariant,
@@ -2594,6 +2595,26 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(face.name, 'sculptedCharacterFace');
   assert.equal(face.children.length, 1);
   assert.ok((face.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100);
+
+  for (const civilization of civilizations) {
+    const crown = createBuildingHeritageKit(
+      'town_center',
+      civilization,
+      palette,
+      4.4
+    );
+    assert.equal(crown.name, 'originalArchitectureHeritageKit');
+    assert.equal(crown.children.length, 1);
+    assert.ok(
+      (crown.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100,
+      civilization + ' architecture crown should contain original colored geometry'
+    );
+  }
+  assert.equal(
+    createBuildingHeritageKit('farm', 'medieval', palette, 4).children.length,
+    0,
+    'functional field buildings should not receive decorative roof crowns'
+  );
 
   const variantA = getDeterministicArtVariant('unit-hero-01');
   assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
