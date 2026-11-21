@@ -64,7 +64,13 @@ function makePart(
 function mergeSculptParts(parts: SculptPart[]): THREE.BufferGeometry {
   const geometries: THREE.BufferGeometry[] = [];
   for (const part of parts) {
-    const geometry = part.geometry;
+    let geometry = part.geometry;
+    // Primitive generators mix indexed and non-indexed layouts. Normalize before merging.
+    if (geometry.index) {
+      const nonIndexed = geometry.toNonIndexed();
+      geometry.dispose();
+      geometry = nonIndexed;
+    }
     const matrix = new THREE.Matrix4().compose(
       new THREE.Vector3(...part.position),
       new THREE.Quaternion().setFromEuler(new THREE.Euler(...part.rotation!)),
