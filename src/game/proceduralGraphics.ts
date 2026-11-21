@@ -7903,7 +7903,7 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     const instancedFlowers = new THREE.InstancedMesh(flowerGeo, flowerMat, flowerPts.length);
     instancedFlowers.name = 'instancedMeadowWildflowers';
     instancedFlowers.userData.qualityMinLevel = 1;
-    const fDummy = new THREE.Object3D();    const fDummy = new THREE.Object3D();
+    const fDummy = new THREE.Object3D();
     const fTint = new THREE.Color();
     flowerPts.forEach((pt, idx) => {
       fDummy.position.set(pt.x, 0.28 * pt.scale, pt.z);

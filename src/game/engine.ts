@@ -4004,7 +4004,7 @@ export class RtsEngine {
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
       `Renderer         ${rendererMode}`,
       `Quality          ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
-    ].join('\\n');
+    ].join('\n');
 
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
