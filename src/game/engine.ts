@@ -8719,14 +8719,14 @@ export class RtsEngine {
           strikeUnits.forEach((unit, idx) => {
             const slot = formationSlots.get(unit.id);
             // Siege also stages behind the army; its extended acquisition radius lets it fire from the rear.
-            const currentTarget =
+            const approachTarget =
               this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
               this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
               null;
             const targetIsNear =
-              !!currentTarget &&
-              currentTarget.hp > 0 &&
-              getDistance(unit.x, unit.z, currentTarget.x, currentTarget.z) <=
+              !!approachTarget &&
+              approachTarget.hp > 0 &&
+              getDistance(unit.x, unit.z, approachTarget.x, approachTarget.z) <=
                 Math.max(13, Math.min(24, unit.unitDef.stats.range + 2));
             const distanceToSlot = slot
               ? getDistance(unit.x, unit.z, slot.x, slot.z)
@@ -8769,8 +8769,6 @@ export class RtsEngine {
               }
               return;
             }
-
-            // Fast units / every 3rd unit: harass workers & eco
 
             // Fast units / every 3rd unit: harass workers & eco
             const isRaider =
