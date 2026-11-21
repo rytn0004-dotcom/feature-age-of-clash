@@ -118,6 +118,7 @@ import {
   getShrineIncome,
   getShrineBlessingHoldTime,
   getTeamVisualColor,
+  shouldShowUnitHealthBar,
   evaluateContestedPresence,
   getContestedShrineSummary,
   stepWildAnimalState,
@@ -4519,7 +4520,7 @@ export class RtsEngine {
           const lvl = xpEligible ? unit.level || 1 : 1;
           const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
           const hpBucket = Math.ceil(hpRatio * 40);
-          const isDamaged = unit.hp < unit.maxHp - 0.5;
+          const isDamaged = shouldShowUnitHealthBar(unit.hp, unit.maxHp);
           const lastHpBucket = (unit as any)._lastHpBucket;
           const lastDamageState = (unit as any)._lastDamageState;
           const lastAction = (unit as any)._lastAction;

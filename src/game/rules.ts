@@ -1070,6 +1070,15 @@ export function findBestFoodResourceNode(
   return best;
 }
 
+/**
+ * Unit nameplates only expand to show a health bar after real damage.
+ * A small tolerance avoids flicker from floating-point healing at full HP.
+ */
+export function shouldShowUnitHealthBar(hp: number, maxHp: number): boolean {
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  return hp > 0 && hp < maxHp - 0.5;
+}
+
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   colorHex: number;
   colorCss: string;

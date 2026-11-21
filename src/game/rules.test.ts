@@ -18,6 +18,7 @@ import {
   evaluateAiScript,
   getDistance,
   getTeamVisualColor,
+  shouldShowUnitHealthBar,
   DEFAULT_PARTICIPANT_PALETTE,
   findBalancedResourceNode,
   findClosestResourceNode,
@@ -2831,4 +2832,14 @@ test('visual allocation: teammates share a team outline colour while opposing te
     DEFAULT_PARTICIPANT_PALETTE[2].colorHex,
     'different factions retain their own livery even when allied'
   );
+});
+
+
+test('visual allocation: unit health bars are hidden at full HP and shown only after damage', () => {
+  assert.equal(shouldShowUnitHealthBar(100, 100), false);
+  assert.equal(shouldShowUnitHealthBar(99.9, 100), false, 'tiny floating-point noise at full HP should not reveal a bar');
+  assert.equal(shouldShowUnitHealthBar(99, 100), true);
+  assert.equal(shouldShowUnitHealthBar(25, 100), true);
+  assert.equal(shouldShowUnitHealthBar(0, 100), false, 'dead units do not retain a live health bar');
+  assert.equal(shouldShowUnitHealthBar(20, 0), false);
 });
