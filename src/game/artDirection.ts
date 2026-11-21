@@ -266,7 +266,7 @@ export interface CharacterFaceOptions {
 function createFaceGeometry(
   eyeColor: number,
   options: CharacterFaceOptions = {}
-): { geometry: THREE.BufferGeometry; hairTail?: THREE.Group } {
+): THREE.BufferGeometry {
   const parts: SculptPart[] = [];
   const add = (
     geometry: THREE.BufferGeometry,
@@ -375,27 +375,41 @@ function createFaceGeometry(
     }
   }
 
-  // Long anime/fantasy hair receives an independent pivot for wind and gait follow-through.
-  let hairTail: THREE.Group | undefined;
-  if (civilization !== 'medieval' && modelType !== 'artificer') {
-    hairTail = new THREE.Group();
-    hairTail.name = 'secondaryMotion:hair';
-    hairTail.position.set(0, 0.07, -0.125);
+  return mergeSculptParts(parts);
+}
+
+const faceHairGeometryCache = new Map<number, THREE.BufferGeometry>();
+const faceHairMaterialCache = new Map<number, THREE.MeshStandardMaterial>();
+
+function createCharacterHairTail(options: CharacterFaceOptions, hairColor: number): THREE.Group | undefined {
+  const civilization = options.civilization || 'medieval';
+  const modelType = options.modelType || 'villager';
+  if (civilization === 'medieval' || modelType === 'artificer') return undefined;
+
+  let geometry = faceHairGeometryCache.get(hairColor);
+  if (!geometry) {
     const tailCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(0, 0, 0),
       new THREE.Vector3(0.015, -0.065, -0.08),
       new THREE.Vector3(-0.025, -0.14, -0.18),
       new THREE.Vector3(0.012, -0.22, -0.28),
     ]);
-    const tail = new THREE.Mesh(
-      new THREE.TubeGeometry(tailCurve, 16, 0.043, 7, false),
-      new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.76 })
-    );
-    tail.castShadow = true;
-    hairTail.add(tail);
+    geometry = new THREE.TubeGeometry(tailCurve, 16, 0.043, 7, false);
+    faceHairGeometryCache.set(hairColor, geometry);
   }
-
-  return { geometry: mergeSculptParts(parts), hairTail };
+  let material = faceHairMaterialCache.get(hairColor);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.76 });
+    faceHairMaterialCache.set(hairColor, material);
+  }
+  const hairTail = new THREE.Group();
+  hairTail.name = 'secondaryMotion:hair';
+  hairTail.position.set(0, 0.07, -0.125);
+  const tail = new THREE.Mesh(geometry, material);
+  tail.castShadow = true;
+  hairTail.add(tail);
+  return hairTail;
+}
 }
 export function createCharacterFaceDetails(
   eyeColor: number,
@@ -403,16 +417,20 @@ export function createCharacterFaceDetails(
 ): THREE.Group {
   const variant = getDeterministicArtVariant(options.unitId || options.modelType || 'villager');
   const key = [eyeColor.toString(16), options.civilization || 'medieval', options.modelType || 'villager', variant].join('|');
-  let faceParts = faceGeometryCache.get(key);
-  let hairTail: THREE.Group | undefined;
-  if (!faceParts) {
-    faceParts = createFaceGeometry(eyeColor, options).geometry;
-    faceGeometryCache.set(key, faceParts);
+  let geometry = faceGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createFaceGeometry(eyeColor, options);
+    faceGeometryCache.set(key, geometry);
   }
-  if (options.civilization !== 'medieval' && options.modelType !== 'artificer') {
-    hairTail = createFaceGeometry(eyeColor, options).hairTail;
-  }
-  const geometry = faceParts;
+  const modelType = options.modelType || 'villager';
+  const civilization = options.civilization || 'medieval';
+  const variantHairColor =
+    modelType === 'saiyan'
+      ? 0xfacc15
+      : civilization === 'anime'
+        ? variant === 0 ? 0x1e1b4b : variant === 1 ? 0x7c2d92 : 0x0f766e
+        : variant === 0 ? 0xdbeafe : variant === 1 ? 0x78350f : 0x475569;
+  const hairTail = createCharacterHairTail(options, variantHairColor);
   let material = faceMaterialCache.get(key);
   if (!material) {
     material = new THREE.MeshStandardMaterial({
