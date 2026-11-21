@@ -8718,21 +8718,20 @@ export class RtsEngine {
 
           strikeUnits.forEach((unit, idx) => {
             const slot = formationSlots.get(unit.id);
-            // Siege also stages behind the army; its extended acquisition radius lets it fire from the rear.
-            const approachTarget =
+            const currentFormationTarget =
               this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
               this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
               null;
             const targetIsNear =
-              !!approachTarget &&
-              approachTarget.hp > 0 &&
-              getDistance(unit.x, unit.z, approachTarget.x, approachTarget.z) <=
+              !!currentFormationTarget &&
+              currentFormationTarget.hp > 0 &&
+              getDistance(unit.x, unit.z, currentFormationTarget.x, currentFormationTarget.z) <=
                 Math.max(13, Math.min(24, unit.unitDef.stats.range + 2));
             const distanceToSlot = slot
               ? getDistance(unit.x, unit.z, slot.x, slot.z)
               : 0;
 
-            // Preserve an active nearby fight; otherwise rally into the role's lane without stacking at the same point.
+            // Keep an active target when it is within the unit's engagement envelope; otherwise stage into the role lane.
             if (slot && distanceToSlot > 1.8 && !targetIsNear) {
               const slotChanged =
                 unit.targetX === undefined ||
@@ -8741,11 +8740,12 @@ export class RtsEngine {
               const formationGoalChanged =
                 !unit.attackMoveGoal ||
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, slot.x, slot.z) > 1.5;
-              if (
+              const shouldStage =
                 unit.state !== 'moving' ||
                 slotChanged ||
-                formationGoalChanged
-              ) {
+                formationGoalChanged ||
+                !unit.currentActionText?.startsWith('陣型推進');
+              if (shouldStage) {
                 unit.targetEntityId = undefined;
                 unit.targetX = slot.x;
                 unit.targetZ = slot.z;
@@ -8756,7 +8756,7 @@ export class RtsEngine {
                 unit.pathGoal = undefined;
                 unit.pathCooldown = 0;
                 unit.state = 'moving';
-                unit.currentActionText =
+                const roleText =
                   slot.role === 'frontline'
                     ? '前排集結'
                     : slot.role === 'backline'
@@ -8766,7 +8766,7 @@ export class RtsEngine {
                         : slot.role === 'siege'
                           ? '攻城後列'
                           : '支援就位';
-                unit.currentActionText = `陣型推進 · ${unit.currentActionText}`;
+                unit.currentActionText = `陣型推進 · ${roleText}`;
               }
               return;
             }
