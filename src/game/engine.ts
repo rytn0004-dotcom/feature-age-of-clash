@@ -1069,7 +1069,7 @@ export class RtsEngine {
   public setupWorld(
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
-    resourceRichness?: ResourceRichness
+    resourceRichness?: ResourceRichness,
     seed?: number
   ) {
     this.battleStressInfo = null;
