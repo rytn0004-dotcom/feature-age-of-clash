@@ -245,6 +245,27 @@ const MODEL_FALLBACK_SPECS: Record<
     bgFrom: '#3b0764',
     bgTo: '#0f172a',
   },
+  guardian: {
+    key: 'fallback_guardian',
+    label: '壁壘守護者',
+    accentHex: '#cbd5e1',
+    bgFrom: '#334155',
+    bgTo: '#0b1220',
+  },
+  oracle: {
+    key: 'fallback_oracle',
+    label: '星界預言者',
+    accentHex: '#67e8f9',
+    bgFrom: '#312e81',
+    bgTo: '#081225',
+  },
+  artificer: {
+    key: 'fallback_artificer',
+    label: '奧術工匠',
+    accentHex: '#d6a84b',
+    bgFrom: '#134e4a',
+    bgTo: '#111827',
+  },
   golem: {
     key: 'fallback_golem',
     label: '巨像 / 攻城機',
