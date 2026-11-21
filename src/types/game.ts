@@ -80,7 +80,21 @@ export interface UnitDefinition {
   stats: UnitStats;
   visual: {
     color: string;
-    modelType: 'villager' | 'swordsman' | 'archer' | 'knight' | 'ninja' | 'saiyan' | 'mage' | 'golem' | 'ram' | 'cannon' | 'boat';
+    modelType:
+      | 'villager'
+      | 'swordsman'
+      | 'archer'
+      | 'knight'
+      | 'ninja'
+      | 'saiyan'
+      | 'mage'
+      | 'guardian'
+      | 'oracle'
+      | 'artificer'
+      | 'golem'
+      | 'ram'
+      | 'cannon'
+      | 'boat';
     scale?: number;
     projectileType?: 'arrow' | 'fireball' | 'ki_blast' | 'slash';
     weaponColor?: string;
