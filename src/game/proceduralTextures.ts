@@ -719,24 +719,50 @@ export function getClothWeaveMaps(): PBRMapSet {
   return clothWeaveCache;
 }
 
-let contactShadowTexCache: THREE.CanvasTexture | null = null;
-export function getContactShadowTexture(): THREE.CanvasTexture {
+let contactShadowTexCache: THREE.DataTexture | null = null;
+
+/** Radial contact shadow generated as raw pixels so graphics modules are safe to import outside the browser. */
+export function getContactShadowTexture(): THREE.DataTexture {
   if (contactShadowTexCache) return contactShadowTexCache;
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d')!;
-  const grad = ctx.createRadialGradient(64, 64, 8, 64, 64, 62);
-  grad.addColorStop(0, 'rgba(6, 12, 6, 0.9)');
-  grad.addColorStop(0.55, 'rgba(8, 16, 8, 0.55)');
-  grad.addColorStop(0.85, 'rgba(8, 16, 8, 0.16)');
-  grad.addColorStop(1, 'rgba(8, 16, 8, 0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  contactShadowTexCache = tex;
-  return tex;
+  const size = 128;
+  const pixels = new Uint8Array(size * size * 4);
+  const stops: Array<[number, number]> = [
+    [0, 0.9],
+    [0.55, 0.55],
+    [0.85, 0.16],
+    [1, 0],
+  ];
+  const innerRadius = 8;
+  const outerRadius = 62;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const distance = Math.hypot(x + 0.5 - size * 0.5, y + 0.5 - size * 0.5);
+      const t = THREE.MathUtils.clamp((distance - innerRadius) / (outerRadius - innerRadius), 0, 1);
+      let alpha = stops[stops.length - 1][1];
+      for (let index = 0; index < stops.length - 1; index++) {
+        const [leftT, leftAlpha] = stops[index];
+        const [rightT, rightAlpha] = stops[index + 1];
+        if (t <= rightT) {
+          const blend = (t - leftT) / Math.max(0.0001, rightT - leftT);
+          alpha = THREE.MathUtils.lerp(leftAlpha, rightAlpha, blend);
+          break;
+        }
+      }
+      const offset = (y * size + x) * 4;
+      pixels[offset] = 8;
+      pixels[offset + 1] = 14;
+      pixels[offset + 2] = 8;
+      pixels[offset + 3] = Math.round(alpha * 255);
+    }
+  }
+  const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  contactShadowTexCache = texture;
+  return texture;
 }
 
 let barkCache: PBRMapSet | null = null;

@@ -21,6 +21,152 @@ import {
 } from '../types/game';
 import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
 
+export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
+export const FIELD_RAM_REQUIRED_INFANTRY = 4;
+export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+
+export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
+
+/**
+ * AI combat units withdraw to friendly garrisons when critically damaged.
+ * Ranged troops are protected earlier; siege engines and workers use their
+ * own specialist survival/economy routines and are deliberately excluded.
+ */
+export function shouldAiUnitSeekShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  personality: 'easy' | 'standard' | 'hard' | 'defensive' = 'standard'
+): boolean {
+  if (
+    category === 'worker' ||
+    category === 'siege' ||
+    !Number.isFinite(hp) ||
+    !Number.isFinite(maxHp) ||
+    maxHp <= 0
+  ) {
+    return false;
+  }
+
+  const roleThreshold: Partial<Record<UnitCategory, number>> = {
+    melee: 0.28,
+    ranged: 0.38,
+    cavalry: 0.32,
+    special: 0.34,
+  };
+  const personalityScale = personality === 'defensive'
+    ? 1.3
+    : personality === 'hard'
+      ? 0.88
+      : personality === 'easy'
+        ? 0.82
+        : 1;
+
+  return Math.max(0, hp) / maxHp <= (roleThreshold[category] || 0.3) * personalityScale;
+}
+
+/** Workers resume their economy immediately; military units stay sheltered until recovered. */
+export function shouldAiUnitLeaveShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  recoveryRatio = 0.72
+): boolean {
+  if (category === 'worker') return true;
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  const threshold = Number.isFinite(recoveryRatio)
+    ? Math.max(0, Math.min(1, recoveryRatio))
+    : 0.72;
+  return Math.max(0, hp) / maxHp >= threshold;
+}
+export const WALL_BREACH_HP_RATIO = 0.32;
+export const WALL_TOWER_LINK_RANGE = 5.8;
+
+/** A siege hit opens a repairable breach once a wall segment falls below its structural threshold. */
+export function shouldBreachWallAfterSiegeHit(
+  building: Pick<BuildingEntity, 'buildingDef' | 'hp' | 'maxHp' | 'wallBreached'>
+): boolean {
+  return (
+    !!building.buildingDef.isWall &&
+    !building.wallBreached &&
+    building.hp > 0 &&
+    building.hp <= building.maxHp * WALL_BREACH_HP_RATIO
+  );
+}
+
+/** A completed friendly watchtower reinforces nearby wall sections and gates. */
+export function isWallLinkedToTower(
+  wall: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed' | 'wallBreached' | 'gateOpen'>,
+  buildings: readonly Pick<BuildingEntity, 'buildingType' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed'>[]
+): boolean {
+  if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed || wall.wallBreached || (wall.buildingType === 'gate' && wall.gateOpen)) return false;
+  return buildings.some(
+    (building) =>
+      building.buildingType === 'tower' &&
+      building.faction === wall.faction &&
+      building.hp > 0 &&
+      building.isConstructed &&
+      getDistance(wall.x, wall.z, building.x, building.z) <= WALL_TOWER_LINK_RANGE
+  );
+}
+
+export const WALL_SEGMENT_SPACING = 2.7;
+
+export interface WallChainPoint {
+  x: number;
+  z: number;
+}
+
+export interface WallSegmentPlacement extends WallChainPoint {
+  rotationY: number;
+  sectionIndex: number;
+}
+
+/**
+ * Converts clicked wall corners into oriented modular wall pieces.
+ * Each section is evenly subdivided so the 2.85-unit wall mesh slightly overlaps its neighbours.
+ */
+export function layoutWallChain(
+  points: readonly WallChainPoint[],
+  maxSpacing = WALL_SEGMENT_SPACING
+): WallSegmentPlacement[] {
+  if (points.length < 2 || !Number.isFinite(maxSpacing) || maxSpacing <= 0) return [];
+
+  const placements: WallSegmentPlacement[] = [];
+  for (let sectionIndex = 0; sectionIndex < points.length - 1; sectionIndex++) {
+    const start = points[sectionIndex];
+    const end = points[sectionIndex + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (!Number.isFinite(length) || length < 0.75) continue;
+
+    const count = Math.max(1, Math.ceil(length / maxSpacing));
+    const rotationY = -Math.atan2(dz, dx);
+    for (let index = 0; index < count; index++) {
+      const t = (index + 0.5) / count;
+      placements.push({
+        x: start.x + dx * t,
+        z: start.z + dz * t,
+        rotationY,
+        sectionIndex,
+      });
+    }
+  }
+  return placements;
+}
+
+/** Wall costs scale by the number of modular segments, not by the number of clicks. */
+export function calculateWallChainCost(segmentCount: number, costPerSegment: Resources): Resources {
+  const count = Math.max(0, Math.floor(Number.isFinite(segmentCount) ? segmentCount : 0));
+  return {
+    food: (costPerSegment.food || 0) * count,
+    wood: (costPerSegment.wood || 0) * count,
+    gold: (costPerSegment.gold || 0) * count,
+    stone: (costPerSegment.stone || 0) * count,
+  };
+}
+
 /**
  * Per-second income from a captured strategic shrine.
  * The three shrine identities deliberately trade food, timber, gold and stone.
@@ -49,6 +195,74 @@ export function canAfford(current: Resources, cost: Resources): boolean {
     current.gold >= (cost.gold || 0) &&
     current.stone >= (cost.stone || 0)
   );
+}
+
+/** Shared age gate used by player, AI, construction and unit production paths. */
+export function isAgeUnlocked(requiredAge: AgeLevel | undefined, currentAge: AgeLevel | number): boolean {
+  return requiredAge === undefined || currentAge >= requiredAge;
+}
+
+/** Centralized field-ram requirements shared by gameplay and the HUD. */
+export function canAssembleFieldRam(
+  currentAge: AgeLevel | number,
+  researchedTechIds: readonly string[],
+  eligibleInfantryCount: number,
+  resources: Resources
+): { ok: boolean; reason?: string } {
+  if (!isAgeUnlocked(2, currentAge)) {
+    return { ok: false, reason: '🔒 野戰工程隊需要時代 II' };
+  }
+  if (!researchedTechIds.includes(FIELD_RAM_TECH_ID)) {
+    return { ok: false, reason: '🔒 請先在兵營研發「野戰工程隊」' };
+  }
+  if (eligibleInfantryCount < FIELD_RAM_REQUIRED_INFANTRY) {
+    return { ok: false, reason: '🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵' };
+  }
+  if (!canAfford(resources, FIELD_RAM_COST)) {
+    return { ok: false, reason: '⚠️ 野戰衝車需要 140 木材與 60 黃金' };
+  }
+  return { ok: true };
+}
+
+export interface AiFieldEngineeringReadiness {
+  age: number;
+  researched: boolean;
+  researchInProgress: boolean;
+  meleeUnitCount: number;
+  hasAvailableBarracks: boolean;
+  prerequisitesMet: boolean;
+  resources: Resources;
+  reserveFood: number;
+  reserveGold: number;
+  techCost: Resources;
+}
+
+/** Maps the generic AI "knight" request to an actual cavalry unit in every civilization. */
+export function resolveAiKnightUnitId(civilizationId: string): string {
+  if (civilizationId === 'anime') return 'scout_rider';
+  if (civilizationId === 'fantasy') return 'fantasy_paladin';
+  return 'knight';
+}
+
+/** Prioritizes the Age II field-engineering unlock over optional research once the AI can afford it safely. */
+export function shouldPrioritizeAiFieldEngineering(input: AiFieldEngineeringReadiness): boolean {
+  if (
+    input.age < 2 ||
+    input.researched ||
+    input.researchInProgress ||
+    input.meleeUnitCount < FIELD_RAM_REQUIRED_INFANTRY ||
+    !input.hasAvailableBarracks ||
+    !input.prerequisitesMet
+  ) {
+    return false;
+  }
+
+  const spendable: Resources = {
+    ...input.resources,
+    food: Math.max(0, input.resources.food - input.reserveFood),
+    gold: Math.max(0, input.resources.gold - input.reserveGold),
+  };
+  return canAfford(spendable, input.techCost);
 }
 
 /**
@@ -113,7 +327,7 @@ export function getUnitVsUnitDamage(
  * Returns effective building armor considering base armor, Age era reinforcement, and defensive techs.
  */
 export function getEffectiveBuildingArmor(
-  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType'>,
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'wallTowerLinked'>,
   defenderAge = 1,
   defenderTechIds: string[] = []
 ): number {
@@ -126,7 +340,8 @@ export function getEffectiveBuildingArmor(
       techBonus += tech.effect.buildingArmorBonus;
     }
   }
-  return baseArmor + ageBonus + techBonus;
+  const towerLinkBonus = building.wallTowerLinked ? 4 : 0;
+  return baseArmor + ageBonus + techBonus + towerLinkBonus;
 }
 
 
@@ -473,6 +688,10 @@ export interface AiEvaluationSnapshot {
   gold: number;
   stone: number;
   armyCount: number;
+  meleeCount?: number;
+  rangedCount?: number;
+  cavalryCount?: number;
+  siegeCount?: number;
   workerCount: number;
   underAttack: number; // 1 or 0
   enemyProximity: number; // distance to closest enemy
@@ -657,6 +876,35 @@ export function computeAiWorkerAllocation(
   return result;
 }
 
+/** Moves at most one worker from a clear surplus to a clear resource deficit. */
+export function selectAiWorkerReassignment(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>
+): { from: ResourceType; to: ResourceType } | null {
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  let donor: ResourceType | null = null;
+  let donorSurplus = 1;
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 1;
+
+  for (const type of types) {
+    const surplus = activeCounts[type] - desiredAlloc[type];
+    if (surplus > donorSurplus) {
+      donor = type;
+      donorSurplus = surplus;
+    }
+
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  if (!donor || !recipient) return null;
+  return { from: donor, to: recipient };
+}
+
 /**
  * 2D Euclidean distance.
  */
@@ -670,6 +918,7 @@ export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
   deep_fish: 1.55,
   shore_fish: 1.32,
   hunt: 1.15,
+  boar: 1.42,
   berry: 1.0,
   farm: 1.0,
   food: 1.0,
@@ -679,6 +928,7 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   deep_fish: 5,
   shore_fish: 4,
   hunt: 3,
+  boar: 1,
   berry: 2,
   farm: 2,
   food: 1,
@@ -792,8 +1042,9 @@ export function canUnitGatherNode(
 }
 
 /**
- * Selects optimal available food node balancing meat/fish gather speed priority (deep_fish > shore_fish > hunt > berry = farm)
- * against travel distance within maxDistance. Land harvesters automatically exclude `deep_fish`.
+ * Selects optimal available food node balancing food yield against travel distance.
+ * Dangerous boars are excluded from autonomous worker reassignment by default; players
+ * can still assign a hunting party directly without dispatching isolated villagers.
  */
 export function findBestFoodResourceNode(
   x: number,
@@ -801,13 +1052,15 @@ export function findBestFoodResourceNode(
   nodes: ResourceNode[],
   maxDistance = 36,
   allowDeepFish = false,
-  fishOnly = false
+  fishOnly = false,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = -Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     if (!allowDeepFish && node.subtype === 'deep_fish') continue;
     if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);
@@ -822,6 +1075,127 @@ export function findBestFoodResourceNode(
   return best;
 }
 
+/**
+ * Unit nameplates only expand to show a health bar after real damage.
+ * A small tolerance avoids flicker from floating-point healing at full HP.
+ */
+export function shouldShowUnitHealthBar(hp: number, maxHp: number): boolean {
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  return hp > 0 && hp < maxHp - 0.5;
+}
+
+export type BattlefieldVisualTier =
+  | 'worker'
+  | 'frontline'
+  | 'ranged'
+  | 'cavalry'
+  | 'siege'
+  | 'special'
+  | 'champion'
+  | 'naval';
+
+export interface BattlefieldVisualProfile {
+  tier: BattlefieldVisualTier;
+  badgeThresholdPx: number;
+  badgeScale: number;
+  roleMarker: 'crest' | 'siege' | null;
+  roleMarkerThresholdPx: number;
+}
+
+/**
+ * Stable visual hierarchy for zoomed-out RTS readability.
+ * Workers use compact labels; signature units, champions and siege engines
+ * retain a clearer battlefield identity without changing combat statistics.
+ */
+export function getBattlefieldVisualProfile(
+  category: UnitCategory,
+  modelType: UnitDefinition['visual']['modelType'],
+  isNaval = false,
+  level = 1,
+  hasSpecialAbility = false
+): BattlefieldVisualProfile {
+  let tier: BattlefieldVisualTier;
+  if (isNaval || modelType === 'boat') {
+    tier = 'naval';
+  } else if (category === 'worker') {
+    tier = 'worker';
+  } else if (category === 'siege') {
+    tier = 'siege';
+  } else if (level >= 3) {
+    tier = 'champion';
+  } else if (
+    category === 'special' ||
+    hasSpecialAbility ||
+    modelType === 'guardian' ||
+    modelType === 'oracle' ||
+    modelType === 'artificer'
+  ) {
+    tier = 'special';
+  } else if (category === 'cavalry') {
+    tier = 'cavalry';
+  } else if (category === 'ranged') {
+    tier = 'ranged';
+  } else {
+    tier = 'frontline';
+  }
+
+  const profiles: Record<BattlefieldVisualTier, Omit<BattlefieldVisualProfile, 'tier'>> = {
+    worker: { badgeThresholdPx: 39, badgeScale: 0.88, roleMarker: null, roleMarkerThresholdPx: 0 },
+    frontline: { badgeThresholdPx: 34, badgeScale: 0.96, roleMarker: null, roleMarkerThresholdPx: 0 },
+    ranged: { badgeThresholdPx: 32, badgeScale: 1, roleMarker: null, roleMarkerThresholdPx: 0 },
+    cavalry: { badgeThresholdPx: 29, badgeScale: 1.03, roleMarker: null, roleMarkerThresholdPx: 0 },
+    siege: { badgeThresholdPx: 25, badgeScale: 1.1, roleMarker: 'siege', roleMarkerThresholdPx: 23 },
+    special: { badgeThresholdPx: 22, badgeScale: 1.16, roleMarker: 'crest', roleMarkerThresholdPx: 19 },
+    champion: { badgeThresholdPx: 18, badgeScale: 1.24, roleMarker: 'crest', roleMarkerThresholdPx: 16 },
+    naval: { badgeThresholdPx: 25, badgeScale: 1.08, roleMarker: null, roleMarkerThresholdPx: 0 },
+  };
+  return { tier, ...profiles[tier] };
+}
+
+export type ParticleBudgetKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
+
+/** Preserve combat feedback while trimming decorative bursts during low quality or large battles. */
+export function computeParticleBurstCount(
+  requestedCount: number,
+  qualityLevel: 0 | 1 | 2,
+  aliveUnitCount: number,
+  kind: ParticleBudgetKind
+): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(requestedCount) ? requestedCount : 0));
+  if (count === 0) return 0;
+
+  const safeUnitCount = Math.max(0, Number.isFinite(aliveUnitCount) ? aliveUnitCount : 0);
+  const critical = kind === 'hit' || kind === 'spark' || kind === 'ember';
+  const qualityScale = critical
+    ? ([0.68, 0.86, 1] as const)[qualityLevel]
+    : ([0.42, 0.72, 1] as const)[qualityLevel];
+  const densityStart = critical ? 100 : 72;
+  const densityRange = critical ? 520 : 300;
+  const densityFloor = critical ? 0.55 : 0.3;
+  const densityScale = Math.max(densityFloor, 1 - Math.max(0, safeUnitCount - densityStart) / densityRange);
+  const materialScale = kind === 'leaf' || kind === 'dust' || kind === 'smoke' ? 0.9 : 1;
+  return Math.max(1, Math.min(count, Math.floor(count * qualityScale * densityScale * materialScale)));
+}
+
+export interface FrameTimeSummary {
+  averageMs: number;
+  p95Ms: number;
+  maxMs: number;
+}
+
+/** Deterministic frame-time summary used by the in-game pressure-test overlay. */
+export function summarizeFrameTimes(samples: readonly number[]): FrameTimeSummary {
+  const valid = samples.filter((sample) => Number.isFinite(sample) && sample > 0).sort((a, b) => a - b);
+  if (valid.length === 0) return { averageMs: 0, p95Ms: 0, maxMs: 0 };
+  const total = valid.reduce((sum, sample) => sum + sample, 0);
+  const p95Index = Math.max(0, Math.ceil(valid.length * 0.95) - 1);
+  return {
+    averageMs: total / valid.length,
+    p95Ms: valid[p95Index],
+    maxMs: valid[valid.length - 1],
+  };
+}
+
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   colorHex: number;
   colorCss: string;
@@ -834,6 +1208,24 @@ export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   { colorHex: 0x7c3aed, colorCss: '#8b5cf6', accentHex: 0xa78bfa }, // Royal Violet
   { colorHex: 0x0891b2, colorCss: '#06b6d4', accentHex: 0x22d3ee }, // Teal Cyan
 ];
+
+export interface TeamVisualColor {
+  colorHex: number;
+  colorCss: string;
+}
+
+/** Stable team colours used for unit rings and map outlines, separate from each faction's own livery. */
+export const TEAM_VISUAL_PALETTE: readonly TeamVisualColor[] = [
+  { colorHex: 0x0ea5e9, colorCss: '#0ea5e9' }, // Team 1 — Azure
+  { colorHex: 0xf43f5e, colorCss: '#f43f5e' }, // Team 2 — Rose
+  { colorHex: 0x84cc16, colorCss: '#84cc16' }, // Team 3 — Lime
+  { colorHex: 0xf59e0b, colorCss: '#f59e0b' }, // Team 4 — Amber
+];
+
+export function getTeamVisualColor(team: number): TeamVisualColor {
+  const safeTeam = Math.max(1, Number.isFinite(team) ? Math.floor(team) : 1);
+  return TEAM_VISUAL_PALETTE[(safeTeam - 1) % TEAM_VISUAL_PALETTE.length];
+}
 
 export function createDefaultParticipants(): MatchParticipant[] {
   return [
@@ -1078,11 +1470,12 @@ const MILITARY_BUILDING_TYPES = new Set([
  * Scores how suitable a hostile unit or building is as a 1v1 matchup or focus-fire target
  * for `attacker`. Higher score = better tactical choice.
  */
-export function scoreUnitMatchupTarget(
+function scoreUnitMatchupTargetInternal(
   attacker: UnitEntity,
   target: UnitEntity | BuildingEntity,
   alliedUnits: UnitEntity[] = [],
-  context: CombatTargetContext = {}
+  context: CombatTargetContext = {},
+  nearbyAlliesOnly = false
 ): number {
   const dist = getDistance(attacker.x, attacker.z, target.x, target.z);
   const attackerCat = attacker.unitDef.category;
@@ -1107,7 +1500,7 @@ export function scoreUnitMatchupTarget(
       ally.hp > 0 &&
       ally.faction === attacker.faction &&
       ally.targetEntityId === target.id &&
-      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+      (nearbyAlliesOnly || getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16)
     ) {
       alliesOnSameTarget++;
     }
@@ -1185,6 +1578,16 @@ export function scoreUnitMatchupTarget(
   return score;
 }
 
+export function scoreUnitMatchupTarget(
+  attacker: UnitEntity,
+  target: UnitEntity | BuildingEntity,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {}
+): number {
+  return scoreUnitMatchupTargetInternal(attacker, target, alliedUnits, context, false);
+}
+
+
 /**
  * Selects the single highest-value combat target for an individual unit using 1v1 counter scoring.
  */
@@ -1198,6 +1601,13 @@ export function selectOptimalCombatTarget(
   const maxRange = context.maxSearchRange ?? Infinity;
   const selfRef = { faction: attacker.faction, team: attacker.team };
 
+  const nearbyAllies = alliedUnits.filter(
+    (ally) =>
+      ally.id !== attacker.id &&
+      ally.hp > 0 &&
+      ally.faction === attacker.faction &&
+      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+  );
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
@@ -1205,8 +1615,8 @@ export function selectOptimalCombatTarget(
     if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
     const d = getDistance(attacker.x, attacker.z, u.x, u.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, u, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || u.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = u;
     }
@@ -1216,8 +1626,8 @@ export function selectOptimalCombatTarget(
     if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
     const d = getDistance(attacker.x, attacker.z, b.x, b.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, b, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || b.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = b;
     }
@@ -1226,10 +1636,267 @@ export function selectOptimalCombatTarget(
   return bestTarget;
 }
 
+
+/**
+ * Applies target-selection hysteresis so an AI unit does not abandon a valid target
+ * for a marginally better option on every strategic tick.
+ */
+export function shouldSwitchCombatTarget(
+  attacker: UnitEntity,
+  currentTarget: UnitEntity | BuildingEntity | null | undefined,
+  candidateTarget: UnitEntity | BuildingEntity | null | undefined,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {},
+  minimumScoreGain = 18
+): boolean {
+  if (
+    !candidateTarget ||
+    candidateTarget.hp <= 0 ||
+    (candidateTarget.type === 'unit' && !!(candidateTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, candidateTarget)
+  ) {
+    return false;
+  }
+
+  if (
+    !currentTarget ||
+    currentTarget.hp <= 0 ||
+    (currentTarget.type === 'unit' && !!(currentTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, currentTarget)
+  ) {
+    return true;
+  }
+
+  if (currentTarget.id === candidateTarget.id) return false;
+
+  const scoreGain =
+    scoreUnitMatchupTarget(attacker, candidateTarget, alliedUnits, context) -
+    scoreUnitMatchupTarget(attacker, currentTarget, alliedUnits, context);
+  const requiredGain = Number.isFinite(minimumScoreGain) ? Math.max(0, minimumScoreGain) : 18;
+  return scoreGain >= requiredGain;
+}
+
+
+export type CombatFormationRole = 'frontline' | 'backline' | 'flank' | 'siege' | 'support';
+
+export interface CombatFormationSlot {
+  unitId: string;
+  x: number;
+  z: number;
+  role: CombatFormationRole;
+  lateralIndex: number;
+}
+
+/**
+ * Assigns deterministic role-based approach slots around a shared objective.
+ * Melee screens the front, ranged and siege stay behind, cavalry spreads to both flanks,
+ * and support units occupy the protected middle line. Workers are intentionally excluded.
+ */
+export function layoutCombatFormation(
+  units: readonly Pick<UnitEntity, 'id' | 'x' | 'z' | 'unitDef'>[],
+  objective: { x: number; z: number },
+  maxWorldExtent = 84
+): CombatFormationSlot[] {
+  if (
+    !Number.isFinite(objective.x) ||
+    !Number.isFinite(objective.z) ||
+    !Number.isFinite(maxWorldExtent) ||
+    maxWorldExtent <= 0
+  ) {
+    return [];
+  }
+
+  const seenUnitIds = new Set<string>();
+  const members = units.filter((unit) => {
+    if (
+      !unit.id ||
+      !Number.isFinite(unit.x) ||
+      !Number.isFinite(unit.z) ||
+      unit.unitDef.category === 'worker' ||
+      seenUnitIds.has(unit.id)
+    ) {
+      return false;
+    }
+    seenUnitIds.add(unit.id);
+    return true;
+  });
+
+  if (members.length === 0) return [];
+
+  const centerX = members.reduce((sum, unit) => sum + unit.x, 0) / members.length;
+  const centerZ = members.reduce((sum, unit) => sum + unit.z, 0) / members.length;
+  let dirX = objective.x - centerX;
+  let dirZ = objective.z - centerZ;
+  const dirLength = Math.hypot(dirX, dirZ);
+  if (dirLength < 0.001) {
+    dirX = 1;
+    dirZ = 0;
+  } else {
+    dirX /= dirLength;
+    dirZ /= dirLength;
+  }
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const limit = Math.max(1, maxWorldExtent);
+
+  const clamp = (value: number) => Math.max(-limit, Math.min(limit, value));
+  const slot = (
+    unitId: string,
+    role: CombatFormationRole,
+    depth: number,
+    lateral: number,
+    lateralIndex: number
+  ): CombatFormationSlot => ({
+    unitId,
+    role,
+    lateralIndex,
+    x: clamp(objective.x - dirX * depth + sideX * lateral),
+    z: clamp(objective.z - dirZ * depth + sideZ * lateral),
+  });
+  const sorted = (category: UnitCategory) =>
+    members
+      .filter((unit) => unit.unitDef.category === category)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  const centered = (index: number, count: number, spacing: number) =>
+    (index - (count - 1) / 2) * spacing;
+
+  const result: CombatFormationSlot[] = [];
+
+  const frontline = sorted('melee');
+  frontline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'frontline', 5.2, centered(index, frontline.length, 2.1), index))
+  );
+
+  const backline = sorted('ranged');
+  backline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'backline', 11.2, centered(index, backline.length, 2.4), index))
+  );
+
+  const cavalry = sorted('cavalry');
+  cavalry.forEach((unit, index) => {
+    const rank = Math.floor(index / 2);
+    const flank = index % 2 === 0 ? -1 : 1;
+    result.push(slot(unit.id, 'flank', 8.2 + rank * 1.4, flank * (5.2 + rank * 2.1), index));
+  });
+
+  const support = sorted('special');
+  support.forEach((unit, index) =>
+    result.push(slot(unit.id, 'support', 9.0, centered(index, support.length, 2.7), index))
+  );
+
+  const siege = sorted('siege');
+  siege.forEach((unit, index) =>
+    result.push(slot(unit.id, 'siege', 18.5, centered(index, siege.length, 3.6), index))
+  );
+
+  return result.sort((a, b) => a.unitId.localeCompare(b.unitId));
+}
+
+export interface RaidTargetAssignment {
+  raiderId: string;
+  targetId: string;
+}
+
+/**
+ * Distributes raiders across exposed targets, caps focus-fire per target, and preserves
+ * still-valid existing assignments before allocating unassigned units by proximity.
+ */
+export function assignRaidTargets<
+  R extends { id: string; x: number; z: number; targetEntityId?: string },
+  T extends { id: string; x: number; z: number }
+>(
+  raiders: readonly R[],
+  targets: readonly T[],
+  maxAttackersPerTarget = 2
+): RaidTargetAssignment[] {
+  if (raiders.length === 0 || targets.length === 0 || !Number.isFinite(maxAttackersPerTarget)) return [];
+
+  const capacity = Math.max(1, Math.floor(maxAttackersPerTarget));
+  const orderedRaiders = [...raiders].sort((a, b) => a.id.localeCompare(b.id));
+  const orderedTargets = [...targets]
+    .filter((target) => target.id && Number.isFinite(target.x) && Number.isFinite(target.z))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const targetById = new Map(orderedTargets.map((target) => [target.id, target]));
+  const counts = new Map<string, number>();
+  const assigned = new Map<string, string>();
+
+  // Keep valid existing assignments first to avoid oscillation between nearby workers.
+  for (const raider of orderedRaiders) {
+    const current = raider.targetEntityId ? targetById.get(raider.targetEntityId) : undefined;
+    if (!current || (counts.get(current.id) || 0) >= capacity) continue;
+    assigned.set(raider.id, current.id);
+    counts.set(current.id, (counts.get(current.id) || 0) + 1);
+  }
+
+  // Fill remaining raiders with the nearest target that still has capacity.
+  for (const raider of orderedRaiders) {
+    if (assigned.has(raider.id)) continue;
+    let nearest: T | null = null;
+    let nearestDistance = Infinity;
+    for (const target of orderedTargets) {
+      if ((counts.get(target.id) || 0) >= capacity) continue;
+      const distance = getDistance(raider.x, raider.z, target.x, target.z);
+      if (
+        distance < nearestDistance - 0.0001 ||
+        (Math.abs(distance - nearestDistance) <= 0.0001 && (!nearest || target.id < nearest.id))
+      ) {
+        nearest = target;
+        nearestDistance = distance;
+      }
+    }
+    if (!nearest) continue;
+    assigned.set(raider.id, nearest.id);
+    counts.set(nearest.id, (counts.get(nearest.id) || 0) + 1);
+  }
+
+  return orderedRaiders
+    .filter((raider) => assigned.has(raider.id))
+    .map((raider) => ({ raiderId: raider.id, targetId: assigned.get(raider.id)! }));
+}
+
 /**
  * Picks a coordinated cluster focus-fire target for an entire squad based on squad centroid,
  * enemy concentration, threat priority, and siege fortifications.
  */
+/**
+ * Selects available frontline escorts near a siege group without overriding units with active orders.
+ * Melee and cavalry are preferred as screens, while proximity keeps the escort from being left behind.
+ */
+export function selectSiegeEscortUnits<
+  T extends { id: string; x: number; z: number; state: string; unitDef: { category: UnitCategory } }
+>(
+  siegeUnits: readonly { x: number; z: number }[],
+  candidates: readonly T[],
+  maxEscortCount: number
+): T[] {
+  if (siegeUnits.length === 0 || maxEscortCount <= 0) return [];
+
+  const centerX = siegeUnits.reduce((sum, unit) => sum + unit.x, 0) / siegeUnits.length;
+  const centerZ = siegeUnits.reduce((sum, unit) => sum + unit.z, 0) / siegeUnits.length;
+  const rolePenalty: Partial<Record<UnitCategory, number>> = {
+    melee: 0,
+    cavalry: 2.2,
+    ranged: 7.5,
+  };
+
+  return candidates
+    .filter(
+      (unit) =>
+        unit.state === 'idle' &&
+        unit.unitDef.category !== 'siege' &&
+        unit.unitDef.category !== 'worker'
+    )
+    .map((unit) => ({
+      unit,
+      score:
+        getDistance(centerX, centerZ, unit.x, unit.z) * 0.75 +
+        (rolePenalty[unit.unitDef.category] ?? 9),
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, Math.floor(maxEscortCount))
+    .map((entry) => entry.unit);
+}
+
 export function selectClusterFocusTarget(
   squadUnits: UnitEntity[],
   hostileUnits: UnitEntity[],
@@ -1237,48 +1904,82 @@ export function selectClusterFocusTarget(
   options: { maxEnemyRangeFromCentroid?: number; defendAnchor?: { x: number; z: number; radius?: number } | null } = {}
 ): UnitEntity | BuildingEntity | null {
   if (squadUnits.length === 0) return null;
-  const cx = squadUnits.reduce((s, u) => s + u.x, 0) / squadUnits.length;
-  const cz = squadUnits.reduce((s, u) => s + u.z, 0) / squadUnits.length;
-  const maxRange = options.maxEnemyRangeFromCentroid ?? 26;
-  const rep = squadUnits[0];
-  const selfRef = { faction: rep.faction, team: rep.team };
+
+  const cx = squadUnits.reduce((sum, unit) => sum + unit.x, 0) / squadUnits.length;
+  const cz = squadUnits.reduce((sum, unit) => sum + unit.z, 0) / squadUnits.length;
+  const requestedRange = options.maxEnemyRangeFromCentroid;
+  const maxRange =
+    requestedRange === Infinity
+      ? Infinity
+      : typeof requestedRange === 'number' && Number.isFinite(requestedRange)
+        ? Math.max(0, requestedRange)
+        : 26;
+  const representative = squadUnits.find((unit) => unit.hp > 0) || squadUnits[0];
+  const selfRef = { faction: representative.faction, team: representative.team };
+  const hasSiegeUnit = squadUnits.some(
+    (unit) => unit.hp > 0 && (unit.unitDef.category === 'siege' || unit.unitDefId === 'fantasy_treant')
+  );
 
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
-  for (const u of hostileUnits) {
-    if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
-    const d = getDistance(cx, cz, u.x, u.z);
-    if (d > maxRange) continue;
-
-    let clusterValue = 45;
-    if (u.unitDef.category === 'ranged' || u.unitDef.category === 'siege') clusterValue += 28;
-    else if (u.unitDef.category !== 'worker') clusterValue += 18;
-    // Focus wounded priority enemies & enemies near allied defenses
-    clusterValue += (1 - Math.max(0, u.hp / Math.max(1, u.maxHp))) * 35;
-    if (options.defendAnchor && getDistance(u.x, u.z, options.defendAnchor.x, options.defendAnchor.z) <= (options.defendAnchor.radius ?? 22)) {
-      clusterValue += 40;
+  // Compare units and structures in one scoring pass. Returning as soon as a unit is
+  // found would make defensive buildings invisible whenever even a low-value worker
+  // happened to be inside the acquisition radius.
+  const consider = (target: UnitEntity | BuildingEntity, score: number) => {
+    const tied = Math.abs(score - bestScore) <= 0.0001;
+    if (
+      score > bestScore + 0.0001 ||
+      (tied && (!bestTarget || target.id.localeCompare(bestTarget.id) < 0))
+    ) {
+      bestScore = score;
+      bestTarget = target;
     }
-    clusterValue -= d * 1.4;
+  };
 
-    if (clusterValue > bestScore) {
-      bestScore = clusterValue;
-      bestTarget = u;
+  for (const unit of hostileUnits) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId || !areHostile(selfRef, unit)) continue;
+    const distance = getDistance(cx, cz, unit.x, unit.z);
+    if (distance > maxRange) continue;
+
+    let unitScore = 45;
+    if (unit.unitDef.category === 'ranged' || unit.unitDef.category === 'siege') unitScore += 28;
+    else if (unit.unitDef.category !== 'worker') unitScore += 18;
+
+    // Finish wounded high-value threats and protect the area around a defended anchor.
+    const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
+    unitScore += (1 - hpRatio) * 35;
+    if (
+      options.defendAnchor &&
+      getDistance(unit.x, unit.z, options.defendAnchor.x, options.defendAnchor.z) <=
+        (options.defendAnchor.radius ?? 22)
+    ) {
+      unitScore += 40;
     }
+    unitScore -= distance * 1.4;
+    consider(unit, unitScore);
   }
 
-  if (bestTarget) return bestTarget;
+  for (const building of hostileBuildings) {
+    if (building.hp <= 0 || !areHostile(selfRef, building)) continue;
+    const distance = getDistance(cx, cz, building.x, building.z);
+    // Cluster focus is a local tactical choice. Distant defenses must not pull the
+    // whole army across the map; the strategic stronghold remains the fallback.
+    if (distance > maxRange) continue;
 
-  for (const b of hostileBuildings) {
-    if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
-    const d = getDistance(cx, cz, b.x, b.z);
-    let bScore = DEFENSIVE_BUILDING_TYPES.has(b.buildingType) ? 60 : MILITARY_BUILDING_TYPES.has(b.buildingType) ? 35 : 10;
-    bScore += (1 - Math.max(0, b.hp / Math.max(1, b.maxHp))) * 25;
-    bScore -= d * 0.9;
-    if (bScore > bestScore) {
-      bestScore = bScore;
-      bestTarget = b;
-    }
+    const isDefensive = DEFENSIVE_BUILDING_TYPES.has(building.buildingType);
+    const isMilitary = MILITARY_BUILDING_TYPES.has(building.buildingType);
+    let buildingScore = isDefensive
+      ? hasSiegeUnit
+        ? 88
+        : 66
+      : isMilitary
+        ? 42
+        : 12;
+    const hpRatio = Math.max(0, Math.min(1, building.hp / Math.max(1, building.maxHp)));
+    buildingScore += (1 - hpRatio) * 25;
+    buildingScore -= distance * (hasSiegeUnit ? 1.25 : 1.45);
+    consider(building, buildingScore);
   }
 
   return bestTarget;
@@ -1708,9 +2409,12 @@ export function triggerWildAnimalPanic(
   simTime: number,
   duration = 2.6
 ): void {
-  if (!node.animalAlive) return;
+  if (!node.animalAlive || node.animalPanicSuppressed) return;
+  // One panic per encounter. Repeated harvest hits from a pursuing worker must not
+  // keep extending the run timer or reset its cooldown every attack interval.
+  node.animalPanicSuppressed = true;
   node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + duration);
-  node.animalFleeCooldown = 0;
+  node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + duration + 1.5);
   const dx = node.x - threatX;
   const dz = node.z - threatZ;
   const len = Math.hypot(dx, dz);
@@ -1783,12 +2487,19 @@ export function stepWildAnimalState(
   const prevZ = node.z;
   const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
 
-  if (nearestThreat && nearestThreat.d < DETECT_RANGE) {
-    const canReact = (node.animalFleeCooldown || 0) <= simTime || nearestThreat.d < 6.0;
-    if (canReact) {
-      node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + 1.9);
-      node.animalFleeCooldown = 0;
-    }
+  const REARM_RANGE = 16.5;
+  // Re-arm only after the encounter has disengaged. A worker following the moving
+  // deer keeps panic disarmed instead of causing repeated sprints.
+  if (node.animalPanicSuppressed && (!nearestThreat || nearestThreat.d >= REARM_RANGE)) {
+    node.animalPanicSuppressed = false;
+    node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.1);
+  }
+  if (
+    nearestThreat && nearestThreat.d < DETECT_RANGE &&
+    !node.animalPanicSuppressed &&
+    (node.animalFleeCooldown || 0) <= simTime
+  ) {
+    triggerWildAnimalPanic(node, nearestThreat.x, nearestThreat.z, simTime, 1.9);
   }
 
   const wasFleeing = (node.animalFleeUntil || 0) > simTime;
@@ -1819,7 +2530,7 @@ export function stepWildAnimalState(
     // Clean transition out of fleeing into calm grazing cooldown
     if ((node.animalFleeUntil || 0) > 0 && (node.animalFleeUntil || 0) <= simTime) {
       node.animalFleeUntil = 0;
-      node.animalFleeCooldown = simTime + 1.4;
+      node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.4);
       node.animalWanderMoving = false;
       node.animalWanderTimer = 2.2 + rand() * 2.2;
     }
@@ -1930,6 +2641,75 @@ export function stepWildAnimalState(
     gaitPhase,
     hopY,
   };
+}
+
+
+/** Records the unit that provoked a wild boar. Boars do not attack passers-by. */
+export function triggerWildBoarAggression(node: ResourceNode, attackerId: string, simTime: number): void {
+  if (!node.animalAlive || !attackerId) return;
+  node.animalAggroTargetId = attackerId;
+  node.animalAggroUntil = Math.max(node.animalAggroUntil || 0, simTime + 8);
+}
+
+export interface WildBoarStepOutput {
+  distMoved: number;
+  actualSpeed: number;
+  yaw: number;
+  isCharging: boolean;
+}
+
+/** Pursuit steering for provoked boars; stops at melee distance and respects terrain blockers. */
+export function stepWildBoarState(
+  node: ResourceNode,
+  target: { x: number; z: number } | null,
+  dt: number,
+  isBlocked: (cx: number, cz: number) => boolean
+): WildBoarStepOutput {
+  const prevX = node.x;
+  const prevZ = node.z;
+  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+  const dx = target ? target.x - node.x : 0;
+  const dz = target ? target.z - node.z : 0;
+  const distance = Math.hypot(dx, dz);
+  const attackRange = 2.25;
+  let targetVx = 0;
+  let targetVz = 0;
+  let isCharging = false;
+
+  if (target && distance > attackRange) {
+    const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, Math.atan2(dz, dx), isBlocked);
+    if (chaseAngle !== null) {
+      targetVx = Math.cos(chaseAngle) * 4.15;
+      targetVz = Math.sin(chaseAngle) * 4.15;
+      isCharging = true;
+    }
+  }
+
+  const blend = 1 - Math.exp(-(isCharging ? 11 : 9) * clampedDt);
+  node.animalVx = (node.animalVx || 0) + (targetVx - (node.animalVx || 0)) * blend;
+  node.animalVz = (node.animalVz || 0) + (targetVz - (node.animalVz || 0)) * blend;
+
+  let nx = Math.max(-91, Math.min(91, node.x + node.animalVx * clampedDt));
+  let nz = Math.max(-91, Math.min(91, node.z + node.animalVz * clampedDt));
+  if (isBlocked(nx, nz)) {
+    nx = prevX;
+    nz = prevZ;
+    node.animalVx = 0;
+    node.animalVz = 0;
+    isCharging = false;
+  }
+  node.x = nx;
+  node.z = nz;
+
+  const movedX = nx - prevX;
+  const movedZ = nz - prevZ;
+  const distMoved = Math.hypot(movedX, movedZ);
+  const actualSpeed = distMoved / clampedDt;
+  let yaw = node.animalYaw ?? 0;
+  if (distMoved > 0.002 && actualSpeed > 0.15) yaw = Math.atan2(-movedZ, movedX);
+  else if (target && distance > 0.01) yaw = Math.atan2(-dz, dx);
+  node.animalYaw = yaw;
+  return { distMoved, actualSpeed, yaw, isCharging };
 }
 
 export interface AiTechCandidateInput {

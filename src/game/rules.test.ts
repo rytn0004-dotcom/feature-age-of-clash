@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canAfford,
+  canAssembleFieldRam,
+  FIELD_RAM_COST,
+  FIELD_RAM_TECH_ID,
+  isAgeUnlocked,
+  shouldPrioritizeAiFieldEngineering,
+  resolveAiKnightUnitId,
+  selectAiWorkerReassignment,
+  selectSiegeEscortUnits,
   deductCost,
   addResources,
   calculateDamage,
@@ -9,6 +17,12 @@ import {
   evaluateCondition,
   evaluateAiScript,
   getDistance,
+  getTeamVisualColor,
+  shouldShowUnitHealthBar,
+  getBattlefieldVisualProfile,
+  computeParticleBurstCount,
+  summarizeFrameTimes,
+  DEFAULT_PARTICIPANT_PALETTE,
   findBalancedResourceNode,
   findClosestResourceNode,
   findClosestEnemy,
@@ -26,7 +40,8 @@ import { AiRule, ResourceNode, EntityCommon } from '../types/game';
 import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS } from './mods';
 import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
 
-test('progression: military production buildings unlock at the intended ages', () => {
+test('progression: military production buildings unlock at the intended ages', async () => {
+  const { getBuildableTypesForCiv, isBuildingBuildableForCiv } = await import('./civilizations');
   assert.equal(DEFAULT_BUILDINGS.barracks.requiredAge, 1);
   assert.equal(DEFAULT_BUILDINGS.archery_range.requiredAge, 2);
   assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
@@ -46,6 +61,22 @@ test('progression: military production buildings unlock at the intended ages', (
     assert.ok(civ.buildableBuildings.includes('archery_range'));
     assert.ok(civ.buildableBuildings.includes('stable'));
     assert.ok(civ.buildableBuildings.includes('siege_workshop'));
+
+    const ageOneBuildings = getBuildableTypesForCiv(civId, 1);
+    const ageTwoBuildings = getBuildableTypesForCiv(civId, 2);
+    const ageThreeBuildings = getBuildableTypesForCiv(civId, 3);
+    assert.ok(ageOneBuildings.includes('barracks'), civId + ' can build its infantry barracks in Age I');
+    for (const lockedType of ['archery_range', 'stable', 'siege_workshop'] as const) {
+      assert.equal(ageOneBuildings.includes(lockedType), false, civId + ' must not expose ' + lockedType + ' in Age I');
+      assert.equal(isBuildingBuildableForCiv(lockedType, civId, 1), false, civId + ' must reject ' + lockedType + ' for Age I');
+    }
+    assert.ok(ageTwoBuildings.includes('archery_range'), civId + ' unlocks ranged production in Age II');
+    assert.ok(ageTwoBuildings.includes('stable'), civId + ' unlocks cavalry production in Age II');
+    assert.equal(ageTwoBuildings.includes('siege_workshop'), false, civId + ' keeps advanced siege locked until Age III');
+    assert.ok(ageThreeBuildings.includes('siege_workshop'), civId + ' unlocks the siege workshop in Age III');
+    assert.equal(isBuildingBuildableForCiv('archery_range', civId, 2), true);
+    assert.equal(isBuildingBuildableForCiv('stable', civId, 2), true);
+    assert.equal(isBuildingBuildableForCiv('siege_workshop', civId, 3), true);
 
     const barracksUnits = civ.trainableByBuilding.barracks || [];
     assert.ok(barracksUnits.length > 0, civId + ' must have Age I infantry');
@@ -421,6 +452,7 @@ test('mapGenerator: produces varied terrain features and abundant diverse resour
   const riverAbundant = generateMapLayout('river_valley', 'abundant', spawns);
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'berry'), 'Map should spawn berry bushes');
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'hunt'), 'Map should spawn deer herds');
+  assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'boar'), 'Map should spawn dangerous wild boar');
   assert.ok(
     riverAbundant.resourceNodes.filter((n) => n.resourceType === 'gold').length >= 6,
     'Map should spawn multiple gold veins'
@@ -494,9 +526,12 @@ test('civilizations: each civ has distinct workers, buildable structures, traini
   assert.ok(getBuildableTypesForCiv('fantasy').includes('mana_well'));
 
   // Building training rosters are tailored per civilization
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami', 'anime_saiyan_brawler', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_paladin', 'fantasy_treant', 'battering_ram']);
-  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman', 'knight', 'battering_ram', 'catapult']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'anime'), ['anime_katana_shinigami']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'fantasy'), ['fantasy_footman']);
+  assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'medieval'), ['swordsman']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'medieval'), ['knight', 'scout_rider']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'anime'), ['scout_rider']);
+  assert.deepEqual(getTrainableUnitsForBuilding('stable', 'fantasy'), ['fantasy_paladin', 'scout_rider']);
 
   // Tech research filtering and stat application
   const shrineTechs = getAvailableTechsForBuilding('spirit_shrine', 'anime', [], 1);
@@ -589,7 +624,8 @@ test('hotkeys: worker build, training slots, and tech slots map cleanly without 
   } = await import('./hotkeys');
   const { getBuildableTypesForCiv } = await import('./civilizations');
 
-  const wasdReserved = new Set(['W', 'A', 'S', 'D', 'Q', 'F', 'X', 'H', 'B', 'I', 'M', 'P']);
+  // M is intentionally context-sensitive: with workers selected it builds the Siege Workshop; otherwise it toggles mute.
+  const wasdReserved = new Set(['W', 'A', 'S', 'D', 'Q', 'F', 'X', 'H', 'B', 'I', 'P']);
   Object.values(BUILDING_HOTKEYS).forEach((k) => {
     assert.ok(k && !wasdReserved.has(k), `Building hotkey ${k} conflicts with camera/global keys`);
   });
@@ -599,6 +635,7 @@ test('hotkeys: worker build, training slots, and tech slots map cleanly without 
   assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('anime')), 'spirit_shrine');
   assert.equal(findBuildingTypeByHotkey('K', getBuildableTypesForCiv('fantasy')), 'mana_well');
   assert.equal(findBuildingTypeByHotkey('V', getBuildableTypesForCiv('medieval')), 'barracks');
+  assert.equal(findBuildingTypeByHotkey('Z', getBuildableTypesForCiv('medieval')), 'stable');
   assert.equal(findTrainingUnitByHotkey('C', ['swordsman', 'knight', 'catapult']), 'knight');
   assert.equal(findTechIdByHotkey('R', ['tech_a', 'tech_b']), 'tech_a');
   assert.equal(findTechIdByHotkey('T', ['tech_a', 'tech_b']), 'tech_b');
@@ -719,7 +756,7 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
-  const { selectOptimalCombatTarget, selectClusterFocusTarget } = await import('./rules');
+  const { selectOptimalCombatTarget, selectClusterFocusTarget, shouldSwitchCombatTarget, assignRaidTargets } = await import('./rules');
 
   const mkUnit = (
     id: string,
@@ -815,6 +852,19 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const meleePick = selectOptimalCombatTarget(swordsman, [enemyMelee], [enemyFarm], [swordsman]);
   assert.equal(meleePick?.id, 'em1');
 
+  const equalTargetZ = mkUnit('optimal-z', 'ai2', 2, 'melee', 5, 2);
+  const equalTargetA = mkUnit('optimal-a', 'ai2', 2, 'melee', 5, 2);
+  assert.equal(
+    selectOptimalCombatTarget(swordsman, [equalTargetZ, equalTargetA])?.id,
+    'optimal-a',
+    'equal target scores must use stable id tie-breaking'
+  );
+  assert.equal(
+    selectOptimalCombatTarget(swordsman, [equalTargetA, equalTargetZ])?.id,
+    'optimal-a',
+    'optimal target choice must not depend on array iteration order'
+  );
+
   // 4. Cluster focus-fire prioritizes wounded high-value enemy archer
   const squad = [
     mkUnit('a1', 'ai1', 1, 'ranged', 0, 0, 65, 65, 14, 3.4),
@@ -825,6 +875,172 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const healthyMelee = mkUnit('emFull', 'ai2', 2, 'melee', 7, 0, 110, 110, 1.5, 3.8);
   const clusterTarget = selectClusterFocusTarget(squad, [healthyMelee, woundedArcher], [enemyFarm]);
   assert.equal(clusterTarget?.id, 'eaLow');
+
+  // Defensive structures compete with nearby troops instead of being skipped once
+  // any unit is found. Siege groups should commit to an exposed tower over a worker.
+  const siegeSquad = [
+    mkUnit('siege-a', 'ai1', 1, 'siege', 0, 0, 160, 160, 18, 2.2),
+    mkUnit('screen-a', 'ai1', 1, 'melee', 0, 1),
+  ];
+  const exposedWorker = mkUnit('enemy-worker', 'ai2', 2, 'worker', 4, 0);
+  const priorityTower = mkBldg('priority-tower', 'ai2', 2, 'tower', 9, 0);
+  const siegeFocus = selectClusterFocusTarget(
+    siegeSquad,
+    [exposedWorker],
+    [priorityTower],
+    { maxEnemyRangeFromCentroid: 32 }
+  );
+  assert.equal(siegeFocus?.id, 'priority-tower');
+
+  // A nearby combat unit still wins over a more distant tower for a non-siege group.
+  const nearbyRanged = mkUnit('nearby-ranged', 'ai2', 2, 'ranged', 2, 0, 65, 65, 14, 3.4);
+  const frontlineFocus = selectClusterFocusTarget(
+    [swordsman],
+    [nearbyRanged],
+    [priorityTower],
+    { maxEnemyRangeFromCentroid: 32 }
+  );
+  assert.equal(frontlineFocus?.id, 'nearby-ranged');
+
+  // Remote defenses are not treated as local cluster targets; the engine can keep its
+  // strategic stronghold/fallback objective rather than redirecting the army cross-map.
+  const distantTower = mkBldg('distant-tower', 'ai2', 2, 'tower', 100, 0);
+  assert.equal(
+    selectClusterFocusTarget([swordsman], [], [distantTower], { maxEnemyRangeFromCentroid: 32 }),
+    null
+  );
+
+  // Equal tactical scores must resolve by stable entity ID, not array iteration order.
+  const tiedEnemyZ = mkUnit('enemy-z', 'ai2', 2, 'melee', 6, 0);
+  const tiedEnemyA = mkUnit('enemy-a', 'ai2', 2, 'melee', 6, 0);
+  assert.equal(selectClusterFocusTarget([swordsman], [tiedEnemyZ, tiedEnemyA])?.id, 'enemy-a');
+  assert.equal(selectClusterFocusTarget([swordsman], [tiedEnemyA, tiedEnemyZ])?.id, 'enemy-a');
+
+  // Target hysteresis: retain a sound target, but switch decisively to a wounded high-value counter.
+  const criticalArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, enemyMelee), false);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, criticalArcher), true);
+  assert.equal(shouldSwitchCombatTarget(swordsman, { ...enemyMelee, hp: 0 }, criticalArcher), true);
+  const friendlyArcher = mkUnit('friendly', 'ai1', 1, 'ranged', 1, 0);
+  assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, friendlyArcher), false);
+
+  // Raid assignments cap each exposed worker at two attackers and preserve valid sticky assignments.
+  const raiders = [
+    { id: 'r1', x: 0, z: 0 },
+    { id: 'r2', x: 1, z: 0 },
+    { id: 'r3', x: 19, z: 0 },
+    { id: 'r4', x: 20, z: 0 },
+    { id: 'r5', x: 10, z: 0 },
+  ];
+  const workers = [
+    { id: 'w1', x: 1, z: 0 },
+    { id: 'w2', x: 19, z: 0 },
+  ];
+  const raidAssignments = assignRaidTargets(raiders, workers, 2);
+  const raidCounts = raidAssignments.reduce((counts, assignment) => {
+    counts[assignment.targetId] = (counts[assignment.targetId] || 0) + 1;
+    return counts;
+  }, {} as Record<string, number>);
+  assert.equal(raidAssignments.length, 4, 'a fifth raider should not overstack a full target list');
+  assert.equal(raidCounts.w1, 2);
+  assert.equal(raidCounts.w2, 2);
+
+  const stickyAssignments = assignRaidTargets(
+    [
+      { id: 'r1', x: 0, z: 0, targetEntityId: 'w2' },
+      { id: 'r2', x: 1, z: 0 },
+    ],
+    workers,
+    1
+  );
+  assert.deepEqual(stickyAssignments, [
+    { raiderId: 'r1', targetId: 'w2' },
+    { raiderId: 'r2', targetId: 'w1' },
+  ]);
+
+  const { layoutCombatFormation } = await import('./rules');
+  const formationUnits = [
+    mkUnit('front-b', 'ai1', 1, 'melee', 0, 1),
+    mkUnit('back-b', 'ai1', 1, 'ranged', 0, -1, 65, 65, 14, 3.4),
+    mkUnit('flank-b', 'ai1', 1, 'cavalry', -1, 0, 210, 210, 1.8, 5.6),
+    mkUnit('siege-b', 'ai1', 1, 'siege', -2, 0, 160, 160, 18, 2.2),
+    mkUnit('worker-ignored', 'ai1', 1, 'worker', -3, 0),
+  ];
+  const formation = layoutCombatFormation(formationUnits, { x: 30, z: 0 });
+  const slotById = new Map(formation.map((entry) => [entry.unitId, entry]));
+  assert.equal(formation.length, 4, 'workers must not receive combat slots');
+  assert.equal(slotById.get('front-b')?.role, 'frontline');
+  assert.equal(slotById.get('back-b')?.role, 'backline');
+  assert.equal(slotById.get('flank-b')?.role, 'flank');
+  assert.equal(slotById.get('siege-b')?.role, 'siege');
+  assert.ok(slotById.get('front-b')!.x > slotById.get('back-b')!.x, 'frontline must stage closer to the objective');
+  assert.ok(slotById.get('back-b')!.x > slotById.get('siege-b')!.x, 'siege must remain behind ranged units');
+  assert.notEqual(slotById.get('flank-b')!.z, slotById.get('front-b')!.z, 'cavalry should use a flank lane');
+
+  const reversedFormation = layoutCombatFormation([...formationUnits].reverse(), { x: 30, z: 0 });
+  assert.deepEqual(
+    reversedFormation,
+    formation,
+    'slot assignments must not depend on iteration order'
+  );
+  assert.deepEqual(layoutCombatFormation(formationUnits, { x: NaN, z: 0 }), []);
+  assert.deepEqual(layoutCombatFormation([formationUnits[4]], { x: 30, z: 0 }), []);
+  assert.ok(
+    layoutCombatFormation(formationUnits, { x: 500, z: 0 }, 40).every(
+      (entry) => Math.abs(entry.x) <= 40 && Math.abs(entry.z) <= 40
+    ),
+    'slots must be clamped to playable map bounds'
+  );
+
+  const { resolveUnitUnitCollisions, resolveUnitBuildingCollisions, resolveUnitResourceCollisions } =
+    await import('./collision');
+  const crowd = Array.from({ length: 48 }, (_, index) =>
+    mkUnit(`crowd-${index}`, 'ai1', 1, 'melee', 200 + index * 12, 0)
+  );
+  crowd[0].x = 0;
+  crowd[0].z = 0;
+  crowd[1].x = 0.1;
+  crowd[1].z = 0;
+  resolveUnitUnitCollisions(crowd);
+  assert.ok(
+    Math.hypot(crowd[0].x - crowd[1].x, crowd[0].z - crowd[1].z) > 0.1,
+    'spatial broad phase must still resolve nearby unit overlaps in a large army'
+  );
+  assert.equal(crowd[20].x, 440, 'far-away units must not be displaced by local collision resolution');
+
+  const buildingProbe = mkUnit('building-probe', 'ai1', 1, 'melee', 0, 0);
+  const buildingField = Array.from({ length: 40 }, (_, index) =>
+    mkBldg(`distant-building-${index}`, 'ai1', 1, 'tower', 200 + index * 14, 0)
+  );
+  buildingField[0] = mkBldg('nearby-building', 'ai1', 1, 'tower', 0.1, 0);
+  resolveUnitBuildingCollisions([buildingProbe], buildingField);
+  assert.ok(
+    Math.hypot(buildingProbe.x - 0.1, buildingProbe.z) > 1.6,
+    'spatial broad phase must retain nearby solid-building collision'
+  );
+
+  const resourceProbe = mkUnit('resource-probe', 'ai1', 1, 'melee', 0, 0);
+  const resourceField: ResourceNode[] = Array.from({ length: 64 }, (_, index) => ({
+    id: `distant-node-${index}`,
+    resourceType: 'wood',
+    x: 200 + index * 14,
+    z: 0,
+    amount: 500,
+    maxAmount: 500,
+  }));
+  resourceField[0] = {
+    id: 'nearby-gold',
+    resourceType: 'gold',
+    x: 0.2,
+    z: 0,
+    amount: 500,
+    maxAmount: 500,
+  };
+  resolveUnitResourceCollisions([resourceProbe], resourceField);
+  assert.ok(
+    Math.hypot(resourceProbe.x - 0.2, resourceProbe.z) > 2,
+    'spatial broad phase must preserve collisions with nearby resource nodes'
+  );
 });
 
 test('audio-locomotion-buildings: spatial gain, staged construction/damage visuals, and stride phase math', async () => {
@@ -1594,6 +1810,9 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
     z: 0,
     animalVx: 6,
     animalVz: 0,
+    animalPanicSuppressed: false,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
   };
   triggerWildAnimalPanic(trappedDeer, -2, 0, 20);
   const trappedStep = stepWildAnimalState(
@@ -1615,6 +1834,9 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
     z: 0,
     animalVx: 0,
     animalVz: 0,
+    animalPanicSuppressed: false,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
   };
   triggerWildAnimalPanic(openDeer, -3, 0, 30, 1.0);
   let fleeStep = stepWildAnimalState(openDeer, { x: -3, z: 0, d: 3 }, 30.05, 0.05, () => false, () => 0.8);
@@ -1632,6 +1854,70 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
   assert.equal(calmOut.isFleeing, false);
   assert.equal(calmOut.hopY, 0, 'Calm/cooldown deer must never hop in place');
   assert.equal(calmOut.isGrazing, true);
+
+  const followedDeer: ResourceNode = {
+    ...deer,
+    id: 'deer_followed',
+    x: 0,
+    z: 0,
+    animalVx: 0,
+    animalVz: 0,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
+    animalPanicSuppressed: false,
+  };
+  triggerWildAnimalPanic(followedDeer, -3, 0, 50, 1.0);
+  let followedStep = stepWildAnimalState(followedDeer, { x: -3, z: 0, d: 3 }, 50.05, 0.05, () => false, () => 0.5);
+  for (let i = 1; i <= 100; i++) {
+    const time = 50.05 + i * 0.05;
+    followedStep = stepWildAnimalState(
+      followedDeer,
+      { x: followedDeer.x - 3, z: followedDeer.z, d: 3 },
+      time,
+      0.05,
+      () => false,
+      () => 0.5
+    );
+  }
+  assert.equal(followedStep.isFleeing, false, 'A pursuing hunter cannot continually restart the same panic');
+  assert.equal(followedDeer.animalPanicSuppressed, true);
+  stepWildAnimalState(followedDeer, null, 56, 0.05, () => false, () => 0.5);
+  assert.equal(followedDeer.animalPanicSuppressed, false, 'Deer re-arms only after the threat leaves');
+});
+
+test('wild boar (野豬): high food yield, faster harvesting, and aggressive pursuit after provocation', async () => {
+  const { getFoodGatherMultiplier, stepWildBoarState, triggerWildBoarAggression, findBestFoodResourceNode } = await import('./rules');
+  assert.ok(getFoodGatherMultiplier('boar') > getFoodGatherMultiplier('hunt'));
+  assert.equal(getFoodGatherMultiplier('boar'), 1.42);
+  const foodNodes: ResourceNode[] = [
+    { id: 'boar_auto', resourceType: 'food', subtype: 'boar', x: 1, z: 0, amount: 900, maxAmount: 900 },
+    { id: 'berry_auto', resourceType: 'food', subtype: 'berry', x: 4, z: 0, amount: 350, maxAmount: 350 },
+  ];
+  assert.equal(findBestFoodResourceNode(0, 0, foodNodes, 36)?.id, 'berry_auto');
+  assert.equal(findBestFoodResourceNode(0, 0, [foodNodes[0]], 36, false, false, true)?.id, 'boar_auto');
+
+  const boar: ResourceNode = {
+    id: 'boar_test',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 0,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 200,
+    animalMaxHp: 200,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+  triggerWildBoarAggression(boar, 'hunter-1', 10);
+  assert.equal(boar.animalAggroTargetId, 'hunter-1');
+  assert.ok((boar.animalAggroUntil || 0) >= 18);
+  let step = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => false);
+  for (let i = 0; i < 40; i++) step = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => false);
+  assert.ok(boar.x > 0, 'A provoked boar should charge toward its attacker');
+  const stopped = stepWildBoarState(boar, { x: boar.x + 0.5, z: boar.z }, 0.1, () => false);
+  assert.equal(stopped.isCharging, false, 'Boar stops at close-combat distance');
 });
 
 test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter damage, eco multipliers, and AI counter-picks', async () => {
@@ -1818,7 +2104,7 @@ test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter 
   assert.equal(aggDoctrine?.tech.id, 'med_doctrine_crusade');
 });
 
-test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and shared scout parity', async () => {
+test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and Age II stable scout parity', async () => {
   const {
     INITIAL_POPULATION_CAP,
     HOUSE_POPULATION_BONUS,
@@ -1834,6 +2120,7 @@ test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reser
   assert.equal(DEFAULT_BUILDINGS.house.populationProvided, 5);
   assert.equal(DEFAULT_BUILDINGS.barracks.populationProvided, undefined);
   assert.equal(DEFAULT_BUILDINGS.archery_range.populationProvided, undefined);
+  assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
   assert.equal(BUILDING_HOTKEYS.house, 'E');
 
   const scout = SHARED_UNITS.find((u) => u.id === 'scout_rider');
@@ -1841,8 +2128,8 @@ test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reser
   for (const civ of ['medieval', 'anime', 'fantasy'] as const) {
     assert.ok(getBuildableTypesForCiv(civ).includes('house'), `${civ} must be able to build House`);
     assert.ok(
-      getTrainableUnitsForBuilding('town_center', civ).includes('scout_rider'),
-      `${civ} TC must be able to train shared scout_rider`
+      getTrainableUnitsForBuilding('stable', civ).includes('scout_rider'),
+      `${civ} stable must be able to train shared Age II scout_rider`
     );
   }
 
@@ -2005,12 +2292,12 @@ test('high-speed-presets-and-continuous-construction: 10x/20x speeds, substeppin
   assert.equal(finished.planksOpacity, 0);
 });
 
-test('unit-portraits: distinct portrait specs for all 20 built-in units and all modelType fallbacks', async () => {
+test('unit-portraits: every built-in unit has a distinct portrait spec and all modelType fallbacks exist', async () => {
   const { getUnitPortraitSpec } = await import('./unitPortraits');
   const { SHARED_UNITS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS } = await import('./mods');
 
   const allUnits = [...SHARED_UNITS, ...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS];
-  assert.equal(allUnits.length, 20, `Expected 20 built-in units, found ${allUnits.length}`);
+  assert.ok(allUnits.length >= 20, `Expected at least 20 built-in units, found ${allUnits.length}`);
 
   const seenKeys = new Set<string>();
   for (const unit of allUnits) {
@@ -2020,7 +2307,7 @@ test('unit-portraits: distinct portrait specs for all 20 built-in units and all 
     assert.ok(spec.accentHex.startsWith('#'));
     seenKeys.add(spec.key);
   }
-  assert.equal(seenKeys.size, 20);
+  assert.equal(seenKeys.size, allUnits.length, 'Every built-in unit needs its own dedicated portrait');
 
   const modelTypes = [
     'villager',
@@ -2039,4 +2326,697 @@ test('unit-portraits: distinct portrait specs for all 20 built-in units and all 
     const fallbackSpec = getUnitPortraitSpec(`custom_${mt}`, mt);
     assert.equal(fallbackSpec.key, `fallback_${mt}`);
   }
+});
+
+
+test('field engineering: ram assembly uses one shared Age II, research, infantry and resource gate', () => {
+  const resources = { food: 0, wood: 180, gold: 80, stone: 0 };
+  assert.deepEqual(FIELD_RAM_COST, { food: 0, wood: 140, gold: 60, stone: 0 });
+  assert.equal(isAgeUnlocked(2, 1), false);
+  assert.equal(isAgeUnlocked(2, 2), true);
+  assert.equal(canAssembleFieldRam(1, [FIELD_RAM_TECH_ID], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [], 4, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 3, resources).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, { ...resources, wood: 139 }).ok, false);
+  assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, resources).ok, true);
+});
+
+
+test('AI siege: all personalities field-assemble battering rams instead of training them from buildings', async () => {
+  const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
+  const allPersonalityRules = [
+    ...DEFAULT_AI_RULES,
+    ...DEFENSIVE_AI_RULES,
+    ...EASY_AI_RULES,
+    ...HARD_AI_RULES,
+  ];
+  const invalidRamTrainRules = allPersonalityRules.filter(
+    (rule) => rule.action.type === 'train_unit' && rule.action.targetId === 'battering_ram'
+  );
+  assert.deepEqual(invalidRamTrainRules.map((rule) => rule.id), []);
+});
+
+
+test('AI progression: mandatory field engineering takes priority only when safe and ready', () => {
+  const base = {
+    age: 2,
+    researched: false,
+    researchInProgress: false,
+    meleeUnitCount: 4,
+    hasAvailableBarracks: true,
+    prerequisitesMet: true,
+    resources: { food: 1400, wood: 180, gold: 700, stone: 0 },
+    reserveFood: 1200,
+    reserveGold: 600,
+    techCost: { food: 80, wood: 120, gold: 60, stone: 0 },
+  };
+
+  assert.equal(shouldPrioritizeAiFieldEngineering(base), true);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, age: 1 }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, researched: true }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, researchInProgress: true }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, meleeUnitCount: 3 }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, hasAvailableBarracks: false }), false);
+  assert.equal(shouldPrioritizeAiFieldEngineering({ ...base, prerequisitesMet: false }), false);
+  assert.equal(
+    shouldPrioritizeAiFieldEngineering({
+      ...base,
+      resources: { ...base.resources, food: 1279 },
+    }),
+    false,
+    'AI must preserve the next landmark food reserve'
+  );
+  assert.equal(
+    shouldPrioritizeAiFieldEngineering({
+      ...base,
+      resources: { ...base.resources, gold: 659 },
+    }),
+    false,
+    'AI must preserve the next landmark gold reserve'
+  );
+});
+
+
+test('AI army composition: role counters prevent single-unit-type overproduction', async () => {
+  const { evaluateCondition } = await import('./rules');
+  const cavalryUnderCap = { field: 'cavalryCount', operator: '<', value: 4 } as const;
+  const rangedUnderCap = { field: 'rangedCount', operator: '<', value: 8 } as const;
+  const meleeUnderCap = { field: 'meleeCount', operator: '<', value: 10 } as const;
+  const siegeUnderCap = { field: 'siegeCount', operator: '<', value: 2 } as const;
+
+  const snapshot = {
+    food: 500,
+    wood: 500,
+    gold: 500,
+    stone: 200,
+    armyCount: 18,
+    workerCount: 12,
+    underAttack: 0,
+    enemyProximity: 40,
+    gameTime: 180,
+    age: 3,
+    cavalryCount: 4,
+    rangedCount: 3,
+    meleeCount: 9,
+    siegeCount: 1,
+  };
+
+  assert.equal(evaluateCondition(cavalryUnderCap, snapshot), false);
+  assert.equal(evaluateCondition(rangedUnderCap, snapshot), true);
+  assert.equal(evaluateCondition(meleeUnderCap, snapshot), true);
+  assert.equal(evaluateCondition(siegeUnderCap, snapshot), true);
+  assert.equal(resolveAiKnightUnitId('anime'), 'scout_rider');
+  assert.equal(resolveAiKnightUnitId('fantasy'), 'fantasy_paladin');
+  assert.equal(resolveAiKnightUnitId('medieval'), 'knight');
+});
+
+test('AI army composition: every personality has role-aware military training caps', async () => {
+  const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
+  const cases = [
+    { rules: DEFAULT_AI_RULES, melee: 10, ranged: 8, cavalry: 4, siege: 2 },
+    { rules: DEFENSIVE_AI_RULES, melee: 8, ranged: 6, cavalry: null, siege: null },
+    { rules: EASY_AI_RULES, melee: 6, ranged: 6, cavalry: null, siege: null },
+    { rules: HARD_AI_RULES, melee: 10, ranged: 10, cavalry: 5, siege: 2 },
+  ] as const;
+
+  for (const item of cases) {
+    const trainingRules = item.rules.filter((rule) => rule.action.type === 'train_unit');
+    const hasCap = (targetId: string, field: string, value: number) =>
+      trainingRules.some(
+        (rule) =>
+          rule.action.targetId === targetId &&
+          rule.conditions.some((condition) => condition.field === field && condition.operator === '<' && condition.value === value)
+      );
+    assert.ok(hasCap('swordsman', 'meleeCount', item.melee), 'melee needs a role cap');
+    assert.ok(hasCap('longbowman', 'rangedCount', item.ranged), 'ranged needs a role cap');
+    if (item.cavalry !== null) assert.ok(hasCap('knight', 'cavalryCount', item.cavalry), 'cavalry needs a role cap');
+    if (item.siege !== null) {
+      assert.ok(trainingRules.some((rule) => rule.action.targetId === 'catapult' && rule.conditions.some((c) => c.field === 'siegeCount' && c.value === item.siege)), 'siege needs a role cap');
+    }
+  }
+});
+
+
+test('siege tactics: select nearby frontline escorts and preserve units with active orders', () => {
+  const siege = [{ x: 10, z: 10 }, { x: 12, z: 10 }];
+  const candidates = [
+    { id: 'far-melee', x: 19, z: 10, state: 'idle', unitDef: { category: 'melee' as const } },
+    { id: 'near-ranged', x: 11, z: 10, state: 'idle', unitDef: { category: 'ranged' as const } },
+    { id: 'near-cavalry', x: 12, z: 12, state: 'idle', unitDef: { category: 'cavalry' as const } },
+    { id: 'busy-melee', x: 10, z: 10, state: 'attacking', unitDef: { category: 'melee' as const } },
+    { id: 'other-siege', x: 10, z: 11, state: 'idle', unitDef: { category: 'siege' as const } },
+    { id: 'worker', x: 10, z: 11, state: 'idle', unitDef: { category: 'worker' as const } },
+  ];
+
+  const escort = selectSiegeEscortUnits(siege, candidates, 2);
+  assert.deepEqual(escort.map((unit) => unit.id), ['near-cavalry', 'far-melee']);
+  assert.deepEqual(selectSiegeEscortUnits([], candidates, 2), []);
+  assert.deepEqual(selectSiegeEscortUnits(siege, candidates, 0), []);
+});
+
+
+test('AI survival: damaged frontline units seek shelter by role and personality', async () => {
+  const { shouldAiUnitSeekShelter } = await import('./rules');
+
+  assert.equal(shouldAiUnitSeekShelter(35, 100, 'ranged', 'standard'), true);
+  assert.equal(shouldAiUnitSeekShelter(35, 100, 'melee', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(27, 100, 'melee', 'standard'), true);
+  assert.equal(shouldAiUnitSeekShelter(36, 100, 'melee', 'defensive'), true);
+  assert.equal(shouldAiUnitSeekShelter(27, 100, 'melee', 'hard'), false);
+  assert.equal(shouldAiUnitSeekShelter(15, 100, 'siege', 'defensive'), false);
+  assert.equal(shouldAiUnitSeekShelter(10, 100, 'worker', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(0, 0, 'melee', 'standard'), false);
+  assert.equal(shouldAiUnitSeekShelter(Number.NaN, 100, 'melee', 'standard'), false);
+});
+
+test('AI garrison recovery: workers return immediately and wounded troops wait until healed', async () => {
+  const { shouldAiUnitLeaveShelter } = await import('./rules');
+
+  assert.equal(shouldAiUnitLeaveShelter(10, 100, 'worker'), true);
+  assert.equal(shouldAiUnitLeaveShelter(71, 100, 'melee'), false);
+  assert.equal(shouldAiUnitLeaveShelter(72, 100, 'melee'), true);
+  assert.equal(shouldAiUnitLeaveShelter(90, 100, 'ranged', 0.9), true);
+  assert.equal(shouldAiUnitLeaveShelter(89, 100, 'ranged', 0.9), false);
+  assert.equal(shouldAiUnitLeaveShelter(100, 0, 'cavalry'), false);
+  assert.equal(shouldAiUnitLeaveShelter(100, 100, 'cavalry', Number.NaN), true);
+});
+
+test('AI economy: rebalance one worker from a clear surplus into the largest resource deficit', () => {
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 1 }
+    ),
+    { from: 'wood', to: 'food' }
+  );
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 1, wood: 1, gold: 4, stone: 0 },
+      { food: 1, wood: 3, gold: 1, stone: 1 }
+    ),
+    { from: 'gold', to: 'wood' }
+  );
+  assert.equal(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 2, gold: 1, stone: 1 },
+      { food: 2, wood: 2, gold: 1, stone: 1 }
+    ),
+    null
+  );
+  assert.equal(
+    selectAiWorkerReassignment(
+      { food: 3, wood: 1, gold: 1, stone: 1 },
+      { food: 2, wood: 2, gold: 1, stone: 1 }
+    ),
+    null,
+    'Do not churn workers for one-worker differences'
+  );
+});
+
+
+test('wall-chain planning: creates modular segments for each polyline edge and scales costs by distance', async () => {
+  const { layoutWallChain, calculateWallChainCost, WALL_SEGMENT_SPACING } = await import('./rules');
+  const layout = layoutWallChain([
+    { x: 0, z: 0 },
+    { x: 5.4, z: 0 },
+    { x: 5.4, z: 5.4 },
+  ]);
+
+  assert.equal(WALL_SEGMENT_SPACING, 2.7);
+  assert.equal(layout.length, 4);
+  assert.deepEqual(
+    layout.map((segment) => [Number(segment.x.toFixed(2)), Number(segment.z.toFixed(2))]),
+    [[1.35, 0], [4.05, 0], [5.4, 1.35], [5.4, 4.05]]
+  );
+  assert.ok(layout.slice(0, 2).every((segment) => Math.abs(segment.rotationY) < 0.001));
+  assert.ok(layout.slice(2).every((segment) => Math.abs(segment.rotationY + Math.PI / 2) < 0.001));
+  assert.deepEqual(calculateWallChainCost(layout.length, { food: 0, wood: 25, gold: 0, stone: 10 }), {
+    food: 0,
+    wood: 100,
+    gold: 0,
+    stone: 40,
+  });
+  assert.deepEqual(layoutWallChain([{ x: 0, z: 0 }, { x: 0.5, z: 0 }]), []);
+  assert.deepEqual(calculateWallChainCost(-3, { food: 0, wood: 25, gold: 0, stone: 10 }), {
+    food: 0, wood: 0, gold: 0, stone: 0,
+  });
+});
+
+
+test('wall defence: siege thresholds create breaches, linked towers add armor, and repair uses fixed materials', async () => {
+  const { WALL_BREACH_HP_RATIO, WALL_REPAIR_COST, isWallLinkedToTower, shouldBreachWallAfterSiegeHit, getEffectiveBuildingArmor } = await import('./rules');
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+  const { getBuildableTypesForCiv } = await import('./civilizations');
+  const { BUILDING_HOTKEYS, eventCodeToHotkeyLabel } = await import('./hotkeys');
+  assert.equal(BUILDING_HOTKEYS.gate, '0');
+  assert.equal(eventCodeToHotkeyLabel('Digit0'), '0');
+  assert.ok(['medieval', 'anime', 'fantasy'].every((civ) => getBuildableTypesForCiv(civ as any).includes('gate')));
+  const wall = {
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    faction: 'player' as const,
+    x: 0,
+    z: 0,
+    hp: 250,
+    maxHp: DEFAULT_BUILDINGS.wall.maxHp,
+    isConstructed: true,
+    wallBreached: false,
+  };
+  assert.equal(WALL_BREACH_HP_RATIO, 0.32);
+  assert.equal(shouldBreachWallAfterSiegeHit(wall), true);
+  assert.deepEqual(WALL_REPAIR_COST, { food: 0, wood: 12, gold: 0, stone: 5 });
+  assert.equal(
+    shouldBreachWallAfterSiegeHit({ ...wall, hp: 500 }),
+    false,
+    'a wall above the threshold stays sealed'
+  );
+  assert.equal(
+    shouldBreachWallAfterSiegeHit({ ...wall, wallBreached: true }),
+    false,
+    'an already open breach is not repeatedly re-triggered'
+  );
+
+  const tower = {
+    buildingType: 'tower' as const,
+    faction: 'player' as const,
+    x: 4.5,
+    z: 0,
+    hp: 700,
+    isConstructed: true,
+  };
+  assert.equal(isWallLinkedToTower(wall, [tower]), true);
+  assert.equal(isWallLinkedToTower({ ...wall, buildingType: 'gate' as const, gateOpen: true }, [tower]), false);
+  assert.equal(isWallLinkedToTower({ ...wall, buildingType: 'gate' as const, gateOpen: false }, [tower]), true);
+  assert.equal(isWallLinkedToTower(wall, [{ ...tower, faction: 'enemy' as const }]), false);
+  assert.equal(isWallLinkedToTower(wall, [{ ...tower, x: 12 }]), false);
+  const baseArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: false }, 1, []);
+  const linkedArmor = getEffectiveBuildingArmor({ buildingDef: DEFAULT_BUILDINGS.wall, buildingType: 'wall', wallTowerLinked: true }, 1, []);
+  assert.equal(linkedArmor - baseArmor, 4);
+});
+
+
+test('gate and breached wall collision: opening a gate or breaking a wall creates a real navigation passage', async () => {
+  const { getBuildingCollisionRadius } = await import('./collision');
+  const { DEFAULT_BUILDINGS } = await import('./mods');
+
+  const closedGate = {
+    buildingType: 'gate' as const,
+    buildingDef: DEFAULT_BUILDINGS.gate,
+    gateOpen: false,
+    wallBreached: false,
+  };
+  assert.equal(getBuildingCollisionRadius(closedGate), DEFAULT_BUILDINGS.gate.size);
+  assert.equal(getBuildingCollisionRadius({ ...closedGate, gateOpen: true }), 0);
+  assert.equal(getBuildingCollisionRadius({ ...closedGate, wallBreached: true }), 0);
+
+  const repairedWall = {
+    buildingType: 'wall' as const,
+    buildingDef: DEFAULT_BUILDINGS.wall,
+    wallBreached: false,
+  };
+  assert.equal(getBuildingCollisionRadius(repairedWall), DEFAULT_BUILDINGS.wall.size);
+  assert.equal(getBuildingCollisionRadius({ ...repairedWall, wallBreached: true }), 0);
+});
+
+test('art-direction: new original faction character kits add sculpted silhouette and face detail without external model files', async () => {
+  const {
+    createBuildingFacadeKit,
+    createBuildingHeritageKit,
+    createCharacterFaceDetails,
+    createCharacterHandDetails,
+    createUnitSignatureKit,
+    getDeterministicArtVariant,
+    getUnitBodyProportionProfile,
+  } = await import('./artDirection');
+
+  const palette = { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 };
+  const civilizations = ['medieval', 'anime', 'fantasy'] as const;
+  for (const civilization of civilizations) {
+    const kit = createUnitSignatureKit({
+      unitId: `art-test-${civilization}`,
+      civilization,
+      category: 'melee',
+      modelType: 'swordsman',
+      age: 3,
+      palette,
+    });
+    assert.equal(kit.name, 'originalFactionSilhouetteKit');
+    assert.equal(kit.children.length, 2);
+    const mesh = kit.children[0] as import('three').Mesh;
+    const cloth = kit.children[1] as import('three').Mesh;
+    assert.ok(mesh.geometry.getAttribute('color').count > 100, civilization + ' art kit should contain authored colored geometry');
+    assert.equal(mesh.castShadow, true);
+    assert.equal(cloth.name, 'originalFactionCloth');
+    assert.ok(cloth.geometry.getAttribute('color').count > 100, civilization + ' cloth should be thick, merged, vertex-coloured geometry');
+    assert.equal((cloth.material as import('three').MeshStandardMaterial).roughness, 0.9);
+    assert.equal((cloth.material as import('three').MeshStandardMaterial).metalness, 0.025);
+    assert.equal(kit.userData.artDirection, civilization);
+  }
+
+  const workerKit = createUnitSignatureKit({
+    unitId: 'art-test-worker',
+    civilization: 'medieval',
+    category: 'worker',
+    modelType: 'villager',
+    age: 1,
+    palette,
+  });
+  assert.equal(workerKit.userData.artRole, 'laborer');
+
+  const siegeKit = createUnitSignatureKit({
+    unitId: 'art-test-siege',
+    civilization: 'fantasy',
+    category: 'siege',
+    modelType: 'ram',
+    age: 3,
+    palette,
+  });
+  assert.equal(siegeKit.children.length, 0, 'siege and naval silhouettes must remain purpose-built');
+
+  const guardianKit = createUnitSignatureKit({
+    unitId: 'art-test-guardian',
+    civilization: 'medieval',
+    category: 'melee',
+    modelType: 'guardian',
+    age: 3,
+    palette,
+  });
+  const oracleKit = createUnitSignatureKit({
+    unitId: 'art-test-oracle',
+    civilization: 'fantasy',
+    category: 'special',
+    modelType: 'oracle',
+    age: 3,
+    palette,
+  });
+  const artificerKit = createUnitSignatureKit({
+    unitId: 'art-test-artificer',
+    civilization: 'anime',
+    category: 'worker',
+    modelType: 'artificer',
+    age: 2,
+    palette,
+  });
+  assert.equal(guardianKit.userData.artRole, 'frontline');
+  assert.equal(oracleKit.userData.artRole, 'arcanist');
+  assert.equal(artificerKit.userData.artRole, 'artificer');
+  assert.equal(artificerKit.children[1].name, 'originalFactionCloth');
+
+  const face = createCharacterFaceDetails(0x1d4ed8);
+  assert.equal(face.name, 'sculptedCharacterFace');
+  assert.equal(face.children.length, 1);
+  assert.ok((face.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100);
+
+  const animeFace = createCharacterFaceDetails(0x38bdf8, {
+    civilization: 'anime',
+    modelType: 'ninja',
+    unitId: 'anime-ninja-hair-01',
+  });
+  assert.equal(animeFace.children.length, 2, 'anime identity includes one independent long-hair pivot');
+  const hairPivot = animeFace.children[1] as import('three').Group;
+  assert.equal(hairPivot.name, 'secondaryMotion:hair');
+  assert.equal(hairPivot.userData.secondaryMotion.axis, 'x');
+  assert.ok(hairPivot.userData.secondaryMotion.amplitude > 0);
+  const sameAnimeFace = createCharacterFaceDetails(0x38bdf8, {
+    civilization: 'anime',
+    modelType: 'ninja',
+    unitId: 'anime-ninja-hair-01',
+  });
+  assert.equal(
+    (animeFace.children[0] as import('three').Mesh).geometry,
+    (sameAnimeFace.children[0] as import('three').Mesh).geometry,
+    'identical unit identities should share cached face/hairline geometry'
+  );
+  const fantasyFace = createCharacterFaceDetails(0x67e8f9, {
+    civilization: 'fantasy',
+    modelType: 'oracle',
+    unitId: 'fantasy-oracle-hair-02',
+  });
+  assert.equal(fantasyFace.userData.artCivilization, 'fantasy');
+  assert.equal(fantasyFace.children[1].name, 'secondaryMotion:hair');
+
+
+  const rightHand = createCharacterHandDetails(0xf7cbb8, palette.secondary, 'medieval', 'hand-test-unit');
+  const mirroredHand = createCharacterHandDetails(0xf7cbb8, palette.secondary, 'medieval', 'hand-test-unit', true);
+  assert.equal(rightHand.name, 'sculptedGripHand:right');
+  assert.equal(rightHand.children.length, 1);
+  assert.equal(mirroredHand.scale.x, -1, 'off-hand anatomy mirrors without regenerating geometry');
+  const handMesh = rightHand.children[0] as import('three').Mesh;
+  assert.ok(handMesh.geometry.getAttribute('color').count > 100, 'five-digit grip geometry is merged into one draw call');
+  assert.equal(handMesh.geometry, (mirroredHand.children[0] as import('three').Mesh).geometry, 'matching grip identities reuse cached hand geometry');
+
+  for (const civilization of civilizations) {
+    const crown = createBuildingHeritageKit(
+      'town_center',
+      civilization,
+      palette,
+      4.4
+    );
+    assert.equal(crown.name, 'originalArchitectureHeritageKit');
+    assert.equal(crown.children.length, 1);
+    assert.ok(
+      (crown.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100,
+      civilization + ' architecture crown should contain original colored geometry'
+    );
+  }
+  assert.equal(
+    createBuildingHeritageKit('farm', 'medieval', palette, 4).children.length,
+    0,
+    'functional field buildings should not receive decorative roof crowns'
+  );
+
+
+  for (const civilization of civilizations) {
+    const facade = createBuildingFacadeKit('house', civilization, palette, 3.8, 3.6, 3.4);
+    assert.equal(facade.name, 'originalArchitectureFacadeKit');
+    assert.equal(facade.children.length, 1);
+    const facadeMesh = facade.children[0] as import('three').Mesh;
+    assert.ok(facadeMesh.geometry.getAttribute('color').count > 300, civilization + ' facade should merge its structural modules');
+    assert.equal(facadeMesh.userData.distanceLodMinPixels, 4.5, 'decorative facade details can be removed at distant scale');
+    const sameFacade = createBuildingFacadeKit('house', civilization, palette, 3.8, 3.6, 3.4);
+    assert.equal(facadeMesh.geometry, (sameFacade.children[0] as import('three').Mesh).geometry, 'matching building footprints reuse facade geometry');
+  }
+  assert.equal(createBuildingFacadeKit('farm', 'medieval', palette, 4, 4, 2).children.length, 0);
+  assert.equal(createBuildingFacadeKit('wall', 'anime', palette, 3, 1, 1).children.length, 0);
+  assert.equal(createBuildingFacadeKit('gate', 'fantasy', palette, 3, 1, 2).children.length, 0);
+
+
+  const guardianProfile = getUnitBodyProportionProfile('guardian-unit-01', 'melee', 'guardian');
+  const rangerProfile = getUnitBodyProportionProfile('ranger-unit-01', 'ranged', 'archer');
+  const artificerProfile = getUnitBodyProportionProfile('artificer-unit-01', 'worker', 'artificer');
+  assert.equal(guardianProfile.archetype, 'frontline');
+  assert.equal(rangerProfile.archetype, 'ranger');
+  assert.equal(artificerProfile.archetype, 'artificer');
+  assert.ok(guardianProfile.scaleX > rangerProfile.scaleX, 'frontline units should have a broader shoulder/torso silhouette than rangers');
+  assert.ok(rangerProfile.scaleY > guardianProfile.scaleY, 'rangers should read taller and leaner than frontline units');
+  assert.deepEqual(
+    getUnitBodyProportionProfile('guardian-unit-01', 'melee', 'guardian'),
+    guardianProfile,
+    'the same unit identity must always receive the same body proportions'
+  );
+  for (const value of [guardianProfile.scaleX, guardianProfile.scaleY, guardianProfile.scaleZ, rangerProfile.scaleX, rangerProfile.scaleY, artificerProfile.scaleZ]) {
+    assert.ok(value >= 0.9 && value <= 1.12, 'proportion variation must remain subtle and animation-safe');
+  }
+
+  const variantA = getDeterministicArtVariant('unit-hero-01');
+  assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
+  assert.ok(variantA === 0 || variantA === 1 || variantA === 2);
+});
+
+
+test('art-direction: building architecture visibly evolves by age and faction with cached geometry', async () => {
+  const THREE = await import('three');
+  const { createBuildingAgeEvolutionKit } = await import('./artDirection');
+  const palette = { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 };
+  const civilizations = ['medieval', 'anime', 'fantasy'] as const;
+  for (const civilization of civilizations) {
+    const age1 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 1);
+    const age2 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 2);
+    const age3 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 3);
+    const age4 = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 4);
+    assert.equal(age1.children.length, 0, 'Age I should retain the original early-game silhouette');
+    assert.equal(age2.userData.ageTier, 2);
+    assert.equal(age2.children.length, 1);
+    assert.equal(age3.children.length, 1);
+    assert.equal(age4.children.length, 1);
+    const eraMesh = age4.children[0] as import('three').Mesh;
+    assert.ok(eraMesh.geometry.getAttribute('color').count > 500, civilization + ' Age IV structure needs a rich merged crown');
+    const sameAge = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 4);
+    assert.equal(eraMesh.geometry, (sameAge.children[0] as import('three').Mesh).geometry, 'age modules should reuse cached geometry');
+  }
+  assert.equal(createBuildingAgeEvolutionKit('farm', 'medieval', palette, 4, 4, 2, 4).children.length, 0);
+  assert.equal(createBuildingAgeEvolutionKit('wall', 'anime', palette, 3, 1, 1, 4).children.length, 0);
+});
+
+test('art-direction: existing buildings can swap era kits without replacing their structural meshes', async () => {
+  const THREE = await import('three');
+  const { updateBuildingAgeVisuals } = await import('./proceduralGraphics');
+  const group = new THREE.Group();
+  const structuralMesh = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+  group.add(structuralMesh);
+  group.userData.buildingArchitecture = {
+    type: 'barracks',
+    civilization: 'fantasy',
+    palette: { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 },
+    width: 3, depth: 3, height: 3,
+    centerX: 0, centerY: 1.5, centerZ: 0, topY: 3,
+  };
+  updateBuildingAgeVisuals(group, 2);
+  const firstStructural = group.children[0];
+  assert.equal(firstStructural, structuralMesh);
+  assert.equal(group.getObjectByName('buildingAgeEvolutionKit')?.userData.ageTier, 2);
+  updateBuildingAgeVisuals(group, 4);
+  assert.equal(group.children[0], structuralMesh);
+  assert.equal(group.getObjectByName('buildingAgeEvolutionKit')?.userData.ageTier, 4);
+  assert.equal(group.userData.buildingAgeTier, 4);
+});
+
+test('visuals: woodland species and wind seeds are stable for the same resource node id', async () => {
+  const { createTreeMesh } = await import('./proceduralGraphics');
+  const a = createTreeMesh(false, 'standard', 320, 'forest-node-17');
+  const b = createTreeMesh(false, 'standard', 320, 'forest-node-17');
+  const c = createTreeMesh(false, 'standard', 320, 'forest-node-18');
+  assert.equal(a.userData.treeSpecies, b.userData.treeSpecies);
+  assert.deepEqual(a.userData.treeWind, b.userData.treeWind);
+  assert.equal(a.userData.treeSeed, 'forest-node-17');
+  assert.notDeepEqual(a.userData.treeWind, c.userData.treeWind, 'different nodes should have different wind phases and sway');
+  const canopyA = a.userData.treeCanopy as import('three').Object3D;
+  const canopyB = b.userData.treeCanopy as import('three').Object3D;
+  assert.deepEqual(canopyA.rotation.toArray(), canopyB.rotation.toArray());
+});
+
+test('visuals: heavily damaged buildings reveal structural cracks and base debris without mutating shared materials', async () => {
+  const THREE = await import('three');
+  const { applyBuildingDamageVisuals, disposeBuildingVisualResources } = await import('./proceduralGraphics');
+  const group = new THREE.Group();
+  const originalMaterial = new THREE.MeshStandardMaterial({ color: 0x9ca3af });
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(4, 3, 3), originalMaterial));
+  group.userData.buildingArchitecture = {
+    width: 4, depth: 3, height: 3, centerX: 0, centerY: 1.5, centerZ: 0,
+  };
+  applyBuildingDamageVisuals(group, 0.72, false, 0.012, 3.5);
+  const layer = group.getObjectByName('buildingDamageDetailLayer') as import('three').Group;
+  assert.ok(layer, 'critical structures should receive a localized damage layer');
+  assert.equal(layer.getObjectByName('buildingDamageCrackPrimary')?.visible, true);
+  assert.equal(layer.getObjectByName('buildingDamageCrackSecondary')?.visible, true);
+  assert.equal(layer.getObjectByName('buildingDamageDebris')?.visible, true);
+  assert.equal((group.children[0] as import('three').Mesh).material === originalMaterial, false, 'per-building damage tint must clone the shared material');
+  assert.equal(originalMaterial.color.getHex(), 0x9ca3af, 'shared material remains untouched');
+  disposeBuildingVisualResources(group);
+  assert.equal(group.getObjectByName('buildingDamageDetailLayer'), undefined);
+});
+
+
+test('visual allocation: teammates share a team outline colour while opposing teams remain distinct', () => {
+  const teamOneA = getTeamVisualColor(1);
+  const teamOneB = getTeamVisualColor(1);
+  const teamTwo = getTeamVisualColor(2);
+  const teamThree = getTeamVisualColor(3);
+  const teamFour = getTeamVisualColor(4);
+  assert.deepEqual(teamOneA, teamOneB, 'same team must resolve the same tactical colour');
+  assert.notEqual(teamOneA.colorHex, teamTwo.colorHex);
+  assert.notEqual(teamTwo.colorHex, teamThree.colorHex);
+  assert.notEqual(teamThree.colorHex, teamFour.colorHex);
+  assert.equal(getTeamVisualColor(5).colorHex, teamOneA.colorHex, 'palette wrapping remains deterministic beyond four teams');
+  assert.notEqual(
+    DEFAULT_PARTICIPANT_PALETTE[0].colorHex,
+    DEFAULT_PARTICIPANT_PALETTE[2].colorHex,
+    'different factions retain their own livery even when allied'
+  );
+});
+
+
+test('visual allocation: unit health bars are hidden at full HP and shown only after damage', () => {
+  assert.equal(shouldShowUnitHealthBar(100, 100), false);
+  assert.equal(shouldShowUnitHealthBar(99.9, 100), false, 'tiny floating-point noise at full HP should not reveal a bar');
+  assert.equal(shouldShowUnitHealthBar(99, 100), true);
+  assert.equal(shouldShowUnitHealthBar(25, 100), true);
+  assert.equal(shouldShowUnitHealthBar(0, 100), false, 'dead units do not retain a live health bar');
+  assert.equal(shouldShowUnitHealthBar(20, 0), false);
+});
+
+test('battlefield visual hierarchy: workers stay compact while champions and signature roles remain readable', () => {
+  const worker = getBattlefieldVisualProfile('worker', 'villager', false, 1, false);
+  const infantry = getBattlefieldVisualProfile('melee', 'swordsman', false, 1, false);
+  const special = getBattlefieldVisualProfile('special', 'oracle', false, 1, true);
+  const champion = getBattlefieldVisualProfile('melee', 'swordsman', false, 3, false);
+  const siege = getBattlefieldVisualProfile('siege', 'ram', false, 1, false);
+  const naval = getBattlefieldVisualProfile('siege', 'boat', true, 1, false);
+
+  assert.equal(worker.tier, 'worker');
+  assert.equal(worker.roleMarker, null);
+  assert.ok(worker.badgeScale < infantry.badgeScale);
+  assert.ok(worker.badgeThresholdPx > infantry.badgeThresholdPx);
+  assert.equal(special.tier, 'special');
+  assert.equal(special.roleMarker, 'crest');
+  assert.ok(special.badgeThresholdPx < infantry.badgeThresholdPx);
+  assert.equal(champion.tier, 'champion');
+  assert.ok(champion.badgeThresholdPx < special.badgeThresholdPx);
+  assert.equal(siege.tier, 'siege');
+  assert.equal(siege.roleMarker, 'siege');
+  assert.equal(naval.tier, 'naval');
+});
+
+test('battlefield particle budget: preserve key combat cues and reduce decorative bursts under load', () => {
+  assert.equal(computeParticleBurstCount(12, 2, 40, 'dust'), 10);
+  assert.equal(computeParticleBurstCount(0, 0, 500, 'hit'), 0);
+
+  const lowQualityHit = computeParticleBurstCount(18, 0, 520, 'hit');
+  const lowQualityDust = computeParticleBurstCount(18, 0, 520, 'dust');
+  const highQualityDust = computeParticleBurstCount(18, 2, 520, 'dust');
+
+  assert.ok(lowQualityHit > lowQualityDust);
+  assert.ok(highQualityDust > lowQualityDust);
+  assert.ok(lowQualityDust >= 1);
+  assert.ok(lowQualityHit <= 18);
+});
+
+
+test('performance diagnostics: frame-time average, p95 and hitch maximum ignore invalid samples', () => {
+  assert.deepEqual(summarizeFrameTimes([]), { averageMs: 0, p95Ms: 0, maxMs: 0 });
+  assert.deepEqual(
+    summarizeFrameTimes([10, 20, 30, 40, 100, Number.NaN, 0, -4]),
+    { averageMs: 40, p95Ms: 100, maxMs: 100 }
+  );
+});
+
+
+test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit counts and mixed roles', async () => {
+  const { createBattleStressPlan } = await import('./battleStress');
+  for (const count of [100, 200, 400] as const) {
+    const plan = createBattleStressPlan(count, 12345);
+    const sameSeed = createBattleStressPlan(count, 12345);
+    const differentSeed = createBattleStressPlan(count, 54321);
+
+    assert.equal(plan.unitCount, count);
+    assert.equal(plan.starterUnitCount, 16);
+    assert.equal(plan.units.length + plan.starterUnitCount, count);
+    assert.equal(plan.participants.length, 4);
+    assert.equal(plan.participants.every((participant) => participant.controller === 'ai'), true);
+    assert.equal(new Set(plan.participants.map((participant) => participant.team)).size, 4);
+    assert.deepEqual(plan, sameSeed, 'the same seed must produce the same full battle plan');
+    assert.notDeepEqual(plan.units, differentSeed.units, 'different seeds must change deterministic formations');
+
+    const unitIds = plan.units.map((unit) => unit.id);
+    assert.equal(new Set(unitIds).size, unitIds.length, 'all generated unit ids must be unique');
+    assert.ok(plan.units.every((unit) =>
+      Number.isFinite(unit.x) &&
+      Number.isFinite(unit.z) &&
+      Number.isFinite(unit.targetX) &&
+      Number.isFinite(unit.targetZ) &&
+      Math.abs(unit.x) <= 80 &&
+      Math.abs(unit.z) <= 80
+    ));
+    assert.deepEqual(
+      new Set(plan.participants.map((participant) => participant.aiPersonality)),
+      new Set(['easy', 'standard', 'hard', 'defensive'])
+    );
+    assert.equal(
+      new Set(plan.participants.map((participant) => participant.civilization)).size,
+      3,
+      'the four teams should exercise all three built-in civilizations'
+    );
+  }
+  assert.throws(() => createBattleStressPlan(150, 12345), /100, 200, or 400/);
+  assert.throws(() => createBattleStressPlan(100, Number.NaN), /finite number/);
 });

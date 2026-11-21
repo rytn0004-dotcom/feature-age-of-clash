@@ -30,6 +30,7 @@ import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
 import {
   canAfford,
+  canAssembleFieldRam,
   FARM_RESEED_WOOD_COST,
   GAME_SPEED_OPTIONS,
   getBuildingCombatStats,
@@ -38,6 +39,7 @@ import {
   getEffectiveBuildingArmor,
   getEffectiveGatherMultiplier,
   getFactionPopulationStats,
+  getTeamVisualColor,
 } from '../game/rules';
 import {
   canResearchTech,
@@ -502,8 +504,8 @@ export const HUD: React.FC<HUDProps> = ({
         const isTC = bldg.buildingType === 'town_center';
         const size = isTC ? 10 : bldg.buildingType === 'dock' ? 8 : 7;
         dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
-        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        dynCtx.lineWidth = isTC ? 2 : 1;
+        dynCtx.strokeStyle = getTeamVisualColor(bldg.team ?? participant?.team ?? 1).colorCss;
+        dynCtx.lineWidth = isTC ? 2.2 : 1.5;
         dynCtx.fillRect(mx - size / 2, my - size / 2, size, size);
         dynCtx.strokeRect(mx - size / 2, my - size / 2, size, size);
       });
@@ -530,8 +532,8 @@ export const HUD: React.FC<HUDProps> = ({
         }
 
         dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
-        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        dynCtx.lineWidth = 1;
+        dynCtx.strokeStyle = getTeamVisualColor(unit.team ?? participant?.team ?? 1).colorCss;
+        dynCtx.lineWidth = 1.6;
         if (isBoat) {
           dynCtx.beginPath();
           dynCtx.ellipse(mx, my, 5.2, 3.2, 0, 0, Math.PI * 2);
@@ -672,17 +674,21 @@ export const HUD: React.FC<HUDProps> = ({
   }, []);
 
   const isWorkerSelected = selectedUnits.some((u) => u.unitDef.category === 'worker');
-  const selectedInfantryCount = selectedUnits.filter(
-    (u) => u.hp > 0 && u.unitDef.category === 'melee' && !u.garrisonedInBuildingId && engine.isHumanControlled(u.faction)
-  ).length;
-  const hasFieldEngineering = researchedTechs.includes('shared_field_engineering');
-  const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
-  const fieldRamAffordable = canAfford(engine.playerResources, { food: 0, wood: 140, gold: 60, stone: 0 });
   const humanCivId = engine.getCivilizationForFaction(observedFactionId);
   const humanCiv = getCivilizationConfig(humanCivId);
   const researchedTechs = engine.getResearchedTechs(observedFactionId);
+  const selectedInfantryCount = selectedUnits.filter(
+    (u) =>
+      u.hp > 0 &&
+      u.unitDef.category === 'melee' &&
+      !u.garrisonedInBuildingId &&
+      (u.state === 'idle' || u.state === 'moving') &&
+      engine.isHumanControlled(u.faction)
+  ).length;
+  const fieldRamCheck = canAssembleFieldRam(observedAge, researchedTechs, selectedInfantryCount, engine.playerResources);
+  const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
   const allCivTechs = getAllTechsForCiv(humanCivId);
-  const buildableTypes = getBuildableTypesForCiv(humanCivId);
+  const buildableTypes = getBuildableTypesForCiv(humanCivId, observedAge);
   const compactBuildTypes: BuildingType[] = [
     'house',
     humanCiv.uniqueBuildingType,
@@ -963,8 +969,9 @@ export const HUD: React.FC<HUDProps> = ({
               engine.units.forEach((u) => {
                 const m = (engine as any).unitMeshes.get(u.id);
                 if (m) {
+                  m.userData.overheadBadgesEnabled = engine.showOverheadBadges;
                   const b = m.getObjectByName('unitBadge');
-                  if (b) b.visible = engine.showOverheadBadges;
+                  if (b && !engine.showOverheadBadges) b.visible = false;
                 }
               });
               engine.resourceNodes.forEach((n) => {
@@ -1247,7 +1254,11 @@ export const HUD: React.FC<HUDProps> = ({
                       >
                         <span
                           className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/50"
-                          style={{ backgroundColor: p.colorCss }}
+                          style={{
+                            backgroundColor: p.colorCss,
+                            borderColor: getTeamVisualColor(p.team).colorCss,
+                            boxShadow: `0 0 0 1px ${getTeamVisualColor(p.team).colorCss}`,
+                          }}
                         />
                         <span>{pCiv.icon}</span>
                         <span className="truncate max-w-[85px]">{p.name}</span>
@@ -1828,6 +1839,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 {bType === 'house' && '🏠'}
                                 {bType === 'castle' && '🏰'}
                                 {bType === 'dock' && '⚓'}
+                                {bType === 'gate' && '🚪'}
                                 {bDef.name.split(' ')[0]}
                               </span>
                               <span className="text-[9px] text-amber-400 font-mono">
@@ -1865,6 +1877,16 @@ export const HUD: React.FC<HUDProps> = ({
                     <div className="space-y-1.5 min-w-[230px]">
                       <div className="text-xs font-bold text-slate-400">作戰指令與主動奧義 (Tactics)</div>
                       <div className="flex flex-wrap gap-1.5">
+                        {engine.buildings.some((building) => building.faction === engine.humanPlayerId && building.buildingDef.isWall && building.isConstructed && building.hp > 0 && !building.wallBreached) && (
+                          <button
+                            data-cmd-wall-patrol="true"
+                            onClick={() => engine.issueWallPatrolOrder()}
+                            className="px-2.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 rounded text-xs font-bold border border-emerald-500/50 cursor-pointer"
+                            title="讓選取的步兵、弓兵與騎兵沿最近友軍城牆巡邏，發現敵軍會自動迎擊"
+                          >
+                            🛡️ 沿城牆巡邏
+                          </button>
+                        )}
                         <button
                           data-cmd-attack-move="true"
                           onClick={() => {
@@ -1919,19 +1941,16 @@ export const HUD: React.FC<HUDProps> = ({
                         <button
                           type="button"
                           data-cmd-field-ram="true"
-                          disabled={isSpectator || observedAge < 2 || !hasFieldEngineering || !fieldRamAffordable || fieldRamInProgress}
+                          disabled={isSpectator || !fieldRamCheck.ok || fieldRamInProgress}
                           onClick={() => engine.startFieldRamAssembly()}
                           className="px-2.5 py-1.5 rounded text-xs font-bold border border-amber-500/50 bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
                           title={
-                            observedAge < 2
-                              ? '需先晉升至時代 II'
-                              : !hasFieldEngineering
-                              ? '需先在兵營研發「野戰工程隊」'
-                              : !fieldRamAffordable
-                              ? '需要 140 木材與 60 黃金'
+                            isSpectator
+                              ? '觀戰模式無法組裝'
                               : fieldRamInProgress
                               ? '已有野戰衝車正在組裝'
-                              : '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
+                              : fieldRamCheck.reason ||
+                                '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
                           }
                         >
                           [{FIELD_ENGINEERING_HOTKEY}] 野戰組裝衝車 · 4 步兵
@@ -2075,6 +2094,42 @@ export const HUD: React.FC<HUDProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {selectedBuilding.buildingDef.isWall && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      {selectedBuilding.wallTowerLinked && (
+                        <span className="px-2 py-1 rounded bg-sky-950/70 text-sky-200 border border-sky-500/40 font-bold">
+                          🏹 箭塔聯防 +4 城甲
+                        </span>
+                      )}
+                      {selectedBuilding.wallBreached && (
+                        <span className="px-2 py-1 rounded bg-red-950/70 text-red-200 border border-red-500/50 font-bold">
+                          💥 防線缺口 · 可通行
+                        </span>
+                      )}
+                      {selectedBuilding.wallBreached && engine.isHumanControlled(selectedBuilding.faction) && (
+                        <span className="text-amber-300">選取工人後右鍵此處修復（🪵12 / 🪨5）</span>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedBuilding.buildingType === 'gate' && selectedBuilding.isConstructed && (
+                    <div data-gate-control="true" className="flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-slate-950/75 border border-amber-500/30">
+                      <span className={selectedBuilding.wallBreached ? 'text-red-300 font-bold text-xs' : selectedBuilding.gateOpen ? 'text-emerald-300 font-bold text-xs' : 'text-amber-200 font-bold text-xs'}>
+                        {selectedBuilding.wallBreached ? '💥 城門被攻破 · 通道開放' : selectedBuilding.gateOpen ? '🚪 城門已開啟 · 通道暢通' : '🛡️ 城門已關閉 · 防線封鎖'}
+                      </span>
+                      {engine.isHumanControlled(selectedBuilding.faction) && !isSpectator && (
+                        <button
+                          data-cmd-toggle-gate="true"
+                          disabled={!!selectedBuilding.wallBreached || selectedBuilding.hp <= 0}
+                          onClick={() => engine.toggleGate(selectedBuilding.id)}
+                          className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 text-[11px] font-black cursor-pointer disabled:cursor-not-allowed"
+                        >
+                          {selectedBuilding.wallBreached ? '等待修復' : selectedBuilding.gateOpen ? '關閉城門' : '開啟城門'}
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* Rally Point Marker Indicator */}
                   {selectedBuilding.buildingDef.trainableUnits.length > 0 && (

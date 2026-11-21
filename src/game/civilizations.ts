@@ -7,6 +7,7 @@ import {
   UnitCategory,
   UnitStats,
 } from '../types/game';
+import { DEFAULT_BUILDINGS } from './mods';
 
 export interface CivilizationConfig {
   id: CivilizationId;
@@ -59,6 +60,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -71,6 +73,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '皇家攻城工坊',
       dock: '帝國海軍碼頭',
       wall: '石砌木欄防禦牆',
+      gate: '帝國吊橋城門',
       tower: '石砌警戒箭塔',
       castle: '聖殿重裝要塞',
     },
@@ -116,6 +119,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -128,6 +132,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '忍具攻城工房',
       dock: '蒼嵐漁港棧橋',
       wall: '竹木矢來防禦垣',
+      gate: '忍界木鐵城門',
       tower: '靈脈結界哨塔',
       castle: '蒼嵐大本營御殿',
     },
@@ -173,6 +178,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -185,6 +191,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '遠古根鬚攻城工坊',
       dock: '森靈港口棧道',
       wall: '秘銀棘石防禦牆',
+      gate: '秘銀符文城門',
       tower: '秘銀晶石守望塔',
       castle: '森靈遠古聖堡',
     },
@@ -193,7 +200,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
       barracks: ['fantasy_footman'],
       archery_range: ['fantasy_mage'],
-      stable: ['fantasy_paladin'],
+      stable: ['fantasy_paladin', 'scout_rider'],
       siege_workshop: ['fantasy_treant', 'catapult', 'bombard_cannon'],
       landmark_barracks: ['fantasy_footman'],
       landmark_citadel: [],
@@ -910,8 +917,30 @@ export function getCivilizationConfig(civId?: CivilizationId): CivilizationConfi
   return CIVILIZATIONS.medieval;
 }
 
-export function getBuildableTypesForCiv(civId?: CivilizationId): BuildingType[] {
-  return [...getCivilizationConfig(civId).buildableBuildings];
+/**
+ * Shared authority for military/economy building availability.
+ * Buildings with no explicit age gate are available from Age I.
+ */
+export function isBuildingBuildableForCiv(
+  buildingType: BuildingType,
+  civId: CivilizationId | undefined,
+  currentAge: number
+): boolean {
+  const civ = getCivilizationConfig(civId);
+  const building = DEFAULT_BUILDINGS[buildingType];
+  if (!building || !Number.isFinite(currentAge)) return false;
+  return civ.buildableBuildings.includes(buildingType) &&
+    currentAge >= (building.requiredAge ?? 1);
+}
+
+/** Returns only buildings this civilization can construct in the current age. */
+export function getBuildableTypesForCiv(
+  civId?: CivilizationId,
+  currentAge = 4
+): BuildingType[] {
+  return getCivilizationConfig(civId).buildableBuildings.filter(
+    (buildingType) => isBuildingBuildableForCiv(buildingType, civId, currentAge)
+  );
 }
 
 export function getTrainableUnitsForBuilding(

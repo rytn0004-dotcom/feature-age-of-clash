@@ -17,6 +17,7 @@ export type UnitPortraitKey =
   | 'anime_saiyan_brawler'
   | 'anime_katana_shinigami'
   | 'anime_spirit_harvester'
+  | 'fantasy_footman'
   | 'fantasy_paladin'
   | 'fantasy_mage'
   | 'fantasy_treant'
@@ -28,6 +29,9 @@ export type UnitPortraitKey =
   | 'fallback_ninja'
   | 'fallback_saiyan'
   | 'fallback_mage'
+  | 'fallback_guardian'
+  | 'fallback_oracle'
+  | 'fallback_artificer'
   | 'fallback_golem'
   | 'fallback_ram'
   | 'fallback_cannon'
@@ -154,6 +158,13 @@ const BUILTIN_PORTRAIT_SPECS: Record<string, UnitPortraitSpec> = {
     bgFrom: '#134e4a',
     bgTo: '#0f172a',
   },
+  fantasy_footman: {
+    key: 'fantasy_footman',
+    label: '秘銀森林步兵',
+    accentHex: '#6ee7b7',
+    bgFrom: '#064e3b',
+    bgTo: '#0f172a',
+  },
   fantasy_paladin: {
     key: 'fantasy_paladin',
     label: '聖光聖騎士',
@@ -236,6 +247,27 @@ const MODEL_FALLBACK_SPECS: Record<
     accentHex: '#c084fc',
     bgFrom: '#3b0764',
     bgTo: '#0f172a',
+  },
+  guardian: {
+    key: 'fallback_guardian',
+    label: '壁壘守護者',
+    accentHex: '#cbd5e1',
+    bgFrom: '#334155',
+    bgTo: '#0b1220',
+  },
+  oracle: {
+    key: 'fallback_oracle',
+    label: '星界預言者',
+    accentHex: '#67e8f9',
+    bgFrom: '#312e81',
+    bgTo: '#081225',
+  },
+  artificer: {
+    key: 'fallback_artificer',
+    label: '奧術工匠',
+    accentHex: '#d6a84b',
+    bgFrom: '#134e4a',
+    bgTo: '#111827',
   },
   golem: {
     key: 'fallback_golem',

@@ -344,6 +344,19 @@ export function generateMapLayout(
       );
     }
 
+    // Wild boar — high-yield but dangerous, placed farther from the Town Center.
+    const boarAngle = huntAngle + (rand() < 0.5 ? -0.95 : 0.95);
+    placeWithFallback(
+      `boar_base_${sp.id}`,
+      'food',
+      'boar',
+      sp.x + Math.cos(boarAngle) * 28.0,
+      sp.z + Math.sin(boarAngle) * 28.0,
+      900,
+      false,
+      false
+    );
+
     // Main Wood Grove outside courtyard (~17.8m out)
     const woodAngle = inAngle + Math.PI * 0.62 + baseSpin * 0.45;
     const woodCx = sp.x + Math.cos(woodAngle) * 18.0;
