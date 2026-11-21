@@ -126,6 +126,8 @@ import {
   getContestedShrineSummary,
   stepWildAnimalState,
   triggerWildAnimalPanic,
+  stepWildBoarState,
+  triggerWildBoarAggression,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -171,6 +173,7 @@ import {
   createCommandRingMesh,
   createDeepFishMesh,
   createDeerMesh,
+  createWildBoarMesh,
   createEnvironmentFeaturesGroup,
   createGoldMineMesh,
   createRallyFlagMesh,
@@ -194,6 +197,7 @@ import {
   disposeBuildingVisualResources,
   registerFactionVisual,
   DeerAnimParts,
+  WildBoarAnimParts,
   UnitAnimParts,
   updateBadgeSprite,
   updateFarmCropVisual,
@@ -1895,6 +1899,8 @@ export class RtsEngine {
       mesh = createBerryBushMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'hunt') {
       mesh = createDeerMesh(amount, hasBadge);
+    } else if (resolvedSubtype === 'boar') {
+      mesh = createWildBoarMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'shore_fish') {
       mesh = createShoreFishMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'deep_fish') {
@@ -2762,7 +2768,9 @@ export class RtsEngine {
       case 'berry':
         return { icon: '🫐', action: '採集漿果', name: '漿果' };
       case 'hunt':
-        return { icon: '🦌', action: '狩獵', name: '獵物' };
+        return { icon: '🦌', action: '狩獵山羌', name: '山羌肉' };
+      case 'boar':
+        return { icon: '🐗', action: '圍獵野豬', name: '野豬肉' };
       case 'shore_fish':
       case 'deep_fish':
         return { icon: '🐟', action: '捕魚', name: '魚群' };
@@ -5231,14 +5239,17 @@ export class RtsEngine {
       deep_fish: '深海魚',
       shore_fish: '沿岸魚',
       hunt: '山羌肉',
+      boar: '野豬肉',
       berry: '漿果',
       farm: '農田',
       food: '糧食',
     };
     const rLabel = labelMap[node.subtype || node.resourceType] || '資源';
-    const huntingLive = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const huntingLive = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
     unit.currentActionText = huntingLive
-      ? `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
+      ? node.subtype === 'boar'
+        ? `🐗 圍獵野豬 (${Math.ceil(node.animalHp ?? 200)} HP)`
+        : `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
       : `⛏️ 採集${rLabel} (${curAmt}/${cap})`;
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
@@ -5271,23 +5282,29 @@ export class RtsEngine {
       const gatherRate = baseGatherRate * subtypeMult * tierMult * oathGather * resTechMult;
       const prevAmount = node.amount;
 
-      // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
-      // Non-workers (if ever hunting here) deal real attack damage toward the same 32 HP pool.
-      if (node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0)) {
+      // Living wildlife must be killed before its meat reserve can be gathered.
+      if (
+        (node.subtype === 'hunt' || node.subtype === 'boar') &&
+        node.animalAlive !== false &&
+        (node.animalHp === undefined || node.animalHp > 0)
+      ) {
+        const isBoar = node.subtype === 'boar';
+        const maxHp = isBoar ? 200 : 32;
         if (node.animalHp === undefined) {
-          node.animalMaxHp = 32;
-          node.animalHp = 32;
+          node.animalMaxHp = maxHp;
+          node.animalHp = maxHp;
           node.animalAlive = true;
         }
         const isVillager = unit.unitDef.category === 'worker';
         let hitCd = (unit as any)._huntHitCd || 0;
         hitCd -= dt;
         if (hitCd <= 0) {
-          const dmg = isVillager ? 16 : Math.max(1, unit.unitDef.stats.attack);
+          const dmg = isVillager ? (isBoar ? 18 : 16) : Math.max(1, unit.unitDef.stats.attack);
           node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
           hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
           this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
-          triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
+          if (isBoar) triggerWildBoarAggression(node, unit.id, this.simTime);
+          else triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
         }
         (unit as any)._huntHitCd = hitCd;
         if (node.animalHp <= 0) {
@@ -5296,7 +5313,9 @@ export class RtsEngine {
           node.animalVz = 0;
           node.animalFleeUntil = 0;
           node.animalMoveBlend = 0;
-          this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
+          node.animalAggroTargetId = undefined;
+          node.animalAggroUntil = 0;
+          this.addFloatingText(node.x, 1.8, node.z, isBoar ? '野豬倒地' : '山羌倒地', '#fca5a5');
           const nm = this.nodeMeshes.get(node.id);
           if (nm) {
             nm.position.y = 0;
@@ -5351,6 +5370,8 @@ export class RtsEngine {
                   ? '🫐'
                   : node.subtype === 'hunt'
                   ? '🦌'
+                  : node.subtype === 'boar'
+                  ? '🐗'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '🌲'
@@ -5371,6 +5392,10 @@ export class RtsEngine {
                   ? node.animalAlive === false
                     ? '山羌屍體'
                     : '野生山羌'
+                  : node.subtype === 'boar'
+                  ? node.animalAlive === false
+                    ? '野豬屍體'
+                    : '野生野豬'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '遠古神木'
@@ -5384,12 +5409,13 @@ export class RtsEngine {
                     ? '精良石脈'
                     : '石礦'
                   : '農田';
-              const isLiveHunt = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const isLiveHunt = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const animalMaxHp = node.animalMaxHp || (node.subtype === 'boar' ? 200 : 32);
               const badgeAmt = isLiveHunt
-                ? `${Math.ceil(node.animalHp || 0)}/${node.animalMaxHp || 32} HP`
+                ? `${Math.ceil(node.animalHp || 0)}/${animalMaxHp} HP`
                 : `${curNodeAmt}/${node.maxAmount}`;
               const badgeRatio = isLiveHunt
-                ? (node.animalHp || 0) / (node.animalMaxHp || 32)
+                ? (node.animalHp || 0) / animalMaxHp
                 : node.amount / node.maxAmount;
               updateBadgeSprite(
                 badge,
@@ -6154,24 +6180,18 @@ export class RtsEngine {
    * Locomotion bounce & limb swing are driven strictly by post-clamp horizontal displacement so
    * blocked or cooling-down deer never hop in place.
    */
+  /**
+   * Wildlife state machines:
+   * - 山羌 flee once per encounter and re-arm only after the threat disengages.
+   * - 野豬 remain calm until hit, then charge and retaliate against their attacker.
+   */
   private updateWildAnimals(dt: number) {
-    const DETECT = 12.5;
+    const DETECT = 18;
     let deerIdx = 0;
-
-    const isDeerBlocked = (cx: number, cz: number): boolean => {
+    const isAnimalBlocked = (cx: number, cz: number): boolean => {
       if (Math.abs(cx) > 91 || Math.abs(cz) > 91) return true;
       if (this.mapLayout) {
-        if (
-          isPointInTerrainObstacle(
-            cx,
-            cz,
-            this.mapLayout.waterRects,
-            this.mapLayout.waterDiscs,
-            this.mapLayout.bridges
-          )
-        ) {
-          return true;
-        }
+        if (isPointInTerrainObstacle(cx, cz, this.mapLayout.waterRects, this.mapLayout.waterDiscs, this.mapLayout.bridges)) return true;
         for (const c of this.mapLayout.cliffDiscs) {
           if (Math.hypot(cx - c.x, cz - c.z) <= c.radius + 0.75) return true;
         }
@@ -6184,48 +6204,141 @@ export class RtsEngine {
       return false;
     };
 
+    const killAnimal = (node: ResourceNode, mesh: THREE.Group | undefined, label: string) => {
+      node.animalAlive = false;
+      node.animalHp = 0;
+      node.animalVx = 0;
+      node.animalVz = 0;
+      node.animalFleeUntil = 0;
+      node.animalMoveBlend = 0;
+      node.animalAggroTargetId = undefined;
+      node.animalAggroUntil = 0;
+      if (mesh) {
+        mesh.position.y = 0;
+        mesh.rotation.x = 0.55;
+      }
+      this.addFloatingText(node.x, 1.8, node.z, label, '#fca5a5');
+    };
+
     for (const node of this.resourceNodes) {
-      if (node.subtype !== 'hunt' || node.amount <= 0) continue;
-      deerIdx++;
+      const isBoar = node.subtype === 'boar';
+      if ((!isBoar && node.subtype !== 'hunt') || node.amount <= 0) continue;
+      const mesh = this.nodeMeshes.get(node.id);
+      const maxHp = isBoar ? 200 : 32;
       if (node.animalAlive === undefined) {
-        node.animalMaxHp = 32;
-        node.animalHp = 32;
+        node.animalMaxHp = maxHp;
+        node.animalHp = maxHp;
         node.animalAlive = true;
         node.animalVx = 0;
         node.animalVz = 0;
-        node.animalYaw = (deerIdx * 1.9) % (Math.PI * 2);
+        node.animalYaw = (this.resourceNodes.indexOf(node) * 1.9) % (Math.PI * 2);
       }
 
-      const mesh = this.nodeMeshes.get(node.id);
       if (!node.animalAlive) {
         if (mesh) {
-          updateDeerAssetAnimation(mesh, 'death', dt);
-          mesh.position.set(node.x, 0, node.z);
-          mesh.rotation.x = 0.55;
-          const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
-          if (parts) {
-            parts.bodyPivot.position.y = 0.7;
-            parts.bodyPivot.rotation.z = 0;
-            parts.flLeg.rotation.z = -0.3;
-            parts.frLeg.rotation.z = -0.15;
-            parts.blLeg.rotation.z = 0.25;
-            parts.brLeg.rotation.z = 0.15;
+          if (isBoar) {
+            mesh.position.set(node.x, 0, node.z);
+            mesh.rotation.x = 0.55;
+            const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
+            if (parts) {
+              parts.bodyPivot.position.y = 0.58;
+              parts.headPivot.rotation.z = -0.32;
+            }
+          } else {
+            updateDeerAssetAnimation(mesh, 'death', dt);
+            mesh.position.set(node.x, 0, node.z);
+            mesh.rotation.x = 0.55;
+            const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
+            if (parts) {
+              parts.bodyPivot.position.y = 0.7;
+              parts.bodyPivot.rotation.z = 0;
+              parts.flLeg.rotation.z = -0.3;
+              parts.frLeg.rotation.z = -0.15;
+              parts.blLeg.rotation.z = 0.25;
+              parts.brLeg.rotation.z = 0.15;
+            }
           }
         }
         continue;
       }
 
-      let nearest: { x: number; z: number; d: number } | null = null;
-      for (const u of this.units) {
-        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
-        if (u.unitDef.isNaval) continue;
-        const d = getDistance(node.x, node.z, u.x, u.z);
-        if (d < DETECT && (!nearest || d < nearest.d)) {
-          nearest = { x: u.x, z: u.z, d };
+      if (isBoar) {
+        // Military units can wound the boar with active attacks / attack-move.
+        for (const attacker of this.units) {
+          if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
+            (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
+          const d = getDistance(node.x, node.z, attacker.x, attacker.z);
+          if (d > Math.max(2.6, (attacker.unitDef.stats.range || 1.5) + 0.65)) continue;
+          let hitCd = (attacker as any)._huntHitCd || 0;
+          hitCd -= dt;
+          if (hitCd <= 0) {
+            const dmg = Math.max(1, attacker.unitDef.stats.attack);
+            node.animalHp = Math.max(0, (node.animalHp || maxHp) - dmg);
+            hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
+            triggerWildBoarAggression(node, attacker.id, this.simTime);
+            this.addFloatingText(node.x, 1.7, node.z, `-${dmg}`, '#fca5a5');
+          }
+          (attacker as any)._huntHitCd = hitCd;
+          if ((node.animalHp || 0) <= 0) {
+            killAnimal(node, mesh, '野豬倒地');
+            break;
+          }
         }
+        if (!node.animalAlive) continue;
+
+        const target = (node.animalAggroUntil || 0) > this.simTime
+          ? this.units.find((u) => u.id === node.animalAggroTargetId && u.hp > 0 && !u.garrisonedInBuildingId)
+          : undefined;
+        if (!target) {
+          node.animalAggroTargetId = undefined;
+          node.animalAggroUntil = 0;
+        }
+        const step = stepWildBoarState(node, target ? { x: target.x, z: target.z } : null, dt, isAnimalBlocked);
+
+        if (mesh) {
+          mesh.position.set(node.x, 0, node.z);
+          mesh.rotation.y = step.yaw;
+          mesh.rotation.x = 0;
+          const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
+          if (parts) {
+            const moving = step.actualSpeed > 0.28;
+            const phase = this.simTime * (moving ? 12.5 : 1.7);
+            const stride = moving ? Math.sin(phase) * 0.58 : 0;
+            parts.flLeg.rotation.z = stride;
+            parts.brLeg.rotation.z = stride * 0.92;
+            parts.frLeg.rotation.z = -stride;
+            parts.blLeg.rotation.z = -stride * 0.92;
+            const bob = moving ? Math.abs(Math.sin(phase * 2)) * 0.025 : Math.sin(phase) * 0.012;
+            parts.bodyPivot.position.y += (0.72 + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
+            const headTilt = step.isCharging ? -0.13 : Math.sin(this.simTime * 1.4) * 0.025;
+            parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
+            parts.tailPivot.rotation.y = Math.sin(this.simTime * 4.4) * 0.26;
+          }
+        }
+
+        if (target && getDistance(node.x, node.z, target.x, target.z) <= 2.4 &&
+          (node.animalAttackCooldown || 0) <= this.simTime) {
+          const rawDamage = target.unitDef.category === 'worker' ? 22 : 15;
+          const damage = calculateDamage(rawDamage, target.unitDef.stats.defense);
+          target.hp = Math.max(0, target.hp - damage);
+          target.lastDamagedTime = performance.now();
+          target.hitFlashTimer = 0.13;
+          target.recoilTimer = 0.2;
+          node.animalAttackCooldown = this.simTime + 1.25;
+          this.spawnParticleBurst(target.x, 1.05, target.z, 'hit', 5);
+          this.addFloatingText(target.x, 2.0, target.z, `-${damage} 野豬衝撞`, '#fb923c');
+        }
+        continue;
       }
 
-      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isDeerBlocked);
+      deerIdx++;
+      let nearest: { x: number; z: number; d: number } | null = null;
+      for (const unit of this.units) {
+        if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.isNaval) continue;
+        const d = getDistance(node.x, node.z, unit.x, unit.z);
+        if (d < DETECT && (!nearest || d < nearest.d)) nearest = { x: unit.x, z: unit.z, d };
+      }
+      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isAnimalBlocked);
 
       if (mesh) {
         const animationState = step.moveBlend > 0.02
@@ -6235,16 +6348,13 @@ export class RtsEngine {
         mesh.position.set(node.x, step.hopY, node.z);
         mesh.rotation.y = step.yaw;
         mesh.rotation.x = 0;
-
         const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
         if (parts) {
           const blend = step.moveBlend;
           const isFast = step.actualSpeed >= 2.2;
           const phase = step.gaitPhase;
-
           if (blend > 0.02) {
             if (isFast) {
-              // Bounding gallop: front pair and rear pair sweep together with natural phase offset
               const frontSwing = Math.sin(phase) * 0.78 * blend;
               const rearSwing = Math.sin(phase + 0.85) * 0.74 * blend;
               parts.flLeg.rotation.z = frontSwing;
@@ -6255,7 +6365,6 @@ export class RtsEngine {
               parts.tailPivot.rotation.z = (0.48 + Math.sin(phase * 2) * 0.14) * blend;
               parts.headPivot.rotation.z = 0.08 + Math.sin(phase) * 0.08 * blend;
             } else {
-              // Calm diagonal walk/trot
               const swing = Math.sin(phase) * 0.45 * blend;
               parts.flLeg.rotation.z = swing;
               parts.brLeg.rotation.z = swing;
@@ -6266,7 +6375,6 @@ export class RtsEngine {
               parts.headPivot.rotation.z = 0.02;
             }
           } else {
-            // Smoothly return legs & body to grounded grazing stance
             const settle = 1 - Math.exp(-10 * dt);
             parts.flLeg.rotation.z += (0 - parts.flLeg.rotation.z) * settle;
             parts.frLeg.rotation.z += (0 - parts.frLeg.rotation.z) * settle;
@@ -6274,7 +6382,6 @@ export class RtsEngine {
             parts.brLeg.rotation.z += (0 - parts.brLeg.rotation.z) * settle;
             parts.bodyPivot.rotation.z += (0 - parts.bodyPivot.rotation.z) * settle;
             parts.tailPivot.rotation.z += (0 - parts.tailPivot.rotation.z) * settle;
-
             if (step.isGrazing) {
               const graze = Math.max(0, Math.sin(this.simTime * 1.15 + deerIdx * 1.7));
               const targetHead = -graze * 0.44;
@@ -6286,35 +6393,21 @@ export class RtsEngine {
         }
       }
 
-      // Non-villager combat damage vs living 山羌 (still needs full 32 HP of real damage)
-      if (node.animalAlive) {
-        for (const u of this.units) {
-          if (u.hp <= 0 || u.unitDef.category === 'worker' || u.unitDef.isNaval) continue;
-          if (u.state !== 'attacking' && !u.attackMoveGoal) continue;
-          const d = getDistance(node.x, node.z, u.x, u.z);
-          if (d > Math.max(2.4, (u.unitDef.stats.range || 1.5) + 0.5)) continue;
-          let cd = (u as any)._huntHitCd || 0;
-          cd -= dt;
-          if (cd <= 0) {
-            const dmg = Math.max(1, u.unitDef.stats.attack);
-            node.animalHp = Math.max(0, (node.animalHp || 32) - dmg);
-            cd = Math.max(0.5, 1 / Math.max(0.35, u.unitDef.stats.attackRate || 1));
-            triggerWildAnimalPanic(node, u.x, u.z, this.simTime, 2.5);
-            if (node.animalHp <= 0) {
-              node.animalAlive = false;
-              node.animalVx = 0;
-              node.animalVz = 0;
-              node.animalFleeUntil = 0;
-              node.animalMoveBlend = 0;
-              this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
-              if (mesh) {
-                mesh.position.y = 0;
-                mesh.rotation.x = 0.55;
-              }
-            }
-          }
-          (u as any)._huntHitCd = cd;
+      for (const attacker of this.units) {
+        if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
+          (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
+        const d = getDistance(node.x, node.z, attacker.x, attacker.z);
+        if (d > Math.max(2.4, (attacker.unitDef.stats.range || 1.5) + 0.5)) continue;
+        let hitCd = (attacker as any)._huntHitCd || 0;
+        hitCd -= dt;
+        if (hitCd <= 0) {
+          const dmg = Math.max(1, attacker.unitDef.stats.attack);
+          node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
+          hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
+          triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
+          if (node.animalHp <= 0) killAnimal(node, mesh, '山羌倒地');
         }
+        (attacker as any)._huntHitCd = hitCd;
       }
     }
   }

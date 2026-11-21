@@ -368,7 +368,7 @@ export interface BuildingEntity extends EntityCommon {
 export interface ResourceNode {
   id: string;
   resourceType: ResourceType;
-  subtype?: 'farm' | 'berry' | 'hunt' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
+  subtype?: 'farm' | 'berry' | 'hunt' | 'boar' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
   /** Quality tier of the resource deposit: 'rich' mid-map veins yield +35% faster gathering and larger reserves */
   nodeTier?: 'standard' | 'rich';
   x: number;
@@ -386,6 +386,13 @@ export interface ResourceNode {
   animalFleeUntil?: number;
   /** Cooldown after sustained panic or clean escape before another jittery sprint */
   animalFleeCooldown?: number;
+  /** Remains disarmed until nearby threats leave the re-arm radius; prevents endless flee refreshes. */
+  animalPanicSuppressed?: boolean;
+  /** Aggressor identity and leash time for dangerous wildlife such as wild boars. */
+  animalAggroTargetId?: string;
+  animalAggroUntil?: number;
+  /** Simulation timestamp when the boar may attack again. */
+  animalAttackCooldown?: number;
   /** Calm wander state machine timer & current target heading */
   animalWanderTimer?: number;
   animalWanderAngle?: number;

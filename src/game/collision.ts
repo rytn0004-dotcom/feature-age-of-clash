@@ -107,6 +107,7 @@ export function getResourceColliderRadius(
     if (subtype === 'shore_fish') return 0.95;
     if (subtype === 'berry') return 1.02;
     if (subtype === 'hunt') return 0.58;
+    if (subtype === 'boar') return 0.92;
     return 0.35; // Farm crops
   }
   return 1.05;

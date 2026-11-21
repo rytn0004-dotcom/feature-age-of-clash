@@ -918,6 +918,7 @@ export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
   deep_fish: 1.55,
   shore_fish: 1.32,
   hunt: 1.15,
+  boar: 1.42,
   berry: 1.0,
   farm: 1.0,
   food: 1.0,
@@ -927,6 +928,7 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   deep_fish: 5,
   shore_fish: 4,
   hunt: 3,
+  boar: 1,
   berry: 2,
   farm: 2,
   food: 1,
@@ -1040,8 +1042,9 @@ export function canUnitGatherNode(
 }
 
 /**
- * Selects optimal available food node balancing meat/fish gather speed priority (deep_fish > shore_fish > hunt > berry = farm)
- * against travel distance within maxDistance. Land harvesters automatically exclude `deep_fish`.
+ * Selects optimal available food node balancing food yield against travel distance.
+ * Dangerous boars are excluded from autonomous worker reassignment by default; players
+ * can still assign a hunting party directly without dispatching isolated villagers.
  */
 export function findBestFoodResourceNode(
   x: number,
@@ -1049,13 +1052,15 @@ export function findBestFoodResourceNode(
   nodes: ResourceNode[],
   maxDistance = 36,
   allowDeepFish = false,
-  fishOnly = false
+  fishOnly = false,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = -Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     if (!allowDeepFish && node.subtype === 'deep_fish') continue;
     if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);
@@ -2404,9 +2409,12 @@ export function triggerWildAnimalPanic(
   simTime: number,
   duration = 2.6
 ): void {
-  if (!node.animalAlive) return;
+  if (!node.animalAlive || node.animalPanicSuppressed) return;
+  // One panic per encounter. Repeated harvest hits from a pursuing worker must not
+  // keep extending the run timer or reset its cooldown every attack interval.
+  node.animalPanicSuppressed = true;
   node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + duration);
-  node.animalFleeCooldown = 0;
+  node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + duration + 1.5);
   const dx = node.x - threatX;
   const dz = node.z - threatZ;
   const len = Math.hypot(dx, dz);
@@ -2479,12 +2487,19 @@ export function stepWildAnimalState(
   const prevZ = node.z;
   const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
 
-  if (nearestThreat && nearestThreat.d < DETECT_RANGE) {
-    const canReact = (node.animalFleeCooldown || 0) <= simTime || nearestThreat.d < 6.0;
-    if (canReact) {
-      node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + 1.9);
-      node.animalFleeCooldown = 0;
-    }
+  const REARM_RANGE = 16.5;
+  // Re-arm only after the encounter has disengaged. A worker following the moving
+  // deer keeps panic disarmed instead of causing repeated sprints.
+  if (node.animalPanicSuppressed && (!nearestThreat || nearestThreat.d >= REARM_RANGE)) {
+    node.animalPanicSuppressed = false;
+    node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.1);
+  }
+  if (
+    nearestThreat && nearestThreat.d < DETECT_RANGE &&
+    !node.animalPanicSuppressed &&
+    (node.animalFleeCooldown || 0) <= simTime
+  ) {
+    triggerWildAnimalPanic(node, nearestThreat.x, nearestThreat.z, simTime, 1.9);
   }
 
   const wasFleeing = (node.animalFleeUntil || 0) > simTime;
@@ -2515,7 +2530,7 @@ export function stepWildAnimalState(
     // Clean transition out of fleeing into calm grazing cooldown
     if ((node.animalFleeUntil || 0) > 0 && (node.animalFleeUntil || 0) <= simTime) {
       node.animalFleeUntil = 0;
-      node.animalFleeCooldown = simTime + 1.4;
+      node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.4);
       node.animalWanderMoving = false;
       node.animalWanderTimer = 2.2 + rand() * 2.2;
     }
@@ -2626,6 +2641,75 @@ export function stepWildAnimalState(
     gaitPhase,
     hopY,
   };
+}
+
+
+/** Records the unit that provoked a wild boar. Boars do not attack passers-by. */
+export function triggerWildBoarAggression(node: ResourceNode, attackerId: string, simTime: number): void {
+  if (!node.animalAlive || !attackerId) return;
+  node.animalAggroTargetId = attackerId;
+  node.animalAggroUntil = Math.max(node.animalAggroUntil || 0, simTime + 8);
+}
+
+export interface WildBoarStepOutput {
+  distMoved: number;
+  actualSpeed: number;
+  yaw: number;
+  isCharging: boolean;
+}
+
+/** Pursuit steering for provoked boars; stops at melee distance and respects terrain blockers. */
+export function stepWildBoarState(
+  node: ResourceNode,
+  target: { x: number; z: number } | null,
+  dt: number,
+  isBlocked: (cx: number, cz: number) => boolean
+): WildBoarStepOutput {
+  const prevX = node.x;
+  const prevZ = node.z;
+  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+  const dx = target ? target.x - node.x : 0;
+  const dz = target ? target.z - node.z : 0;
+  const distance = Math.hypot(dx, dz);
+  const attackRange = 2.25;
+  let targetVx = 0;
+  let targetVz = 0;
+  let isCharging = false;
+
+  if (target && distance > attackRange) {
+    const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, Math.atan2(dz, dx), isBlocked);
+    if (chaseAngle !== null) {
+      targetVx = Math.cos(chaseAngle) * 4.15;
+      targetVz = Math.sin(chaseAngle) * 4.15;
+      isCharging = true;
+    }
+  }
+
+  const blend = 1 - Math.exp(-(isCharging ? 11 : 9) * clampedDt);
+  node.animalVx = (node.animalVx || 0) + (targetVx - (node.animalVx || 0)) * blend;
+  node.animalVz = (node.animalVz || 0) + (targetVz - (node.animalVz || 0)) * blend;
+
+  let nx = Math.max(-91, Math.min(91, node.x + node.animalVx * clampedDt));
+  let nz = Math.max(-91, Math.min(91, node.z + node.animalVz * clampedDt));
+  if (isBlocked(nx, nz)) {
+    nx = prevX;
+    nz = prevZ;
+    node.animalVx = 0;
+    node.animalVz = 0;
+    isCharging = false;
+  }
+  node.x = nx;
+  node.z = nz;
+
+  const movedX = nx - prevX;
+  const movedZ = nz - prevZ;
+  const distMoved = Math.hypot(movedX, movedZ);
+  const actualSpeed = distMoved / clampedDt;
+  let yaw = node.animalYaw ?? 0;
+  if (distMoved > 0.002 && actualSpeed > 0.15) yaw = Math.atan2(-movedZ, movedX);
+  else if (target && distance > 0.01) yaw = Math.atan2(-dz, dx);
+  node.animalYaw = yaw;
+  return { distMoved, actualSpeed, yaw, isCharging };
 }
 
 export interface AiTechCandidateInput {

@@ -7109,6 +7109,139 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   return group;
 }
 
+
+export interface WildBoarAnimParts {
+  bodyPivot: THREE.Group;
+  headPivot: THREE.Group;
+  tailPivot: THREE.Group;
+  flLeg: THREE.Group;
+  frLeg: THREE.Group;
+  blLeg: THREE.Group;
+  brLeg: THREE.Group;
+}
+
+const sharedWildBoarBodyGeo = new THREE.SphereGeometry(0.55, 12, 9);
+const sharedWildBoarHeadGeo = new THREE.SphereGeometry(0.34, 10, 8);
+const sharedWildBoarSnoutGeo = new THREE.CylinderGeometry(0.13, 0.19, 0.27, 9);
+sharedWildBoarSnoutGeo.rotateZ(-Math.PI / 2);
+const sharedWildBoarEarGeo = new THREE.ConeGeometry(0.085, 0.23, 5);
+const sharedWildBoarTuskGeo = new THREE.ConeGeometry(0.055, 0.22, 6);
+const sharedWildBoarLegGeo = new THREE.CylinderGeometry(0.105, 0.085, 0.38, 7);
+const sharedWildBoarHoofGeo = new THREE.CylinderGeometry(0.095, 0.11, 0.095, 6);
+const sharedWildBoarBristleGeo = new THREE.ConeGeometry(0.055, 0.17, 5);
+const sharedWildBoarTailGeo = new THREE.CylinderGeometry(0.025, 0.035, 0.24, 5);
+const sharedWildBoarFurMat = new THREE.MeshStandardMaterial({
+  color: 0x68402b,
+  map: resFurMaps.map,
+  normalMap: resFurMaps.normalMap,
+  normalScale: new THREE.Vector2(0.55, 0.55),
+  roughness: 0.88,
+});
+const sharedWildBoarMuzzleMat = new THREE.MeshStandardMaterial({ color: 0x9a6046, roughness: 0.9 });
+const sharedWildBoarBristleMat = new THREE.MeshStandardMaterial({ color: 0x38251f, roughness: 0.96 });
+const sharedWildBoarTuskMat = new THREE.MeshStandardMaterial({ color: 0xf3e5c2, roughness: 0.48 });
+const sharedWildBoarHoofMat = new THREE.MeshStandardMaterial({ color: 0x292524, roughness: 0.62 });
+const sharedWildBoarEyeMat = new THREE.MeshStandardMaterial({ color: 0x17120f, roughness: 0.3 });
+const sharedWildBoarEyeGeo = new THREE.SphereGeometry(0.035, 6, 5);
+
+export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'wildBoarResource';
+  addContactShadow(group, 1.28);
+
+  const bodyPivot = new THREE.Group();
+  bodyPivot.position.set(0, 0.72, 0);
+  group.add(bodyPivot);
+
+  const body = new THREE.Mesh(sharedWildBoarBodyGeo, sharedWildBoarFurMat);
+  body.scale.set(1.38, 0.9, 0.9);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  bodyPivot.add(body);
+
+  const shoulder = new THREE.Mesh(sharedWildBoarBodyGeo, sharedWildBoarFurMat);
+  shoulder.position.set(0.36, 0.09, 0);
+  shoulder.scale.set(0.72, 0.88, 0.86);
+  shoulder.castShadow = true;
+  bodyPivot.add(shoulder);
+
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0.57, 0.04, 0);
+  bodyPivot.add(headPivot);
+  const head = new THREE.Mesh(sharedWildBoarHeadGeo, sharedWildBoarFurMat);
+  head.position.set(0.13, 0.02, 0);
+  head.scale.set(1.25, 1.05, 1.04);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  const snout = new THREE.Mesh(sharedWildBoarSnoutGeo, sharedWildBoarMuzzleMat);
+  snout.position.set(0.48, -0.04, 0);
+  snout.castShadow = true;
+  headPivot.add(snout);
+
+  [-1, 1].forEach((side) => {
+    const tusk = new THREE.Mesh(sharedWildBoarTuskGeo, sharedWildBoarTuskMat);
+    tusk.position.set(0.32, -0.14, side * 0.19);
+    tusk.rotation.z = -0.52;
+    tusk.rotation.x = side * 0.22;
+    headPivot.add(tusk);
+
+    const ear = new THREE.Mesh(sharedWildBoarEarGeo, sharedWildBoarFurMat);
+    ear.position.set(-0.02, 0.27, side * 0.2);
+    ear.rotation.z = -0.18;
+    ear.rotation.x = side * 0.42;
+    headPivot.add(ear);
+
+    const eye = new THREE.Mesh(sharedWildBoarEyeGeo, sharedWildBoarEyeMat);
+    eye.position.set(0.2, 0.12, side * 0.285);
+    headPivot.add(eye);
+  });
+
+  for (let i = 0; i < 6; i++) {
+    const bristle = new THREE.Mesh(sharedWildBoarBristleGeo, sharedWildBoarBristleMat);
+    bristle.position.set(-0.38 + i * 0.17, 0.48, 0);
+    bristle.rotation.z = -0.12;
+    bristle.scale.set(0.9, 1 + (i % 2) * 0.22, 0.85);
+    bodyPivot.add(bristle);
+  }
+
+  const makeLeg = (lx: number, lz: number): THREE.Group => {
+    const leg = new THREE.Group();
+    leg.position.set(lx, 0.44, lz);
+    const upper = new THREE.Mesh(sharedWildBoarLegGeo, sharedWildBoarFurMat);
+    upper.position.y = -0.17;
+    upper.castShadow = true;
+    const hoof = new THREE.Mesh(sharedWildBoarHoofGeo, sharedWildBoarHoofMat);
+    hoof.position.y = -0.37;
+    leg.add(upper, hoof);
+    group.add(leg);
+    return leg;
+  };
+  const blLeg = makeLeg(-0.4, -0.27);
+  const brLeg = makeLeg(-0.4, 0.27);
+  const flLeg = makeLeg(0.42, -0.29);
+  const frLeg = makeLeg(0.42, 0.29);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.69, 0.03, 0);
+  bodyPivot.add(tailPivot);
+  const tail = new THREE.Mesh(sharedWildBoarTailGeo, sharedWildBoarFurMat);
+  tail.position.y = -0.09;
+  tail.rotation.z = -0.68;
+  tailPivot.add(tail);
+
+  const animParts: WildBoarAnimParts = { bodyPivot, headPivot, tailPivot, flLeg, frLeg, blLeg, brLeg };
+  group.userData.wildBoarAnimParts = animParts;
+
+  if (hasBadge) {
+    const badge = createBadgeSprite('野生野豬', '🐗', `${amount}`, 1, false, true, '高風險圍獵・採集倍率 ×1.42');
+    badge.position.set(0, 2.45, 0);
+    group.add(badge);
+    group.userData.badgeSprite = badge;
+  }
+  return group;
+}
+
 const sharedFishBodyGeo = makeLatheGeo([
   [0.01, -0.22],
   [0.065, -0.1],

@@ -452,6 +452,7 @@ test('mapGenerator: produces varied terrain features and abundant diverse resour
   const riverAbundant = generateMapLayout('river_valley', 'abundant', spawns);
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'berry'), 'Map should spawn berry bushes');
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'hunt'), 'Map should spawn deer herds');
+  assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'boar'), 'Map should spawn dangerous wild boar');
   assert.ok(
     riverAbundant.resourceNodes.filter((n) => n.resourceType === 'gold').length >= 6,
     'Map should spawn multiple gold veins'
@@ -1809,6 +1810,9 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
     z: 0,
     animalVx: 6,
     animalVz: 0,
+    animalPanicSuppressed: false,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
   };
   triggerWildAnimalPanic(trappedDeer, -2, 0, 20);
   const trappedStep = stepWildAnimalState(
@@ -1830,6 +1834,9 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
     z: 0,
     animalVx: 0,
     animalVz: 0,
+    animalPanicSuppressed: false,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
   };
   triggerWildAnimalPanic(openDeer, -3, 0, 30, 1.0);
   let fleeStep = stepWildAnimalState(openDeer, { x: -3, z: 0, d: 3 }, 30.05, 0.05, () => false, () => 0.8);
@@ -1847,6 +1854,70 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
   assert.equal(calmOut.isFleeing, false);
   assert.equal(calmOut.hopY, 0, 'Calm/cooldown deer must never hop in place');
   assert.equal(calmOut.isGrazing, true);
+
+  const followedDeer: ResourceNode = {
+    ...deer,
+    id: 'deer_followed',
+    x: 0,
+    z: 0,
+    animalVx: 0,
+    animalVz: 0,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 0,
+    animalPanicSuppressed: false,
+  };
+  triggerWildAnimalPanic(followedDeer, -3, 0, 50, 1.0);
+  let followedStep = stepWildAnimalState(followedDeer, { x: -3, z: 0, d: 3 }, 50.05, 0.05, () => false, () => 0.5);
+  for (let i = 1; i <= 100; i++) {
+    const time = 50.05 + i * 0.05;
+    followedStep = stepWildAnimalState(
+      followedDeer,
+      { x: followedDeer.x - 3, z: followedDeer.z, d: 3 },
+      time,
+      0.05,
+      () => false,
+      () => 0.5
+    );
+  }
+  assert.equal(followedStep.isFleeing, false, 'A pursuing hunter cannot continually restart the same panic');
+  assert.equal(followedDeer.animalPanicSuppressed, true);
+  stepWildAnimalState(followedDeer, null, 56, 0.05, () => false, () => 0.5);
+  assert.equal(followedDeer.animalPanicSuppressed, false, 'Deer re-arms only after the threat leaves');
+});
+
+test('wild boar (野豬): high food yield, faster harvesting, and aggressive pursuit after provocation', async () => {
+  const { getFoodGatherMultiplier, stepWildBoarState, triggerWildBoarAggression, findBestFoodResourceNode } = await import('./rules');
+  assert.ok(getFoodGatherMultiplier('boar') > getFoodGatherMultiplier('hunt'));
+  assert.equal(getFoodGatherMultiplier('boar'), 1.42);
+  const foodNodes: ResourceNode[] = [
+    { id: 'boar_auto', resourceType: 'food', subtype: 'boar', x: 1, z: 0, amount: 900, maxAmount: 900 },
+    { id: 'berry_auto', resourceType: 'food', subtype: 'berry', x: 4, z: 0, amount: 350, maxAmount: 350 },
+  ];
+  assert.equal(findBestFoodResourceNode(0, 0, foodNodes, 36)?.id, 'berry_auto');
+  assert.equal(findBestFoodResourceNode(0, 0, foodNodes, 36, false, false, true)?.id, 'boar_auto');
+
+  const boar: ResourceNode = {
+    id: 'boar_test',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 0,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 200,
+    animalMaxHp: 200,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+  triggerWildBoarAggression(boar, 'hunter-1', 10);
+  assert.equal(boar.animalAggroTargetId, 'hunter-1');
+  assert.ok((boar.animalAggroUntil || 0) >= 18);
+  let step = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => false);
+  for (let i = 0; i < 40; i++) step = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => false);
+  assert.ok(boar.x > 0, 'A provoked boar should charge toward its attacker');
+  const stopped = stepWildBoarState(boar, { x: boar.x + 0.5, z: boar.z }, 0.1, () => false);
+  assert.equal(stopped.isCharging, false, 'Boar stops at close-combat distance');
 });
 
 test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter damage, eco multipliers, and AI counter-picks', async () => {
