@@ -410,7 +410,6 @@ function createCharacterHairTail(options: CharacterFaceOptions, hairColor: numbe
   hairTail.add(tail);
   return hairTail;
 }
-}
 export function createCharacterFaceDetails(
   eyeColor: number,
   options: CharacterFaceOptions = {}
