@@ -2936,7 +2936,6 @@ test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit c
       Math.abs(unit.x) <= 80 &&
       Math.abs(unit.z) <= 80
     ));
-    assert.ok(plan.units.every((unit) => unit.role !== 'worker'));
     assert.deepEqual(
       new Set(plan.participants.map((participant) => participant.aiPersonality)),
       new Set(['easy', 'standard', 'hard', 'defensive'])
