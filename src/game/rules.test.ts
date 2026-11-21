@@ -2591,6 +2591,34 @@ test('art-direction: new original faction character kits add sculpted silhouette
   });
   assert.equal(siegeKit.children.length, 0, 'siege and naval silhouettes must remain purpose-built');
 
+  const guardianKit = createUnitSignatureKit({
+    unitId: 'art-test-guardian',
+    civilization: 'medieval',
+    category: 'melee',
+    modelType: 'guardian',
+    age: 3,
+    palette,
+  });
+  const oracleKit = createUnitSignatureKit({
+    unitId: 'art-test-oracle',
+    civilization: 'fantasy',
+    category: 'special',
+    modelType: 'oracle',
+    age: 3,
+    palette,
+  });
+  const artificerKit = createUnitSignatureKit({
+    unitId: 'art-test-artificer',
+    civilization: 'anime',
+    category: 'worker',
+    modelType: 'artificer',
+    age: 2,
+    palette,
+  });
+  assert.equal(guardianKit.userData.artRole, 'frontline');
+  assert.equal(oracleKit.userData.artRole, 'arcanist');
+  assert.equal(artificerKit.userData.artRole, 'laborer');
+
   const face = createCharacterFaceDetails(0x1d4ed8);
   assert.equal(face.name, 'sculptedCharacterFace');
   assert.equal(face.children.length, 1);
