@@ -257,7 +257,16 @@ export function createUnitSignatureKit(options: UnitSignatureKitOptions): THREE.
   return group;
 }
 
-function createFaceGeometry(eyeColor: number): THREE.BufferGeometry {
+export interface CharacterFaceOptions {
+  civilization?: CivilizationId;
+  modelType?: string;
+  unitId?: string;
+}
+
+function createFaceGeometry(
+  eyeColor: number,
+  options: CharacterFaceOptions = {}
+): { geometry: THREE.BufferGeometry; hairTail?: THREE.Group } {
   const parts: SculptPart[] = [];
   const add = (
     geometry: THREE.BufferGeometry,
@@ -268,23 +277,142 @@ function createFaceGeometry(eyeColor: number): THREE.BufferGeometry {
   ) => parts.push(makePart(geometry, color, position, scale, rotation));
   const white = 0xf8fafc;
   const ink = 0x171923;
+  const civilization = options.civilization || 'medieval';
+  const modelType = options.modelType || 'villager';
+  const variant = getDeterministicArtVariant(options.unitId || modelType);
+  const hairColor =
+    modelType === 'saiyan'
+      ? 0xfacc15
+      : civilization === 'anime'
+        ? variant === 0 ? 0x1e1b4b : variant === 1 ? 0x7c2d92 : 0x0f766e
+        : civilization === 'fantasy'
+          ? variant === 0 ? 0xdbeafe : variant === 1 ? 0x78350f : 0x475569
+          : variant === 0 ? 0x422006 : variant === 1 ? 0x292524 : 0x713f12;
+
+  // Eyes, irises, catchlights, eyebrows and sculpted nose; all merged into one face-detail draw call.
   for (const x of [-0.066, 0.066]) {
     add(new THREE.SphereGeometry(0.029, 10, 8), white, [x, 0.012, 0.158], [1.2, 0.78, 0.52]);
     add(new THREE.SphereGeometry(0.015, 8, 6), eyeColor, [x, 0.01, 0.176], [0.9, 1.05, 0.45]);
     add(new THREE.SphereGeometry(0.008, 8, 6), ink, [x, 0.01, 0.183], [1, 1, 0.45]);
+    add(new THREE.SphereGeometry(0.0045, 6, 5), white, [x - 0.004, 0.016, 0.188], [1, 1, 0.42]);
     add(new RoundedBoxGeometry(0.052, 0.012, 0.012, 2, 0.003), ink, [x, 0.055, 0.154], [1, 1, 1], [0, 0, x > 0 ? -0.08 : 0.08]);
   }
   add(new THREE.OctahedronGeometry(0.024, 0), 0xe9b49d, [0, -0.02, 0.174], [0.75, 1.25, 0.72]);
-  return mergeSculptParts(parts);
-}
+  add(new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.03, -0.09, 0.16),
+      new THREE.Vector3(0, -0.098, 0.168),
+      new THREE.Vector3(0.03, -0.09, 0.16),
+    ]),
+    8,
+    0.006,
+    5,
+    false
+  ), 0x8b4a42, [0, 0, 0]);
 
-export function createCharacterFaceDetails(eyeColor: number): THREE.Group {
-  const key = eyeColor.toString(16);
-  let geometry = faceGeometryCache.get(key);
-  if (!geometry) {
-    geometry = createFaceGeometry(eyeColor);
-    faceGeometryCache.set(key, geometry);
+  // Hairline and side locks vary by civilization and deterministic unit identity.
+  const hairMatColor = hairColor;
+  add(
+    new THREE.SphereGeometry(0.178, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58),
+    hairMatColor,
+    [0, 0.105, -0.018],
+    [1.02, 0.82, 0.98]
+  );
+  for (const side of [-1, 1]) {
+    const lockHeight = civilization === 'anime' ? 0.2 : 0.15;
+    add(
+      new THREE.CapsuleGeometry(0.043, lockHeight, 4, 8),
+      hairMatColor,
+      [side * 0.145, -0.012, 0.015],
+      [0.78, 1, 0.82],
+      [0, 0, side * -0.16]
+    );
   }
+
+  if (civilization === 'anime') {
+    // Layered fringe and paired hair ornaments create a recognisable anime silhouette.
+    for (let index = 0; index < 3; index++) {
+      const x = (index - 1) * 0.082;
+      add(
+        new RoundedBoxGeometry(0.072, 0.12 + (index === 1 ? 0.035 : 0), 0.045, 3, 0.018),
+        hairMatColor,
+        [x, 0.095 - Math.abs(index - 1) * 0.012, 0.13],
+        [1, 1, 0.9],
+        [0, 0, (index - 1) * -0.18]
+      );
+    }
+    const clipColor = modelType === 'saiyan' ? 0xfacc15 : 0xf9a8d4;
+    add(new THREE.TorusGeometry(0.052, 0.012, 5, 12), clipColor, [-0.17, 0.13, 0.03], [1, 0.7, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.TorusGeometry(0.052, 0.012, 5, 12), clipColor, [0.17, 0.13, 0.03], [1, 0.7, 1], [Math.PI / 2, 0, 0]);
+  } else if (civilization === 'fantasy') {
+    // Fine circlet and tapered ear tips: visible at close range but still one merged face-detail mesh.
+    add(new THREE.TorusGeometry(0.17, 0.014, 5, 20, Math.PI), 0xd6b56d, [0, 0.105, 0.045], [1, 0.72, 1], [Math.PI / 2, 0, 0]);
+    for (const side of [-1, 1]) {
+      add(new THREE.ConeGeometry(0.037, 0.22, 5), hairMatColor, [side * 0.19, -0.02, 0], [0.72, 1, 0.62], [0, 0, side * -Math.PI / 2]);
+    }
+  } else {
+    // A simple leather/hair brow band for the grounded historical silhouette.
+    add(new THREE.TorusGeometry(0.17, 0.014, 5, 18, Math.PI), 0x6b3e1b, [0, 0.07, 0.05], [1, 0.75, 1], [Math.PI / 2, 0, 0]);
+  }
+
+  if (modelType === 'villager' || modelType === 'artificer') {
+    // Short beard and moustache enrich worker faces without forcing every unit into the same appearance.
+    add(new THREE.SphereGeometry(0.047, 10, 7), hairMatColor, [-0.042, -0.105, 0.132], [1, 0.5, 0.68]);
+    add(new THREE.SphereGeometry(0.047, 10, 7), hairMatColor, [0.042, -0.105, 0.132], [1, 0.5, 0.68]);
+    add(new THREE.ConeGeometry(0.052, 0.12, 7), hairMatColor, [0, -0.16, 0.11], [1, 1, 0.72], [Math.PI, 0, 0]);
+  }
+  if (modelType === 'saiyan') {
+    // Distinct high-energy crown spikes, replacing a generic hair cap.
+    for (let i = 0; i < 7; i++) {
+      const angle = (i / 6 - 0.5) * Math.PI * 0.9;
+      add(
+        new THREE.ConeGeometry(0.05, 0.24 + (i % 2) * 0.055, 5),
+        0xfacc15,
+        [Math.sin(angle) * 0.13, 0.22 + (i % 2) * 0.025, -Math.cos(angle) * 0.045],
+        [1, 1, 0.9],
+        [0, 0, -angle * 0.5]
+      );
+    }
+  }
+
+  // Long anime/fantasy hair receives an independent pivot for wind and gait follow-through.
+  let hairTail: THREE.Group | undefined;
+  if (civilization !== 'medieval' && modelType !== 'artificer') {
+    hairTail = new THREE.Group();
+    hairTail.name = 'secondaryMotion:hair';
+    hairTail.position.set(0, 0.07, -0.125);
+    const tailCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0.015, -0.065, -0.08),
+      new THREE.Vector3(-0.025, -0.14, -0.18),
+      new THREE.Vector3(0.012, -0.22, -0.28),
+    ]);
+    const tail = new THREE.Mesh(
+      new THREE.TubeGeometry(tailCurve, 16, 0.043, 7, false),
+      new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.76 })
+    );
+    tail.castShadow = true;
+    hairTail.add(tail);
+  }
+
+  return { geometry: mergeSculptParts(parts), hairTail };
+}
+export function createCharacterFaceDetails(
+  eyeColor: number,
+  options: CharacterFaceOptions = {}
+): THREE.Group {
+  const variant = getDeterministicArtVariant(options.unitId || options.modelType || 'villager');
+  const key = [eyeColor.toString(16), options.civilization || 'medieval', options.modelType || 'villager', variant].join('|');
+  let faceParts = faceGeometryCache.get(key);
+  let hairTail: THREE.Group | undefined;
+  if (!faceParts) {
+    faceParts = createFaceGeometry(eyeColor, options).geometry;
+    faceGeometryCache.set(key, faceParts);
+  }
+  if (options.civilization !== 'medieval' && options.modelType !== 'artificer') {
+    hairTail = createFaceGeometry(eyeColor, options).hairTail;
+  }
+  const geometry = faceParts;
   let material = faceMaterialCache.get(key);
   if (!material) {
     material = new THREE.MeshStandardMaterial({
@@ -300,6 +428,20 @@ export function createCharacterFaceDetails(eyeColor: number): THREE.Group {
   face.name = 'sculptedFaceDetails';
   face.raycast = () => {};
   group.add(face);
+  if (hairTail) {
+    group.add(hairTail);
+    group.userData.secondaryMotionParts = [{
+      object: hairTail,
+      axis: 'x',
+      amplitude: 0.2,
+      frequency: 5.8,
+      phase: variant * 0.7,
+    }];
+  } else {
+    group.userData.secondaryMotionParts = [];
+  }
+  group.userData.artVariant = variant;
+  group.userData.artCivilization = options.civilization || 'medieval';
   return group;
 }
 
