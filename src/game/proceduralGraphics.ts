@@ -8460,7 +8460,8 @@ export function updateUnitVisualLod(
   group: THREE.Group,
   camera: THREE.PerspectiveCamera,
   viewportHeight: number,
-  forceHighDetail = false
+  forceHighDetail = false,
+  unitLevel = 1
 ): void {
   const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
   const identityParts = group.userData.identityLodParts as UnitIdentityLodPart[] | undefined;
@@ -8521,8 +8522,8 @@ export function updateUnitVisualLod(
     if (badge) {
       const requested = group.userData.overheadBadgesEnabled !== false;
       const baseThreshold = Number(group.userData.badgeLodThresholdPx) || 30;
-      const level = Number(group.userData.battlefieldVisualLevel) || 1;
-      const championThreshold = level >= 3 ? Math.min(baseThreshold, 18) : baseThreshold;
+      group.userData.battlefieldVisualLevel = unitLevel;
+      const championThreshold = unitLevel >= 3 ? Math.min(baseThreshold, 18) : baseThreshold;
       const shouldShow = requested && (forceHighDetail || projectedHeight >= championThreshold);
       if (badge.visible !== shouldShow) badge.visible = shouldShow;
     }
