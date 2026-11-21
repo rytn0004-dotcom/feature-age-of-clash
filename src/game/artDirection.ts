@@ -404,6 +404,12 @@ function createCharacterHairTail(options: CharacterFaceOptions, hairColor: numbe
   }
   const hairTail = new THREE.Group();
   hairTail.name = 'secondaryMotion:hair';
+  hairTail.userData.secondaryMotion = {
+    axis: 'x',
+    amplitude: 0.2,
+    frequency: 5.8,
+    phase: getDeterministicArtVariant(options.unitId || modelType) * 0.7,
+  };
   hairTail.position.set(0, 0.07, -0.125);
   const tail = new THREE.Mesh(geometry, material);
   tail.castShadow = true;
