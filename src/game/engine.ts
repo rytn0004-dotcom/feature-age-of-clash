@@ -8713,7 +8713,7 @@ export class RtsEngine {
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
           const formationSlots = new Map(
-            layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry])
+            layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry] as const)
           );
 
           strikeUnits.forEach((unit, idx) => {
@@ -8743,7 +8743,7 @@ export class RtsEngine {
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
               if (
                 unit.state !== 'moving' ||
-                unit.currentActionText !== '陣型推進' ||
+                !unit.currentActionText?.startsWith('陣型推進') ||
                 slotChanged ||
                 objectiveChanged
               ) {
