@@ -5414,16 +5414,17 @@ export function createBadgeCanvas(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = 260;
-  canvas.height = 80;
+  canvas.height = showHealthBar ? 80 : actionText ? 58 : 36;
   const ctx = canvas.getContext('2d')!;
+  const canvasHeight = canvas.height;
 
-  ctx.clearRect(0, 0, 260, 80);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Background capsule
   if (isUnderAttack) {
     ctx.fillStyle = 'rgba(127, 29, 29, 0.95)';
     ctx.strokeStyle = '#f87171';
@@ -5442,23 +5443,23 @@ export function createBadgeCanvas(
     ctx.lineWidth = 2.5;
   }
 
-  // Rounded rectangle
   const r = 12;
+  const right = canvas.width - 4;
+  const bottom = canvasHeight - 4;
   ctx.beginPath();
   ctx.moveTo(r, 4);
-  ctx.lineTo(260 - r, 4);
-  ctx.quadraticCurveTo(260 - 4, 4, 260 - 4, 4 + r);
-  ctx.lineTo(260 - 4, 76 - r);
-  ctx.quadraticCurveTo(260 - 4, 76, 260 - r, 76);
-  ctx.lineTo(r, 76);
-  ctx.quadraticCurveTo(4, 76, 4, 76 - r);
+  ctx.lineTo(canvas.width - r, 4);
+  ctx.quadraticCurveTo(right, 4, right, 4 + r);
+  ctx.lineTo(right, bottom - r);
+  ctx.quadraticCurveTo(right, bottom, canvas.width - r, bottom);
+  ctx.lineTo(r, bottom);
+  ctx.quadraticCurveTo(4, bottom, 4, bottom - r);
   ctx.lineTo(4, 4 + r);
   ctx.quadraticCurveTo(4, 4, r, 4);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Top line: Name and HP value
   ctx.font = 'bold 18px "Microsoft JhengHei", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.fillText(`${icon} ${title}`, 14, 26);
@@ -5469,11 +5470,9 @@ export function createBadgeCanvas(
   ctx.fillText(valueText, 246, 26);
   ctx.textAlign = 'left';
 
-  // Middle line: Live Action Status
   if (actionText) {
     let statusBg = 'rgba(51, 65, 85, 0.8)';
     let statusColor = '#e2e8f0';
-
     if (isUnderAttack) {
       statusBg = 'rgba(239, 68, 68, 0.85)';
       statusColor = '#ffffff';
@@ -5493,32 +5492,33 @@ export function createBadgeCanvas(
       statusBg = 'rgba(14, 165, 233, 0.7)';
       statusColor = '#e0f2fe';
     }
-
     ctx.fillStyle = statusBg;
     ctx.beginPath();
     ctx.roundRect(14, 32, 232, 20, 6);
     ctx.fill();
-
     ctx.font = 'bold 13px "Microsoft JhengHei", sans-serif';
     ctx.fillStyle = statusColor;
     ctx.fillText(actionText, 20, 46);
   }
 
-  // Bottom line: HP bar / Resource capacity bar
-  const barY = actionText ? 58 : 46;
-  const barH = actionText ? 10 : 12;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-  ctx.fillRect(14, barY, 232, barH);
-
-  const fillWidth = Math.max(0, Math.min(232, 232 * ratio));
-  ctx.fillStyle = isUnderAttack
-    ? '#ef4444'
-    : isResource
-    ? '#f59e0b'
-    : isEnemy
-    ? '#ef4444'
-    : '#22c55e';
-  ctx.fillRect(14, barY, fillWidth, barH);
+  if (showHealthBar) {
+    const barY = actionText ? 58 : 46;
+    const barH = actionText ? 10 : 12;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(14, barY, 232, barH);
+    const fillWidth = Math.max(0, Math.min(232, 232 * ratio));
+    const fillColor = isUnderAttack || isEnemy
+      ? '#ef4444'
+      : isResource
+      ? '#f59e0b'
+      : ratio < 0.3
+      ? '#ef4444'
+      : ratio < 0.6
+      ? '#f59e0b'
+      : '#22c55e';
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(14, barY, fillWidth, barH);
+  }
 
   return canvas;
 }
@@ -5531,9 +5531,10 @@ export function createBadgeSprite(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ): THREE.Sprite {
-  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack);
+  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack, showHealthBar);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
 
@@ -5543,7 +5544,7 @@ export function createBadgeSprite(
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(3.4, 1.05, 1);
+  sprite.scale.set(3.4, 1.05 * (canvas.height / 80), 1);
   sprite.name = 'badgeSprite';
   return sprite;
 }
@@ -5557,15 +5558,17 @@ export function updateBadgeSprite(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ) {
-  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack);
+  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack, showHealthBar);
   if (sprite.material.map) {
     sprite.material.map.dispose();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   sprite.material.map = texture;
+  sprite.scale.y = 1.05 * (canvas.height / 80);
   sprite.material.needsUpdate = true;
 }
 
@@ -8377,7 +8380,10 @@ export function updateDistanceShadowLod(
 export interface UnitVisualContext {
   age?: number;
   researchedTechIds?: string[];
+  /** Unit definition id used for gameplay-specific model selection. */
   unitId?: string;
+  /** Entity id used only for deterministic cosmetic variation between individuals. */
+  visualSeed?: string;
 }
 
 interface UnitDistanceLodPart {
@@ -8457,7 +8463,8 @@ export function updateUnitVisualLod(
 ): void {
   const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
   const identityParts = group.userData.identityLodParts as UnitIdentityLodPart[] | undefined;
-  if (!parts?.length && !identityParts?.length) return;
+  const badge = group.userData.unitBadge as THREE.Sprite | undefined;
+  if (!parts?.length && !identityParts?.length && !badge) return;
 
   group.updateMatrixWorld(true);
   const safeHeight = Math.max(1, viewportHeight);
@@ -8497,9 +8504,45 @@ export function updateUnitVisualLod(
     if (part.object.visible !== shouldShow) part.object.visible = shouldShow;
     part.wasVisible = shouldShow;
   }
+
+  if (badge) {
+    group.getWorldPosition(unitLodWorldCenter);
+    group.getWorldScale(unitIdentityLodWorldScale);
+    const worldScale = Math.max(
+      0.0001,
+      Math.abs(unitIdentityLodWorldScale.x),
+      Math.abs(unitIdentityLodWorldScale.y),
+      Math.abs(unitIdentityLodWorldScale.z)
+    );
+    const distance = Math.max(0.001, camera.position.distanceTo(unitLodWorldCenter));
+    const projectedHeight = (2.55 * worldScale * focalPixels) / distance;
+    const requested = group.userData.overheadBadgesEnabled !== false;
+    const shouldShow = requested && (forceHighDetail || projectedHeight >= 30);
+    if (badge.visible !== shouldShow) badge.visible = shouldShow;
+  }
 }
 
 /** Map researched tech ids to silhouette upgrades (procedural accessories). */
+
+const sharedUnitFactionRingGeometry = new THREE.RingGeometry(0.55, 0.7, 20);
+sharedUnitFactionRingGeometry.rotateX(-Math.PI / 2);
+const unitFactionRingMaterialCache = new Map<number, THREE.MeshBasicMaterial>();
+
+function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
+  let material = unitFactionRingMaterialCache.get(color);
+  if (!material) {
+    material = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
+    unitFactionRingMaterialCache.set(color, material);
+  }
+  return material;
+}
+
 export function getUnitVisualFlags(ctx?: UnitVisualContext) {
   const age = ctx?.age || 1;
   const techs = ctx?.researchedTechIds || [];
@@ -8523,20 +8566,13 @@ export function createUnitMesh(
   const colors = getFactionPalette(faction);
   const s = unitDef.visual.scale || 1;
   const unitId = visualCtx?.unitId || unitDef.id;
+  const artSeed = visualCtx?.visualSeed || unitId;
   const flags = getUnitVisualFlags(visualCtx);
 
   addContactShadow(group, 0.72 * s);
 
-  const factionRingGeo = new THREE.RingGeometry(0.55 * s, 0.7 * s, 20);
-  factionRingGeo.rotateX(-Math.PI / 2);
-  const factionRingMat = new THREE.MeshBasicMaterial({
-    color: colors.ring,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-  });
-  const factionRing = new THREE.Mesh(factionRingGeo, factionRingMat);
+  const factionRing = new THREE.Mesh(sharedUnitFactionRingGeometry, getUnitFactionRingMaterial(colors.ring));
+  factionRing.scale.setScalar(s);
   factionRing.position.y = 0.025;
   group.add(factionRing);
 
@@ -8600,15 +8636,19 @@ export function createUnitMesh(
   const badge = createBadgeSprite(
     displayName,
     icon,
-    `${unitDef.stats.maxHp}`,
+    '',
     1.0,
     colors.isHostile,
+    false,
+    undefined,
+    false,
     false
   );
   badge.position.set(0, 2.55 * s, 0);
   badge.name = 'unitBadge';
   group.add(badge);
   group.userData.unitBadge = badge;
+  group.userData.overheadBadgesEnabled = true;
 
   // High-contrast PBR unit materials with >= 0.25 roughness separation
   const armorMat = new THREE.MeshStandardMaterial({
@@ -10318,7 +10358,7 @@ export function createUnitMesh(
         0xf7cbb8,
         colors.secondary,
         handCiv,
-        `${unitId}:${side}`,
+        `${artSeed}:${side}`,
         side === 'left'
       );
       hand.position.set(position[0], position[1], position[2]);
@@ -10363,7 +10403,7 @@ export function createUnitMesh(
     group.userData.bodyProportionProfile = bodyProfile;
 
     const signatureKit = createUnitSignatureKit({
-      unitId,
+      unitId: artSeed,
       civilization: colors.civilization || 'medieval',
       category: unitDef.category,
       modelType: mType,
@@ -10390,7 +10430,7 @@ export function createUnitMesh(
     const faceDetails = createCharacterFaceDetails(colors.banner, {
       civilization: colors.civilization || 'medieval',
       modelType: mType,
-      unitId,
+      unitId: artSeed,
     });
     faceDetails.position.y = mType === 'mage' || mType === 'oracle' ? 1.09 : 0.76;
     bodyPivot.add(faceDetails);

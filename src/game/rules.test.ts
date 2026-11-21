@@ -17,6 +17,8 @@ import {
   evaluateCondition,
   evaluateAiScript,
   getDistance,
+  getTeamVisualColor,
+  DEFAULT_PARTICIPANT_PALETTE,
   findBalancedResourceNode,
   findClosestResourceNode,
   findClosestEnemy,
@@ -2810,4 +2812,23 @@ test('visuals: heavily damaged buildings reveal structural cracks and base debri
   assert.equal(originalMaterial.color.getHex(), 0x9ca3af, 'shared material remains untouched');
   disposeBuildingVisualResources(group);
   assert.equal(group.getObjectByName('buildingDamageDetailLayer'), undefined);
+});
+
+
+test('visual allocation: teammates share a team outline colour while opposing teams remain distinct', () => {
+  const teamOneA = getTeamVisualColor(1);
+  const teamOneB = getTeamVisualColor(1);
+  const teamTwo = getTeamVisualColor(2);
+  const teamThree = getTeamVisualColor(3);
+  const teamFour = getTeamVisualColor(4);
+  assert.deepEqual(teamOneA, teamOneB, 'same team must resolve the same tactical colour');
+  assert.notEqual(teamOneA.colorHex, teamTwo.colorHex);
+  assert.notEqual(teamTwo.colorHex, teamThree.colorHex);
+  assert.notEqual(teamThree.colorHex, teamFour.colorHex);
+  assert.equal(getTeamVisualColor(5).colorHex, teamOneA.colorHex, 'palette wrapping remains deterministic beyond four teams');
+  assert.notEqual(
+    DEFAULT_PARTICIPANT_PALETTE[0].colorHex,
+    DEFAULT_PARTICIPANT_PALETTE[2].colorHex,
+    'different factions retain their own livery even when allied'
+  );
 });

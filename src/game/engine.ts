@@ -117,6 +117,7 @@ import {
   getUnitVsUnitDamage,
   getShrineIncome,
   getShrineBlessingHoldTime,
+  getTeamVisualColor,
   evaluateContestedPresence,
   getContestedShrineSummary,
   stepWildAnimalState,
@@ -1114,7 +1115,7 @@ export class RtsEngine {
       registerFactionVisual(p.id, {
         primary: p.colorHex,
         banner: p.accentHex,
-        ring: p.accentHex,
+        ring: getTeamVisualColor(p.team).colorHex,
         isHostile: hostile,
         labelPrefix: this.isSpectatorMode
           ? `${p.name}·`
@@ -1447,6 +1448,7 @@ export class RtsEngine {
       age: this.ageByFaction[faction] || 1,
       researchedTechIds: this.getResearchedTechs(faction),
       unitId: unit.unitDefId,
+      visualSeed: unit.id,
     });
     mesh.position.set(x, 0, z);
     Object.assign(mesh.userData, { type: 'unit', id, faction, team });
@@ -4510,23 +4512,29 @@ export class RtsEngine {
       if (mesh) {
         const badge = (mesh.userData.unitBadge as THREE.Sprite) || (mesh.getObjectByName('unitBadge') as THREE.Sprite);
         if (badge) {
-          badge.visible = this.showOverheadBadges;
+          mesh.userData.overheadBadgesEnabled = this.showOverheadBadges;
           const now = performance.now();
           const isUnderAttack = !!(unit.lastDamagedTime && now - unit.lastDamagedTime < 2500);
           const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
           const lvl = xpEligible ? unit.level || 1 : 1;
-          const lastHp = (unit as any)._lastHp;
+          const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
+          const hpBucket = Math.ceil(hpRatio * 40);
+          const isDamaged = unit.hp < unit.maxHp - 0.5;
+          const lastHpBucket = (unit as any)._lastHpBucket;
+          const lastDamageState = (unit as any)._lastDamageState;
           const lastAction = (unit as any)._lastAction;
           const lastAttack = (unit as any)._lastAttack;
           const lastLvl = (unit as any)._lastLvl;
 
           if (
-            lastHp !== unit.hp ||
+            lastHpBucket !== hpBucket ||
+            lastDamageState !== isDamaged ||
             lastAction !== unit.currentActionText ||
             lastAttack !== isUnderAttack ||
             lastLvl !== lvl
           ) {
-            (unit as any)._lastHp = unit.hp;
+            (unit as any)._lastHpBucket = hpBucket;
+            (unit as any)._lastDamageState = isDamaged;
             (unit as any)._lastAction = unit.currentActionText;
             (unit as any)._lastAttack = isUnderAttack;
             (unit as any)._lastLvl = lvl;
@@ -4567,7 +4575,6 @@ export class RtsEngine {
               : '友軍·';
             const lvlSuffix = xpEligible && lvl >= 2 ? ` ★Lv.${lvl}` : '';
             const displayName = `${prefix}${unit.unitDef.name.split(' ')[0]}${lvlSuffix}`;
-            const ratio = Math.max(0, unit.hp / unit.maxHp);
             const actionText = isUnderAttack
               ? '⚠️ 遭受攻擊!'
               : unit.currentActionText || (unit.state === 'idle' ? '💤 待命中' : '');
@@ -4575,12 +4582,13 @@ export class RtsEngine {
               badge,
               displayName,
               icon,
-              `${Math.max(0, unit.hp)}/${unit.maxHp}`,
-              ratio,
+              isDamaged ? `${Math.ceil(Math.max(0, unit.hp))}/${unit.maxHp}` : '',
+              hpRatio,
               hostile,
               false,
               actionText,
-              isUnderAttack
+              isUnderAttack,
+              isDamaged
             );
           }
         }
@@ -9154,6 +9162,7 @@ export class RtsEngine {
         age,
         researchedTechIds: techs,
         unitId: unit.unitDefId,
+        visualSeed: unit.id,
       });
       next.position.copy(pos);
       next.rotation.y = rotY;

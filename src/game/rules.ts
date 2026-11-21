@@ -1084,6 +1084,27 @@ export const DEFAULT_PARTICIPANT_PALETTE: Array<{
 ];
 
 export function createDefaultParticipants(): MatchParticipant[] {
+
+
+export interface TeamVisualColor {
+  colorHex: number;
+  colorCss: string;
+}
+
+/** Stable team colours used for unit rings and map outlines, separate from each faction's own livery. */
+export const TEAM_VISUAL_PALETTE: readonly TeamVisualColor[] = [
+  { colorHex: 0x0ea5e9, colorCss: '#0ea5e9' }, // Team 1 — Azure
+  { colorHex: 0xf43f5e, colorCss: '#f43f5e' }, // Team 2 — Rose
+  { colorHex: 0x84cc16, colorCss: '#84cc16' }, // Team 3 — Lime
+  { colorHex: 0xf59e0b, colorCss: '#f59e0b' }, // Team 4 — Amber
+];
+
+export function getTeamVisualColor(team: number): TeamVisualColor {
+  const safeTeam = Math.max(1, Number.isFinite(team) ? Math.floor(team) : 1);
+  return TEAM_VISUAL_PALETTE[(safeTeam - 1) % TEAM_VISUAL_PALETTE.length];
+}
+
+
   return [
     {
       id: 'player',

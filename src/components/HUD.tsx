@@ -39,6 +39,7 @@ import {
   getEffectiveBuildingArmor,
   getEffectiveGatherMultiplier,
   getFactionPopulationStats,
+  getTeamVisualColor,
 } from '../game/rules';
 import {
   canResearchTech,
@@ -503,8 +504,8 @@ export const HUD: React.FC<HUDProps> = ({
         const isTC = bldg.buildingType === 'town_center';
         const size = isTC ? 10 : bldg.buildingType === 'dock' ? 8 : 7;
         dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#2563eb' : '#dc2626');
-        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        dynCtx.lineWidth = isTC ? 2 : 1;
+        dynCtx.strokeStyle = getTeamVisualColor(bldg.team ?? participant?.team ?? 1).colorCss;
+        dynCtx.lineWidth = isTC ? 2.2 : 1.5;
         dynCtx.fillRect(mx - size / 2, my - size / 2, size, size);
         dynCtx.strokeRect(mx - size / 2, my - size / 2, size, size);
       });
@@ -531,8 +532,8 @@ export const HUD: React.FC<HUDProps> = ({
         }
 
         dynCtx.fillStyle = participant?.colorCss || (isFriendly ? '#38bdf8' : '#ef4444');
-        dynCtx.strokeStyle = isFriendly ? '#ffffff' : '#0f172a';
-        dynCtx.lineWidth = 1;
+        dynCtx.strokeStyle = getTeamVisualColor(unit.team ?? participant?.team ?? 1).colorCss;
+        dynCtx.lineWidth = 1.6;
         if (isBoat) {
           dynCtx.beginPath();
           dynCtx.ellipse(mx, my, 5.2, 3.2, 0, 0, Math.PI * 2);
@@ -968,8 +969,9 @@ export const HUD: React.FC<HUDProps> = ({
               engine.units.forEach((u) => {
                 const m = (engine as any).unitMeshes.get(u.id);
                 if (m) {
+                  m.userData.overheadBadgesEnabled = engine.showOverheadBadges;
                   const b = m.getObjectByName('unitBadge');
-                  if (b) b.visible = engine.showOverheadBadges;
+                  if (b && !engine.showOverheadBadges) b.visible = false;
                 }
               });
               engine.resourceNodes.forEach((n) => {
@@ -1252,7 +1254,11 @@ export const HUD: React.FC<HUDProps> = ({
                       >
                         <span
                           className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/50"
-                          style={{ backgroundColor: p.colorCss }}
+                          style={{
+                            backgroundColor: p.colorCss,
+                            borderColor: getTeamVisualColor(p.team).colorCss,
+                            boxShadow: `0 0 0 1px ${getTeamVisualColor(p.team).colorCss}`,
+                          }}
                         />
                         <span>{pCiv.icon}</span>
                         <span className="truncate max-w-[85px]">{p.name}</span>

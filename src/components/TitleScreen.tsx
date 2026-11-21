@@ -1,7 +1,7 @@
 import React from 'react';
 import { Play, Volume2, VolumeX, Sliders, Plus, Trash2, User, Bot, Shield, Map as MapIcon, Gem, Sparkles } from 'lucide-react';
 import { CivilizationId, MapPresetId, MatchParticipant, ResourceRichness } from '../types/game';
-import { DEFAULT_PARTICIPANT_PALETTE } from '../game/rules';
+import { DEFAULT_PARTICIPANT_PALETTE, getTeamVisualColor } from '../game/rules';
 import { MAP_PRESETS } from '../game/mapGenerator';
 import { CIVILIZATION_LIST, getCivilizationConfig } from '../game/civilizations';
 import { DEFAULT_BUILDINGS } from '../game/mods';
@@ -392,7 +392,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="w-3.5 h-3.5 rounded-sm shrink-0 border border-white/40 shadow"
-                      style={{ backgroundColor: p.colorCss }}
+                      style={{
+                        backgroundColor: p.colorCss,
+                        borderColor: getTeamVisualColor(p.team).colorCss,
+                        boxShadow: `0 0 0 1px ${getTeamVisualColor(p.team).colorCss}`,
+                      }}
                     />
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-white truncate">
