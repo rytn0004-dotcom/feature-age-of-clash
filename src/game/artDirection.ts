@@ -308,7 +308,7 @@ function createFaceGeometry(
     0.006,
     5,
     false
-  ), 0x8b4a42, [0, 0, 0]);
+  ), 0x8b4a42, [0, 0, 0], [1, 1, 1]);
 
   // Hairline and side locks vary by civilization and deterministic unit identity.
   // Hooded / helmed archetypes keep their bespoke authored headwear unobstructed.
@@ -337,7 +337,7 @@ function createFaceGeometry(
       const x = (index - 1) * 0.082;
       add(
         new RoundedBoxGeometry(0.072, 0.12 + (index === 1 ? 0.035 : 0), 0.045, 3, 0.018),
-        hairMatColor,
+        hairColor,
         [x, 0.095 - Math.abs(index - 1) * 0.012, 0.13],
         [1, 1, 0.9],
         [0, 0, (index - 1) * -0.18]
@@ -352,7 +352,7 @@ function createFaceGeometry(
       add(new THREE.TorusGeometry(0.17, 0.014, 5, 20, Math.PI), 0xd6b56d, [0, 0.105, 0.045], [1, 0.72, 1], [Math.PI / 2, 0, 0]);
     }
     for (const side of [-1, 1]) {
-      add(new THREE.ConeGeometry(0.037, 0.22, 5), hairMatColor, [side * 0.19, -0.02, 0], [0.72, 1, 0.62], [0, 0, side * -Math.PI / 2]);
+      add(new THREE.ConeGeometry(0.037, 0.22, 5), hairColor, [side * 0.19, -0.02, 0], [0.72, 1, 0.62], [0, 0, side * -Math.PI / 2]);
     }
   } else {
     // A simple leather/hair brow band for the grounded historical silhouette.
@@ -361,9 +361,9 @@ function createFaceGeometry(
 
   if (modelType === 'villager' || modelType === 'artificer') {
     // Short beard and moustache enrich worker faces without forcing every unit into the same appearance.
-    add(new THREE.SphereGeometry(0.047, 10, 7), hairMatColor, [-0.042, -0.105, 0.132], [1, 0.5, 0.68]);
-    add(new THREE.SphereGeometry(0.047, 10, 7), hairMatColor, [0.042, -0.105, 0.132], [1, 0.5, 0.68]);
-    add(new THREE.ConeGeometry(0.052, 0.12, 7), hairMatColor, [0, -0.16, 0.11], [1, 1, 0.72], [Math.PI, 0, 0]);
+    add(new THREE.SphereGeometry(0.047, 10, 7), hairColor, [-0.042, -0.105, 0.132], [1, 0.5, 0.68]);
+    add(new THREE.SphereGeometry(0.047, 10, 7), hairColor, [0.042, -0.105, 0.132], [1, 0.5, 0.68]);
+    add(new THREE.ConeGeometry(0.052, 0.12, 7), hairColor, [0, -0.16, 0.11], [1, 1, 0.72], [Math.PI, 0, 0]);
   }
   return mergeSculptParts(parts);
 }
