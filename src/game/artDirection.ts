@@ -251,8 +251,13 @@ export function createUnitSignatureKit(options: UnitSignatureKitOptions): THREE.
 
 function createFaceGeometry(eyeColor: number): THREE.BufferGeometry {
   const parts: SculptPart[] = [];
-  const add = (geometry: THREE.BufferGeometry, color: number, position: [number, number, number], scale: [number, number, number]) =>
-    parts.push(makePart(geometry, color, position, scale));
+  const add = (
+    geometry: THREE.BufferGeometry,
+    color: number,
+    position: [number, number, number],
+    scale: [number, number, number],
+    rotation: [number, number, number] = [0, 0, 0]
+  ) => parts.push(makePart(geometry, color, position, scale, rotation));
   const white = 0xf8fafc;
   const ink = 0x171923;
   for (const x of [-0.066, 0.066]) {
