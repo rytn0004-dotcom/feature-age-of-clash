@@ -694,7 +694,7 @@ export class RtsEngine {
     for (let i = 0; i < budgetedCount; i++) {
       const p = this.particlePool[this.particleCursor];
       this.particleCursor = (this.particleCursor + 1) % this.particlePool.length;
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.65;
+      const angle = (i / budgetedCount) * Math.PI * 2 + Math.random() * 0.65;
       const speed = isBuoyant ? 0.35 + Math.random() * 0.85 : 1.6 + Math.random() * 2.6;
       const baseScale = kind === 'smoke' ? 2.1 + Math.random() * 1.4 : kind === 'ember' ? 0.75 + Math.random() * 0.5 : 0.8 + Math.random() * 0.6;
       p.mesh.material = mat;
