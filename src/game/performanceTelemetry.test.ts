@@ -16,6 +16,19 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     geometries: 88,
     textures: 34,
     aliveUnits: 100,
+    aiAliveUnits: 86,
+    aiIdleUnits: 5,
+    aiMovingUnits: 20,
+    aiAttackingUnits: 30,
+    aiGatheringUnits: 18,
+    aiReturningUnits: 9,
+    aiBuildingUnits: 3,
+    aiAssemblingUnits: 1,
+    aiGarrisoningUnits: 0,
+    aiQueuedUnits: 7,
+    aiResearchingBuildings: 2,
+    aiDecisionCount: 12,
+    aiDecisionAccumulatorSeconds: 0.4,
     projectileCount: 12,
     activeParticles: 28,
     particleCapacity: 256,
@@ -36,11 +49,12 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
   };
 }
 
-test('performance telemetry: exports stable column order and numeric samples', () => {
+test('performance telemetry: exports stable columns and numeric samples', () => {
   const csv = formatPerformanceTelemetryCsv([makeSample()]);
   const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
   assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,/);
-  assert.match(header, /stressUnitCount,stressSeed,mapPreset/);
+  assert.match(header, /aiAliveUnits,aiIdleUnits,aiMovingUnits,aiAttackingUnits/);
+  assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds/);
   assert.ok(row.includes('59.8'));
   assert.ok(row.includes('45000'));
   assert.ok(row.includes('highland_basin'));
