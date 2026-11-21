@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
-import { createBuildingHeritageKit, createCharacterFaceDetails, createUnitSignatureKit } from './artDirection';
+import { createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -4560,38 +4560,54 @@ export function createBuildingMesh(
 
   finalizeBuildingWindowBatches(group);
 
-  // Anchor the original civilization crown to real roof geometry, not to the old badge or flag height.
-  if (
+  // Anchor original roof crowns and structural facade modules to the original building bounds.
+  // Badges and flags are excluded so decorative attachments cannot distort the footprint.
+  const needsHeritage =
     type === 'town_center' ||
     type === 'tower' ||
     type === 'castle' ||
     type === 'armory_forge' ||
     type === 'spirit_shrine' ||
     type === 'mana_well' ||
-    type.startsWith('landmark')
-  ) {
-    group.updateMatrixWorld(true);
-    const baseBounds = new THREE.Box3();
-    group.traverse((object) => {
-      const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.geometry || object.name === 'bldgBadge' || object.name === 'animatedFlag') return;
-      baseBounds.expandByObject(mesh);
-    });
-    if (!baseBounds.isEmpty()) {
-      const dimensions = baseBounds.getSize(new THREE.Vector3());
-      const center = baseBounds.getCenter(new THREE.Vector3());
+    type.startsWith('landmark');
+  const palette = {
+    primary: getFactionPalette(faction).primary,
+    secondary: getFactionPalette(faction).secondary,
+    banner: getFactionPalette(faction).banner,
+  };
+  group.updateMatrixWorld(true);
+  const architectureBounds = new THREE.Box3();
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry || object.name === 'bldgBadge' || object.name === 'animatedFlag') return;
+    architectureBounds.expandByObject(mesh);
+  });
+  if (!architectureBounds.isEmpty()) {
+    const dimensions = architectureBounds.getSize(new THREE.Vector3());
+    const center = architectureBounds.getCenter(new THREE.Vector3());
+
+    if (needsHeritage) {
       const heritageKit = createBuildingHeritageKit(
         type,
         resolvedCiv,
-        {
-          primary: getFactionPalette(faction).primary,
-          secondary: getFactionPalette(faction).secondary,
-          banner: getFactionPalette(faction).banner,
-        },
+        palette,
         Math.min(dimensions.x, dimensions.z)
       );
-      heritageKit.position.set(center.x, baseBounds.max.y - 0.16, center.z);
+      heritageKit.position.set(center.x, architectureBounds.max.y - 0.16, center.z);
       group.add(heritageKit);
+    }
+
+    const facadeKit = createBuildingFacadeKit(
+      type,
+      resolvedCiv,
+      palette,
+      dimensions.x,
+      dimensions.z,
+      dimensions.y
+    );
+    if (facadeKit.children.length > 0) {
+      facadeKit.position.set(center.x, architectureBounds.min.y, center.z);
+      group.add(facadeKit);
     }
   }
 
@@ -7777,7 +7793,17 @@ const unitShinGeo = makeLatheGeo([
 ], 14);
 const unitBootGeo = new RoundedBoxGeometry(0.125, 0.085, 0.22, 2, 0.022);
 const unitPoleynGeo = new THREE.SphereGeometry(0.068, 12, 8);
-const unitArmSegmentGeo = new THREE.CapsuleGeometry(0.054, 0.18, 7, 14);
+// Tapered upper-arm / forearm profile: broad at the shoulder, narrowing into the wrist.
+const unitArmSegmentGeo = makeLatheGeo([
+  [0.024, -0.145],
+  [0.038, -0.132],
+  [0.05, -0.085],
+  [0.063, -0.015],
+  [0.068, 0.045],
+  [0.058, 0.105],
+  [0.04, 0.14],
+  [0.018, 0.15],
+], 14);
 const unitHandGeo = new THREE.SphereGeometry(0.066, 12, 8);
 // Sculpted tapered jaw and fuller brow silhouette; shared by all organic humanoid rigs.
 const unitHeadGeo = makeLatheGeo([
@@ -10049,6 +10075,58 @@ export function createUnitMesh(
       eye.position.set(ex, 0.94, 0.35);
       bodyPivot.add(eye);
     });
+  }
+
+  // --- Anatomical grip pass: add a hand that follows each existing animated forearm pivot. ---
+  const handCapableModel =
+    mType === 'villager' ||
+    mType === 'swordsman' ||
+    mType === 'archer' ||
+    mType === 'knight' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage' ||
+    mType === 'guardian' ||
+    mType === 'oracle' ||
+    mType === 'artificer';
+  if (handCapableModel) {
+    const handCiv = colors.civilization || 'medieval';
+    const addGripHand = (
+      pivot: THREE.Group,
+      side: 'left' | 'right',
+      position: [number, number, number]
+    ) => {
+      // Some rigs intentionally leave one arm unused; do not create a floating hand.
+      if (!pivot.parent) return;
+      const hand = createCharacterHandDetails(
+        0xf7cbb8,
+        colors.secondary,
+        handCiv,
+        `${unitId}:${side}`,
+        side === 'left'
+      );
+      hand.position.set(position[0], position[1], position[2]);
+      hand.scale.multiplyScalar(s);
+      hand.userData.unitId = unitId;
+      hand.userData.handSide = side;
+      pivot.add(hand);
+    };
+
+    const rightHandPosition: [number, number, number] =
+      mType === 'villager' || mType === 'artificer'
+        ? [0.02, -0.14, 0.29]
+        : mType === 'swordsman'
+          ? [0.02, -0.18, 0.14]
+          : [0, -0.25, 0.11];
+    const leftHandPosition: [number, number, number] =
+      mType === 'archer'
+        ? [0.06, -0.02, 0.28]
+        : mType === 'swordsman'
+          ? [-0.1, -0.06, 0.14]
+          : [0, -0.25, 0.1];
+
+    addGripHand(rightArmPivot, 'right', rightHandPosition);
+    addGripHand(leftArmPivot, 'left', leftHandPosition);
   }
 
   // --- Original faction art direction layer (shared procedural rig, new authored silhouette) ---
