@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { CivilizationId, UnitCategory } from '../types/game';
+import type { BuildingType, CivilizationId, UnitCategory } from '../types/game';
 
 export interface UnitArtPalette {
   primary: number;
@@ -298,5 +298,116 @@ export function createCharacterFaceDetails(eyeColor: number): THREE.Group {
   face.name = 'sculptedFaceDetails';
   face.raycast = () => {};
   group.add(face);
+  return group;
+}
+
+
+const buildingGeometryCache = new Map<string, THREE.BufferGeometry>();
+const buildingMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+
+const SIGNATURE_BUILDING_TYPES = new Set<BuildingType>([
+  'town_center',
+  'tower',
+  'castle',
+  'armory_forge',
+  'spirit_shrine',
+  'mana_well',
+  'landmark_aachen',
+  'landmark_barracks',
+  'landmark_guildhall',
+  'landmark_citadel',
+  'landmark_observatory',
+  'landmark_arsenal',
+]);
+
+function createBuildingCrownGeometry(
+  civilization: CivilizationId,
+  scale: number,
+  palette: UnitArtPalette,
+  type: BuildingType
+): THREE.BufferGeometry {
+  const p: SculptPart[] = [];
+  const add = (
+    geometry: THREE.BufferGeometry,
+    color: number,
+    position: [number, number, number],
+    size: [number, number, number] = [1, 1, 1],
+    rotation: [number, number, number] = [0, 0, 0]
+  ) => p.push(makePart(geometry, color, position, size, rotation));
+  const s = scale;
+  const highProfile = type === 'castle' || type.startsWith('landmark') || type === 'town_center';
+
+  if (civilization === 'medieval') {
+    // Heraldic roof standard: layered bronze socket, swept crossbar and enamel pennant.
+    add(new THREE.TorusGeometry(0.22 * s, 0.035 * s, 6, 16), palette.secondary, [0, 0.12 * s, 0], [1, 0.82, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.CylinderGeometry(0.045 * s, 0.07 * s, 0.6 * s, 8), palette.secondary, [0, 0.39 * s, 0]);
+    add(new RoundedBoxGeometry(0.62 * s, 0.07 * s, 0.075 * s, 3, 0.018 * s), palette.primary, [0, 0.62 * s, 0]);
+    add(new RoundedBoxGeometry(0.28 * s, (highProfile ? 0.46 : 0.34) * s, 0.045 * s, 3, 0.025 * s), palette.banner, [0.2 * s, 0.34 * s, 0], [1, 1, 1], [0, 0, -0.08]);
+    add(new THREE.OctahedronGeometry(0.105 * s, 1), palette.secondary, [0, 0.68 * s, 0.015 * s], [0.8, 1.1, 0.7]);
+  } else if (civilization === 'anime') {
+    // Original torii roof crown: vermilion gate beam with upturned eave tips and hanging seal.
+    add(new RoundedBoxGeometry(0.72 * s, 0.09 * s, 0.12 * s, 3, 0.025 * s), palette.primary, [0, 0.52 * s, 0]);
+    add(new RoundedBoxGeometry(0.48 * s, 0.07 * s, 0.1 * s, 3, 0.02 * s), palette.secondary, [0, 0.42 * s, 0]);
+    add(new RoundedBoxGeometry(0.065 * s, 0.42 * s, 0.065 * s, 3, 0.018 * s), palette.primary, [-0.22 * s, 0.22 * s, 0]);
+    add(new RoundedBoxGeometry(0.065 * s, 0.42 * s, 0.065 * s, 3, 0.018 * s), palette.primary, [0.22 * s, 0.22 * s, 0]);
+    add(new THREE.ConeGeometry(0.045 * s, 0.25 * s, 5), palette.banner, [-0.4 * s, 0.64 * s, 0], [1, 1, 1], [0, 0, 0.72]);
+    add(new THREE.ConeGeometry(0.045 * s, 0.25 * s, 5), palette.banner, [0.4 * s, 0.64 * s, 0], [1, 1, 1], [0, 0, -0.72]);
+    add(new RoundedBoxGeometry(0.16 * s, 0.23 * s, 0.035 * s, 2, 0.012 * s), 0xfef3c7, [0, 0.18 * s, 0.14 * s]);
+    add(new THREE.OctahedronGeometry(0.06 * s, 0), palette.secondary, [0, 0.18 * s, 0.17 * s]);
+  } else {
+    // Fantasy crown: a suspended rune ring around a faceted crystal, with three shard spires.
+    add(new THREE.TorusGeometry(0.28 * s, 0.025 * s, 6, 22), palette.secondary, [0, 0.3 * s, 0], [1, 0.9, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.OctahedronGeometry((highProfile ? 0.19 : 0.15) * s, 1), palette.banner, [0, 0.36 * s, 0], [0.9, 1.35, 0.72]);
+    add(new THREE.ConeGeometry(0.065 * s, 0.38 * s, 6), palette.secondary, [-0.31 * s, 0.28 * s, 0], [1, 1, 1], [0, 0, 0.42]);
+    add(new THREE.ConeGeometry(0.065 * s, 0.38 * s, 6), palette.secondary, [0.31 * s, 0.28 * s, 0], [1, 1, 1], [0, 0, -0.42]);
+    add(new THREE.OctahedronGeometry(0.075 * s, 0), palette.banner, [0, 0.72 * s, 0]);
+  }
+
+  if (highProfile) {
+    add(new THREE.TorusGeometry(0.12 * s, 0.018 * s, 5, 16), palette.secondary, [0, 0.82 * s, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+  }
+  return mergeSculptParts(p);
+}
+
+/**
+ * A unique roofline signature for important structures. Geometry and materials are cached,
+ * while the caller computes a safe roof anchor from the original building meshes.
+ */
+export function createBuildingHeritageKit(
+  type: BuildingType,
+  civilization: CivilizationId,
+  palette: UnitArtPalette,
+  size: number
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'originalArchitectureHeritageKit';
+  if (!SIGNATURE_BUILDING_TYPES.has(type)) return group;
+
+  const scale = THREE.MathUtils.clamp(Number.isFinite(size) ? size / 4.2 : 1, 0.72, 1.5);
+  const paletteKey = colorKey(palette);
+  const key = [type, civilization, scale.toFixed(2), paletteKey].join('|');
+  let geometry = buildingGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createBuildingCrownGeometry(civilization, scale, palette, type);
+    buildingGeometryCache.set(key, geometry);
+  }
+  const materialKey = [civilization, paletteKey].join('|');
+  let material = buildingMaterialCache.get(materialKey);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      metalness: civilization === 'fantasy' ? 0.56 : 0.68,
+      roughness: civilization === 'anime' ? 0.36 : 0.43,
+    });
+    buildingMaterialCache.set(materialKey, material);
+  }
+
+  const crown = new THREE.Mesh(geometry, material);
+  crown.name = 'originalArchitectureCrown';
+  crown.castShadow = true;
+  crown.receiveShadow = true;
+  group.add(crown);
+  group.userData.artDirection = civilization;
+  group.userData.buildingType = type;
   return group;
 }
