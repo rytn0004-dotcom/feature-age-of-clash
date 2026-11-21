@@ -880,6 +880,40 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
     { raiderId: 'r1', targetId: 'w2' },
     { raiderId: 'r2', targetId: 'w1' },
   ]);
+
+  const { layoutCombatFormation } = await import('./rules');
+  const formationUnits = [
+    mkUnit('front-b', 'ai1', 1, 'melee', 0, 1),
+    mkUnit('back-b', 'ai1', 1, 'ranged', 0, -1, 65, 65, 14, 3.4),
+    mkUnit('flank-b', 'ai1', 1, 'cavalry', -1, 0, 210, 210, 1.8, 5.6),
+    mkUnit('siege-b', 'ai1', 1, 'siege', -2, 0, 160, 160, 18, 2.2),
+    mkUnit('worker-ignored', 'ai1', 1, 'worker', -3, 0),
+  ];
+  const formation = layoutCombatFormation(formationUnits, { x: 30, z: 0 });
+  const slotById = new Map(formation.map((entry) => [entry.unitId, entry]));
+  assert.equal(formation.length, 4, 'workers must not receive combat slots');
+  assert.equal(slotById.get('front-b')?.role, 'frontline');
+  assert.equal(slotById.get('back-b')?.role, 'backline');
+  assert.equal(slotById.get('flank-b')?.role, 'flank');
+  assert.equal(slotById.get('siege-b')?.role, 'siege');
+  assert.ok(slotById.get('front-b')!.x > slotById.get('back-b')!.x, 'frontline must stage closer to the objective');
+  assert.ok(slotById.get('back-b')!.x > slotById.get('siege-b')!.x, 'siege must remain behind ranged units');
+  assert.notEqual(slotById.get('flank-b')!.z, slotById.get('front-b')!.z, 'cavalry should use a flank lane');
+
+  const reversedFormation = layoutCombatFormation([...formationUnits].reverse(), { x: 30, z: 0 });
+  assert.deepEqual(
+    reversedFormation,
+    formation,
+    'slot assignments must not depend on iteration order'
+  );
+  assert.deepEqual(layoutCombatFormation(formationUnits, { x: NaN, z: 0 }), []);
+  assert.deepEqual(layoutCombatFormation([formationUnits[4]], { x: 30, z: 0 }), []);
+  assert.ok(
+    layoutCombatFormation(formationUnits, { x: 500, z: 0 }, 40).every(
+      (entry) => Math.abs(entry.x) <= 40 && Math.abs(entry.z) <= 40
+    ),
+    'slots must be clamped to playable map bounds'
+  );
 });
 
 test('audio-locomotion-buildings: spatial gain, staged construction/damage visuals, and stride phase math', async () => {
