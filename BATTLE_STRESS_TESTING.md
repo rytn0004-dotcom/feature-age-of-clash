@@ -32,6 +32,10 @@
 - CI 的 TypeScript、單元測試與 production build 不能取代實際瀏覽器會戰。
 - AI 是否停滯仍須透過長時間實戰觀察；本測試計畫與回歸測試本身不構成 AI 無停滯的證明。
 
+## CI
+
+此壓測回歸分支以 PR #53 的功能分支為基底；CI 工作流程已允許針對該整合分支的 pull request 執行驗證。
+
 ## 本次回歸測試
 
 `npm test` 會同時執行既有規則測試與 `battleStress.test.ts`，驗證規模限制、固定 seed 可重現性、文明與 AI 人格覆蓋、兵種角色覆蓋、座標有效性及非法 seed 防護。
