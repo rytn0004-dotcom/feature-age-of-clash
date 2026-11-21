@@ -8553,6 +8553,10 @@ export class RtsEngine {
       const combatCmd = plan.combatAction;
       if (!combatCmd || aiArmy.length === 0) continue;
 
+      // Reuse id indexes throughout this AI decision pass instead of rescanning full entity arrays per unit.
+      const combatUnitById = new Map(this.units.map((candidate) => [candidate.id, candidate] as const));
+      const combatBuildingById = new Map(this.buildings.map((candidate) => [candidate.id, candidate] as const));
+
       if (combatCmd.type === 'defend_base' || combatCmd.type === 'retreat_to_base') {
         const defendAnchor = { x: anchorX, z: anchorZ, radius: 26 };
         const baseClusterTarget = selectClusterFocusTarget(aiArmy, this.units, this.buildings, {
@@ -8572,8 +8576,8 @@ export class RtsEngine {
 
           if (bestTarget) {
             const currentTarget =
-              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
-              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
             const needsRetarget = shouldSwitchCombatTarget(
               unit,
@@ -8673,6 +8677,7 @@ export class RtsEngine {
               !u.garrisonedInBuildingId &&
               this.isHostile({ faction: aiId, team: aiTeam }, u)
           );
+          const exposedWorkerById = new Map(exposedWorkers.map((worker) => [worker.id, worker] as const));
           const raiderUnits = strikeUnits.filter(
             (unit, idx) =>
               unit.unitDef.category === 'cavalry' ||
@@ -8719,8 +8724,8 @@ export class RtsEngine {
           strikeUnits.forEach((unit, idx) => {
             const slot = formationSlots.get(unit.id);
             const currentFormationTarget =
-              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
-              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
             const targetIsNear =
               !!currentFormationTarget &&
@@ -8778,9 +8783,7 @@ export class RtsEngine {
               unit.unitDef.stats.speed >= 3.6;
 
             const assignedPreyId = raidTargetByUnit.get(unit.id);
-            const prey = assignedPreyId
-              ? exposedWorkers.find((worker) => worker.id === assignedPreyId)
-              : undefined;
+            const prey = assignedPreyId ? exposedWorkerById.get(assignedPreyId) : undefined;
             if (isRaider && prey) {
               const goalChanged =
                 !unit.attackMoveGoal ||
@@ -8824,8 +8827,8 @@ export class RtsEngine {
             );
             const chosen = optimalLocal || clusterTarget || stronghold;
             const currentTarget =
-              this.units.find((candidate) => candidate.id === unit.targetEntityId) ||
-              this.buildings.find((candidate) => candidate.id === unit.targetEntityId) ||
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
             const targetChanged = shouldSwitchCombatTarget(
               unit,
