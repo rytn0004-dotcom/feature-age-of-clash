@@ -454,6 +454,7 @@ export class RtsEngine {
 
   // AI Timer
   private aiTickAccumulator = 0;
+  private aiDecisionCount = 0;
 
   // Callbacks for UI updates
   public onStateChange?: () => void;
@@ -1213,6 +1214,7 @@ export class RtsEngine {
     this.landmarksByFaction = {};
     this.researchedTechsByFaction = {};
     this.aiTickAccumulator = 1.2;
+    this.aiDecisionCount = 0;
     this.playerAge = 1;
     this.enemyAge = 1;
     this.playerLandmarks = [];
@@ -4109,6 +4111,22 @@ export class RtsEngine {
     const render = renderInfo.render;
     const memory = renderInfo.memory;
     const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
+    const aiFactionIds = new Set(this.participants.filter((participant) => participant.controller === 'ai').map((participant) => participant.id));
+    const aiUnits = this.units.filter((unit) => unit.hp > 0 && aiFactionIds.has(unit.faction));
+    const aiStateCounts: Record<UnitEntity['state'], number> = {
+      idle: 0,
+      moving: 0,
+      attacking: 0,
+      gathering: 0,
+      returning_resource: 0,
+      building: 0,
+      assembling: 0,
+      garrisoning: 0,
+    };
+    aiUnits.forEach((unit) => { aiStateCounts[unit.state] += 1; });
+    const aiBuildings = this.buildings.filter((building) => building.hp > 0 && building.isConstructed && aiFactionIds.has(building.faction));
+    const aiQueuedUnits = aiBuildings.reduce((total, building) => total + building.queue.length, 0);
+    const aiResearchingBuildings = aiBuildings.filter((building) => !!building.activeTechId).length;
     const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
     const sample: PerformanceSample = {
       elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
@@ -4122,6 +4140,19 @@ export class RtsEngine {
       geometries: memory.geometries,
       textures: memory.textures,
       aliveUnits,
+      aiAliveUnits: aiUnits.length,
+      aiIdleUnits: aiStateCounts.idle,
+      aiMovingUnits: aiStateCounts.moving,
+      aiAttackingUnits: aiStateCounts.attacking,
+      aiGatheringUnits: aiStateCounts.gathering,
+      aiReturningUnits: aiStateCounts.returning_resource,
+      aiBuildingUnits: aiStateCounts.building,
+      aiAssemblingUnits: aiStateCounts.assembling,
+      aiGarrisoningUnits: aiStateCounts.garrisoning,
+      aiQueuedUnits,
+      aiResearchingBuildings,
+      aiDecisionCount: this.aiDecisionCount,
+      aiDecisionAccumulatorSeconds: this.aiTickAccumulator,
       projectileCount: this.projectiles.length,
       activeParticles,
       particleCapacity: this.particlePool.length,
@@ -4155,6 +4186,11 @@ export class RtsEngine {
       `Geometries       ${memory.geometries.toLocaleString()}`,
       `Textures         ${memory.textures.toLocaleString()}`,
       `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
+      `AI Idle/Move/Atk  ${aiStateCounts.idle}/${aiStateCounts.moving}/${aiStateCounts.attacking}`,
+      `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
+      `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
+      `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
+      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / 1.20s`,
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
       `Renderer         ${rendererMode}`,
@@ -4457,6 +4493,7 @@ export class RtsEngine {
     this.aiTickAccumulator += dt;
     if (this.aiTickAccumulator >= 1.2) {
       this.aiTickAccumulator = 0;
+      this.aiDecisionCount += 1;
       this.evaluateAiLogic();
     }
 
