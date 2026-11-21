@@ -153,6 +153,7 @@ import {
 import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
+import { formatPerformanceTelemetryCsv, type PerformanceSample } from './performanceTelemetry';
 import {
   ControlGroupsMap,
   createEmptyControlGroups,
@@ -251,6 +252,7 @@ interface FieldSiegeProject {
 }
 
 const MAX_WALL_CHAIN_SEGMENTS = 120;
+const MAX_PERFORMANCE_SAMPLES = 3600;
 
 export class RtsEngine {
   public container: HTMLElement;
@@ -267,6 +269,8 @@ export class RtsEngine {
   private performanceWindowStart = 0;
   private performanceLastFrameTime = 0;
   private performanceFrameTimes: number[] = [];
+  private performanceCaptureStartedAt = 0;
+  private performanceSamples: PerformanceSample[] = [];
   private qualityWindowStart = 0;
   private qualityFrameCount = 0;
   private qualityLevel: 0 | 1 | 2 = 2;
@@ -4079,6 +4083,8 @@ export class RtsEngine {
       this.performanceWindowStart = performance.now();
       this.performanceLastFrameTime = this.performanceWindowStart;
       this.performanceFrameTimes = [];
+      this.performanceCaptureStartedAt = this.performanceWindowStart;
+      this.performanceSamples = [];
       this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
     }
   }
@@ -4103,8 +4109,42 @@ export class RtsEngine {
     const render = renderInfo.render;
     const memory = renderInfo.memory;
     const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
+    const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
+    const sample: PerformanceSample = {
+      elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
+      wallTime: new Date().toISOString(),
+      fps,
+      frameAverageMs: frameTimes.averageMs,
+      frameP95Ms: frameTimes.p95Ms,
+      maxHitchMs: frameTimes.maxMs,
+      drawCalls: render.calls,
+      triangles: render.triangles,
+      geometries: memory.geometries,
+      textures: memory.textures,
+      aliveUnits,
+      projectileCount: this.projectiles.length,
+      activeParticles,
+      particleCapacity: this.particlePool.length,
+      pixelRatio: this.renderer.getPixelRatio(),
+      rendererMode,
+      qualityLevel: this.qualityLevel,
+      stressUnitCount: this.battleStressInfo?.unitCount ?? null,
+      stressSeed: this.battleStressInfo?.seed ?? null,
+      mapPreset: this.battleStressInfo?.mapPreset ?? 'none',
+      gameDurationSeconds: this.stats.gameDuration,
+      gameSpeed: this.gameSpeed,
+      gameState: this.gameState,
+      participantCount: this.participants.length,
+      aiParticipantCount: this.participants.filter((participant) => participant.controller === 'ai').length,
+      viewportWidth: this.container.clientWidth,
+      viewportHeight: this.container.clientHeight,
+    };
+    if (this.performanceSamples.length >= MAX_PERFORMANCE_SAMPLES) this.performanceSamples.shift();
+    this.performanceSamples.push(sample);
+
     this.performanceOverlay.textContent = [
-      'PERFORMANCE MONITOR  ·  F3 隱藏',
+      'PERFORMANCE MONITOR  ·  F3 隱藏 · F4 匯出 CSV',
+      `Capture Samples  ${this.performanceSamples.length} / ${MAX_PERFORMANCE_SAMPLES}`,
       `Stress Scenario ${this.battleStressInfo ? `${this.battleStressInfo.unitCount} units · ${this.battleStressInfo.mapPreset} · seed ${this.battleStressInfo.seed}` : 'OFF'}`,
       `Frame FPS        ${fps.toFixed(1)}`,
       `Frame ms avg     ${frameTimes.averageMs.toFixed(2)}`,
@@ -4118,12 +4158,38 @@ export class RtsEngine {
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
       `Renderer         ${rendererMode}`,
-      `Quality          ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
+      `Quality          ${qualityLabel} (自動)`
     ].join('\n');
 
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
     this.performanceFrameTimes = [];
+  }
+
+  private exportPerformanceTelemetry(): void {
+    if (this.performanceSamples.length === 0) {
+      if (this.performanceOverlay) {
+        this.performanceOverlay.textContent = '尚無效能樣本；先按 F3 開始收集，再按 F4 匯出。';
+      }
+      return;
+    }
+
+    const csv = formatPerformanceTelemetryCsv(this.performanceSamples);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const firstSample = this.performanceSamples[0];
+    const scenario = firstSample.stressUnitCount
+      ? `stress-${firstSample.stressUnitCount}-seed-${firstSample.stressSeed ?? 'unknown'}`
+      : 'match';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `age-of-clash-${scenario}-performance-${timestamp}.csv`;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ------------------ MAIN SIMULATION LOOP ------------------
@@ -9258,6 +9324,12 @@ export class RtsEngine {
       if (!isTyping && e.code === 'F3') {
         e.preventDefault();
         this.togglePerformanceOverlay();
+        return;
+      }
+
+      if (!isTyping && !e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'F4') {
+        e.preventDefault();
+        this.exportPerformanceTelemetry();
         return;
       }
 
