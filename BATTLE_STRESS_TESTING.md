@@ -21,7 +21,7 @@
 1. 使用相同瀏覽器、視窗尺寸、縮放比例、地圖與 seed。
 2. 載入後先暖機 30 秒，再按 F3 開啟效能監視器；F3 開啟時開始新的量測區段。
 3. 每個規模至少觀察 3 分鐘；另做一次 10 分鐘長時間混戰觀察。
-4. 量測中可隨時按 F4 匯出 CSV；每 0.5 秒會記錄 FPS、平均/P95 frame time、最大 hitch、Draw Calls、Triangles、Geometries、Textures、存活單位、投射物、粒子、畫質、速度、文明/AI 人數及視窗尺寸。單次擷取最多保留 3,600 筆（約 30 分鐘），超出時保留最近資料。
+4. 量測中可隨時按 F4 匯出 CSV；每 0.5 秒記錄 FPS、平均/P95 frame time、最大 hitch、Draw Calls、Triangles、Geometries、Textures、存活單位、AI 各行為狀態、AI 決策心跳/累積器、生產佇列、研發數、投射物、粒子、畫質、速度、文明/AI 人數及視窗尺寸。單次擷取最多保留 3,600 筆（約 30 分鐘），超出時保留最近資料。
 5. 每個規模至少重跑兩次；比較時不要混用不同硬體或不同畫質設定。
 
 ## 判讀與限制
@@ -30,7 +30,7 @@
 - Draw Calls / Triangles 是監視器更新當下讀取的 renderer 統計，不應誤稱為整場平均值。
 - 瀏覽器分頁背景節流、視窗失焦、GPU 軟體渲染會使數據失真，必須註明。
 - CI 的 TypeScript、單元測試與 production build 不能取代實際瀏覽器會戰。
-- AI 是否停滯仍須透過長時間實戰觀察；本測試計畫與回歸測試本身不構成 AI 無停滯的證明。
+- AI 心跳每次呼叫決策評估器時遞增；狀態統計涵蓋 idle、moving、attacking、gathering、returning_resource、building、assembling、garrisoning。這些數字是診斷線索，不把閒置單位直接判定為卡死；若整個主迴圈同步阻塞，瀏覽器也可能無法輸出最後一筆樣本。AI 是否停滯仍須透過長時間實戰觀察。
 
 ## CI
 
