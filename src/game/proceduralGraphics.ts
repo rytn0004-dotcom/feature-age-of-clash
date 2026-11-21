@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
@@ -7866,7 +7866,7 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
   // 7. Instanced Meadow Wildflowers scattered naturally across clear turf
   const flowerPts: Array<{ x: number; z: number; scale: number; hex: number }> = [];
   const flowerPalette = [0xfacc15, 0xfef9c3, 0xfb7185, 0xc084fc, 0xfde047];
-  for (let i = 0; i < 980 && flowerPts.length < 320; i++) {
+  for (let i = 0; i < 1400 && flowerPts.length < 440; i++) {
     const rawX = (Math.sin(i * 41.13 + 7.2) * 31987.412) % 1;
     const rawZ = (Math.sin(i * 67.89 + 3.1) * 51234.789) % 1;
     const fx = (rawX < 0 ? rawX + 1 : rawX) * 166 - 83;
@@ -7880,10 +7880,30 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     });
   }
   if (flowerPts.length > 0) {
-    const flowerGeo = new THREE.OctahedronGeometry(0.15, 0);
+    // Five overlapping low-poly petals and a center are merged before instancing.
+    // The richer silhouette therefore remains a single draw call for the whole meadow.
+    const flowerParts: THREE.BufferGeometry[] = [];
+    const flowerUp = new THREE.Vector3(0, 1, 0);
+    for (let petalIndex = 0; petalIndex < 5; petalIndex++) {
+      const angle = (petalIndex / 5) * Math.PI * 2;
+      const petal = new THREE.SphereGeometry(0.105, 7, 4);
+      const position = new THREE.Vector3(Math.cos(angle) * 0.105, 0.018, Math.sin(angle) * 0.105);
+      const rotation = new THREE.Quaternion().setFromAxisAngle(flowerUp, -angle);
+      const scale = new THREE.Vector3(0.82, 0.38, 1.35);
+      petal.applyMatrix4(new THREE.Matrix4().compose(position, rotation, scale));
+      flowerParts.push(petal);
+    }
+    const flowerCenter = new THREE.SphereGeometry(0.064, 7, 5);
+    flowerCenter.translate(0, 0.045, 0);
+    flowerParts.push(flowerCenter);
+    const flowerGeo = mergeGeometries(flowerParts, false);
+    flowerParts.forEach((part) => part.dispose());
+    if (!flowerGeo) throw new Error('Failed to assemble the instanced meadow flower geometry');
     const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 });
     const instancedFlowers = new THREE.InstancedMesh(flowerGeo, flowerMat, flowerPts.length);
-    const fDummy = new THREE.Object3D();
+    instancedFlowers.name = 'instancedMeadowWildflowers';
+    instancedFlowers.userData.qualityMinLevel = 1;
+    const fDummy = new THREE.Object3D();    const fDummy = new THREE.Object3D();
     const fTint = new THREE.Color();
     flowerPts.forEach((pt, idx) => {
       fDummy.position.set(pt.x, 0.28 * pt.scale, pt.z);
@@ -7939,9 +7959,13 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
       side: THREE.DoubleSide,
     });
     const instancedReeds = new THREE.InstancedMesh(reedGeo, reedMat, reedPts.length);
+    instancedReeds.name = 'instancedShorelineReeds';
+    instancedReeds.userData.qualityMinLevel = 1;
     const cattailGeo = new THREE.CylinderGeometry(0.036, 0.036, 0.22, 6);
     const cattailMat = new THREE.MeshStandardMaterial({ color: 0x713f12, roughness: 0.92 });
     const instancedCattails = new THREE.InstancedMesh(cattailGeo, cattailMat, reedPts.length);
+    instancedCattails.name = 'instancedShorelineCattails';
+    instancedCattails.userData.qualityMinLevel = 1;
     const rdDummy = new THREE.Object3D();
     reedPts.forEach((pt, idx) => {
       rdDummy.position.set(pt.x, 0.0, pt.z);

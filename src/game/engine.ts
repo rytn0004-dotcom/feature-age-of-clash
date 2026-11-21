@@ -120,6 +120,7 @@ import {
   getTeamVisualColor,
   shouldShowUnitHealthBar,
   computeParticleBurstCount,
+  summarizeFrameTimes,
   evaluateContestedPresence,
   getContestedShrineSummary,
   stepWildAnimalState,
@@ -210,15 +211,24 @@ import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNo
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
 
+type ParticleRenderLayer = 'solid' | 'smoke';
+
 interface PooledParticle {
-  mesh: THREE.Mesh;
+  instanceId: number;
+  renderLayer: ParticleRenderLayer;
   kind: ParticleKind;
+  x: number;
+  y: number;
+  z: number;
+  rotationX: number;
+  rotationY: number;
   vx: number;
   vy: number;
   vz: number;
   life: number;
   maxLife: number;
   baseScale: number;
+  scale: number;
   active: boolean;
 }
 
@@ -249,6 +259,8 @@ export class RtsEngine {
   private performanceOverlayVisible = false;
   private performanceFrameCount = 0;
   private performanceWindowStart = 0;
+  private performanceLastFrameTime = 0;
+  private performanceFrameTimes: number[] = [];
   private qualityWindowStart = 0;
   private qualityFrameCount = 0;
   private qualityLevel: 0 | 1 | 2 = 2;
@@ -344,7 +356,10 @@ export class RtsEngine {
   private lastTimerSec = -1;
   private particlePool: PooledParticle[] = [];
   private particleCursor = 0;
-  private particleMaterials: Record<ParticleKind, THREE.MeshBasicMaterial> | null = null;
+  private particleSolidBatch: THREE.InstancedMesh | null = null;
+  private particleSmokeBatch: THREE.InstancedMesh | null = null;
+  private particleColors: Record<ParticleKind, THREE.Color> | null = null;
+  private particleDummy = new THREE.Object3D();
   private dyingEffects: Array<{ mesh: THREE.Group; age: number; duration: number; startY: number }> = [];
   private collapsingBuildings: Array<{
     mesh: THREE.Group;
@@ -649,35 +664,90 @@ export class RtsEngine {
   }
 
   private initParticlePool() {
-    const pGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-    this.particleMaterials = {
-      hit: new THREE.MeshBasicMaterial({ color: 0xef4444 }),
-      spark: new THREE.MeshBasicMaterial({ color: 0xfef08a }),
-      wood: new THREE.MeshBasicMaterial({ color: 0x92400e }),
-      gold: new THREE.MeshBasicMaterial({ color: 0xfbbf24 }),
-      stone: new THREE.MeshBasicMaterial({ color: 0x94a3b8 }),
-      leaf: new THREE.MeshBasicMaterial({ color: 0x22c55e }),
-      dust: new THREE.MeshBasicMaterial({ color: 0xe2e8f0 }),
-      smoke: new THREE.MeshBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.72 }),
-      ember: new THREE.MeshBasicMaterial({ color: 0xf97316 }),
-    };
     const count = 112;
+    const geometry = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+    this.particleColors = {
+      hit: new THREE.Color(0xef4444),
+      spark: new THREE.Color(0xfef08a),
+      wood: new THREE.Color(0x92400e),
+      gold: new THREE.Color(0xfbbf24),
+      stone: new THREE.Color(0x94a3b8),
+      leaf: new THREE.Color(0x22c55e),
+      dust: new THREE.Color(0xe2e8f0),
+      smoke: new THREE.Color(0x475569),
+      ember: new THREE.Color(0xf97316),
+    };
+
+    const solidMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      toneMapped: false,
+    });
+    const smokeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.particleSolidBatch = new THREE.InstancedMesh(geometry, solidMaterial, count);
+    this.particleSolidBatch.name = 'instancedCombatParticles';
+    this.particleSolidBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.particleSolidBatch.frustumCulled = false;
+    this.particleSmokeBatch = new THREE.InstancedMesh(geometry, smokeMaterial, count);
+    this.particleSmokeBatch.name = 'instancedSmokeParticles';
+    this.particleSmokeBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.particleSmokeBatch.frustumCulled = false;
+
+    const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
     this.particlePool = [];
     for (let i = 0; i < count; i++) {
-      const mesh = new THREE.Mesh(pGeo, this.particleMaterials.spark);
-      mesh.visible = false;
-      this.scene.add(mesh);
+      this.particleSolidBatch.setMatrixAt(i, hiddenMatrix);
+      this.particleSmokeBatch.setMatrixAt(i, hiddenMatrix);
+      this.particleSolidBatch.setColorAt(i, this.particleColors.spark);
+      this.particleSmokeBatch.setColorAt(i, this.particleColors.smoke);
       this.particlePool.push({
-        mesh,
+        instanceId: i,
+        renderLayer: 'solid',
         kind: 'spark',
+        x: 0,
+        y: 0,
+        z: 0,
+        rotationX: 0,
+        rotationY: 0,
         vx: 0,
         vy: 0,
         vz: 0,
         life: 0,
         maxLife: 0.4,
         baseScale: 1,
+        scale: 0,
         active: false,
       });
+    }
+    this.markParticleBatchesDirty(true, true, true);
+    this.scene.add(this.particleSolidBatch, this.particleSmokeBatch);
+  }
+
+  private writeParticleInstance(particle: PooledParticle, visible: boolean): void {
+    const batch = particle.renderLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
+    if (!batch) return;
+    this.particleDummy.position.set(particle.x, particle.y, particle.z);
+    this.particleDummy.rotation.set(particle.rotationX, particle.rotationY, 0);
+    this.particleDummy.scale.setScalar(visible ? particle.scale : 0);
+    this.particleDummy.updateMatrix();
+    batch.setMatrixAt(particle.instanceId, this.particleDummy.matrix);
+  }
+
+  private markParticleBatchesDirty(solid: boolean, smoke: boolean, colors = false): void {
+    if (solid && this.particleSolidBatch) {
+      this.particleSolidBatch.instanceMatrix.needsUpdate = true;
+      if (colors && this.particleSolidBatch.instanceColor) this.particleSolidBatch.instanceColor.needsUpdate = true;
+    }
+    if (smoke && this.particleSmokeBatch) {
+      this.particleSmokeBatch.instanceMatrix.needsUpdate = true;
+      if (colors && this.particleSmokeBatch.instanceColor) this.particleSmokeBatch.instanceColor.needsUpdate = true;
     }
   }
 
@@ -687,25 +757,32 @@ export class RtsEngine {
   }
 
   public spawnParticleBurst(x: number, y: number, z: number, kind: ParticleKind, count = 6) {
-    if (!this.particleMaterials || this.particlePool.length === 0) return;
-    const mat = this.particleMaterials[kind];
+    if (!this.particleColors || this.particlePool.length === 0) return;
     const isBuoyant = kind === 'smoke' || kind === 'ember';
+    const targetLayer: ParticleRenderLayer = kind === 'smoke' ? 'smoke' : 'solid';
     const budgetedCount = computeParticleBurstCount(count, this.qualityLevel, this.units.length, kind);
+    let solidChanged = false;
+    let smokeChanged = false;
+    let colorsChanged = false;
+
     for (let i = 0; i < budgetedCount; i++) {
       const p = this.particlePool[this.particleCursor];
       this.particleCursor = (this.particleCursor + 1) % this.particlePool.length;
+      this.writeParticleInstance(p, false);
+      if (p.renderLayer === 'smoke') smokeChanged = true;
+      else solidChanged = true;
+      p.renderLayer = targetLayer;
+
       const angle = (i / budgetedCount) * Math.PI * 2 + Math.random() * 0.65;
       const speed = isBuoyant ? 0.35 + Math.random() * 0.85 : 1.6 + Math.random() * 2.6;
       const baseScale = kind === 'smoke' ? 2.1 + Math.random() * 1.4 : kind === 'ember' ? 0.75 + Math.random() * 0.5 : 0.8 + Math.random() * 0.6;
-      p.mesh.material = mat;
-      p.mesh.position.set(
-        x + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0),
-        y,
-        z + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0)
-      );
-      p.mesh.scale.setScalar(baseScale);
-      p.mesh.visible = true;
       p.kind = kind;
+      p.x = x + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0);
+      p.y = y;
+      p.z = z + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0);
+      p.rotationX = 0;
+      p.rotationY = 0;
+      p.scale = baseScale;
       p.baseScale = baseScale;
       p.vx = Math.cos(angle) * speed;
       p.vy = kind === 'smoke' ? 1.8 + Math.random() * 1.2 : kind === 'ember' ? 2.6 + Math.random() * 1.8 : 2.4 + Math.random() * 2.5;
@@ -713,17 +790,29 @@ export class RtsEngine {
       p.life = 0;
       p.maxLife = kind === 'smoke' ? 0.85 + Math.random() * 0.45 : kind === 'ember' ? 0.55 + Math.random() * 0.35 : 0.32 + Math.random() * 0.24;
       p.active = true;
+
+      const batch = targetLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
+      batch?.setColorAt(p.instanceId, this.particleColors[kind]);
+      this.writeParticleInstance(p, true);
+      if (targetLayer === 'smoke') smokeChanged = true;
+      else solidChanged = true;
+      colorsChanged = true;
     }
+    this.markParticleBatchesDirty(solidChanged, smokeChanged, colorsChanged);
   }
 
   private updateParticles(dt: number) {
+    let solidChanged = false;
+    let smokeChanged = false;
     for (let i = 0; i < this.particlePool.length; i++) {
       const p = this.particlePool[i];
       if (!p.active) continue;
       p.life += dt;
       if (p.life >= p.maxLife) {
         p.active = false;
-        p.mesh.visible = false;
+        this.writeParticleInstance(p, false);
+        if (p.renderLayer === 'smoke') smokeChanged = true;
+        else solidChanged = true;
         continue;
       }
       const prog = p.life / p.maxLife;
@@ -731,20 +820,24 @@ export class RtsEngine {
         p.vy += 1.2 * dt;
         p.vx *= Math.max(0, 1 - 1.5 * dt);
         p.vz *= Math.max(0, 1 - 1.5 * dt);
-        p.mesh.scale.setScalar(p.baseScale * (0.85 + prog * 1.15) * (1 - prog * 0.65));
+        p.scale = p.baseScale * (0.85 + prog * 1.15) * (1 - prog * 0.65);
       } else if (p.kind === 'ember') {
         p.vy += 0.8 * dt;
-        p.mesh.scale.setScalar(Math.max(0.08, p.baseScale * (1 - prog)));
+        p.scale = Math.max(0.08, p.baseScale * (1 - prog));
       } else {
         p.vy -= 9.5 * dt;
-        p.mesh.scale.setScalar(Math.max(0.05, p.baseScale * (1 - prog)));
+        p.scale = Math.max(0.05, p.baseScale * (1 - prog));
       }
-      p.mesh.position.x += p.vx * dt;
-      p.mesh.position.y = Math.max(0.05, p.mesh.position.y + p.vy * dt);
-      p.mesh.position.z += p.vz * dt;
-      p.mesh.rotation.x += (p.kind === 'smoke' ? 1.6 : 6) * dt;
-      p.mesh.rotation.y += (p.kind === 'smoke' ? 1.4 : 5) * dt;
+      p.x += p.vx * dt;
+      p.y = Math.max(0.05, p.y + p.vy * dt);
+      p.z += p.vz * dt;
+      p.rotationX += (p.kind === 'smoke' ? 1.6 : 6) * dt;
+      p.rotationY += (p.kind === 'smoke' ? 1.4 : 5) * dt;
+      this.writeParticleInstance(p, true);
+      if (p.renderLayer === 'smoke') smokeChanged = true;
+      else solidChanged = true;
     }
+    this.markParticleBatchesDirty(solidChanged, smokeChanged);
   }
 
   private createMountainPerimeter() {
@@ -999,8 +1092,9 @@ export class RtsEngine {
     this.commandIndicators = [];
     this.particlePool.forEach((p) => {
       p.active = false;
-      p.mesh.visible = false;
+      this.writeParticleInstance(p, false);
     });
+    this.markParticleBatchesDirty(true, true);
     this.dyingEffects.forEach((d) => this.scene.remove(d.mesh));
     this.dyingEffects = [];
     this.collapsingBuildings.forEach((cb) => {
@@ -1158,6 +1252,7 @@ export class RtsEngine {
 
     this.environmentGroup = createEnvironmentFeaturesGroup(layout);
     this.scene.add(this.environmentGroup);
+    this.applySceneDetailQuality(this.qualityLevel);
 
     const fallbackWorker = this.findUnitDef('villager')!;
     const fallbackWarrior = this.findUnitDef('swordsman') || fallbackWorker;
@@ -3809,6 +3904,7 @@ export class RtsEngine {
     this.lowFpsSamples = 0;
     this.highFpsSamples = 0;
     this.qualityCooldownUntil = now + 6000;
+    this.applySceneDetailQuality(nextLevel);
 
     const pixelRatio = nextLevel === 0 ? 1 : nextLevel === 1 ? 1.35 : Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(pixelRatio);
@@ -3823,6 +3919,15 @@ export class RtsEngine {
         object.shadow.map = null;
         object.shadow.camera.updateProjectionMatrix();
       }
+    });
+  }
+
+  private applySceneDetailQuality(level: 0 | 1 | 2): void {
+    this.scene.traverse((object) => {
+      const minimumLevel = object.userData?.qualityMinLevel;
+      if (typeof minimumLevel !== 'number') return;
+      const shouldShow = level >= minimumLevel;
+      if (object.visible !== shouldShow) object.visible = shouldShow;
     });
   }
 
@@ -3858,6 +3963,8 @@ export class RtsEngine {
     if (this.performanceOverlayVisible) {
       this.performanceFrameCount = 0;
       this.performanceWindowStart = performance.now();
+      this.performanceLastFrameTime = this.performanceWindowStart;
+      this.performanceFrameTimes = [];
       this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
     }
   }
@@ -3865,29 +3972,43 @@ export class RtsEngine {
   private updatePerformanceOverlay(now: number): void {
     if (!this.performanceOverlayVisible || !this.performanceOverlay) return;
 
+    if (this.performanceLastFrameTime > 0) {
+      const frameTime = now - this.performanceLastFrameTime;
+      if (Number.isFinite(frameTime) && frameTime > 0) this.performanceFrameTimes.push(frameTime);
+    }
+    this.performanceLastFrameTime = now;
     this.performanceFrameCount += 1;
     const elapsedMs = now - this.performanceWindowStart;
     if (elapsedMs < 500) return;
 
     const fps = (this.performanceFrameCount * 1000) / Math.max(1, elapsedMs);
+    const frameTimes = summarizeFrameTimes(this.performanceFrameTimes);
+    const activeParticles = this.particlePool.reduce((total, particle) => total + (particle.active ? 1 : 0), 0);
+    const aliveUnits = this.units.reduce((total, unit) => total + (unit.hp > 0 ? 1 : 0), 0);
     const renderInfo = this.renderer.info;
     const render = renderInfo.render;
     const memory = renderInfo.memory;
     const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
     this.performanceOverlay.textContent = [
       'PERFORMANCE MONITOR  ·  F3 隱藏',
-      `Frame FPS      ${fps.toFixed(1)}`,
-      `Draw Calls     ${render.calls.toLocaleString()}`,
-      `Triangles      ${render.triangles.toLocaleString()}`,
-      `Geometries     ${memory.geometries.toLocaleString()}`,
-      `Textures       ${memory.textures.toLocaleString()}`,
-      `Pixel Ratio    ${this.renderer.getPixelRatio().toFixed(2)}`,
-      `Renderer       ${rendererMode}`,
-      `Quality        ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
-    ].join('\n');
+      `Frame FPS        ${fps.toFixed(1)}`,
+      `Frame ms avg     ${frameTimes.averageMs.toFixed(2)}`,
+      `Frame ms p95     ${frameTimes.p95Ms.toFixed(2)}`,
+      `Max hitch ms     ${frameTimes.maxMs.toFixed(2)}`,
+      `Draw Calls       ${render.calls.toLocaleString()}`,
+      `Triangles        ${render.triangles.toLocaleString()}`,
+      `Geometries       ${memory.geometries.toLocaleString()}`,
+      `Textures         ${memory.textures.toLocaleString()}`,
+      `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
+      `Particles        ${activeParticles} / ${this.particlePool.length}`,
+      `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
+      `Renderer         ${rendererMode}`,
+      `Quality          ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
+    ].join('\\n');
 
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
+    this.performanceFrameTimes = [];
   }
 
   // ------------------ MAIN SIMULATION LOOP ------------------
@@ -9386,6 +9507,18 @@ export class RtsEngine {
     this.cleanupWindowListeners = [];
     this.performanceOverlay?.remove();
     this.performanceOverlay = null;
+    const particleGeometry = this.particleSolidBatch?.geometry || this.particleSmokeBatch?.geometry;
+    if (this.particleSolidBatch) {
+      this.scene.remove(this.particleSolidBatch);
+      (this.particleSolidBatch.material as THREE.Material).dispose();
+      this.particleSolidBatch = null;
+    }
+    if (this.particleSmokeBatch) {
+      this.scene.remove(this.particleSmokeBatch);
+      (this.particleSmokeBatch.material as THREE.Material).dispose();
+      this.particleSmokeBatch = null;
+    }
+    particleGeometry?.dispose();
     this.renderer.dispose();
   }
 }

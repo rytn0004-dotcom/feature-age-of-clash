@@ -1172,6 +1172,25 @@ export function computeParticleBurstCount(
   return Math.max(1, Math.min(count, Math.floor(count * qualityScale * densityScale * materialScale)));
 }
 
+export interface FrameTimeSummary {
+  averageMs: number;
+  p95Ms: number;
+  maxMs: number;
+}
+
+/** Deterministic frame-time summary used by the in-game pressure-test overlay. */
+export function summarizeFrameTimes(samples: readonly number[]): FrameTimeSummary {
+  const valid = samples.filter((sample) => Number.isFinite(sample) && sample > 0).sort((a, b) => a - b);
+  if (valid.length === 0) return { averageMs: 0, p95Ms: 0, maxMs: 0 };
+  const total = valid.reduce((sum, sample) => sum + sample, 0);
+  const p95Index = Math.max(0, Math.ceil(valid.length * 0.95) - 1);
+  return {
+    averageMs: total / valid.length,
+    p95Ms: valid[p95Index],
+    maxMs: valid[valid.length - 1],
+  };
+}
+
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   colorHex: number;
   colorCss: string;

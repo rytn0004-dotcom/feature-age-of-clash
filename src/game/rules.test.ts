@@ -21,6 +21,7 @@ import {
   shouldShowUnitHealthBar,
   getBattlefieldVisualProfile,
   computeParticleBurstCount,
+  summarizeFrameTimes,
   DEFAULT_PARTICIPANT_PALETTE,
   findBalancedResourceNode,
   findClosestResourceNode,
@@ -2880,4 +2881,13 @@ test('battlefield particle budget: preserve key combat cues and reduce decorativ
   assert.ok(highQualityDust > lowQualityDust);
   assert.ok(lowQualityDust >= 1);
   assert.ok(lowQualityHit <= 18);
+});
+
+
+test('performance diagnostics: frame-time average, p95 and hitch maximum ignore invalid samples', () => {
+  assert.deepEqual(summarizeFrameTimes([]), { averageMs: 0, p95Ms: 0, maxMs: 0 });
+  assert.deepEqual(
+    summarizeFrameTimes([10, 20, 30, 40, 100, Number.NaN, 0, -4]),
+    { averageMs: 40, p95Ms: 100, maxMs: 100 }
+  );
 });
