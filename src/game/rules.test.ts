@@ -828,6 +828,19 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const meleePick = selectOptimalCombatTarget(swordsman, [enemyMelee], [enemyFarm], [swordsman]);
   assert.equal(meleePick?.id, 'em1');
 
+  const equalTargetZ = mkUnit('optimal-z', 'ai2', 2, 'melee', 5, 2);
+  const equalTargetA = mkUnit('optimal-a', 'ai2', 2, 'melee', 5, 2);
+  assert.equal(
+    selectOptimalCombatTarget(swordsman, [equalTargetZ, equalTargetA])?.id,
+    'optimal-a',
+    'equal target scores must use stable id tie-breaking'
+  );
+  assert.equal(
+    selectOptimalCombatTarget(swordsman, [equalTargetA, equalTargetZ])?.id,
+    'optimal-a',
+    'optimal target choice must not depend on array iteration order'
+  );
+
   // 4. Cluster focus-fire prioritizes wounded high-value enemy archer
   const squad = [
     mkUnit('a1', 'ai1', 1, 'ranged', 0, 0, 65, 65, 14, 3.4),
@@ -953,6 +966,56 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
       (entry) => Math.abs(entry.x) <= 40 && Math.abs(entry.z) <= 40
     ),
     'slots must be clamped to playable map bounds'
+  );
+
+  const { resolveUnitUnitCollisions, resolveUnitBuildingCollisions, resolveUnitResourceCollisions } =
+    await import('./collision');
+  const crowd = Array.from({ length: 48 }, (_, index) =>
+    mkUnit(`crowd-${index}`, 'ai1', 1, 'melee', 200 + index * 12, 0)
+  );
+  crowd[0].x = 0;
+  crowd[0].z = 0;
+  crowd[1].x = 0.1;
+  crowd[1].z = 0;
+  resolveUnitUnitCollisions(crowd);
+  assert.ok(
+    Math.hypot(crowd[0].x - crowd[1].x, crowd[0].z - crowd[1].z) > 0.1,
+    'spatial broad phase must still resolve nearby unit overlaps in a large army'
+  );
+  assert.equal(crowd[20].x, 440, 'far-away units must not be displaced by local collision resolution');
+
+  const buildingProbe = mkUnit('building-probe', 'ai1', 1, 'melee', 0, 0);
+  const buildingField = Array.from({ length: 40 }, (_, index) =>
+    mkBldg(`distant-building-${index}`, 'ai1', 1, 'tower', 200 + index * 14, 0)
+  );
+  buildingField[0] = mkBldg('nearby-building', 'ai1', 1, 'tower', 0.1, 0);
+  resolveUnitBuildingCollisions([buildingProbe], buildingField);
+  assert.ok(
+    Math.hypot(buildingProbe.x - 0.1, buildingProbe.z) > 1.6,
+    'spatial broad phase must retain nearby solid-building collision'
+  );
+
+  const resourceProbe = mkUnit('resource-probe', 'ai1', 1, 'melee', 0, 0);
+  const resourceField: ResourceNode[] = Array.from({ length: 64 }, (_, index) => ({
+    id: `distant-node-${index}`,
+    resourceType: 'wood',
+    x: 200 + index * 14,
+    z: 0,
+    amount: 500,
+    maxAmount: 500,
+  }));
+  resourceField[0] = {
+    id: 'nearby-gold',
+    resourceType: 'gold',
+    x: 0.2,
+    z: 0,
+    amount: 500,
+    maxAmount: 500,
+  };
+  resolveUnitResourceCollisions([resourceProbe], resourceField);
+  assert.ok(
+    Math.hypot(resourceProbe.x - 0.2, resourceProbe.z) > 2,
+    'spatial broad phase must preserve collisions with nearby resource nodes'
   );
 });
 
