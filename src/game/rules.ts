@@ -1092,9 +1092,6 @@ export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   { colorHex: 0x0891b2, colorCss: '#06b6d4', accentHex: 0x22d3ee }, // Teal Cyan
 ];
 
-export function createDefaultParticipants(): MatchParticipant[] {
-
-
 export interface TeamVisualColor {
   colorHex: number;
   colorCss: string;
@@ -1113,7 +1110,7 @@ export function getTeamVisualColor(team: number): TeamVisualColor {
   return TEAM_VISUAL_PALETTE[(safeTeam - 1) % TEAM_VISUAL_PALETTE.length];
 }
 
-
+export function createDefaultParticipants(): MatchParticipant[] {
   return [
     {
       id: 'player',
