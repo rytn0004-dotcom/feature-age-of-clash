@@ -695,10 +695,12 @@ export class RtsEngine {
     this.particleSolidBatch.name = 'instancedCombatParticles';
     this.particleSolidBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.particleSolidBatch.frustumCulled = false;
+    this.particleSolidBatch.visible = false;
     this.particleSmokeBatch = new THREE.InstancedMesh(geometry, smokeMaterial, count);
     this.particleSmokeBatch.name = 'instancedSmokeParticles';
     this.particleSmokeBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.particleSmokeBatch.frustumCulled = false;
+    this.particleSmokeBatch.visible = false;
 
     const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
     this.particlePool = [];
@@ -792,6 +794,7 @@ export class RtsEngine {
       p.active = true;
 
       const batch = targetLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
+      if (batch) batch.visible = true;
       batch?.setColorAt(p.instanceId, this.particleColors[kind]);
       this.writeParticleInstance(p, true);
       if (targetLayer === 'smoke') smokeChanged = true;
@@ -804,6 +807,8 @@ export class RtsEngine {
   private updateParticles(dt: number) {
     let solidChanged = false;
     let smokeChanged = false;
+    let solidActive = false;
+    let smokeActive = false;
     for (let i = 0; i < this.particlePool.length; i++) {
       const p = this.particlePool[i];
       if (!p.active) continue;
@@ -834,9 +839,16 @@ export class RtsEngine {
       p.rotationX += (p.kind === 'smoke' ? 1.6 : 6) * dt;
       p.rotationY += (p.kind === 'smoke' ? 1.4 : 5) * dt;
       this.writeParticleInstance(p, true);
-      if (p.renderLayer === 'smoke') smokeChanged = true;
-      else solidChanged = true;
+      if (p.renderLayer === 'smoke') {
+        smokeChanged = true;
+        smokeActive = true;
+      } else {
+        solidChanged = true;
+        solidActive = true;
+      }
     }
+    if (this.particleSolidBatch) this.particleSolidBatch.visible = solidActive;
+    if (this.particleSmokeBatch) this.particleSmokeBatch.visible = smokeActive;
     this.markParticleBatchesDirty(solidChanged, smokeChanged);
   }
 
@@ -1095,6 +1107,8 @@ export class RtsEngine {
       this.writeParticleInstance(p, false);
     });
     this.markParticleBatchesDirty(true, true);
+    if (this.particleSolidBatch) this.particleSolidBatch.visible = false;
+    if (this.particleSmokeBatch) this.particleSmokeBatch.visible = false;
     this.dyingEffects.forEach((d) => this.scene.remove(d.mesh));
     this.dyingEffects = [];
     this.collapsingBuildings.forEach((cb) => {
