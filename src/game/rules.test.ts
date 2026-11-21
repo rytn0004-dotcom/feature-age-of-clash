@@ -2891,3 +2891,45 @@ test('performance diagnostics: frame-time average, p95 and hitch maximum ignore 
     { averageMs: 40, p95Ms: 100, maxMs: 100 }
   );
 });
+
+
+test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit counts and mixed roles', async () => {
+  const { createBattleStressPlan } = await import('./battleStress');
+  for (const count of [100, 200, 400] as const) {
+    const plan = createBattleStressPlan(count, 12345);
+    const sameSeed = createBattleStressPlan(count, 12345);
+    const differentSeed = createBattleStressPlan(count, 54321);
+
+    assert.equal(plan.unitCount, count);
+    assert.equal(plan.starterUnitCount, 16);
+    assert.equal(plan.units.length + plan.starterUnitCount, count);
+    assert.equal(plan.participants.length, 4);
+    assert.equal(plan.participants.every((participant) => participant.controller === 'ai'), true);
+    assert.equal(new Set(plan.participants.map((participant) => participant.team)).size, 4);
+    assert.deepEqual(plan, sameSeed, 'the same seed must produce the same full battle plan');
+    assert.notDeepEqual(plan.units, differentSeed.units, 'different seeds must change deterministic formations');
+
+    const unitIds = plan.units.map((unit) => unit.id);
+    assert.equal(new Set(unitIds).size, unitIds.length, 'all generated unit ids must be unique');
+    assert.ok(plan.units.every((unit) =>
+      Number.isFinite(unit.x) &&
+      Number.isFinite(unit.z) &&
+      Number.isFinite(unit.targetX) &&
+      Number.isFinite(unit.targetZ) &&
+      Math.abs(unit.x) <= 80 &&
+      Math.abs(unit.z) <= 80
+    ));
+    assert.ok(plan.units.every((unit) => unit.role !== 'worker'));
+    assert.deepEqual(
+      new Set(plan.participants.map((participant) => participant.aiPersonality)),
+      new Set(['easy', 'standard', 'hard', 'defensive'])
+    );
+    assert.equal(
+      new Set(plan.participants.map((participant) => participant.civilization)).size,
+      3,
+      'the four teams should exercise all three built-in civilizations'
+    );
+  }
+  assert.throws(() => createBattleStressPlan(150, 12345), /100, 200, or 400/);
+  assert.throws(() => createBattleStressPlan(100, Number.NaN), /finite number/);
+});

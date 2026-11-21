@@ -42,9 +42,27 @@ export default function App() {
         forceUpdate();
       };
 
-      // Check for ?autostart=1 or ?map= in URL
+      // Developer-only deterministic large-battle scenario: ?battleStress=100|200|400&seed=12345
       const params = new URLSearchParams(window.location.search);
       const urlMap = params.get('map') as MapPresetId | null;
+      const stressValue = params.get('battleStress');
+      const stressCount = stressValue === '100' ? 100 : stressValue === '200' ? 200 : stressValue === '400' ? 400 : null;
+      if (import.meta.env.DEV && stressCount !== null) {
+        const stressMap = urlMap === 'river_valley' || urlMap === 'highland_basin' || urlMap === 'twin_lakes'
+          ? urlMap
+          : 'highland_basin';
+        const requestedSeed = Number(params.get('seed') ?? '20261122');
+        const stressSeed = Number.isFinite(requestedSeed) ? requestedSeed : 20261122;
+        setMapPreset(stressMap);
+        setResourceRichness('abundant');
+        eng.setupBattleStressTest(stressCount, stressSeed, stressMap);
+        setGameState('playing');
+        document.body.dataset.state = 'playing';
+        forceUpdate();
+        return;
+      }
+
+      // Check for ?autostart=1 or ?map= in URL
       if (urlMap === 'river_valley' || urlMap === 'highland_basin' || urlMap === 'twin_lakes') {
         setMapPreset(urlMap);
         eng.setupWorld(undefined, urlMap);

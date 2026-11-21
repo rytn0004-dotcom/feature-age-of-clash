@@ -149,6 +149,7 @@ import {
 } from './collision';
 import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
+import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import {
   ControlGroupsMap,
   createEmptyControlGroups,
@@ -271,6 +272,7 @@ export class RtsEngine {
   // RTS Multi-Participant & Team State
   public participants: MatchParticipant[] = createDefaultParticipants();
   public isSpectatorMode = false;
+  public battleStressInfo: { unitCount: number; seed: number; mapPreset: MapPresetId } | null = null;
   public humanPlayerId: string = 'player';
   public humanTeam: number = 1;
   public observedFactionId: FactionId = 'player';
@@ -1067,7 +1069,9 @@ export class RtsEngine {
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
     resourceRichness?: ResourceRichness
+    seed?: number
   ) {
+    this.battleStressInfo = null;
     this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
@@ -1251,7 +1255,9 @@ export class RtsEngine {
     };
 
     const spawns = generateSpawnPositions(this.participants.length, 58);
-    const matchSeed = Math.floor(Math.random() * 900000) + 1000;
+    const matchSeed = Number.isFinite(seed)
+      ? (Math.floor(Math.abs(seed as number)) >>> 0) || 1
+      : Math.floor(Math.random() * 900000) + 1000;
     const layout = generateMapLayout(
       this.mapPreset,
       this.resourceRichness,
@@ -1406,6 +1412,88 @@ export class RtsEngine {
     this.updateCameraPosition();
   }
 
+  /**
+   * Starts a deterministic, all-AI four-faction battle used only by the Vite
+   * development stress-test URL. Normal matches never call this method.
+   */
+  public setupBattleStressTest(
+    unitCount: BattleStressUnitCount,
+    seed: number,
+    mapPreset: MapPresetId = 'highland_basin'
+  ): void {
+    const plan = createBattleStressPlan(unitCount, seed);
+    this.setupWorld(plan.participants, mapPreset, 'abundant', plan.seed);
+
+    const rosterByFaction = new Map<string, UnitDefinition[]>();
+    for (const participant of plan.participants) {
+      this.ageByFaction[participant.id] = 3;
+      this.resourcesByFaction[participant.id] = {
+        food: 5000,
+        wood: 5000,
+        gold: 5000,
+        stone: 2500,
+      };
+      this.refreshFactionUnitStats(participant.id);
+      rosterByFaction.set(
+        participant.id,
+        this.getAvailableUnitDefs(participant.id).filter(
+          (definition) =>
+            definition.category !== 'worker' &&
+            !definition.isNaval &&
+            (definition.requiredAge ?? 1) <= 3
+        )
+      );
+    }
+    this.syncHumanResourcesAlias();
+
+    const fallbackRoles: Record<BattleStressRole, BattleStressRole[]> = {
+      melee: ['melee', 'special', 'ranged', 'cavalry', 'siege'],
+      ranged: ['ranged', 'special', 'melee', 'siege', 'cavalry'],
+      cavalry: ['cavalry', 'melee', 'special', 'ranged', 'siege'],
+      siege: ['siege', 'ranged', 'melee', 'special', 'cavalry'],
+      special: ['special', 'ranged', 'melee', 'cavalry', 'siege'],
+    };
+    const roleUsage = new Map<string, number>();
+
+    for (const spawn of plan.units) {
+      const roster = rosterByFaction.get(spawn.factionId) || [];
+      const preferred = fallbackRoles[spawn.role]
+        .map((role) => roster.filter((definition) => definition.category === role))
+        .find((definitions) => definitions.length > 0);
+      if (!preferred?.length) {
+        throw new Error(`No combat units are available for stress faction ${spawn.factionId}.`);
+      }
+
+      const usageKey = `${spawn.factionId}:${spawn.role}`;
+      const roleIndex = roleUsage.get(usageKey) || 0;
+      roleUsage.set(usageKey, roleIndex + 1);
+      const definition = preferred[roleIndex % preferred.length];
+      const unit = this.addUnit(definition, spawn.factionId, spawn.x, spawn.z, spawn.id);
+      unit.targetX = spawn.targetX;
+      unit.targetZ = spawn.targetZ;
+      unit.targetEntityId = undefined;
+      unit.attackMoveGoal = { x: spawn.targetX, z: spawn.targetZ };
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.state = 'moving';
+      unit.currentActionText = '⚔️ 壓測推進';
+    }
+
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    this.gameSpeed = 1;
+    this.gameState = 'playing';
+    this.battleStressInfo = {
+      unitCount: plan.unitCount,
+      seed: plan.seed,
+      mapPreset: this.mapPreset,
+    };
+    this.onResourcesChange?.(this.playerResources);
+    this.onStateChange?.();
+    this.onSelectionChange?.();
+  }
+
   public hasUniqueBuildingAura(faction: FactionId): boolean {
     const uniqueType = getCivilizationConfig(this.getCivilizationForFaction(faction)).uniqueBuildingType;
     return this.buildings.some(
@@ -1511,8 +1599,8 @@ export class RtsEngine {
     });
   }
 
-  public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number): UnitEntity {
-    const id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number, stableId?: string): UnitEntity {
+    const id = stableId || `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const team = this.getParticipant(faction)?.team ?? (faction === 'player' ? 1 : 2);
     const age = this.ageByFaction[faction] || 1;
     const hasAura = this.hasUniqueBuildingAura(faction);
@@ -4005,6 +4093,7 @@ export class RtsEngine {
     const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
     this.performanceOverlay.textContent = [
       'PERFORMANCE MONITOR  ·  F3 隱藏',
+      `Stress Scenario ${this.battleStressInfo ? `${this.battleStressInfo.unitCount} units · ${this.battleStressInfo.mapPreset} · seed ${this.battleStressInfo.seed}` : 'OFF'}`,
       `Frame FPS        ${fps.toFixed(1)}`,
       `Frame ms avg     ${frameTimes.averageMs.toFixed(2)}`,
       `Frame ms p95     ${frameTimes.p95Ms.toFixed(2)}`,
