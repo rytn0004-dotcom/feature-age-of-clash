@@ -1514,6 +1514,117 @@ export function shouldSwitchCombatTarget(
   return scoreGain >= requiredGain;
 }
 
+
+export type CombatFormationRole = 'frontline' | 'backline' | 'flank' | 'siege' | 'support';
+
+export interface CombatFormationSlot {
+  unitId: string;
+  x: number;
+  z: number;
+  role: CombatFormationRole;
+  lateralIndex: number;
+}
+
+/**
+ * Assigns deterministic role-based approach slots around a shared objective.
+ * Melee screens the front, ranged and siege stay behind, cavalry spreads to both flanks,
+ * and support units occupy the protected middle line. Workers are intentionally excluded.
+ */
+export function layoutCombatFormation(
+  units: readonly Pick<UnitEntity, 'id' | 'x' | 'z' | 'unitDef'>[],
+  objective: { x: number; z: number },
+  maxWorldExtent = 84
+): CombatFormationSlot[] {
+  if (
+    !Number.isFinite(objective.x) ||
+    !Number.isFinite(objective.z) ||
+    !Number.isFinite(maxWorldExtent) ||
+    maxWorldExtent <= 0
+  ) {
+    return [];
+  }
+
+  const members = units
+    .filter(
+      (unit) =>
+        !!unit.id &&
+        Number.isFinite(unit.x) &&
+        Number.isFinite(unit.z) &&
+        unit.unitDef.category !== 'worker'
+    )
+    .filter((unit, index, all) => all.findIndex((candidate) => candidate.id === unit.id) === index);
+
+  if (members.length === 0) return [];
+
+  const centerX = members.reduce((sum, unit) => sum + unit.x, 0) / members.length;
+  const centerZ = members.reduce((sum, unit) => sum + unit.z, 0) / members.length;
+  let dirX = objective.x - centerX;
+  let dirZ = objective.z - centerZ;
+  const dirLength = Math.hypot(dirX, dirZ);
+  if (dirLength < 0.001) {
+    dirX = 1;
+    dirZ = 0;
+  } else {
+    dirX /= dirLength;
+    dirZ /= dirLength;
+  }
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const limit = Math.max(1, maxWorldExtent);
+
+  const clamp = (value: number) => Math.max(-limit, Math.min(limit, value));
+  const slot = (
+    unitId: string,
+    role: CombatFormationRole,
+    depth: number,
+    lateral: number,
+    lateralIndex: number
+  ): CombatFormationSlot => ({
+    unitId,
+    role,
+    lateralIndex,
+    x: clamp(objective.x - dirX * depth + sideX * lateral),
+    z: clamp(objective.z - dirZ * depth + sideZ * lateral),
+  });
+  const sorted = (category: UnitCategory) =>
+    members
+      .filter((unit) => unit.unitDef.category === category)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  const centered = (index: number, count: number, spacing: number) =>
+    (index - (count - 1) / 2) * spacing;
+
+  const result: CombatFormationSlot[] = [];
+
+  const frontline = sorted('melee');
+  frontline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'frontline', 5.2, centered(index, frontline.length, 2.1), index))
+  );
+
+  const backline = sorted('ranged');
+  backline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'backline', 11.2, centered(index, backline.length, 2.4), index))
+  );
+
+  const cavalry = sorted('cavalry');
+  cavalry.forEach((unit, index) => {
+    const rank = Math.floor(index / 2);
+    const flank = index % 2 === 0 ? -1 : 1;
+    result.push(slot(unit.id, 'flank', 8.2 + rank * 1.4, flank * (5.2 + rank * 2.1), index));
+  });
+
+  const support = sorted('special');
+  support.forEach((unit, index) =>
+    result.push(slot(unit.id, 'support', 9.0, centered(index, support.length, 2.7), index))
+  );
+
+  const siege = sorted('siege');
+  siege.forEach((unit, index) =>
+    result.push(slot(unit.id, 'siege', 18.5, centered(index, siege.length, 3.6), index))
+  );
+
+  return result.sort((a, b) => a.unitId.localeCompare(b.unitId));
+}
+
 export interface RaidTargetAssignment {
   raiderId: string;
   targetId: string;
