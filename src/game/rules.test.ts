@@ -1894,7 +1894,7 @@ test('wild boar (野豬): high food yield, faster harvesting, and aggressive pur
     { id: 'berry_auto', resourceType: 'food', subtype: 'berry', x: 4, z: 0, amount: 350, maxAmount: 350 },
   ];
   assert.equal(findBestFoodResourceNode(0, 0, foodNodes, 36)?.id, 'berry_auto');
-  assert.equal(findBestFoodResourceNode(0, 0, foodNodes, 36, false, false, true)?.id, 'boar_auto');
+  assert.equal(findBestFoodResourceNode(0, 0, [foodNodes[0]], 36, false, false, true)?.id, 'boar_auto');
 
   const boar: ResourceNode = {
     id: 'boar_test',
