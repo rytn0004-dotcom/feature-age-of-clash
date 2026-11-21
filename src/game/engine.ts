@@ -8738,19 +8738,20 @@ export class RtsEngine {
                 unit.targetX === undefined ||
                 unit.targetZ === undefined ||
                 getDistance(unit.targetX, unit.targetZ, slot.x, slot.z) > 1.5;
-              const objectiveChanged =
+              const formationGoalChanged =
                 !unit.attackMoveGoal ||
-                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, slot.x, slot.z) > 1.5;
               if (
                 unit.state !== 'moving' ||
-                !unit.currentActionText?.startsWith('陣型推進') ||
                 slotChanged ||
-                objectiveChanged
+                formationGoalChanged
               ) {
                 unit.targetEntityId = undefined;
                 unit.targetX = slot.x;
                 unit.targetZ = slot.z;
-                unit.attackMoveGoal = { x: goalX, z: goalZ };
+                // Keep the attack-move fallback on the formation slot, not the objective center,
+                // so a unit that wins an interception returns to its assigned lane.
+                unit.attackMoveGoal = { x: slot.x, z: slot.z };
                 unit.waypoints = undefined;
                 unit.pathGoal = undefined;
                 unit.pathCooldown = 0;
