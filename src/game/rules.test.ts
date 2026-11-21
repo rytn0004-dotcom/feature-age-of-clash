@@ -839,6 +839,46 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const clusterTarget = selectClusterFocusTarget(squad, [healthyMelee, woundedArcher], [enemyFarm]);
   assert.equal(clusterTarget?.id, 'eaLow');
 
+  // Defensive structures compete with nearby troops instead of being skipped once
+  // any unit is found. Siege groups should commit to an exposed tower over a worker.
+  const siegeSquad = [
+    mkUnit('siege-a', 'ai1', 1, 'siege', 0, 0, 160, 160, 18, 2.2),
+    mkUnit('screen-a', 'ai1', 1, 'melee', 0, 1),
+  ];
+  const exposedWorker = mkUnit('enemy-worker', 'ai2', 2, 'worker', 4, 0);
+  const priorityTower = mkBldg('priority-tower', 'ai2', 2, 'tower', 9, 0);
+  const siegeFocus = selectClusterFocusTarget(
+    siegeSquad,
+    [exposedWorker],
+    [priorityTower],
+    { maxEnemyRangeFromCentroid: 32 }
+  );
+  assert.equal(siegeFocus?.id, 'priority-tower');
+
+  // A nearby combat unit still wins over a more distant tower for a non-siege group.
+  const nearbyRanged = mkUnit('nearby-ranged', 'ai2', 2, 'ranged', 2, 0, 65, 65, 14, 3.4);
+  const frontlineFocus = selectClusterFocusTarget(
+    [swordsman],
+    [nearbyRanged],
+    [priorityTower],
+    { maxEnemyRangeFromCentroid: 32 }
+  );
+  assert.equal(frontlineFocus?.id, 'nearby-ranged');
+
+  // Remote defenses are not treated as local cluster targets; the engine can keep its
+  // strategic stronghold/fallback objective rather than redirecting the army cross-map.
+  const distantTower = mkBldg('distant-tower', 'ai2', 2, 'tower', 100, 0);
+  assert.equal(
+    selectClusterFocusTarget([swordsman], [], [distantTower], { maxEnemyRangeFromCentroid: 32 }),
+    null
+  );
+
+  // Equal tactical scores must resolve by stable entity ID, not array iteration order.
+  const tiedEnemyZ = mkUnit('enemy-z', 'ai2', 2, 'melee', 6, 0);
+  const tiedEnemyA = mkUnit('enemy-a', 'ai2', 2, 'melee', 6, 0);
+  assert.equal(selectClusterFocusTarget([swordsman], [tiedEnemyZ, tiedEnemyA])?.id, 'enemy-a');
+  assert.equal(selectClusterFocusTarget([swordsman], [tiedEnemyA, tiedEnemyZ])?.id, 'enemy-a');
+
   // Target hysteresis: retain a sound target, but switch decisively to a wounded high-value counter.
   const criticalArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
   assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, enemyMelee), false);
