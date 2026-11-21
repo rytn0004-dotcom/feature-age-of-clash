@@ -2543,3 +2543,59 @@ test('gate and breached wall collision: opening a gate or breaking a wall create
   assert.equal(getBuildingCollisionRadius(repairedWall), DEFAULT_BUILDINGS.wall.size);
   assert.equal(getBuildingCollisionRadius({ ...repairedWall, wallBreached: true }), 0);
 });
+
+test('art-direction: new original faction character kits add sculpted silhouette and face detail without external model files', async () => {
+  const {
+    createCharacterFaceDetails,
+    createUnitSignatureKit,
+    getDeterministicArtVariant,
+  } = await import('./artDirection');
+
+  const palette = { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 };
+  const civilizations = ['medieval', 'anime', 'fantasy'] as const;
+  for (const civilization of civilizations) {
+    const kit = createUnitSignatureKit({
+      unitId: `art-test-${civilization}`,
+      civilization,
+      category: 'melee',
+      modelType: 'swordsman',
+      age: 3,
+      palette,
+    });
+    assert.equal(kit.name, 'originalFactionSilhouetteKit');
+    assert.equal(kit.children.length, 1);
+    const mesh = kit.children[0] as import('three').Mesh;
+    assert.ok(mesh.geometry.getAttribute('color').count > 100, civilization + ' art kit should contain authored colored geometry');
+    assert.equal(mesh.castShadow, true);
+    assert.equal(kit.userData.artDirection, civilization);
+  }
+
+  const workerKit = createUnitSignatureKit({
+    unitId: 'art-test-worker',
+    civilization: 'medieval',
+    category: 'worker',
+    modelType: 'villager',
+    age: 1,
+    palette,
+  });
+  assert.equal(workerKit.userData.artRole, 'laborer');
+
+  const siegeKit = createUnitSignatureKit({
+    unitId: 'art-test-siege',
+    civilization: 'fantasy',
+    category: 'siege',
+    modelType: 'ram',
+    age: 3,
+    palette,
+  });
+  assert.equal(siegeKit.children.length, 0, 'siege and naval silhouettes must remain purpose-built');
+
+  const face = createCharacterFaceDetails(0x1d4ed8);
+  assert.equal(face.name, 'sculptedCharacterFace');
+  assert.equal(face.children.length, 1);
+  assert.ok((face.children[0] as import('three').Mesh).geometry.getAttribute('color').count > 100);
+
+  const variantA = getDeterministicArtVariant('unit-hero-01');
+  assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
+  assert.ok(variantA === 0 || variantA === 1 || variantA === 2);
+});
