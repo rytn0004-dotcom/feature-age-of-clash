@@ -2745,10 +2745,10 @@ test('art-direction: building architecture visibly evolves by age and faction wi
     assert.equal(age2.children.length, 1);
     assert.equal(age3.children.length, 1);
     assert.equal(age4.children.length, 1);
-    const eraMesh = age4.children[0] as THREE.Mesh;
+    const eraMesh = age4.children[0] as import('three').Mesh;
     assert.ok(eraMesh.geometry.getAttribute('color').count > 500, civilization + ' Age IV structure needs a rich merged crown');
     const sameAge = createBuildingAgeEvolutionKit('barracks', civilization, palette, 4.2, 3.8, 3.6, 4);
-    assert.equal(eraMesh.geometry, (sameAge.children[0] as THREE.Mesh).geometry, 'age modules should reuse cached geometry');
+    assert.equal(eraMesh.geometry, (sameAge.children[0] as import('three').Mesh).geometry, 'age modules should reuse cached geometry');
   }
   assert.equal(createBuildingAgeEvolutionKit('farm', 'medieval', palette, 4, 4, 2, 4).children.length, 0);
   assert.equal(createBuildingAgeEvolutionKit('wall', 'anime', palette, 3, 1, 1, 4).children.length, 0);
@@ -2801,12 +2801,12 @@ test('visuals: heavily damaged buildings reveal structural cracks and base debri
     width: 4, depth: 3, height: 3, centerX: 0, centerY: 1.5, centerZ: 0,
   };
   applyBuildingDamageVisuals(group, 0.72, false, 0.012, 3.5);
-  const layer = group.getObjectByName('buildingDamageDetailLayer') as THREE.Group;
+  const layer = group.getObjectByName('buildingDamageDetailLayer') as import('three').Group;
   assert.ok(layer, 'critical structures should receive a localized damage layer');
   assert.equal(layer.getObjectByName('buildingDamageCrackPrimary')?.visible, true);
   assert.equal(layer.getObjectByName('buildingDamageCrackSecondary')?.visible, true);
   assert.equal(layer.getObjectByName('buildingDamageDebris')?.visible, true);
-  assert.equal((group.children[0] as THREE.Mesh).material === originalMaterial, false, 'per-building damage tint must clone the shared material');
+  assert.equal((group.children[0] as import('three').Mesh).material === originalMaterial, false, 'per-building damage tint must clone the shared material');
   assert.equal(originalMaterial.color.getHex(), 0x9ca3af, 'shared material remains untouched');
   disposeBuildingVisualResources(group);
   assert.equal(group.getObjectByName('buildingDamageDetailLayer'), undefined);
