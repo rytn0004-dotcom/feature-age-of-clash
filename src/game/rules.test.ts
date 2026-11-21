@@ -2693,7 +2693,7 @@ test('art-direction: new original faction character kits add sculpted silhouette
     assert.ok(facadeMesh.geometry.getAttribute('color').count > 300, civilization + ' facade should merge its structural modules');
     assert.equal(facadeMesh.userData.distanceLodMinPixels, 4.5, 'decorative facade details can be removed at distant scale');
     const sameFacade = createBuildingFacadeKit('house', civilization, palette, 3.8, 3.6, 3.4);
-    assert.equal(facadeMesh.geometry, sameFacade.children[0].geometry, 'matching building footprints reuse facade geometry');
+    assert.equal(facadeMesh.geometry, (sameFacade.children[0] as import('three').Mesh).geometry, 'matching building footprints reuse facade geometry');
   }
   assert.equal(createBuildingFacadeKit('farm', 'medieval', palette, 4, 4, 2).children.length, 0);
   assert.equal(createBuildingFacadeKit('wall', 'anime', palette, 3, 1, 1).children.length, 0);
