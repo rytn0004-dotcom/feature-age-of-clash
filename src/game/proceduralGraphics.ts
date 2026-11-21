@@ -195,6 +195,16 @@ function makeTubeGeo(
   return safeComputeTangents(geo);
 }
 
+function markSecondaryMotion(
+  object: THREE.Object3D,
+  axis: 'x' | 'y' | 'z',
+  amplitude: number,
+  frequency: number,
+  phase = 0
+): void {
+  object.userData.secondaryMotion = { axis, amplitude, frequency, phase };
+}
+
 /**
  * Curved upturned pagoda eave profile rotated in 4-sided hipped roof geometry.
  * Ordered bottom-to-top (increasing Y) so LatheGeometry faces wind outward.
@@ -8602,6 +8612,7 @@ export function createUnitMesh(
       const haoriCape = new THREE.Mesh(unitCapeGeo, robeDarkMat);
       haoriCape.position.set(0, 0.26, -0.22);
       haoriCape.rotation.x = 0.2;
+      markSecondaryMotion(haoriCape, 'x', 0.12, 4.8, 0.5);
       bodyPivot.add(torso, obiSash, haoriCape);
 
       // Samurai Layered Shoulder Sode Guards
@@ -8677,6 +8688,7 @@ export function createUnitMesh(
       const cape = new THREE.Mesh(unitCapeGeo, armorMat);
       cape.position.set(0, 0.28, -0.24);
       cape.rotation.x = 0.22;
+      markSecondaryMotion(cape, 'x', 0.14, 4.1, 0.2);
       bodyPivot.add(paulL, paulR, cape);
 
       // Visored Sallet Helmet + Recessed Slit + Nasal Bar + Crest
@@ -8755,6 +8767,7 @@ export function createUnitMesh(
     const cloak = new THREE.Mesh(unitCapeGeo, hoodMat);
     cloak.position.set(0, 0.28, -0.22);
     cloak.rotation.x = 0.24;
+    markSecondaryMotion(cloak, 'x', 0.16, 4.6, 0.8);
     bodyPivot.add(head, hood, cloak);
 
     // Leather Quiver with 4 feathered arrows
@@ -8916,6 +8929,7 @@ export function createUnitMesh(
       const cloak = new THREE.Mesh(unitCapeGeo, armorMat);
       cloak.position.set(0, 1.46, -0.22);
       cloak.rotation.x = 0.28;
+      markSecondaryMotion(cloak, 'x', 0.18, 4.3, 0.4);
       const head = new THREE.Mesh(unitHeadGeo, fleshMat);
       head.position.set(0, 1.88, -0.02);
       const hood = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.36, 9), armorMat);
@@ -8962,6 +8976,7 @@ export function createUnitMesh(
       const holyCape = new THREE.Mesh(unitCapeGeo, armorMat);
       holyCape.position.set(0, 1.44, -0.26);
       holyCape.rotation.x = 0.25;
+      markSecondaryMotion(holyCape, 'x', 0.15, 4.4, 0.7);
       bodyPivot.add(rider, holyCape);
 
       const rPaulL = new THREE.Mesh(unitPauldronGeo, goldTrimMat);
@@ -9010,6 +9025,7 @@ export function createUnitMesh(
       const knightCape = new THREE.Mesh(unitCapeGeo, armorMat);
       knightCape.position.set(0, 1.44, -0.26);
       knightCape.rotation.x = 0.25;
+      markSecondaryMotion(knightCape, 'x', 0.13, 4.0, 0.3);
       bodyPivot.add(rider, knightCape);
 
       const rPaulL = new THREE.Mesh(unitPauldronGeo, steelMat);
@@ -9076,6 +9092,7 @@ export function createUnitMesh(
       ], 0.052, 10, 6),
       scarfMat
     );
+    markSecondaryMotion(scarfTail, 'z', 0.18, 6.2, 0.35);
     const katanaSaya = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.88, 8), leatherMat);
     katanaSaya.position.set(0.02, 0.42, -0.2);
     katanaSaya.rotation.z = 0.68;
@@ -10024,7 +10041,11 @@ export function createUnitMesh(
     mType === 'oracle' ||
     mType === 'artificer'
   ) {
-    const faceDetails = createCharacterFaceDetails(colors.banner);
+    const faceDetails = createCharacterFaceDetails(colors.banner, {
+      civilization: colors.civilization || 'medieval',
+      modelType: mType,
+      unitId,
+    });
     faceDetails.position.y = mType === 'mage' || mType === 'oracle' ? 1.09 : 0.76;
     bodyPivot.add(faceDetails);
   }
@@ -10074,6 +10095,32 @@ export function createUnitMesh(
     }
   }
 
+  const secondaryMotionParts: Array<{
+    object: THREE.Object3D;
+    axis: 'x' | 'y' | 'z';
+    amplitude: number;
+    frequency: number;
+    phase: number;
+    baseRotation: THREE.Euler;
+  }> = [];
+  group.traverse((object) => {
+    const motion = object.userData.secondaryMotion as {
+      axis?: 'x' | 'y' | 'z';
+      amplitude?: number;
+      frequency?: number;
+      phase?: number;
+    } | undefined;
+    if (!motion || !motion.axis) return;
+    secondaryMotionParts.push({
+      object,
+      axis: motion.axis,
+      amplitude: Number.isFinite(motion.amplitude) ? motion.amplitude! : 0.1,
+      frequency: Number.isFinite(motion.frequency) ? motion.frequency! : 4,
+      phase: Number.isFinite(motion.phase) ? motion.phase! : 0,
+      baseRotation: object.rotation.clone(),
+    });
+  });
+  group.userData.secondaryMotionParts = secondaryMotionParts;
   group.userData.animParts = animParts;
   group.userData.visualFlags = flags;
   group.userData.visualUnitId = unitId;
