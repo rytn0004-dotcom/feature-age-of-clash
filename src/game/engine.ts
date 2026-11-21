@@ -7269,7 +7269,14 @@ export class RtsEngine {
     const mType = unit.unitDef.visual.modelType;
     const isSiegeUnit = unit.unitDef.id === 'catapult' || mType === 'ram' || mType === 'cannon' || unit.unitDef.category === 'siege';
     const unitScale = unit.unitDef.visual.scale || 1;
-    const baseBodyY = mType === 'knight' ? 0 : mType === 'mage' ? 0.24 : isSiegeUnit ? 0 : 0.36;
+    const baseBodyY =
+      mType === 'knight'
+        ? 0
+        : mType === 'mage' || mType === 'oracle'
+          ? 0.24
+          : isSiegeUnit
+            ? 0
+            : 0.36;
     const hasVelocityIntent = unit.velocity.x !== 0 || unit.velocity.z !== 0;
 
     // Persistent smoothed joint & kinematic state per mesh -> zero foot-skating and fluid pose blending
@@ -7634,6 +7641,22 @@ export class RtsEngine {
     parts.bodyPivot.position.y = anim.bodyY;
     parts.bodyPivot.scale.y = anim.scaleY;
     if (parts.horseHead) parts.horseHead.rotation.x = anim.horseHeadX;
+
+    // Secondary motion follows gait and wind-like idle drift without changing simulation state.
+    const secondaryMotionParts = mesh.userData.secondaryMotionParts as Array<{
+      object: THREE.Object3D;
+      axis: 'x' | 'y' | 'z';
+      amplitude: number;
+      frequency: number;
+      phase: number;
+      baseRotation: THREE.Euler;
+    }> | undefined;
+    secondaryMotionParts?.forEach((part) => {
+      const rhythm = t * part.frequency + part.phase + anim.gaitPhase * 0.22;
+      const movementGain = 0.22 + anim.moveBlend * 0.95;
+      const flutter = Math.sin(rhythm) * part.amplitude * movementGain;
+      part.object.rotation[part.axis] = part.baseRotation[part.axis] + flutter;
+    });
   }
 
   // ------------------ AI TACTICS EVALUATOR ------------------
