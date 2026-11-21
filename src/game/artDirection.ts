@@ -311,24 +311,26 @@ function createFaceGeometry(
   ), 0x8b4a42, [0, 0, 0]);
 
   // Hairline and side locks vary by civilization and deterministic unit identity.
-  const hairMatColor = hairColor;
-  add(
-    new THREE.SphereGeometry(0.178, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58),
-    hairMatColor,
-    [0, 0.105, -0.018],
-    [1.02, 0.82, 0.98]
-  );
-  for (const side of [-1, 1]) {
-    const lockHeight = civilization === 'anime' ? 0.2 : 0.15;
+  // Hooded / helmed archetypes keep their bespoke authored headwear unobstructed.
+  const hasDedicatedHeadwear = ['archer', 'mage', 'ninja', 'saiyan'].includes(modelType);
+  if (!hasDedicatedHeadwear) {
     add(
-      new THREE.CapsuleGeometry(0.043, lockHeight, 4, 8),
-      hairMatColor,
-      [side * 0.145, -0.012, 0.015],
-      [0.78, 1, 0.82],
-      [0, 0, side * -0.16]
+      new THREE.SphereGeometry(0.178, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58),
+      hairColor,
+      [0, 0.105, -0.018],
+      [1.02, 0.82, 0.98]
     );
+    for (const side of [-1, 1]) {
+      const lockHeight = civilization === 'anime' ? 0.2 : 0.15;
+      add(
+        new THREE.CapsuleGeometry(0.043, lockHeight, 4, 8),
+        hairColor,
+        [side * 0.145, -0.012, 0.015],
+        [0.78, 1, 0.82],
+        [0, 0, side * -0.16]
+      );
+    }
   }
-
   if (civilization === 'anime') {
     // Layered fringe and paired hair ornaments create a recognisable anime silhouette.
     for (let index = 0; index < 3; index++) {
@@ -345,8 +347,10 @@ function createFaceGeometry(
     add(new THREE.TorusGeometry(0.052, 0.012, 5, 12), clipColor, [-0.17, 0.13, 0.03], [1, 0.7, 1], [Math.PI / 2, 0, 0]);
     add(new THREE.TorusGeometry(0.052, 0.012, 5, 12), clipColor, [0.17, 0.13, 0.03], [1, 0.7, 1], [Math.PI / 2, 0, 0]);
   } else if (civilization === 'fantasy') {
-    // Fine circlet and tapered ear tips: visible at close range but still one merged face-detail mesh.
-    add(new THREE.TorusGeometry(0.17, 0.014, 5, 20, Math.PI), 0xd6b56d, [0, 0.105, 0.045], [1, 0.72, 1], [Math.PI / 2, 0, 0]);
+    // Fine circlet and tapered ear tips: visible at close range but don't collide with a mage's tall hat.
+    if (modelType !== 'mage') {
+      add(new THREE.TorusGeometry(0.17, 0.014, 5, 20, Math.PI), 0xd6b56d, [0, 0.105, 0.045], [1, 0.72, 1], [Math.PI / 2, 0, 0]);
+    }
     for (const side of [-1, 1]) {
       add(new THREE.ConeGeometry(0.037, 0.22, 5), hairMatColor, [side * 0.19, -0.02, 0], [0.72, 1, 0.62], [0, 0, side * -Math.PI / 2]);
     }
@@ -361,20 +365,6 @@ function createFaceGeometry(
     add(new THREE.SphereGeometry(0.047, 10, 7), hairMatColor, [0.042, -0.105, 0.132], [1, 0.5, 0.68]);
     add(new THREE.ConeGeometry(0.052, 0.12, 7), hairMatColor, [0, -0.16, 0.11], [1, 1, 0.72], [Math.PI, 0, 0]);
   }
-  if (modelType === 'saiyan') {
-    // Distinct high-energy crown spikes, replacing a generic hair cap.
-    for (let i = 0; i < 7; i++) {
-      const angle = (i / 6 - 0.5) * Math.PI * 0.9;
-      add(
-        new THREE.ConeGeometry(0.05, 0.24 + (i % 2) * 0.055, 5),
-        0xfacc15,
-        [Math.sin(angle) * 0.13, 0.22 + (i % 2) * 0.025, -Math.cos(angle) * 0.045],
-        [1, 1, 0.9],
-        [0, 0, -angle * 0.5]
-      );
-    }
-  }
-
   return mergeSculptParts(parts);
 }
 
