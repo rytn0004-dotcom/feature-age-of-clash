@@ -105,7 +105,9 @@ function resolveArtRole(category: UnitCategory, modelType: string): ArtRole | nu
   }
   if (category === 'worker') return 'laborer';
   if (category === 'cavalry' || modelType === 'knight') return 'mounted';
-  if (modelType === 'mage') return 'arcanist';
+  if (modelType === 'mage' || modelType === 'oracle') return 'arcanist';
+  if (modelType === 'guardian') return 'frontline';
+  if (modelType === 'artificer') return 'ranger';
   if (modelType === 'ninja') return 'skirmisher';
   if (modelType === 'saiyan') return 'champion';
   if (category === 'ranged' || modelType === 'archer') return 'ranger';
