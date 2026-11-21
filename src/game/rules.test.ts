@@ -2546,8 +2546,10 @@ test('gate and breached wall collision: opening a gate or breaking a wall create
 
 test('art-direction: new original faction character kits add sculpted silhouette and face detail without external model files', async () => {
   const {
+    createBuildingFacadeKit,
     createBuildingHeritageKit,
     createCharacterFaceDetails,
+    createCharacterHandDetails,
     createUnitSignatureKit,
     getDeterministicArtVariant,
   } = await import('./artDirection');
@@ -2652,6 +2654,16 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(fantasyFace.userData.artCivilization, 'fantasy');
   assert.equal(fantasyFace.children[1].name, 'secondaryMotion:hair');
 
+
+  const rightHand = createCharacterHandDetails(0xf7cbb8, palette.secondary, 'medieval', 'hand-test-unit');
+  const mirroredHand = createCharacterHandDetails(0xf7cbb8, palette.secondary, 'medieval', 'hand-test-unit', true);
+  assert.equal(rightHand.name, 'sculptedGripHand:right');
+  assert.equal(rightHand.children.length, 1);
+  assert.equal(mirroredHand.scale.x, -1, 'off-hand anatomy mirrors without regenerating geometry');
+  const handMesh = rightHand.children[0] as import('three').Mesh;
+  assert.ok(handMesh.geometry.getAttribute('color').count > 100, 'five-digit grip geometry is merged into one draw call');
+  assert.equal(handMesh.geometry, mirroredHand.children[0].geometry, 'matching grip identities reuse cached hand geometry');
+
   for (const civilization of civilizations) {
     const crown = createBuildingHeritageKit(
       'town_center',
@@ -2671,6 +2683,21 @@ test('art-direction: new original faction character kits add sculpted silhouette
     0,
     'functional field buildings should not receive decorative roof crowns'
   );
+
+
+  for (const civilization of civilizations) {
+    const facade = createBuildingFacadeKit('house', civilization, palette, 3.8, 3.6, 3.4);
+    assert.equal(facade.name, 'originalArchitectureFacadeKit');
+    assert.equal(facade.children.length, 1);
+    const facadeMesh = facade.children[0] as import('three').Mesh;
+    assert.ok(facadeMesh.geometry.getAttribute('color').count > 300, civilization + ' facade should merge its structural modules');
+    assert.equal(facadeMesh.userData.distanceLodMinPixels, 4.5, 'decorative facade details can be removed at distant scale');
+    const sameFacade = createBuildingFacadeKit('house', civilization, palette, 3.8, 3.6, 3.4);
+    assert.equal(facadeMesh.geometry, sameFacade.children[0].geometry, 'matching building footprints reuse facade geometry');
+  }
+  assert.equal(createBuildingFacadeKit('farm', 'medieval', palette, 4, 4, 2).children.length, 0);
+  assert.equal(createBuildingFacadeKit('wall', 'anime', palette, 3, 1, 1).children.length, 0);
+  assert.equal(createBuildingFacadeKit('gate', 'fantasy', palette, 3, 1, 2).children.length, 0);
 
   const variantA = getDeterministicArtVariant('unit-hero-01');
   assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
