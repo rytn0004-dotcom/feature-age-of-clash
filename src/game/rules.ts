@@ -1737,48 +1737,82 @@ export function selectClusterFocusTarget(
   options: { maxEnemyRangeFromCentroid?: number; defendAnchor?: { x: number; z: number; radius?: number } | null } = {}
 ): UnitEntity | BuildingEntity | null {
   if (squadUnits.length === 0) return null;
-  const cx = squadUnits.reduce((s, u) => s + u.x, 0) / squadUnits.length;
-  const cz = squadUnits.reduce((s, u) => s + u.z, 0) / squadUnits.length;
-  const maxRange = options.maxEnemyRangeFromCentroid ?? 26;
-  const rep = squadUnits[0];
-  const selfRef = { faction: rep.faction, team: rep.team };
+
+  const cx = squadUnits.reduce((sum, unit) => sum + unit.x, 0) / squadUnits.length;
+  const cz = squadUnits.reduce((sum, unit) => sum + unit.z, 0) / squadUnits.length;
+  const requestedRange = options.maxEnemyRangeFromCentroid;
+  const maxRange =
+    requestedRange === Infinity
+      ? Infinity
+      : typeof requestedRange === 'number' && Number.isFinite(requestedRange)
+        ? Math.max(0, requestedRange)
+        : 26;
+  const representative = squadUnits.find((unit) => unit.hp > 0) || squadUnits[0];
+  const selfRef = { faction: representative.faction, team: representative.team };
+  const hasSiegeUnit = squadUnits.some(
+    (unit) => unit.hp > 0 && (unit.unitDef.category === 'siege' || unit.unitDefId === 'fantasy_treant')
+  );
 
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
-  for (const u of hostileUnits) {
-    if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
-    const d = getDistance(cx, cz, u.x, u.z);
-    if (d > maxRange) continue;
-
-    let clusterValue = 45;
-    if (u.unitDef.category === 'ranged' || u.unitDef.category === 'siege') clusterValue += 28;
-    else if (u.unitDef.category !== 'worker') clusterValue += 18;
-    // Focus wounded priority enemies & enemies near allied defenses
-    clusterValue += (1 - Math.max(0, u.hp / Math.max(1, u.maxHp))) * 35;
-    if (options.defendAnchor && getDistance(u.x, u.z, options.defendAnchor.x, options.defendAnchor.z) <= (options.defendAnchor.radius ?? 22)) {
-      clusterValue += 40;
+  // Compare units and structures in one scoring pass. Returning as soon as a unit is
+  // found would make defensive buildings invisible whenever even a low-value worker
+  // happened to be inside the acquisition radius.
+  const consider = (target: UnitEntity | BuildingEntity, score: number) => {
+    const tied = Math.abs(score - bestScore) <= 0.0001;
+    if (
+      score > bestScore + 0.0001 ||
+      (tied && (!bestTarget || target.id.localeCompare(bestTarget.id) < 0))
+    ) {
+      bestScore = score;
+      bestTarget = target;
     }
-    clusterValue -= d * 1.4;
+  };
 
-    if (clusterValue > bestScore) {
-      bestScore = clusterValue;
-      bestTarget = u;
+  for (const unit of hostileUnits) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId || !areHostile(selfRef, unit)) continue;
+    const distance = getDistance(cx, cz, unit.x, unit.z);
+    if (distance > maxRange) continue;
+
+    let unitScore = 45;
+    if (unit.unitDef.category === 'ranged' || unit.unitDef.category === 'siege') unitScore += 28;
+    else if (unit.unitDef.category !== 'worker') unitScore += 18;
+
+    // Finish wounded high-value threats and protect the area around a defended anchor.
+    const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
+    unitScore += (1 - hpRatio) * 35;
+    if (
+      options.defendAnchor &&
+      getDistance(unit.x, unit.z, options.defendAnchor.x, options.defendAnchor.z) <=
+        (options.defendAnchor.radius ?? 22)
+    ) {
+      unitScore += 40;
     }
+    unitScore -= distance * 1.4;
+    consider(unit, unitScore);
   }
 
-  if (bestTarget) return bestTarget;
+  for (const building of hostileBuildings) {
+    if (building.hp <= 0 || !areHostile(selfRef, building)) continue;
+    const distance = getDistance(cx, cz, building.x, building.z);
+    // Cluster focus is a local tactical choice. Distant defenses must not pull the
+    // whole army across the map; the strategic stronghold remains the fallback.
+    if (distance > maxRange) continue;
 
-  for (const b of hostileBuildings) {
-    if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
-    const d = getDistance(cx, cz, b.x, b.z);
-    let bScore = DEFENSIVE_BUILDING_TYPES.has(b.buildingType) ? 60 : MILITARY_BUILDING_TYPES.has(b.buildingType) ? 35 : 10;
-    bScore += (1 - Math.max(0, b.hp / Math.max(1, b.maxHp))) * 25;
-    bScore -= d * 0.9;
-    if (bScore > bestScore) {
-      bestScore = bScore;
-      bestTarget = b;
-    }
+    const isDefensive = DEFENSIVE_BUILDING_TYPES.has(building.buildingType);
+    const isMilitary = MILITARY_BUILDING_TYPES.has(building.buildingType);
+    let buildingScore = isDefensive
+      ? hasSiegeUnit
+        ? 88
+        : 66
+      : isMilitary
+        ? 42
+        : 12;
+    const hpRatio = Math.max(0, Math.min(1, building.hp / Math.max(1, building.maxHp)));
+    buildingScore += (1 - hpRatio) * 25;
+    buildingScore -= distance * (hasSiegeUnit ? 1.25 : 1.45);
+    consider(building, buildingScore);
   }
 
   return bestTarget;
