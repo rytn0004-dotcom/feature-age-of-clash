@@ -4,7 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import type { BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
-import { createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit } from './artDirection';
+import { createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -10142,6 +10142,10 @@ export function createUnitMesh(
     mType === 'artificer';
 
   if (organicHumanoid) {
+    const bodyProfile = getUnitBodyProportionProfile(unitId, unitDef.category, mType);
+    bodyPivot.scale.set(bodyProfile.scaleX, bodyProfile.scaleY, bodyProfile.scaleZ);
+    group.userData.bodyProportionProfile = bodyProfile;
+
     const signatureKit = createUnitSignatureKit({
       unitId,
       civilization: colors.civilization || 'medieval',

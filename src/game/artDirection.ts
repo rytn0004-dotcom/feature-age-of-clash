@@ -19,7 +19,7 @@ export interface UnitSignatureKitOptions {
 }
 
 type ArtVariant = 0 | 1 | 2;
-type ArtRole = 'frontline' | 'ranger' | 'skirmisher' | 'arcanist' | 'mounted' | 'laborer' | 'champion';
+type ArtRole = 'frontline' | 'ranger' | 'skirmisher' | 'arcanist' | 'mounted' | 'laborer' | 'champion' | 'artificer';
 
 interface SculptPart {
   geometry: THREE.BufferGeometry;
@@ -31,6 +31,8 @@ interface SculptPart {
 
 const signatureGeometryCache = new Map<string, THREE.BufferGeometry>();
 const signatureMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
+const signatureClothGeometryCache = new Map<string, THREE.BufferGeometry>();
+const signatureClothMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 const faceGeometryCache = new Map<string, THREE.BufferGeometry>();
 const faceMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 
@@ -103,15 +105,60 @@ function resolveArtRole(category: UnitCategory, modelType: string): ArtRole | nu
   if (category === 'siege' || modelType === 'boat' || modelType === 'ram' || modelType === 'cannon' || modelType === 'golem') {
     return null;
   }
+  if (modelType === 'artificer') return 'artificer';
   if (category === 'worker') return 'laborer';
   if (category === 'cavalry' || modelType === 'knight') return 'mounted';
   if (modelType === 'mage' || modelType === 'oracle') return 'arcanist';
   if (modelType === 'guardian') return 'frontline';
-  if (modelType === 'artificer') return 'ranger';
   if (modelType === 'ninja') return 'skirmisher';
   if (modelType === 'saiyan') return 'champion';
   if (category === 'ranged' || modelType === 'archer') return 'ranger';
   return 'frontline';
+}
+
+export interface UnitBodyProportionProfile {
+  scaleX: number;
+  scaleY: number;
+  scaleZ: number;
+  archetype: ArtRole | 'neutral';
+  variant: ArtVariant;
+}
+
+/**
+ * Gives each combat role a readable body silhouette before equipment is layered on.
+ * The small deterministic offsets add natural crowd variation without affecting gameplay.
+ */
+export function getUnitBodyProportionProfile(
+  unitId: string,
+  category: UnitCategory,
+  modelType: string
+): UnitBodyProportionProfile {
+  const archetype = resolveArtRole(category, modelType);
+  const base: Record<ArtRole, [number, number, number]> = {
+    laborer: [1.035, 0.97, 1.04],
+    mounted: [1.015, 1.005, 1.025],
+    arcanist: [0.965, 1.055, 0.97],
+    ranger: [0.945, 1.045, 0.955],
+    skirmisher: [0.925, 1.06, 0.93],
+    frontline: [1.065, 1.0, 1.035],
+    champion: [1.025, 1.065, 0.99],
+    artificer: [1.045, 0.985, 1.055],
+  };
+  const variant = getDeterministicArtVariant(unitId);
+  const variation: Record<ArtVariant, [number, number, number]> = {
+    0: [-0.012, 0.014, -0.008],
+    1: [0.012, -0.008, 0.01],
+    2: [0, 0, 0],
+  };
+  const profile = archetype ? base[archetype] : [1, 1, 1];
+  const offset = variation[variant];
+  return {
+    scaleX: THREE.MathUtils.clamp(profile[0] + offset[0], 0.9, 1.12),
+    scaleY: THREE.MathUtils.clamp(profile[1] + offset[1], 0.9, 1.12),
+    scaleZ: THREE.MathUtils.clamp(profile[2] + offset[2], 0.9, 1.12),
+    archetype: archetype || 'neutral',
+    variant,
+  };
 }
 
 function createSignatureGeometry(
@@ -166,6 +213,13 @@ function createSignatureGeometry(
     } else {
       add(new THREE.TorusGeometry(0.2, 0.018, 5, 16), emblem, [0, 0.48, -0.27], [1, 1, 1], [Math.PI / 2, 0, 0]);
     }
+  } else if (role === 'artificer') {
+    // A deliberately asymmetrical toolwright silhouette: reinforced harness, shoulder tool-rail and a gear hub.
+    add(new RoundedBoxGeometry(0.13, 0.54, 0.075, 3, 0.024), cloth, [-0.105, 0.27, 0.255], [1, 1, 1], [0, 0, -0.22]);
+    add(new RoundedBoxGeometry(0.27, 0.19, 0.14, 3, 0.035), metal, [0.285, 0.54, 0.015], [1, 1, 1], [0, 0, -0.12]);
+    add(new THREE.TorusGeometry(0.13, 0.026, 6, 16), emblem, [-0.23, 0.39, -0.29], [1, 0.84, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.CylinderGeometry(0.075, 0.09, 0.09, 10), metal, [-0.23, 0.39, -0.29], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.OctahedronGeometry(0.06, 0), emblem, [0.285, 0.57, 0.105], [1, 1.15, 0.7]);
   } else if (role === 'ranger' || role === 'skirmisher') {
     // Asymmetric shoulder mantle, arm bracer and paired backstreamers give agile units a clean readable profile.
     const isSkirmisher = role === 'skirmisher';
@@ -239,6 +293,107 @@ function getSignatureMaterial(options: UnitSignatureKitOptions): THREE.MeshStand
   return material;
 }
 
+function createSplitClothPanelGeometry(width: number, height: number, variant: ArtVariant): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  const notch = variant === 1 ? 0.29 : variant === 2 ? 0.34 : 0.31;
+  shape.moveTo(-width * 0.5, height * 0.5);
+  shape.bezierCurveTo(-width * 0.52, height * 0.06, -width * 0.47, -height * 0.2, -width * 0.36, -height * 0.5);
+  shape.lineTo(-width * 0.09, -height * 0.45);
+  shape.lineTo(0, -height * notch);
+  shape.lineTo(width * 0.09, -height * 0.45);
+  shape.lineTo(width * 0.36, -height * 0.5);
+  shape.bezierCurveTo(width * 0.47, -height * 0.2, width * 0.52, height * 0.06, width * 0.5, height * 0.5);
+  shape.quadraticCurveTo(0, height * 0.42, -width * 0.5, height * 0.5);
+
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.028,
+    bevelEnabled: true,
+    bevelSegments: 2,
+    bevelThickness: 0.009,
+    bevelSize: 0.008,
+    curveSegments: 7,
+  });
+  geometry.translate(0, 0, -0.014);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createSignatureClothGeometry(
+  role: ArtRole,
+  variant: ArtVariant,
+  tier: number,
+  palette: UnitArtPalette
+): THREE.BufferGeometry {
+  const parts: SculptPart[] = [];
+  const addPanel = (
+    width: number,
+    height: number,
+    color: number,
+    position: [number, number, number],
+    rotation: [number, number, number] = [0, 0, 0],
+    scale: [number, number, number] = [1, 1, 1]
+  ) => parts.push(makePart(createSplitClothPanelGeometry(width, height, variant), color, position, scale, rotation));
+  const tierScale = 1 + tier * 0.035;
+
+  if (role === 'laborer') {
+    addPanel(0.24, 0.34, palette.primary, [0, 0.015, 0.265]);
+    parts.push(makePart(new RoundedBoxGeometry(0.045, 0.22, 0.025, 2, 0.009), palette.banner, [0, 0.07, 0.29]));
+  } else if (role === 'mounted') {
+    // A split saddle cloth reads as horse equipment, not another infantry cape.
+    addPanel(0.23, 0.4, palette.primary, [-0.34, 0.58, 0.4], [0, 0, -0.12], [1, 1, 0.72]);
+    addPanel(0.23, 0.4, palette.banner, [0.34, 0.58, 0.4], [0, 0, 0.12], [1, 1, 0.72]);
+  } else if (role === 'arcanist') {
+    addPanel(0.18, 0.62, palette.primary, [0, 0.17, 0.305], [0.04, 0, 0]);
+    addPanel(0.13, 0.5, palette.banner, [-0.2, 0.14, -0.245], [0, 0, -0.1]);
+    addPanel(0.13, 0.5, palette.primary, [0.2, 0.14, -0.245], [0, 0, 0.1]);
+  } else if (role === 'ranger' || role === 'skirmisher') {
+    const panelHeight = role === 'skirmisher' ? 0.46 : 0.58;
+    addPanel(0.13, panelHeight, palette.primary, [-0.15, 0.16, -0.315], [0.02, 0, -0.11]);
+    addPanel(0.13, panelHeight, palette.banner, [0.15, 0.16, -0.315], [-0.02, 0, 0.11]);
+    if (role === 'ranger') addPanel(0.2, 0.32, palette.primary, [0, 0.02, 0.29]);
+  } else if (role === 'frontline') {
+    addPanel(0.3, 0.54 * tierScale, palette.primary, [0, 0.12, 0.32]);
+    parts.push(makePart(new THREE.OctahedronGeometry(0.075, 1), palette.banner, [0, 0.34, 0.355], [0.9, 1.2, 0.5]));
+  } else if (role === 'champion') {
+    addPanel(0.34, 0.61 * tierScale, palette.primary, [0, 0.13, 0.33]);
+    addPanel(0.2, 0.45, palette.banner, [0, 0.12, -0.31]);
+  } else {
+    // Artificers wear a leather work apron with a clipped side tool-roll.
+    addPanel(0.25, 0.39, palette.primary, [0, 0.035, 0.285]);
+    addPanel(0.14, 0.34, palette.banner, [0.23, 0.12, -0.2], [0, 0, -0.18]);
+  }
+
+  return mergeSculptParts(parts);
+}
+
+function getSignatureClothGeometry(options: UnitSignatureKitOptions, role: ArtRole): THREE.BufferGeometry {
+  const tier = Math.max(0, Math.min(3, Math.floor(options.age) - 1));
+  const variant = getDeterministicArtVariant(options.unitId);
+  const key = [options.civilization, role, variant, tier, colorKey(options.palette)].join('|');
+  let geometry = signatureClothGeometryCache.get(key);
+  if (!geometry) {
+    geometry = createSignatureClothGeometry(role, variant, tier, options.palette);
+    signatureClothGeometryCache.set(key, geometry);
+  }
+  return geometry;
+}
+
+function getSignatureClothMaterial(options: UnitSignatureKitOptions): THREE.MeshStandardMaterial {
+  const key = [options.civilization, colorKey(options.palette)].join('|');
+  let material = signatureClothMaterialCache.get(key);
+  if (!material) {
+    material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.9,
+      metalness: 0.025,
+      side: THREE.DoubleSide,
+    });
+    signatureClothMaterialCache.set(key, material);
+  }
+  return material;
+}
+
+
 /** Fresh, original faction motifs layered over the legacy rig; no generated model files are required. */
 export function createUnitSignatureKit(options: UnitSignatureKitOptions): THREE.Group {
   const group = new THREE.Group();
@@ -251,6 +406,14 @@ export function createUnitSignatureKit(options: UnitSignatureKitOptions): THREE.
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
+
+  const cloth = new THREE.Mesh(getSignatureClothGeometry(options, role), getSignatureClothMaterial(options));
+  cloth.name = 'originalFactionCloth';
+  cloth.castShadow = true;
+  cloth.receiveShadow = false;
+  cloth.userData.distanceLodMinPixels = 3.8;
+  group.add(cloth);
+
   group.userData.artDirection = options.civilization;
   group.userData.artRole = role;
   group.userData.artVariant = getDeterministicArtVariant(options.unitId);

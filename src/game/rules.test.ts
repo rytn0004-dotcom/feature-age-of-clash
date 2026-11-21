@@ -2552,6 +2552,7 @@ test('art-direction: new original faction character kits add sculpted silhouette
     createCharacterHandDetails,
     createUnitSignatureKit,
     getDeterministicArtVariant,
+    getUnitBodyProportionProfile,
   } = await import('./artDirection');
 
   const palette = { primary: 0x2563eb, secondary: 0xf59e0b, banner: 0x1d4ed8 };
@@ -2566,10 +2567,15 @@ test('art-direction: new original faction character kits add sculpted silhouette
       palette,
     });
     assert.equal(kit.name, 'originalFactionSilhouetteKit');
-    assert.equal(kit.children.length, 1);
+    assert.equal(kit.children.length, 2);
     const mesh = kit.children[0] as import('three').Mesh;
+    const cloth = kit.children[1] as import('three').Mesh;
     assert.ok(mesh.geometry.getAttribute('color').count > 100, civilization + ' art kit should contain authored colored geometry');
     assert.equal(mesh.castShadow, true);
+    assert.equal(cloth.name, 'originalFactionCloth');
+    assert.ok(cloth.geometry.getAttribute('color').count > 100, civilization + ' cloth should be thick, merged, vertex-coloured geometry');
+    assert.equal((cloth.material as import('three').MeshStandardMaterial).roughness, 0.9);
+    assert.equal((cloth.material as import('three').MeshStandardMaterial).metalness, 0.025);
     assert.equal(kit.userData.artDirection, civilization);
   }
 
@@ -2619,7 +2625,8 @@ test('art-direction: new original faction character kits add sculpted silhouette
   });
   assert.equal(guardianKit.userData.artRole, 'frontline');
   assert.equal(oracleKit.userData.artRole, 'arcanist');
-  assert.equal(artificerKit.userData.artRole, 'laborer');
+  assert.equal(artificerKit.userData.artRole, 'artificer');
+  assert.equal(artificerKit.children[1].name, 'originalFactionCloth');
 
   const face = createCharacterFaceDetails(0x1d4ed8);
   assert.equal(face.name, 'sculptedCharacterFace');
@@ -2698,6 +2705,24 @@ test('art-direction: new original faction character kits add sculpted silhouette
   assert.equal(createBuildingFacadeKit('farm', 'medieval', palette, 4, 4, 2).children.length, 0);
   assert.equal(createBuildingFacadeKit('wall', 'anime', palette, 3, 1, 1).children.length, 0);
   assert.equal(createBuildingFacadeKit('gate', 'fantasy', palette, 3, 1, 2).children.length, 0);
+
+
+  const guardianProfile = getUnitBodyProportionProfile('guardian-unit-01', 'melee', 'guardian');
+  const rangerProfile = getUnitBodyProportionProfile('ranger-unit-01', 'ranged', 'archer');
+  const artificerProfile = getUnitBodyProportionProfile('artificer-unit-01', 'worker', 'artificer');
+  assert.equal(guardianProfile.archetype, 'frontline');
+  assert.equal(rangerProfile.archetype, 'ranger');
+  assert.equal(artificerProfile.archetype, 'artificer');
+  assert.ok(guardianProfile.scaleX > rangerProfile.scaleX, 'frontline units should have a broader shoulder/torso silhouette than rangers');
+  assert.ok(rangerProfile.scaleY > guardianProfile.scaleY, 'rangers should read taller and leaner than frontline units');
+  assert.deepEqual(
+    getUnitBodyProportionProfile('guardian-unit-01', 'melee', 'guardian'),
+    guardianProfile,
+    'the same unit identity must always receive the same body proportions'
+  );
+  for (const value of [guardianProfile.scaleX, guardianProfile.scaleY, guardianProfile.scaleZ, rangerProfile.scaleX, rangerProfile.scaleY, artificerProfile.scaleZ]) {
+    assert.ok(value >= 0.9 && value <= 1.12, 'proportion variation must remain subtle and animation-safe');
+  }
 
   const variantA = getDeterministicArtVariant('unit-hero-01');
   assert.equal(getDeterministicArtVariant('unit-hero-01'), variantA);
