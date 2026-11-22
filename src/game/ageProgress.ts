@@ -34,10 +34,7 @@ export function getAgeResourceProgress(
     overallRatio: Math.min(foodRatio, goldRatio),
     foodMissing: Math.max(0, foodGoal - foodStock),
     goldMissing: Math.max(0, goldGoal - goldStock),
-    ready: foodMissingIsZero(foodGoal, foodStock) && foodMissingIsZero(goldGoal, goldStock),
+    ready: foodStock >= foodGoal && goldStock >= goldGoal,
   };
 }
 
-function foodMissingIsZero(required: number, current: number): boolean {
-  return required <= current;
-}
