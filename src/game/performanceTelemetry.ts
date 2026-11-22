@@ -9,6 +9,12 @@ export interface PerformanceSample {
   simulationUpdateMaxMs: number;
   renderCallAverageMs: number;
   renderCallMaxMs: number;
+  pathSearchSamples: number;
+  aiPathSearchSamples: number;
+  emptyPathSearches: number;
+  aiEmptyPathSearches: number;
+  pathSearchAverageMs: number;
+  pathSearchMaxMs: number;
   drawCalls: number;
   triangles: number;
   geometries: number;
@@ -63,6 +69,12 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'simulationUpdateMaxMs',
   'renderCallAverageMs',
   'renderCallMaxMs',
+  'pathSearchSamples',
+  'aiPathSearchSamples',
+  'emptyPathSearches',
+  'aiEmptyPathSearches',
+  'pathSearchAverageMs',
+  'pathSearchMaxMs',
   'drawCalls',
   'triangles',
   'geometries',
@@ -158,5 +170,45 @@ export function recordAiDecisionTiming(
 }
 
 export function getAverageAiDecisionMs(timing: AiDecisionTiming): number {
+  return timing.sampleCount > 0 ? timing.totalMs / timing.sampleCount : 0;
+}
+
+export interface PathSearchTiming {
+  sampleCount: number;
+  aiSampleCount: number;
+  emptyPathCount: number;
+  aiEmptyPathCount: number;
+  totalMs: number;
+  maxMs: number;
+}
+
+export const EMPTY_PATH_SEARCH_TIMING: PathSearchTiming = {
+  sampleCount: 0,
+  aiSampleCount: 0,
+  emptyPathCount: 0,
+  aiEmptyPathCount: 0,
+  totalMs: 0,
+  maxMs: 0,
+};
+
+/** Adds one path request to the current capture without storing per-search history. */
+export function recordPathSearchTiming(
+  previous: PathSearchTiming,
+  elapsedMs: number,
+  isAiPathSearch: boolean,
+  hasPath: boolean,
+): PathSearchTiming {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return previous;
+  return {
+    sampleCount: previous.sampleCount + 1,
+    aiSampleCount: previous.aiSampleCount + (isAiPathSearch ? 1 : 0),
+    emptyPathCount: previous.emptyPathCount + (hasPath ? 0 : 1),
+    aiEmptyPathCount: previous.aiEmptyPathCount + (isAiPathSearch && !hasPath ? 1 : 0),
+    totalMs: previous.totalMs + elapsedMs,
+    maxMs: Math.max(previous.maxMs, elapsedMs),
+  };
+}
+
+export function getAveragePathSearchMs(timing: PathSearchTiming): number {
   return timing.sampleCount > 0 ? timing.totalMs / timing.sampleCount : 0;
 }
