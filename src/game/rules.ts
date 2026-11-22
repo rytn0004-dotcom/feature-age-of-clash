@@ -25,6 +25,17 @@ import { estimateDeliveredResourcePerMinute } from './economyInsights';
 export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+/** Field-assembled battering rams follow the same global production time scale. */
+export const FIELD_RAM_ASSEMBLY_BASE_DURATION = 18;
+export const FIELD_RAM_ASSEMBLY_DURATION = getEffectiveProductionDuration(FIELD_RAM_ASSEMBLY_BASE_DURATION);
+
+/** Ready-builder estimate for the 4-person project; fewer than 3 cancels assembly. */
+export function estimateFieldRamAssemblyDuration(readyBuilderCount: number): number | null {
+  const readyCount = Math.floor(Number.isFinite(readyBuilderCount) ? readyBuilderCount : 0);
+  if (readyCount < 3) return null;
+  return +(FIELD_RAM_ASSEMBLY_DURATION * 4 / readyCount).toFixed(3);
+}
+
 
 export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
 
