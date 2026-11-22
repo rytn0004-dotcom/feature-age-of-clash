@@ -6350,12 +6350,27 @@ export class RtsEngine {
         this.getCivilizationForFaction(bldg.faction),
         this.activeMods
       );
+      const activeBuilderCount = this.units.filter(
+        (worker) =>
+          worker.hp > 0 &&
+          worker.faction === bldg.faction &&
+          worker.state === 'building' &&
+          worker.targetBuildingId === bldg.id &&
+          !worker.garrisonedInBuildingId &&
+          getDistance(worker.x, worker.z, bldg.x, bldg.z) <= buildReach
+      ).length;
+      const builderCount = Math.max(1, activeBuilderCount);
+      const perBuilderWorkShare =
+        getConstructionWorkerMultiplier(builderCount) / builderCount;
       if (repairingWall) {
         const repairSpeed =
-          (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) * constructionSpeedMultiplier;
+          (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
+          constructionSpeedMultiplier *
+          perBuilderWorkShare;
         bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
       } else {
-        const buildSpeed = constructionSpeedMultiplier / bldg.buildingDef.buildTime;
+        const buildSpeed =
+          (constructionSpeedMultiplier * perBuilderWorkShare) / bldg.buildingDef.buildTime;
         bldg.buildProgress += buildSpeed * dt;
         bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
       }
