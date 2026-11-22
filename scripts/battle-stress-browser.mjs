@@ -37,6 +37,7 @@ async function waitFor(operation, timeoutMs, label) {
 async function main() {
   assert.ok(counts.length > 0 && counts.every((count) => [100, 200, 400].includes(count)), "Use 100, 200, or 400 stress units.");
   assert.ok(Number.isSafeInteger(seed) && seed >= 0, "Stress seed must be a non-negative safe integer.");
+  assert.ok(Number.isSafeInteger(minCaptureSamples) && minCaptureSamples > 0, "BATTLE_STRESS_MIN_SAMPLES must be a positive integer.");
   assert.ok(["highland_basin", "river_valley", "twin_lakes"].includes(map), "Unsupported stress map.");
 
   const chromePath = process.env.CHROME_BIN || ["google-chrome", "chrome", "chromium"].map((name) => {
@@ -142,7 +143,7 @@ async function main() {
 
       await sleep(1500);
       await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', code: 'F3', bubbles: true, cancelable: true })); true");
-      const telemetry = await waitFor(async () => evaluate("(() => { const e = window.__rtsEngine; const p = [...document.querySelectorAll('[role=\"status\"]')].find(n => n.textContent?.includes('PERFORMANCE MONITOR')); if (!e || !p || p.style.display === 'none') return null; const t = p.textContent || ''; const samples = Number(t.match(/Capture Samples\\s+(\\d+)/)?.[1] || 0); if (samples < minCaptureSamples) return null; const value = re => Number((t.match(re)?.[1] || "").replaceAll(",", "") || NaN); return { samples, state: e.gameState, simulatedSeconds: e.stats.gameDuration, fps: value(/Frame FPS\\s+([\\d.]+)/), p95Ms: value(/Frame ms p95\\s+([\\d.]+)/), hitchMs: value(/Max hitch ms\\s+([\\d.]+)/), drawCalls: value(/Draw Calls\\s+([\\d,]+)/), triangles: value(/Triangles\\s+([\\d,]+)/), renderer: t.match(/Renderer\\s+([^\\n]+)/)?.[1]?.trim() || 'unknown' }; })()"), 30000, count + "-unit F3 telemetry");
+      const telemetry = await waitFor(async () => evaluate("(() => { const e = window.__rtsEngine; const p = [...document.querySelectorAll('[role=\"status\"]')].find(n => n.textContent?.includes('PERFORMANCE MONITOR')); if (!e || !p || p.style.display === 'none') return null; const t = p.textContent || ''; const samples = Number(t.match(/Capture Samples\\s+(\\d+)/)?.[1] || 0); if (samples < " + minCaptureSamples + ") return null; const value = re => Number((t.match(re)?.[1] || "").replaceAll(",", "") || NaN); return { samples, state: e.gameState, simulatedSeconds: e.stats.gameDuration, fps: value(/Frame FPS\\s+([\\d.]+)/), p95Ms: value(/Frame ms p95\\s+([\\d.]+)/), hitchMs: value(/Max hitch ms\\s+([\\d.]+)/), drawCalls: value(/Draw Calls\\s+([\\d,]+)/), triangles: value(/Triangles\\s+([\\d,]+)/), renderer: t.match(/Renderer\\s+([^\\n]+)/)?.[1]?.trim() || 'unknown' }; })()"), 30000, count + "-unit F3 telemetry");
 
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
