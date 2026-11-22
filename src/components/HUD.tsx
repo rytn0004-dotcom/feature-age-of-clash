@@ -753,9 +753,13 @@ export const HUD: React.FC<HUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between select-none z-10">
       {/* ================= TOP PERIMETER STATUS CLUSTER ================= */}
-      <header className="relative flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none"
-        onMouseEnter={() => setShowEconomyPanel(true)}
-        onMouseLeave={() => { if (!isEconomyPinned) setShowEconomyPanel(false); }}>
+      <header className="relative flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none">
+        <div
+          data-economy-hover-zone="true"
+          className="relative pointer-events-none"
+          onMouseEnter={() => setShowEconomyPanel(true)}
+          onMouseLeave={() => { if (!isEconomyPinned) setShowEconomyPanel(false); }}
+        >
         {/* Primary economy row: all four resources and population stay visible without horizontal scrolling. */}
         <div
           data-top-resource-bar="true"
@@ -882,6 +886,129 @@ export const HUD: React.FC<HUDProps> = ({
 
         </div>
 
+      {showEconomyPanel && (
+        <section
+          id="economy-overview-panel"
+          data-economy-panel="true"
+          aria-label="經濟總覽"
+          className="absolute top-full left-0 z-40 mt-1 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <h2 className="text-sm font-black tracking-wide text-emerald-200">經濟總覽</h2>
+              <p className="text-[10px] text-slate-400">以遊戲時間取樣；淨變化包含收入與所有資源支出</p>
+            </div>
+            <button
+              type="button"
+              data-economy-close="true"
+              onClick={() => { setIsEconomyPinned(false); setShowEconomyPanel(false); }}
+              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
+              aria-label="關閉經濟總覽"
+            >
+              關閉 ✕
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {economyResourceRows.map((resource) => {
+              const net = economyNetRates?.[resource.key];
+              const health = net === undefined ? null : getResourceHealthStatus(resource.stock, net);
+              const statusLabel = !health
+                ? '收集趨勢中'
+                : health.status === 'critical'
+                ? '短缺危險'
+                : health.status === 'warning'
+                ? '短缺警戒'
+                : health.status === 'draining'
+                ? '庫存下降'
+                : health.status === 'growing'
+                ? '庫存增加'
+                : '大致持平';
+              const statusTone = !health
+                ? 'text-slate-400'
+                : health.status === 'critical'
+                ? 'text-rose-300'
+                : health.status === 'warning'
+                ? 'text-amber-300'
+                : health.status === 'draining'
+                ? 'text-orange-300'
+                : health.status === 'growing'
+                ? 'text-emerald-300'
+                : 'text-slate-300';
+              return (
+                <article key={resource.key} data-economy-resource={resource.key} className="min-w-0 rounded-lg border border-slate-700/80 bg-slate-900/85 p-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-slate-300">{resource.icon} {resource.label}</span>
+                    <span className={`text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
+                  </div>
+                  <div className="mt-1 text-lg font-black tabular-nums">{formatResourceCount(resource.stock)}</div>
+                  <div className="mt-1 text-[10px] text-slate-400">不計運輸的採集／據點產能：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
+                  <div className="text-[10px] font-semibold text-emerald-200 tabular-nums">扣除往返運輸後估算入庫：+{Math.round(resource.delivered).toLocaleString('zh-TW')}/分</div>
+                  <div className={`text-[10px] font-bold tabular-nums ${net === undefined ? 'text-slate-500' : net < -0.05 ? 'text-orange-300' : net > 0.05 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                    {net === undefined ? '淨變化：資料收集中' : `淨變化：${formatNetRate(net)}`}
+                  </div>
+                  {health?.runwayMinutes !== null && health?.runwayMinutes !== undefined && (
+                    <div className="mt-1 text-[10px] text-rose-200">依目前速度約 {health.runwayMinutes.toFixed(1)} 遊戲分鐘耗盡</div>
+                  )}
+                  <div className="mt-1 text-[10px] text-slate-500">採集村民 {resource.workers} 人</div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">村民工作配置</h3>
+              <div className="space-y-2">
+                {[
+                  { key: 'food', label: '糧食', count: observedTelemetry.workersByResource.food, color: 'bg-amber-400' },
+                  { key: 'wood', label: '木材', count: observedTelemetry.workersByResource.wood, color: 'bg-emerald-400' },
+                  { key: 'gold', label: '黃金', count: observedTelemetry.workersByResource.gold, color: 'bg-yellow-300' },
+                  { key: 'stone', label: '石料', count: observedTelemetry.workersByResource.stone, color: 'bg-slate-300' },
+                  { key: 'building', label: '建築', count: observedTelemetry.workersByResource.building, color: 'bg-orange-400' },
+                  { key: 'idle', label: '閒置', count: observedTelemetry.workersByResource.idle, color: 'bg-rose-400' },
+                ].map((group) => (
+                  <div key={group.key} className="grid grid-cols-[44px_1fr_28px] items-center gap-2 text-[10px]">
+                    <span className="text-slate-400">{group.label}</span>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div className={`h-full rounded-full ${group.color}`} style={{ width: `${observedTelemetry.totalWorkers > 0 ? (group.count / observedTelemetry.totalWorkers) * 100 : 0}%` }} />
+                    </div>
+                    <span className="text-right font-bold tabular-nums text-slate-200">{group.count}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 border-t border-slate-700 pt-2 text-[10px] text-slate-400">
+                總村民 {observedTelemetry.totalWorkers} 人 · 閒置 {observedTelemetry.workersByResource.idle} 人 · 建築中 {observedTelemetry.workersByResource.building} 人
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">升時代準備度</h3>
+              {nextAgeInfo && ageResourceShortfall ? (
+                <>
+                  <div className="text-sm font-black text-amber-200">{nextAgeInfo.name}</div>
+                  <div className="mt-2 space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">糧食需求 {formatResourceCount(nextAgeInfo.cost.food)}</span><strong className={ageResourceShortfall.food > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.food > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.food)}` : '已足夠'}</strong></div>
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">黃金需求 {formatResourceCount(nextAgeInfo.cost.gold)}</span><strong className={ageResourceShortfall.gold > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.gold > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.gold)}` : '已足夠'}</strong></div>
+                  </div>
+                  <div className={`mt-3 rounded-md px-2 py-1.5 text-center text-xs font-black ${ageResourceShortfall.ready ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/10 text-amber-200'}`}>
+                    {ageResourceShortfall.ready ? '資源已達升時代門檻' : '仍需累積指定資源'}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-slate-500">此處只檢查升時代糧食與黃金門檻；地標建造條件、工人配置與戰場安全仍需另外確認。</p>
+                </>
+              ) : (
+                <div className="rounded-md bg-cyan-500/10 px-2 py-3 text-xs font-bold text-cyan-200">已達最高時代，沒有下一階段資源門檻。</div>
+              )}
+            </section>
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+            村民入庫估算依目前採集速度、負載量、移動速度與 A* 地形／建築繞行路線，計入採集點到合適存放建築的往返時間；不含戰鬥受阻、野生動物擊殺等待等臨時因素。淨變化則根據最近約 20 秒遊戲時間的庫存差額計算，包含所有收入與支出。
+          </p>
+        </section>
+      )}
+
+        </div>
+
         {/* Secondary status and controls are separated from the resource grid so they cannot push resources off-screen. */}
         <div className="flex flex-col gap-1.5 min-w-0 sm:flex-row sm:items-center sm:justify-between">
           <div data-top-status-bar="true" className="flex min-w-0 flex-wrap items-center gap-1 pointer-events-auto">
@@ -944,8 +1071,9 @@ export const HUD: React.FC<HUDProps> = ({
             aria-pressed={isEconomyPinned}
             aria-controls="economy-overview-panel"
             onClick={() => {
-              setIsEconomyPinned((pinned) => !pinned);
-              setShowEconomyPanel(true);
+              const nextPinned = !isEconomyPinned;
+              setIsEconomyPinned(nextPinned);
+              setShowEconomyPanel(nextPinned);
             }}
             className={`flex items-center gap-1 px-2.5 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors ${isEconomyPinned ? 'border-emerald-400/80 text-emerald-100' : showEconomyPanel ? 'border-emerald-400/70 text-emerald-200' : 'border-emerald-500/35 text-slate-200 hover:border-emerald-400'}`}
             title={isEconomyPinned ? '已固定經濟面板；再次點擊解除固定' : '移入頂部經濟區自動展開；點擊固定面板'}
@@ -1134,127 +1262,6 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
         </div>
-      {showEconomyPanel && (
-        <section
-          id="economy-overview-panel"
-          data-economy-panel="true"
-          aria-label="經濟總覽"
-          className="absolute top-full left-2 z-40 mt-1 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
-        >
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <div>
-              <h2 className="text-sm font-black tracking-wide text-emerald-200">經濟總覽</h2>
-              <p className="text-[10px] text-slate-400">以遊戲時間取樣；淨變化包含收入與所有資源支出</p>
-            </div>
-            <button
-              type="button"
-              data-economy-close="true"
-              onClick={() => { setIsEconomyPinned(false); setShowEconomyPanel(false); }}
-              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
-              aria-label="關閉經濟總覽"
-            >
-              關閉 ✕
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {economyResourceRows.map((resource) => {
-              const net = economyNetRates?.[resource.key];
-              const health = net === undefined ? null : getResourceHealthStatus(resource.stock, net);
-              const statusLabel = !health
-                ? '收集趨勢中'
-                : health.status === 'critical'
-                ? '短缺危險'
-                : health.status === 'warning'
-                ? '短缺警戒'
-                : health.status === 'draining'
-                ? '庫存下降'
-                : health.status === 'growing'
-                ? '庫存增加'
-                : '大致持平';
-              const statusTone = !health
-                ? 'text-slate-400'
-                : health.status === 'critical'
-                ? 'text-rose-300'
-                : health.status === 'warning'
-                ? 'text-amber-300'
-                : health.status === 'draining'
-                ? 'text-orange-300'
-                : health.status === 'growing'
-                ? 'text-emerald-300'
-                : 'text-slate-300';
-              return (
-                <article key={resource.key} data-economy-resource={resource.key} className="min-w-0 rounded-lg border border-slate-700/80 bg-slate-900/85 p-2">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-bold text-slate-300">{resource.icon} {resource.label}</span>
-                    <span className={`text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
-                  </div>
-                  <div className="mt-1 text-lg font-black tabular-nums">{formatResourceCount(resource.stock)}</div>
-                  <div className="mt-1 text-[10px] text-slate-400">不計運輸的採集／據點產能：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
-                  <div className="text-[10px] font-semibold text-emerald-200 tabular-nums">扣除往返運輸後估算入庫：+{Math.round(resource.delivered).toLocaleString('zh-TW')}/分</div>
-                  <div className={`text-[10px] font-bold tabular-nums ${net === undefined ? 'text-slate-500' : net < -0.05 ? 'text-orange-300' : net > 0.05 ? 'text-emerald-300' : 'text-slate-400'}`}>
-                    {net === undefined ? '淨變化：資料收集中' : `淨變化：${formatNetRate(net)}`}
-                  </div>
-                  {health?.runwayMinutes !== null && health?.runwayMinutes !== undefined && (
-                    <div className="mt-1 text-[10px] text-rose-200">依目前速度約 {health.runwayMinutes.toFixed(1)} 遊戲分鐘耗盡</div>
-                  )}
-                  <div className="mt-1 text-[10px] text-slate-500">採集村民 {resource.workers} 人</div>
-                </article>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
-              <h3 className="text-xs font-black text-slate-200 mb-2">村民工作配置</h3>
-              <div className="space-y-2">
-                {[
-                  { key: 'food', label: '糧食', count: observedTelemetry.workersByResource.food, color: 'bg-amber-400' },
-                  { key: 'wood', label: '木材', count: observedTelemetry.workersByResource.wood, color: 'bg-emerald-400' },
-                  { key: 'gold', label: '黃金', count: observedTelemetry.workersByResource.gold, color: 'bg-yellow-300' },
-                  { key: 'stone', label: '石料', count: observedTelemetry.workersByResource.stone, color: 'bg-slate-300' },
-                  { key: 'building', label: '建築', count: observedTelemetry.workersByResource.building, color: 'bg-orange-400' },
-                  { key: 'idle', label: '閒置', count: observedTelemetry.workersByResource.idle, color: 'bg-rose-400' },
-                ].map((group) => (
-                  <div key={group.key} className="grid grid-cols-[44px_1fr_28px] items-center gap-2 text-[10px]">
-                    <span className="text-slate-400">{group.label}</span>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
-                      <div className={`h-full rounded-full ${group.color}`} style={{ width: `${observedTelemetry.totalWorkers > 0 ? (group.count / observedTelemetry.totalWorkers) * 100 : 0}%` }} />
-                    </div>
-                    <span className="text-right font-bold tabular-nums text-slate-200">{group.count}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 border-t border-slate-700 pt-2 text-[10px] text-slate-400">
-                總村民 {observedTelemetry.totalWorkers} 人 · 閒置 {observedTelemetry.workersByResource.idle} 人 · 建築中 {observedTelemetry.workersByResource.building} 人
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
-              <h3 className="text-xs font-black text-slate-200 mb-2">升時代準備度</h3>
-              {nextAgeInfo && ageResourceShortfall ? (
-                <>
-                  <div className="text-sm font-black text-amber-200">{nextAgeInfo.name}</div>
-                  <div className="mt-2 space-y-1.5 text-xs">
-                    <div className="flex justify-between gap-2"><span className="text-slate-400">糧食需求 {formatResourceCount(nextAgeInfo.cost.food)}</span><strong className={ageResourceShortfall.food > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.food > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.food)}` : '已足夠'}</strong></div>
-                    <div className="flex justify-between gap-2"><span className="text-slate-400">黃金需求 {formatResourceCount(nextAgeInfo.cost.gold)}</span><strong className={ageResourceShortfall.gold > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.gold > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.gold)}` : '已足夠'}</strong></div>
-                  </div>
-                  <div className={`mt-3 rounded-md px-2 py-1.5 text-center text-xs font-black ${ageResourceShortfall.ready ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/10 text-amber-200'}`}>
-                    {ageResourceShortfall.ready ? '資源已達升時代門檻' : '仍需累積指定資源'}
-                  </div>
-                  <p className="mt-2 text-[10px] leading-relaxed text-slate-500">此處只檢查升時代糧食與黃金門檻；地標建造條件、工人配置與戰場安全仍需另外確認。</p>
-                </>
-              ) : (
-                <div className="rounded-md bg-cyan-500/10 px-2 py-3 text-xs font-bold text-cyan-200">已達最高時代，沒有下一階段資源門檻。</div>
-              )}
-            </section>
-          </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-            村民入庫估算依目前採集速度、負載量、移動速度與 A* 地形／建築繞行路線，計入採集點到合適存放建築的往返時間；不含戰鬥受阻、野生動物擊殺等待等臨時因素。淨變化則根據最近約 20 秒遊戲時間的庫存差額計算，包含所有收入與支出。
-          </p>
-        </section>
-      )}
-
       </header>
 
       {/* ================= DYNAMIC ALERT BANNERS ================= */}
