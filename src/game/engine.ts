@@ -6,7 +6,6 @@ import {
   queryCombatSpatialIndex,
   type CombatSpatialIndex,
 } from './combatSpatialIndex';
-import { getUnitVisualAnimationInterval } from './unitVisualAnimationLod';
 import {
   AgeLevel,
   BuildingEntity,
@@ -4924,49 +4923,18 @@ export class RtsEngine {
     resolveUnitBuildingCollisions(this.units, this.buildings);
     resolveUnitResourceCollisions(this.units, this.resourceNodes);
 
-    // Always synchronize gameplay positions after collision resolution. Procedural
-    // skeletal animation is visual-only, so distant meshes can update at a lower
-    // cadence without slowing movement, attacks, cooldowns or AI decisions.
-    const highDetailUnitIds = new Set(this.selectedUnitIds);
-    if (this.inspectedEntity?.type === 'unit') highDetailUnitIds.add(this.inspectedEntity.id);
-    const cameraX = this.camera.position.x;
-    const cameraZ = this.camera.position.z;
+    // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
       const mesh = this.unitMeshes.get(unit.id);
       if (mesh) {
         if (unit.garrisonedInBuildingId) {
           mesh.visible = false;
-          mesh.userData.visualAnimationElapsed = 0;
           continue;
         }
         mesh.visible = true;
         mesh.position.set(unit.x, 0, unit.z);
-
-        const dx = cameraX - unit.x;
-        const dz = cameraZ - unit.z;
-        const isMovingOrFighting =
-          unit.state === 'moving' ||
-          unit.state === 'attacking' ||
-          Math.abs(unit.velocity.x) > 0.1 ||
-          Math.abs(unit.velocity.z) > 0.1;
-        const animationInterval = getUnitVisualAnimationInterval(
-          dx * dx + dz * dz,
-          isMovingOrFighting,
-          highDetailUnitIds.has(unit.id),
-        );
-        if (animationInterval > 0) {
-          const elapsed = (mesh.userData.visualAnimationElapsed || 0) + dt;
-          if (elapsed < animationInterval) {
-            mesh.userData.visualAnimationElapsed = elapsed;
-            continue;
-          }
-          mesh.userData.visualAnimationElapsed = 0;
-          this.animateUnitMesh(unit, mesh, elapsed);
-        } else {
-          mesh.userData.visualAnimationElapsed = 0;
-          this.animateUnitMesh(unit, mesh, dt);
-        }
+        this.animateUnitMesh(unit, mesh, dt);
       }
     }
 
