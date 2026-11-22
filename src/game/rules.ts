@@ -20,6 +20,7 @@ import {
   UnitCategory,
 } from '../types/game';
 import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
+import { estimateDeliveredResourcePerMinute } from './economyInsights';
 
 export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
@@ -2916,8 +2917,26 @@ export interface FactionResourceTelemetry {
     idle: number;
   };
   totalWorkers: number;
+  /** Theoretical gather speed + passive shrine income, before transport walking time. */
   incomePerMin: ResourceIncomeRate;
+  /** Estimated resources actually deposited, after gather time and round-trip delivery travel. */
+  deliveredIncomePerMin: ResourceIncomeRate;
 }
+
+export type ResourceDeliveryWorker = Pick<
+  UnitEntity,
+  'unitDef' | 'x' | 'z'
+>;
+
+export type ResourceDeliveryNode = Pick<
+  ResourceNode,
+  'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount' | 'x' | 'z'
+>;
+
+export type EstimateResourceDeliveryTravel = (
+  worker: ResourceDeliveryWorker,
+  node: ResourceDeliveryNode
+) => number | null;
 
 /**
  * Computes real-time worker allocation counts and estimated per-minute income
@@ -2929,12 +2948,13 @@ export function computeFactionResourceTelemetry(
     Pick<
       UnitEntity,
       'faction' | 'hp' | 'state' | 'unitDef' | 'targetResourceNodeId' | 'carryingResource'
-    >
+    > & Partial<Pick<UnitEntity, 'x' | 'z'>>
   >,
-  resourceNodes: Array<Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>>,
+  resourceNodes: Array<ResourceDeliveryNode>,
   contestedPoints: Array<Pick<ContestedPoint, 'ownerFaction' | 'shrineType' | 'siegeSupplyActive'>>,
   researchedTechs: string[],
-  hasStarOath = false
+  hasStarOath = false,
+  estimateDeliveryTravel?: EstimateResourceDeliveryTravel
 ): FactionResourceTelemetry {
   const nodeById = new Map<
     string,
@@ -2953,6 +2973,7 @@ export function computeFactionResourceTelemetry(
     idle: 0,
   };
   const incomeRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
+  const deliveredRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
   let totalWorkers = 0;
 
   for (const u of units) {
@@ -2978,7 +2999,29 @@ export function computeFactionResourceTelemetry(
               researchedTechs,
               hasStarOath
             );
-        incomeRaw[resType] += baseGatherPerSec * 60 * mult;
+        const gatherPerSecond = baseGatherPerSec * mult;
+        const theoreticalPerMin = gatherPerSecond * 60;
+        incomeRaw[resType] += theoreticalPerMin;
+
+        if (estimateDeliveryTravel) {
+          if (targetNode && Number.isFinite(u.x) && Number.isFinite(u.z)) {
+            const travelDistance = estimateDeliveryTravel(
+              u as ResourceDeliveryWorker,
+              targetNode
+            );
+            if (travelDistance !== null && Number.isFinite(travelDistance) && travelDistance >= 0) {
+              deliveredRaw[resType] += estimateDeliveredResourcePerMinute(
+                gatherPerSecond,
+                u.unitDef.stats.carryCapacity,
+                u.unitDef.stats.speed,
+                travelDistance
+              );
+            }
+          }
+        } else {
+          // Preserve theoretical telemetry for callers without a world/drop-off model.
+          deliveredRaw[resType] += theoreticalPerMin;
+        }
         continue;
       }
     }
@@ -2994,6 +3037,10 @@ export function computeFactionResourceTelemetry(
     incomeRaw.wood += perSec.wood * 60;
     incomeRaw.gold += perSec.gold * 60;
     incomeRaw.stone += perSec.stone * 60;
+    deliveredRaw.food += perSec.food * 60;
+    deliveredRaw.wood += perSec.wood * 60;
+    deliveredRaw.gold += perSec.gold * 60;
+    deliveredRaw.stone += perSec.stone * 60;
   }
 
   return {
@@ -3004,6 +3051,12 @@ export function computeFactionResourceTelemetry(
       wood: Math.round(incomeRaw.wood),
       gold: Math.round(incomeRaw.gold),
       stone: Math.round(incomeRaw.stone),
+    },
+    deliveredIncomePerMin: {
+      food: Math.round(deliveredRaw.food),
+      wood: Math.round(deliveredRaw.wood),
+      gold: Math.round(deliveredRaw.gold),
+      stone: Math.round(deliveredRaw.stone),
     },
   };
 }
