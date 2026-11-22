@@ -348,9 +348,28 @@ async function main() {
             if (!e || !overlay || overlay.style.display === 'none') return null;
             const samples = Array.isArray(e.performanceSamples) ? e.performanceSamples : [];
             if (samples.length < ${minCaptureSamples}) return null;
+            const units = Array.isArray(e.units) ? e.units : [];
+            const unitMeshes = e.unitMeshes instanceof Map ? [...e.unitMeshes.values()] : [];
+            const liveNonGarrisonedUnits = units.filter(
+              (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId,
+            ).length;
+            const visibleIndividualShadows = unitMeshes.filter(
+              (mesh) => mesh.userData?.unitContactShadowMesh?.visible === true,
+            ).length;
+            const visibleIndividualFactionRings = unitMeshes.filter(
+              (mesh) => mesh.userData?.unitFactionRingMesh?.visible === true,
+            ).length;
             return {
               state: e.gameState,
               simulatedSeconds: e.stats.gameDuration,
+              unitDecorations: {
+                liveNonGarrisonedUnits,
+                unitMeshes: unitMeshes.length,
+                shadowInstances: e.unitContactShadowBatch?.count ?? 0,
+                factionRingInstances: e.unitFactionRingBatch?.count ?? 0,
+                visibleIndividualShadows,
+                visibleIndividualFactionRings,
+              },
               samples,
             };
           })()
@@ -365,6 +384,15 @@ async function main() {
 
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
+      const decorations = capture.unitDecorations;
+      assert.ok(decorations.shadowInstances > 0, "Unit contact-shadow batch did not receive instances.");
+      assert.equal(decorations.shadowInstances, decorations.factionRingInstances, "Contact shadows and faction rings must share the same instance ordering.");
+      assert.equal(decorations.visibleIndividualShadows, 0, "A unit contact shadow is still rendered individually.");
+      assert.equal(decorations.visibleIndividualFactionRings, 0, "A unit faction ring is still rendered individually.");
+      assert.ok(
+        decorations.shadowInstances >= decorations.liveNonGarrisonedUnits,
+        "Instanced decorations are missing one or more visible live units.",
+      );
       for (const key of ["fps", "frameAverageMs", "p95Ms", "hitchMs", "simulationAverageMs", "renderAverageMs", "drawCalls", "triangles", "aiDecisionAverageMs"]) {
         assert.ok(Number.isFinite(telemetry[key]) && telemetry[key] > 0, "Invalid F3 metric: " + key);
       }
@@ -380,7 +408,7 @@ async function main() {
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
         " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
-        telemetry.drawCalls + " draws, " + telemetry.renderer);
+        telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " + telemetry.renderer);
     }
     report.result = "passed";
   } catch (error) {
