@@ -345,6 +345,8 @@ export class RtsEngine {
   private navGridDirty = true;
   private waterNavGrid: NavGrid | null = null;
   private waterNavGridDirty = true;
+  /** Cached route lengths are tied to a specific immutable navigation-grid instance. */
+  private economyDeliveryRouteCache = new WeakMap<NavGrid, Map<string, number>>();
 
   // Reusable Raycaster & HUD Sync Throttle
   private raycaster = new THREE.Raycaster();
@@ -1979,6 +1981,88 @@ export class RtsEngine {
     return next;
   }
 
+  private estimateResourceDeliveryTravelDistance(
+    faction: FactionId,
+    worker: { unitDef: UnitEntity['unitDef']; x: number; z: number },
+    node: ResourceNode
+  ): number | null {
+    const isNaval = !!worker.unitDef.isNaval || worker.unitDef.id === 'fishing_boat';
+    const resourceType = node.resourceType;
+    const dropOffs = this.buildings.filter((building) => {
+      if (building.faction !== faction || !building.isConstructed || building.hp <= 0) return false;
+      if (isNaval) return building.buildingType === 'dock';
+      if (building.buildingType === 'town_center') return true;
+      if (resourceType === 'food') {
+        return ['dock', 'granary', 'farm'].includes(building.buildingType);
+      }
+      if (resourceType === 'wood') return building.buildingType === 'lumber_camp';
+      return (resourceType === 'gold' || resourceType === 'stone') && building.buildingType === 'mining_camp';
+    });
+    if (dropOffs.length === 0) return null;
+
+    // stepUnitReturning chooses the closest valid drop-off from the worker's
+    // current gathering position. The node stance is a stable estimate of it.
+    let nearest = dropOffs[0];
+    let nearestDistance = getDistance(node.x, node.z, nearest.x, nearest.z);
+    for (let index = 1; index < dropOffs.length; index++) {
+      const candidate = dropOffs[index];
+      const distance = getDistance(node.x, node.z, candidate.x, candidate.z);
+      if (distance < nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    }
+
+    const grid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
+    let cache = this.economyDeliveryRouteCache.get(grid);
+    if (!cache) {
+      cache = new Map<string, number>();
+      this.economyDeliveryRouteCache.set(grid, cache);
+    }
+    const cacheKey = `${node.id}:${nearest.id}:${isNaval ? 'water' : 'land'}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
+    const gatherRange =
+      node.subtype === 'deep_fish'
+        ? Math.max(5.5, nodeRadius + 4.4)
+        : node.subtype === 'shore_fish'
+          ? Math.max(3.6, nodeRadius + 2.65)
+          : nodeRadius + 1.35;
+    const depositRange = Math.max(
+      2.6,
+      getBuildingCollisionRadius(nearest) + (nearest.buildingType === 'dock' ? 3.6 : 1.85)
+    );
+    const dx = nearest.x - node.x;
+    const dz = nearest.z - node.z;
+    const centerDistance = Math.hypot(dx, dz);
+    if (centerDistance <= gatherRange + depositRange || centerDistance <= 0.001) {
+      cache.set(cacheKey, 0);
+      return 0;
+    }
+
+    // Path from the actual harvesting interaction ring to the actual drop-off
+    // interaction ring, rather than center-to-center distance. A* therefore
+    // includes terrain, buildings, walls, bridges and naval/land route rules.
+    const dirX = dx / centerDistance;
+    const dirZ = dz / centerDistance;
+    const startX = node.x + dirX * gatherRange;
+    const startZ = node.z + dirZ * gatherRange;
+    const goalX = nearest.x - dirX * depositRange;
+    const goalZ = nearest.z - dirZ * depositRange;
+    const points = findPath(startX, startZ, goalX, goalZ, grid);
+    let routeDistance = 0;
+    let previous = { x: startX, z: startZ };
+    for (const point of points) {
+      routeDistance += getDistance(previous.x, previous.z, point.x, point.z);
+      previous = point;
+    }
+    const result = Number.isFinite(routeDistance) ? Math.max(0, routeDistance) : centerDistance - gatherRange - depositRange;
+    cache.set(cacheKey, result);
+    return result;
+  }
+
   public getFactionResourceTelemetry(faction?: FactionId): FactionResourceTelemetry {
     const f = faction || this.humanPlayerId;
     const hasOath = (this.starOathUntil[f] || 0) > this.simTime;
@@ -1988,7 +2072,8 @@ export class RtsEngine {
       this.resourceNodes,
       this.contestedPoints,
       this.getResearchedTechs(f),
-      hasOath
+      hasOath,
+      (worker, node) => this.estimateResourceDeliveryTravelDistance(f, worker, node)
     );
   }
 
