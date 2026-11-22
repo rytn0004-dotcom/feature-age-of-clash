@@ -313,6 +313,8 @@ export interface FormationTacticalSlot {
   role: FormationTacticalRole;
   lateralOffset: number;
   distanceFromTarget: number;
+  /** True when melee form a compact screen in front of ranged allies. */
+  shieldWall: boolean;
 }
 
 export interface FormationTacticalSlotInput {
@@ -364,6 +366,9 @@ export function getFormationTacticalSlot(
         : attackRange > 2.5 && (category === 'ranged' || category === 'special')
           ? 'backline'
           : 'frontline';
+  const shieldWall =
+    members.filter((member) => member.category === 'melee').length >= 2 &&
+    members.some((member) => member.category === 'ranged');
 
   const sameRoleMembers = members
     .filter((member) => member.category === category)
@@ -413,7 +418,8 @@ export function getFormationTacticalSlot(
     const maxLateral = Math.sqrt(Math.max(0, maxCenterDistance ** 2 - baseDistance ** 2));
     lateralOffset = Math.max(-maxLateral, Math.min(maxLateral, centered));
   } else {
-    const spacing = 1.35;
+    // Mixed squads close infantry gaps so the front row acts as a screen for archers.
+    const spacing = shieldWall ? 1.05 : 1.35;
     const centered = (slotIndex - (sameRoleMembers.length - 1) / 2) * spacing;
     baseDistance = Math.min(baseDistance, Math.max(targetRadius + 0.25, maxCenterDistance - 0.2));
     const maxLateral = Math.sqrt(Math.max(0, maxCenterDistance ** 2 - baseDistance ** 2));
@@ -436,6 +442,7 @@ export function getFormationTacticalSlot(
     role,
     lateralOffset,
     distanceFromTarget,
+    shieldWall,
   };
 }
 
@@ -455,4 +462,43 @@ export function shouldRefreshFormationTacticalSlot(
     return true;
   }
   return Math.hypot(nextTarget.x - currentAnchor.x, nextTarget.z - currentAnchor.z) >= refreshDistance;
+}
+
+
+export interface AiCavalryDisengageInput {
+  hp: number;
+  maxHp: number;
+  nearbyEnemyCount: number;
+  nearbyAllyCount: number;
+  personality?: 'easy' | 'standard' | 'hard' | 'defensive';
+}
+
+/**
+ * Allows cavalry to break contact when wounded and locally outnumbered.
+ * Different AI personalities use different risk tolerances; the numeric
+ * threshold is intentionally separate from the existing base-garrison rule.
+ */
+export function shouldAiCavalryDisengage(input: AiCavalryDisengageInput): boolean {
+  const { hp, maxHp, nearbyEnemyCount, nearbyAllyCount, personality = 'standard' } = input;
+  if (
+    ![hp, maxHp, nearbyEnemyCount, nearbyAllyCount].every(Number.isFinite) ||
+    maxHp <= 0 ||
+    nearbyEnemyCount < 2 ||
+    nearbyAllyCount < 1
+  ) {
+    return false;
+  }
+
+  const hpThreshold =
+    personality === 'defensive'
+      ? 0.58
+      : personality === 'easy'
+        ? 0.4
+        : personality === 'hard'
+          ? 0.44
+          : 0.5;
+  const healthRatio = Math.max(0, Math.min(1, hp / maxHp));
+  const enemyCount = Math.max(0, Math.floor(nearbyEnemyCount));
+  const allyCount = Math.max(1, Math.floor(nearbyAllyCount));
+  return healthRatio <= hpThreshold && enemyCount > allyCount;
 }
