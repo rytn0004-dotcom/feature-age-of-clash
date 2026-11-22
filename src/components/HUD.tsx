@@ -131,7 +131,7 @@ export const HUD: React.FC<HUDProps> = ({
   }, [engine]);
 
   useEffect(() => {
-    if (!showHotkeysModal && !showAgeModal && !showTechTreeModal) return;
+    if (!showHotkeysModal && !showAgeModal && !showTechTreeModal && !showEconomyPanel) return;
     const onModalKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
         e.preventDefault();
@@ -139,11 +139,12 @@ export const HUD: React.FC<HUDProps> = ({
         setShowHotkeysModal(false);
         setShowAgeModal(false);
         setShowTechTreeModal(false);
+        setShowEconomyPanel(false);
       }
     };
     window.addEventListener('keydown', onModalKeyDown, true);
     return () => window.removeEventListener('keydown', onModalKeyDown, true);
-  }, [showHotkeysModal, showAgeModal, showTechTreeModal]);
+  }, [showHotkeysModal, showAgeModal, showTechTreeModal, showEconomyPanel]);
 
   const NEXT_AGE_INFO: Record<
     number,
@@ -1132,7 +1133,7 @@ export const HUD: React.FC<HUDProps> = ({
           id="economy-overview-panel"
           data-economy-panel="true"
           aria-label="經濟總覽"
-          className="fixed top-20 left-2 z-40 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
+          className="fixed top-28 left-2 z-40 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
         >
           <div className="flex items-center justify-between gap-3 mb-2">
             <div>
