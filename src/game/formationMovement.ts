@@ -91,3 +91,208 @@ export function getFormationCohesionSpeedScale(
   if (gap <= freeGap) return 1;
   return Math.max(0.25, Math.min(1, 1 - (gap - freeGap) * 2.4));
 }
+
+
+export interface FormationNarrowPassage {
+  x: number;
+  z: number;
+  directionX: number;
+  directionZ: number;
+  width: number;
+  halfLength: number;
+}
+
+export interface FormationTrafficMember {
+  id: string;
+  x: number;
+  z: number;
+  stuckDuration?: number;
+}
+
+/**
+ * Finds the first sustained narrow section along an already-computed A* route.
+ * widthAt must return the walkable cross-section width at the supplied route point.
+ */
+export function findNarrowPassageOnRoute(
+  route: readonly { x: number; z: number }[],
+  widthAt: (x: number, z: number, directionX: number, directionZ: number) => number,
+  maxWidth = 3.25,
+): FormationNarrowPassage | null {
+  if (route.length < 2 || !Number.isFinite(maxWidth) || maxWidth <= 0) return null;
+
+  const segments: Array<{
+    start: { x: number; z: number };
+    end: { x: number; z: number };
+    length: number;
+    directionX: number;
+    directionZ: number;
+  }> = [];
+  let totalLength = 0;
+
+  for (let index = 0; index < route.length - 1; index++) {
+    const start = route[index];
+    const end = route[index + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (!Number.isFinite(length) || length < 0.05) continue;
+    segments.push({
+      start,
+      end,
+      length,
+      directionX: dx / length,
+      directionZ: dz / length,
+    });
+    totalLength += length;
+  }
+
+  if (totalLength < 7) return null;
+
+  type WidthSample = {
+    x: number;
+    z: number;
+    directionX: number;
+    directionZ: number;
+    width: number;
+    distance: number;
+  };
+  let run: WidthSample[] = [];
+  let runEndDistance = -Infinity;
+
+  const finishRun = (): FormationNarrowPassage | null => {
+    if (run.length < 2) {
+      run = [];
+      runEndDistance = -Infinity;
+      return null;
+    }
+
+    const averageX = run.reduce((sum, sample) => sum + sample.x, 0) / run.length;
+    const averageZ = run.reduce((sum, sample) => sum + sample.z, 0) / run.length;
+    const rawDirX = run.reduce((sum, sample) => sum + sample.directionX, 0);
+    const rawDirZ = run.reduce((sum, sample) => sum + sample.directionZ, 0);
+    const directionLength = Math.hypot(rawDirX, rawDirZ) || 1;
+    const span = Math.max(0, run[run.length - 1].distance - run[0].distance);
+    const passage = {
+      x: averageX,
+      z: averageZ,
+      directionX: rawDirX / directionLength,
+      directionZ: rawDirZ / directionLength,
+      width: Math.min(...run.map((sample) => sample.width)),
+      halfLength: Math.max(1.6, Math.min(5.5, span * 0.5 + 1.1)),
+    };
+    run = [];
+    runEndDistance = -Infinity;
+    return passage;
+  };
+
+  let travelled = 0;
+  for (const segment of segments) {
+    const steps = Math.max(1, Math.ceil(segment.length / 0.85));
+    for (let step = 0; step <= steps; step++) {
+      if (step === 0 && travelled > 0) continue;
+      const localDistance = (step / steps) * segment.length;
+      const routeDistance = travelled + localDistance;
+      if (routeDistance < 3 || totalLength - routeDistance < 3) continue;
+
+      const t = localDistance / segment.length;
+      const x = segment.start.x + (segment.end.x - segment.start.x) * t;
+      const z = segment.start.z + (segment.end.z - segment.start.z) * t;
+      const measuredWidth = widthAt(x, z, segment.directionX, segment.directionZ);
+      const isNarrow =
+        Number.isFinite(measuredWidth) &&
+        measuredWidth >= 0.75 &&
+        measuredWidth <= maxWidth;
+
+      if (isNarrow) {
+        if (run.length > 0 && routeDistance - runEndDistance > 1.55) {
+          const finished = finishRun();
+          if (finished) return finished;
+        }
+        run.push({
+          x,
+          z,
+          directionX: segment.directionX,
+          directionZ: segment.directionZ,
+          width: measuredWidth,
+          distance: routeDistance,
+        });
+        runEndDistance = routeDistance;
+      } else {
+        const finished = finishRun();
+        if (finished) return finished;
+      }
+    }
+    travelled += segment.length;
+  }
+
+  return finishRun();
+}
+
+/**
+ * Serializes units through a narrow route section. A unit that has already exited
+ * is released immediately; abandoned, unreachable units never occupy a traffic slot.
+ */
+export function getFormationNarrowPassageTrafficScale(
+  memberId: string,
+  members: readonly FormationTrafficMember[],
+  passage: FormationNarrowPassage,
+): number {
+  const activeMembers = members.filter(
+    (member) =>
+      Number.isFinite(member.x) &&
+      Number.isFinite(member.z) &&
+      (!Number.isFinite(member.stuckDuration) ||
+        (member.stuckDuration as number) < FORMATION_REGROUP_ABANDON_STALL_SECONDS),
+  );
+  const current = activeMembers.find((member) => member.id === memberId);
+  if (!current) return 1;
+
+  const halfLength = Math.max(1.6, passage.halfLength);
+  const corridorHalfWidth = Math.max(0.5, passage.width * 0.5 + 0.45);
+  const lateralX = -passage.directionZ;
+  const lateralZ = passage.directionX;
+
+  const localPosition = (member: FormationTrafficMember) => {
+    const dx = member.x - passage.x;
+    const dz = member.z - passage.z;
+    return {
+      along: dx * passage.directionX + dz * passage.directionZ,
+      lateral: dx * lateralX + dz * lateralZ,
+    };
+  };
+
+  const currentLocal = localPosition(current);
+  const isInside = (member: FormationTrafficMember) => {
+    const local = localPosition(member);
+    return (
+      Math.abs(local.along) <= halfLength &&
+      Math.abs(local.lateral) <= corridorHalfWidth
+    );
+  };
+  const occupants = activeMembers.filter(
+    (member) => member.id !== current.id && isInside(member),
+  );
+  const capacity = Math.max(1, Math.floor((passage.width + 0.2) / 1.35));
+  const currentInside =
+    Math.abs(currentLocal.along) <= halfLength &&
+    Math.abs(currentLocal.lateral) <= corridorHalfWidth;
+
+  if (currentInside) {
+    const unitsAhead = occupants.filter((member) => {
+      const other = localPosition(member);
+      return (
+        other.along > currentLocal.along + 0.4 ||
+        (Math.abs(other.along - currentLocal.along) <= 0.4 && member.id < current.id)
+      );
+    }).length;
+    return unitsAhead >= capacity ? 0.12 : 1;
+  }
+
+  const isQueuingAtEntrance =
+    currentLocal.along < -halfLength &&
+    currentLocal.along >= -halfLength - 3.8 &&
+    Math.abs(currentLocal.lateral) <= corridorHalfWidth + 3.0;
+
+  if (isQueuingAtEntrance && occupants.length >= capacity) return 0.12;
+  return 1;
+}
