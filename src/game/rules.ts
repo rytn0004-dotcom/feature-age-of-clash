@@ -1879,7 +1879,8 @@ function scoreUnitMatchupTargetInternal(
   target: UnitEntity | BuildingEntity,
   alliedUnits: UnitEntity[] = [],
   context: CombatTargetContext = {},
-  nearbyAlliesOnly = false
+  nearbyAlliesOnly = false,
+  precomputedAlliesOnTarget?: ReadonlyMap<string, number>
 ): number {
   const dist = getDistance(attacker.x, attacker.z, target.x, target.z);
   const attackerCat = attacker.unitDef.category;
@@ -1897,16 +1898,18 @@ function scoreUnitMatchupTargetInternal(
     score += attackerCat === 'ranged' || attackerCat === 'siege' ? 42 : 24;
   }
 
-  let alliesOnSameTarget = 0;
-  for (const ally of alliedUnits) {
-    if (
-      ally.id !== attacker.id &&
-      ally.hp > 0 &&
-      ally.faction === attacker.faction &&
-      ally.targetEntityId === target.id &&
-      (nearbyAlliesOnly || getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16)
-    ) {
-      alliesOnSameTarget++;
+  let alliesOnSameTarget = precomputedAlliesOnTarget?.get(target.id) || 0;
+  if (!precomputedAlliesOnTarget) {
+    for (const ally of alliedUnits) {
+      if (
+        ally.id !== attacker.id &&
+        ally.hp > 0 &&
+        ally.faction === attacker.faction &&
+        ally.targetEntityId === target.id &&
+        (nearbyAlliesOnly || getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16)
+      ) {
+        alliesOnSameTarget++;
+      }
     }
   }
   if (attackerCat === 'ranged') {
@@ -2012,6 +2015,15 @@ export function selectOptimalCombatTarget(
       ally.faction === attacker.faction &&
       getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
   );
+  const alliesOnTargetCounts = new Map<string, number>();
+  for (const ally of nearbyAllies) {
+    if (ally.id === attacker.id || !ally.targetEntityId || ally.hp <= 0) continue;
+    alliesOnTargetCounts.set(
+      ally.targetEntityId,
+      (alliesOnTargetCounts.get(ally.targetEntityId) || 0) + 1,
+    );
+  }
+
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
@@ -2019,7 +2031,7 @@ export function selectOptimalCombatTarget(
     if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
     const d = getDistance(attacker.x, attacker.z, u.x, u.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true);
+    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true, alliesOnTargetCounts);
     if (s > bestScore || (s === bestScore && (!bestTarget || u.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = u;
@@ -2030,7 +2042,7 @@ export function selectOptimalCombatTarget(
     if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
     const d = getDistance(attacker.x, attacker.z, b.x, b.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true);
+    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true, alliesOnTargetCounts);
     if (s > bestScore || (s === bestScore && (!bestTarget || b.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = b;
