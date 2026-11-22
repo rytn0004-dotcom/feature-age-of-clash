@@ -144,15 +144,24 @@ async function main() {
 
       const inspectResourceBar = async (width, height) => {
         await send("Emulation.setDeviceMetricsOverride", {
-          width, height, deviceScaleFactor: 1, mobile: false,
+          width, height, deviceScaleFactor: 1, mobile: width < 768,
         }, sessionId);
         await sleep(100);
         const layout = await evaluate(`
           (() => {
             const bar = document.querySelector('[data-top-resource-bar="true"]');
-            if (!bar) return null;
+            const header = bar?.closest('header');
+            const status = header?.querySelector('[data-top-status-bar="true"]');
+            const utility = header?.querySelector('[data-top-utility-bar="true"]');
+            if (!bar || !header || !status || !utility) return null;
             const bounds = bar.getBoundingClientRect();
+            const statusBounds = status.getBoundingClientRect();
+            const utilityBounds = utility.getBoundingClientRect();
             const pills = [...bar.querySelectorAll('[data-resource-pill], [data-population-badge]')];
+            const overlaps = statusBounds.left < utilityBounds.right &&
+              statusBounds.right > utilityBounds.left &&
+              statusBounds.top < utilityBounds.bottom &&
+              statusBounds.bottom > utilityBounds.top;
             return {
               count: pills.length,
               width: bar.clientWidth,
@@ -161,21 +170,39 @@ async function main() {
                 const rect = pill.getBoundingClientRect();
                 return rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
               }).length,
+              headerWidth: header.clientWidth,
+              headerScrollWidth: header.scrollWidth,
+              utilityWidth: utility.clientWidth,
+              utilityScrollWidth: utility.scrollWidth,
+              utilityLeft: utilityBounds.left,
+              utilityRight: utilityBounds.right,
+              statusUtilityOverlap: overlaps,
               viewportWidth: window.innerWidth,
             };
           })()
         `);
-        assert.ok(layout, "Resource bar is missing at " + width + "px.");
+        assert.ok(layout, "Resource/status/utility HUD is incomplete at " + width + "px.");
         assert.equal(layout.count, 5, "Expected four resources and population at " + width + "px.");
         assert.ok(layout.width > 0, "Resource bar has no width at " + width + "px.");
         assert.ok(layout.scrollWidth <= layout.width + 1, "Resource bar requires horizontal scrolling at " + width + "px.");
         assert.equal(layout.visibleCount, 5, "One or more resource badges are clipped at " + width + "px.");
+        assert.ok(layout.headerScrollWidth <= layout.headerWidth + 1, "Top HUD header overflows at " + width + "px.");
+        assert.ok(layout.utilityScrollWidth <= layout.utilityWidth + 1, "Top-right controls overflow at " + width + "px.");
+        assert.ok(layout.utilityLeft >= -1 && layout.utilityRight <= width + 1, "Top-right controls are off-screen at " + width + "px.");
+        assert.equal(layout.statusUtilityOverlap, false, "Status and utility controls overlap at " + width + "px.");
         return layout;
       };
-      const resourceLayouts = {
-        desktop: await inspectResourceBar(1280, 800),
-        compact: await inspectResourceBar(390, 844),
-      };
+      const resourceLayouts = {};
+      for (const [label, width, height] of [
+        ["small-phone", 320, 720],
+        ["phone", 390, 844],
+        ["small-tablet", 640, 900],
+        ["tablet", 768, 1024],
+        ["laptop", 1024, 768],
+        ["desktop", 1280, 800],
+      ]) {
+        resourceLayouts[label] = await inspectResourceBar(width, height);
+      }
       await send("Emulation.setDeviceMetricsOverride", {
         width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
       }, sessionId);
