@@ -794,6 +794,33 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
 });
 
+test('AI economy: worker allocation reacts to sustained resource flow without abandoning stock targets', async () => {
+  const { computeAiWorkerAllocation } = await import('./rules');
+  const resources = { food: 1500, wood: 700, gold: 1500, stone: 600 };
+  const stable = computeAiWorkerAllocation(resources, 16, 'balanced_eco', 3);
+  const flowAware = computeAiWorkerAllocation(resources, 16, 'balanced_eco', 3, {
+    food: -30,
+    wood: 24,
+    gold: 0,
+    stone: 0,
+  });
+
+  assert.ok(
+    flowAware.food > stable.food,
+    'A sustained food deficit should redirect some workers toward food while stock is below the age target'
+  );
+  assert.ok(
+    flowAware.wood < stable.wood,
+    'A healthy wood surplus should release some gatherers when wood stock is already safe'
+  );
+  assert.equal(
+    flowAware.food + flowAware.wood + flowAware.gold + flowAware.stone,
+    16,
+    'Flow-aware allocation must still distribute every worker exactly once'
+  );
+  assert.ok(flowAware.food >= 1, 'The allocation must retain a minimum food workforce');
+});
+
 test('AI worker production counts queued villagers and protects the next-age landmark reserve', async () => {
   const { shouldAiQueueWorker } = await import('./rules');
   const medievalWorkerCost = { food: 50, wood: 0, gold: 0, stone: 0 };
