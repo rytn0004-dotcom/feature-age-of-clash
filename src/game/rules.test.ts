@@ -3210,9 +3210,12 @@ test('cooperative construction follows the requested contribution curve', () => 
 });
 
 test('construction ETA shares the live builder and civilization speed formula', () => {
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36 * 1.12);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), (36 * 1.12) / 1.75);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), (36 * 1.12) / 2.85);
+  const near = (actual: number | null, expected: number) => {
+    assert.ok(actual !== null && Math.abs(actual - expected) < 1e-9, `expected ${actual} to be near ${expected}`);
+  };
+  near(estimateConstructionTimeRemaining(40, 0.1, 1), 36 * 1.12);
+  near(estimateConstructionTimeRemaining(40, 0.1, 2), (36 * 1.12) / 1.75);
+  near(estimateConstructionTimeRemaining(40, 0.1, 4), (36 * 1.12) / 2.85);
   assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
   assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
