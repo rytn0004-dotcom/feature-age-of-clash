@@ -29,6 +29,45 @@ export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 
 export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
 
 /**
+ * Additional builders remain useful, but each contributes less work than the
+ * previous one. The first eight workers provide at most 2.91 worker-equivalents.
+ * This is intentionally deterministic and shared by construction, repair and
+ * the player-facing time estimate.
+ */
+const CONSTRUCTION_WORKER_CONTRIBUTIONS = [1, 0.65, 0.45, 0.3, 0.2, 0.14, 0.1, 0.07] as const;
+
+export function getConstructionWorkerMultiplier(workerCount: number): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(workerCount) ? workerCount : 0));
+  let multiplier = 0;
+  for (let index = 0; index < Math.min(count, CONSTRUCTION_WORKER_CONTRIBUTIONS.length); index++) {
+    multiplier += CONSTRUCTION_WORKER_CONTRIBUTIONS[index];
+  }
+  return +multiplier.toFixed(3);
+}
+
+/** Returns null when there are no active builders or the inputs are invalid. */
+export function estimateConstructionTimeRemaining(
+  buildTime: number,
+  progress: number,
+  workerCount: number,
+  constructionSpeedMultiplier = 1
+): number | null {
+  if (
+    !Number.isFinite(buildTime) ||
+    buildTime <= 0 ||
+    !Number.isFinite(progress) ||
+    !Number.isFinite(constructionSpeedMultiplier) ||
+    constructionSpeedMultiplier <= 0
+  ) {
+    return null;
+  }
+  const workerMultiplier = getConstructionWorkerMultiplier(workerCount);
+  if (workerMultiplier <= 0) return null;
+  return (Math.max(0, 1 - Math.max(0, Math.min(1, progress))) * buildTime) /
+    (workerMultiplier * constructionSpeedMultiplier);
+}
+
+/**
  * AI combat units withdraw to friendly garrisons when critically damaged.
  * Ranged troops are protected earlier; siege engines and workers use their
  * own specialist survival/economy routines and are deliberately excluded.
