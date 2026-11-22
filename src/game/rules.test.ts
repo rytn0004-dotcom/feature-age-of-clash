@@ -3528,7 +3528,7 @@ test('combat formations widen their lateral spacing for larger armies', async ()
       id: `melee-${String(index).padStart(3, '0')}`,
       x: 0,
       z: 0,
-      unitDef: { category: 'melee' as const },
+      unitDef: { category: 'melee' as const } as import('../types/game').UnitDefinition,
     }));
   const lateralWidth = (count: number) => {
     const slots = layoutCombatFormation(makeUnits(count), { x: 30, z: 0 });
