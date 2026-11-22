@@ -2,6 +2,8 @@ import {
   AgeLevel,
   BuildingType,
   CivilizationId,
+  GameMod,
+  LandmarkType,
   ResourceType,
   TechDefinition,
   UnitCategory,
@@ -750,8 +752,8 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     roleTag: '互斥·爆兵',
     exclusiveGroup: 'doctrine_army_style',
     exclusiveLabel: '軍團作戰路線 (二選一)',
-    description: '【時代 II 互斥路線】簡化徵募與行軍編制，極速暴兵搶佔據點並壓垮對手節奏！',
-    effectLabel: '全兵種訓練時間 -25% · 移速 +8%',
+    description: '【時代 II 互斥路線】簡化步兵、遠程與騎兵的徵募編制，縮短這三類部隊的訓練時間並提升行軍速度。',
+    effectLabel: '步兵／遠程／騎兵訓練時間 -25% · 移速 +8%',
     cost: { food: 90, wood: 0, gold: 70, stone: 0 },
     researchTime: 10,
     requiredAge: 2,
@@ -1043,13 +1045,47 @@ export function getAllTechsForCiv(civId?: CivilizationId): TechDefinition[] {
   );
 }
 
-export function getTrainingTimeMultiplier(researchedIds: string[]): number {
+/**
+ * Construction speed comes from the enabled civilization pack. A malformed or
+ * missing mod multiplier safely falls back to the neutral 1x rate.
+ */
+export function getCivilizationBuildSpeedMultiplier(
+  civId: CivilizationId | undefined,
+  activeMods: readonly GameMod[]
+): number {
+  const resolvedCiv = getCivilizationConfig(civId).id;
+  const sourceMod = activeMods.find(
+    (mod) =>
+      mod.enabled &&
+      mod.unitDefinitions.some((unit) => unit.factionPack === resolvedCiv)
+  );
+  const multiplier = sourceMod?.balanceMultipliers.buildSpeed ?? 1;
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+}
+
+/** The White Tower's +35% production bonus applies only to melee infantry. */
+export function getLandmarkTrainingSpeedMultiplier(
+  landmarks: readonly LandmarkType[],
+  category: UnitCategory
+): number {
+  return landmarks.includes('landmark_barracks') && category === 'melee' ? 1.35 : 1;
+}
+
+export function getTrainingTimeMultiplier(
+  researchedIds: string[],
+  category?: UnitCategory
+): number {
   let mult = 1;
   for (const tId of researchedIds) {
     const t = findTechDef(tId);
-    if (t?.effect.trainTimeMultiplier) {
-      mult *= t.effect.trainTimeMultiplier;
-    }
+    if (!t?.effect.trainTimeMultiplier) continue;
+    // A category-scoped training doctrine must not shorten worker, siege or
+    // naval/special production unless those categories are explicitly listed.
+    const appliesToCategory =
+      category === undefined ||
+      !t.targetCategories?.length ||
+      t.targetCategories.includes(category);
+    if (appliesToCategory) mult *= t.effect.trainTimeMultiplier;
   }
   return +Math.max(0.45, mult).toFixed(3);
 }
