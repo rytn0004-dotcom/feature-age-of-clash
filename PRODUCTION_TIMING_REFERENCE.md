@@ -7,11 +7,11 @@ All values are **simulation seconds**. They are the data-driven baseline, not gu
 ## Timing rules
 
 - Unit production uses `UnitStats.trainTime`. One production building works on one queue item at a time; different buildings can produce in parallel.
-- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress, and each builder adds progress independently. With (N) builders already in working range, the current linear model is approximately:
+- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress. Effective builder work is subject to diminishing returns: contributions for the first eight builders are `1.00, 0.65, 0.45, 0.30, 0.20, 0.14, 0.10, 0.07`; additional builders add no more work. With (N) builders already in working range:
 
-  `actual work time = 0.9 × buildTime ÷ (N × civilization build-speed multiplier)`
+  `actual work time = 0.9 × buildTime ÷ (civilization build-speed multiplier × summed builder contribution)`
 
-  Walking to the site is additional. More builders currently shorten construction linearly; there is no diminishing-return curve or hard builder cap.
+  Walking to the site is additional. The same diminishing-return curve applies to wall repairs. The selected-building panel shows the live in-range builder count, effective cooperative multiplier and remaining-time estimate.
 - Research uses `TechDefinition.researchTime`. An allied, completed Royal Foundry within 16 world units of the research building grants 1.25× research speed (80% of listed time). The foundry does not accelerate research performed inside itself.
 - The Royal Foundry aura also grants 1.25× production speed to unit queues in nearby allied production buildings (80% of listed unit time).
 - The White Tower landmark grants 1.35× melee-infantry production speed (about 74.1% of listed time). This is now applied by the training queue.
@@ -54,7 +54,18 @@ Age advancement is **not a separate research timer**. The age changes when the c
 | Age III | Guild Hall / Citadel Keep | 55 s | 49.5 s |
 | Age IV | Imperial Observatory / Crimson Arsenal | 75 s | 67.5 s |
 
-Because builders currently stack linearly, four builders need approximately 9 s / 12.4 s / 16.9 s for these three landmark tiers in a neutral-speed civilization, before travel time. This makes the resource cost and the time needed to gather it more important than the actual landmark construction interval once several workers are assigned.
+With the diminishing-return curve, four builders provide 2.4 worker-equivalents. They need approximately 15 s / 20.6 s / 28.1 s for these three landmark tiers in a neutral-speed civilization, before travel time. Eight or more builders cap at 2.91 worker-equivalents, so piling on more villagers has sharply reduced returns.
+
+
+## Live remaining-time estimates
+
+The selected-building HUD now estimates:
+
+- Construction / wall repair remaining time from builders actually inside the work radius, civilization construction speed and the shared diminishing-return curve. If no builder is working in range, it reports that it is waiting for workers rather than inventing a countdown.
+- Research remaining time from progress, research duration and nearby Royal Foundry aura.
+- Current unit and total queue remaining time from each queued unit's training duration, category-scoped technology, White Tower melee bonus and nearby Royal Foundry aura.
+
+These are simulation-time estimates. They do not include future population blocking, interruptions, unit deaths, builder travel, or a future change in the number of active builders. The HUD refreshes selected-building estimates twice per second.
 
 ## Unit production times
 
