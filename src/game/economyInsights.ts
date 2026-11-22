@@ -66,3 +66,29 @@ export function calculateAgeResourceShortfall(
   const gold = Math.max(0, Math.ceil(cost.gold - stock.gold));
   return { food, gold, ready: food === 0 && gold === 0 };
 }
+
+/**
+ * Converts a worker's theoretical gather speed into estimated delivered output.
+ * Travel distance is the one-way walkable route between the harvesting stance
+ * and the nearest valid drop-off stance. The worker must travel both directions
+ * for each full carry load.
+ */
+export function estimateDeliveredResourcePerMinute(
+  gatherPerSecond: number,
+  carryCapacity: number,
+  moveSpeed: number,
+  oneWayTravelDistance: number,
+): number {
+  if (
+    !Number.isFinite(gatherPerSecond) || gatherPerSecond <= 0 ||
+    !Number.isFinite(carryCapacity) || carryCapacity <= 0 ||
+    !Number.isFinite(moveSpeed) || moveSpeed <= 0 ||
+    !Number.isFinite(oneWayTravelDistance) || oneWayTravelDistance < 0
+  ) return 0;
+
+  const gatheringSeconds = carryCapacity / gatherPerSecond;
+  const roundTripTravelSeconds = (2 * oneWayTravelDistance) / moveSpeed;
+  const cycleSeconds = gatheringSeconds + roundTripTravelSeconds;
+  if (!Number.isFinite(cycleSeconds) || cycleSeconds <= 0) return 0;
+  return (carryCapacity / cycleSeconds) * 60;
+}
