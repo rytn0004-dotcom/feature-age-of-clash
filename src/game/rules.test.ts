@@ -753,6 +753,32 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
   assert.equal(starvedAlloc.food + starvedAlloc.wood + starvedAlloc.gold + starvedAlloc.stone, 8);
   assert.ok(starvedAlloc.food >= 4, `Expected >=4 workers on food when starving, got ${JSON.stringify(starvedAlloc)}`);
+
+  // The AI should reserve more gold while short of the next-age target, then
+  // release that labor once the age-up threshold is reached.
+  const ageOnePreparing = computeAiWorkerAllocation(
+    { food: 250, wood: 300, gold: 100, stone: 60 }, 8, 'balanced_eco', 1
+  );
+  const ageOneReady = computeAiWorkerAllocation(
+    { food: 500, wood: 300, gold: 250, stone: 60 }, 8, 'balanced_eco', 1
+  );
+  assert.ok(ageOnePreparing.gold > ageOneReady.gold, 'Age I AI should increase gold allocation while preparing 400 food / 200 gold.');
+  assert.equal(
+    ageOnePreparing.food + ageOnePreparing.wood + ageOnePreparing.gold + ageOnePreparing.stone,
+    8
+  );
+
+  const ageTwoPreparing = computeAiWorkerAllocation(
+    { food: 700, wood: 200, gold: 200, stone: 60 }, 8, 'military_eco', 2
+  );
+  const ageTwoReady = computeAiWorkerAllocation(
+    { food: 1500, wood: 200, gold: 800, stone: 60 }, 8, 'military_eco', 2
+  );
+  assert.ok(ageTwoPreparing.gold > ageTwoReady.gold, 'Age II AI should redirect labor toward the 1200 food / 600 gold target.');
+  assert.equal(
+    ageTwoPreparing.food + ageTwoPreparing.wood + ageTwoPreparing.gold + ageTwoPreparing.stone,
+    8
+  );
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
