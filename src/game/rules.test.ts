@@ -12,6 +12,7 @@ import {
   resolveAiKnightUnitId,
   selectAiWorkerResourceType,
   selectAiWorkerReassignment,
+  shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
   deductCost,
   addResources,
@@ -840,6 +841,23 @@ test('AI economy: worker allocation reacts to sustained resource flow without ab
     'Flow-aware allocation must still distribute every worker exactly once'
   );
   assert.ok(flowAware.food >= 1, 'The allocation must retain a minimum food workforce');
+});
+
+test('AI economy: predict resource depletion before the active workforce exhausts a node', () => {
+  assert.equal(shouldRelocateFromResourceNode(24, 2, 12), true);
+  assert.equal(shouldRelocateFromResourceNode(24.01, 2, 12), false);
+  assert.equal(
+    shouldRelocateFromResourceNode(120, 2, 12),
+    false,
+    'A healthy reserve should not trigger premature worker movement'
+  );
+  assert.equal(
+    shouldRelocateFromResourceNode(0, 0, 12),
+    false,
+    'A node with no active gatherers does not need proactive relocation'
+  );
+  assert.equal(shouldRelocateFromResourceNode(Number.NaN, 2, 12), false);
+  assert.equal(shouldRelocateFromResourceNode(10, 2, Number.NaN), false);
 });
 
 test('AI worker production counts queued villagers and protects the next-age landmark reserve', async () => {
