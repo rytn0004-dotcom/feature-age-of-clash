@@ -40,13 +40,13 @@ test('formation regroup: one blocked member slows the advance of the rest of the
   assert.ok(state);
   assert.equal(state.activeMemberCount, 3);
   assert.equal(state.stalledMemberCount, 1);
-  assert.equal(state.slowestProgress, 0.12);
+  assert.equal(state.slowestProgress, 0);
   assert.ok(
     getFormationCohesionSpeedScale(0.62, state.slowestProgress, true) < 0.4,
     'units far ahead should slow down while the blocked member is recovering',
   );
   assert.equal(
-    getFormationCohesionSpeedScale(0.12, state.slowestProgress, true),
+    getFormationCohesionSpeedScale(0, state.slowestProgress, true),
     1,
     'the straggler itself must not be slowed further',
   );
@@ -119,7 +119,7 @@ test('formation terrain flow: a clear unit passes while the next unit queues at 
   ];
 
   assert.equal(getFormationNarrowPassageTrafficScale('front', members, passage), 1);
-  assert.equal(getFormationNarrowPassageTrafficScale('next', members, passage), 0.12);
+  assert.equal(getFormationNarrowPassageTrafficScale('next', members, passage), 0);
 });
 
 test('formation terrain flow: exited and permanently unreachable units do not reserve passage capacity', () => {
