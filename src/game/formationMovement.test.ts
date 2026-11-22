@@ -205,7 +205,7 @@ test('combat tactics: ranged units stay behind the target approach line while in
 
 test('combat tactics: cavalry alternates across both flanks without stacking on the same point', () => {
   const members = Array.from({ length: 4 }, (_, index) => ({
-    id: \`cav-\${index + 1}\`,
+    id: 'cav-' + (index + 1),
     category: 'cavalry' as const,
   }));
   const slots = members.map((member) =>
@@ -227,7 +227,7 @@ test('combat tactics: cavalry alternates across both flanks without stacking on 
   assert.ok(slots[1]!.lateralOffset > 0);
   assert.ok(slots[2]!.lateralOffset < 0);
   assert.ok(Math.abs(slots[2]!.lateralOffset) > Math.abs(slots[0]!.lateralOffset));
-  assert.ok(new Set(slots.map((slot) => \`\${slot!.x.toFixed(2)}:\${slot!.z.toFixed(2)}\`)).size > 2);
+  assert.ok(new Set(slots.map((slot) => slot!.x.toFixed(2) + ':' + slot!.z.toFixed(2))).size > 2);
   assert.ok(slots.every((slot) => slot!.distanceFromTarget <= 2.4 + 0.45 - 0.22 + 0.001));
 });
 
