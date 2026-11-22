@@ -1020,12 +1020,37 @@ export function shouldAiQueueWorker(options: {
   );
 }
 
+/** Selects the largest unmet resource target that currently has a live node. */
+export function selectAiWorkerResourceType(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[]
+): ResourceType | null {
+  const available = new Set(availableTypes);
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 0;
+
+  for (const type of types) {
+    if (!available.has(type)) continue;
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  return recipient;
+}
+
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,
-  desiredAlloc: Readonly<Record<ResourceType, number>>
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone']
 ): { from: ResourceType; to: ResourceType } | null {
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const available = new Set(availableTypes);
   let donor: ResourceType | null = null;
   let donorSurplus = 1;
   let recipient: ResourceType | null = null;
@@ -1038,6 +1063,7 @@ export function selectAiWorkerReassignment(
       donorSurplus = surplus;
     }
 
+    if (!available.has(type)) continue;
     const deficit = desiredAlloc[type] - activeCounts[type];
     if (deficit > recipientDeficit) {
       recipient = type;
