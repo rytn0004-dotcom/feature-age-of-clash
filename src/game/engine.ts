@@ -8639,7 +8639,7 @@ export class RtsEngine {
     aiCiv: ReturnType<typeof getCivilizationConfig>,
     rawTargetId: string,
     aiBuildings: BuildingEntity[]
-  ) {
+  ): boolean {
     let unitDefId = rawTargetId;
     if (rawTargetId === 'villager') {
       unitDefId = aiCiv.workerUnitId;
@@ -8659,7 +8659,7 @@ export class RtsEngine {
 
     const aiAge = this.ageByFaction[aiId] || 1;
     const uDef = this.findUnitDef(unitDefId, aiId);
-    if (!uDef || (uDef.requiredAge && aiAge < uDef.requiredAge)) return;
+    if (!uDef || (uDef.requiredAge && aiAge < uDef.requiredAge)) return false;
 
     const candidates = aiBuildings
       .filter(
@@ -8672,8 +8672,9 @@ export class RtsEngine {
       .sort((a, b) => a.queue.length - b.queue.length);
 
     if (candidates.length > 0) {
-      this.trainUnit(candidates[0].id, unitDefId);
+      return this.trainUnit(candidates[0].id, unitDefId);
     }
+    return false;
   }
 
   private evaluateAiLogic() {
@@ -9442,7 +9443,7 @@ export class RtsEngine {
         nextAgeRule?.conditions.find(
           (condition) => condition.field === 'workerCount' && condition.operator === '>='
         )?.value ?? 0;
-      const queuedWorkerCount = aiBuildings.reduce(
+      let queuedWorkerCount = aiBuildings.reduce(
         (total, building) =>
           total + building.queue.filter((unitId) => unitId === aiCiv.workerUnitId).length,
         0
@@ -9481,7 +9482,8 @@ export class RtsEngine {
           } else if ((savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
             continue;
           }
-          this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
+          const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
+          if (isVillagerTrain && queued) queuedWorkerCount++;
         }
       }
 
