@@ -71,6 +71,9 @@ import {
   shouldPrioritizeAiFieldEngineering,
   shouldAiUnitSeekShelter,
   shouldAiUnitLeaveShelter,
+  countPendingGarrisonReservations,
+  getAvailableGarrisonSlots,
+  selectNearestGarrisonShelter,
   resolveAiKnightUnitId,
   selectSiegeEscortUnits,
   FIELD_RAM_COST,
@@ -3175,7 +3178,13 @@ export class RtsEngine {
     if (!bldg || bldg.hp <= 0 || !bldg.isConstructed || bldg.faction !== unit.faction) return false;
     const maxCap = getBuildingMaxGarrison(bldg);
     if (maxCap <= 0) return false;
-    return (bldg.garrisonedUnitIds?.length || 0) < maxCap;
+    const incoming = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      new Set([unit.id])
+    );
+    return getAvailableGarrisonSlots(maxCap, bldg.garrisonedUnitIds?.length || 0, incoming) > 0;
   }
 
   public issueGarrisonOrder(buildingId: string): boolean {
@@ -3197,7 +3206,14 @@ export class RtsEngine {
     }
 
     const currentCount = bldg.garrisonedUnitIds?.length || 0;
-    const availableSlots = Math.max(0, maxCap - currentCount);
+    const selectedEligibleIds = new Set(eligible.map((unit) => unit.id));
+    const incoming = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      selectedEligibleIds
+    );
+    const availableSlots = getAvailableGarrisonSlots(maxCap, currentCount, incoming);
     if (availableSlots <= 0) {
       this.addFloatingText(bldg.x, 3.0, bldg.z, `🛡️ 駐防已滿 (${currentCount}/${maxCap})`, '#f59e0b');
       sound.playInvalid();
@@ -3205,7 +3221,12 @@ export class RtsEngine {
     }
 
     const chosen = [...eligible]
-      .sort((a, b) => getDistance(a.x, a.z, bldg.x, bldg.z) - getDistance(b.x, b.z, bldg.x, bldg.z))
+      .sort(
+        (a, b) =>
+          getDistance(a.x, a.z, bldg.x, bldg.z) -
+            getDistance(b.x, b.z, bldg.x, bldg.z) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      )
       .slice(0, availableSlots);
 
     const bName = bldg.buildingDef.name.split(' ')[0];
@@ -6049,6 +6070,8 @@ export class RtsEngine {
     if (!bldg || bldg.hp <= 0 || !bldg.isConstructed || bldg.faction !== unit.faction) {
       unit.targetGarrisonBuildingId = undefined;
       unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'idle';
       unit.currentActionText = '💤 待命中 (閒置)';
       return;
@@ -6056,9 +6079,17 @@ export class RtsEngine {
 
     const maxCap = getBuildingMaxGarrison(bldg);
     const curCount = bldg.garrisonedUnitIds?.length || 0;
-    if (curCount >= maxCap) {
+    const pendingOther = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      new Set([unit.id])
+    );
+    if (getAvailableGarrisonSlots(maxCap, curCount, pendingOther) <= 0) {
       unit.targetGarrisonBuildingId = undefined;
       unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'idle';
       unit.currentActionText = '🛡️ 駐防已滿待命';
       return;
@@ -8214,18 +8245,22 @@ export class RtsEngine {
         underAttack = 1;
       }
 
-      // AI Tactical Garrison Defense: shelter exposed villagers during base raids & release once threat clears!
-      if (underAttack === 1 && aiTC) {
+      // Use any surviving garrison-capable building; a destroyed Town Center must not disable retreats.
+      if (underAttack === 1) {
         const aiShelters = aiBuildings
-          .filter((b) => b.isConstructed && getBuildingMaxGarrison(b) > 0)
+          .filter((b) => b.hp > 0 && b.isConstructed && getBuildingMaxGarrison(b) > 0)
           .map((b) => {
-            const incoming = aiUnits.filter(
-              (unit) => unit.targetGarrisonBuildingId === b.id && !unit.garrisonedInBuildingId
-            ).length;
+            const incoming = countPendingGarrisonReservations(b.id, b.faction, aiUnits);
             return {
+              id: b.id,
+              x: b.x,
+              z: b.z,
               bldg: b,
-              // Reserve capacity for units already walking toward shelter to avoid overbooking.
-              freeSlots: Math.max(0, getBuildingMaxGarrison(b) - (b.garrisonedUnitIds?.length || 0) - incoming),
+              freeSlots: getAvailableGarrisonSlots(
+                getBuildingMaxGarrison(b),
+                b.garrisonedUnitIds?.length || 0,
+                incoming
+              ),
             };
           })
           .filter((s) => s.freeSlots > 0);
@@ -8237,9 +8272,7 @@ export class RtsEngine {
               getDistance(anchorX, anchorZ, w.x, w.z) <= 22
           ).slice(0, 5);
           for (const ew of exposed) {
-            const open = aiShelters
-              .filter((s) => s.freeSlots > 0)
-              .sort((a, b) => getDistance(ew.x, ew.z, a.bldg.x, a.bldg.z) - getDistance(ew.x, ew.z, b.bldg.x, b.bldg.z))[0];
+            const open = selectNearestGarrisonShelter(ew.x, ew.z, aiShelters);
             if (!open) break;
             open.freeSlots--;
             ew.targetGarrisonBuildingId = open.bldg.id;
@@ -8271,9 +8304,7 @@ export class RtsEngine {
           );
 
         for (const wounded of vulnerableArmy) {
-          const open = aiShelters
-            .filter((s) => s.freeSlots > 0)
-            .sort((a, b) => getDistance(wounded.x, wounded.z, a.bldg.x, a.bldg.z) - getDistance(wounded.x, wounded.z, b.bldg.x, b.bldg.z))[0];
+          const open = selectNearestGarrisonShelter(wounded.x, wounded.z, aiShelters);
           if (!open) break;
           open.freeSlots--;
 

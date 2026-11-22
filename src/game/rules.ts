@@ -79,6 +79,98 @@ export function shouldAiUnitLeaveShelter(
     : 0.72;
   return Math.max(0, hp) / maxHp >= threshold;
 }
+
+/** A live unit can reserve one shelter slot while it is actively walking to that garrison. */
+export interface GarrisonReservationUnit {
+  id: string;
+  faction: string;
+  hp: number;
+  state: string;
+  targetGarrisonBuildingId?: string;
+  garrisonedInBuildingId?: string;
+}
+
+export function countPendingGarrisonReservations(
+  buildingId: string,
+  faction: string,
+  units: readonly GarrisonReservationUnit[],
+  excludedUnitIds?: ReadonlySet<string>
+): number {
+  let count = 0;
+  for (const unit of units) {
+    if (
+      Number.isFinite(unit.hp) &&
+      unit.hp > 0 &&
+      unit.faction === faction &&
+      unit.state === 'garrisoning' &&
+      unit.targetGarrisonBuildingId === buildingId &&
+      !unit.garrisonedInBuildingId &&
+      !excludedUnitIds?.has(unit.id)
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** Remaining capacity after both occupants and live incoming reservations are accounted for. */
+export function getAvailableGarrisonSlots(
+  maxCapacity: number,
+  occupiedCount: number,
+  incomingCount = 0
+): number {
+  if (!Number.isFinite(maxCapacity) || maxCapacity <= 0) return 0;
+  const capacity = Math.floor(maxCapacity);
+  const occupied = Number.isFinite(occupiedCount)
+    ? Math.max(0, Math.floor(occupiedCount))
+    : capacity;
+  const incoming = Number.isFinite(incomingCount)
+    ? Math.max(0, Math.floor(incomingCount))
+    : capacity;
+  return Math.max(0, capacity - occupied - incoming);
+}
+
+export interface GarrisonShelterCandidate {
+  id: string;
+  x: number;
+  z: number;
+  freeSlots: number;
+}
+
+/** Select the nearest available shelter in linear time, with stable ID tie-breaking. */
+export function selectNearestGarrisonShelter<T extends GarrisonShelterCandidate>(
+  x: number,
+  z: number,
+  candidates: readonly T[]
+): T | null {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+
+  let best: T | null = null;
+  let bestDistanceSq = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    if (
+      candidate.freeSlots <= 0 ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z)
+    ) {
+      continue;
+    }
+    const dx = candidate.x - x;
+    const dz = candidate.z - z;
+    const distanceSq = dx * dx + dz * dz;
+    if (!Number.isFinite(distanceSq)) continue;
+
+    if (
+      distanceSq < bestDistanceSq ||
+      (distanceSq === bestDistanceSq && (!best || candidate.id < best.id))
+    ) {
+      best = candidate;
+      bestDistanceSq = distanceSq;
+    }
+  }
+  return best;
+}
+
 export const WALL_BREACH_HP_RATIO = 0.32;
 export const WALL_TOWER_LINK_RANGE = 5.8;
 

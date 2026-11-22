@@ -3020,3 +3020,47 @@ test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit c
   assert.throws(() => createBattleStressPlan(150, 12345), /100, 200, or 400/);
   assert.throws(() => createBattleStressPlan(100, Number.NaN), /finite number/);
 });
+
+
+test('garrison reservations: only live same-faction units actively approaching a shelter consume slots', async () => {
+  const { countPendingGarrisonReservations, getAvailableGarrisonSlots } = await import('./rules');
+  const units = [
+    { id: 'incoming-a', faction: 'blue', hp: 42, state: 'garrisoning', targetGarrisonBuildingId: 'keep' },
+    { id: 'incoming-b', faction: 'blue', hp: 18, state: 'garrisoning', targetGarrisonBuildingId: 'keep' },
+    { id: 'dead', faction: 'blue', hp: 0, state: 'garrisoning', targetGarrisonBuildingId: 'keep' },
+    { id: 'enemy', faction: 'red', hp: 80, state: 'garrisoning', targetGarrisonBuildingId: 'keep' },
+    { id: 'not-walking', faction: 'blue', hp: 80, state: 'moving', targetGarrisonBuildingId: 'keep' },
+    {
+      id: 'already-inside',
+      faction: 'blue',
+      hp: 80,
+      state: 'garrisoning',
+      targetGarrisonBuildingId: 'keep',
+      garrisonedInBuildingId: 'keep',
+    },
+  ];
+
+  assert.equal(countPendingGarrisonReservations('keep', 'blue', units), 2);
+  assert.equal(countPendingGarrisonReservations('keep', 'blue', units, new Set(['incoming-a'])), 1);
+  assert.equal(getAvailableGarrisonSlots(5, 2, 2), 1);
+  assert.equal(getAvailableGarrisonSlots(5, 2, 3), 0);
+  assert.equal(getAvailableGarrisonSlots(Number.NaN, 0, 0), 0);
+});
+
+test('garrison shelter selection: nearest free shelter is deterministic and does not require a Town Center', async () => {
+  const { selectNearestGarrisonShelter } = await import('./rules');
+  const survivingShelters = [
+    { id: 'z-castle', x: 10, z: 0, freeSlots: 1 },
+    { id: 'b-barracks', x: -10, z: 0, freeSlots: 1 },
+    { id: 'a-full-tower', x: 0, z: 1, freeSlots: 0 },
+    { id: 'invalid', x: Number.NaN, z: 0, freeSlots: 2 },
+  ];
+
+  assert.equal(selectNearestGarrisonShelter(0, 0, survivingShelters)?.id, 'b-barracks');
+  assert.equal(
+    selectNearestGarrisonShelter(1, 0, [...survivingShelters, { id: 'nearby-keep', x: 1, z: 0, freeSlots: 1 }])?.id,
+    'nearby-keep'
+  );
+  assert.equal(selectNearestGarrisonShelter(0, 0, survivingShelters.map((s) => ({ ...s, freeSlots: 0 }))), null);
+  assert.equal(selectNearestGarrisonShelter(Number.NaN, 0, survivingShelters), null);
+});
