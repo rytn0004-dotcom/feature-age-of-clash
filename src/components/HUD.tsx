@@ -814,6 +814,7 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">人</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">人口</span>
             <span
+              data-population-value="true"
               className={`text-xs font-extrabold tabular-nums ${
                 observedPop >= observedMaxPop
                   ? 'text-rose-400'
