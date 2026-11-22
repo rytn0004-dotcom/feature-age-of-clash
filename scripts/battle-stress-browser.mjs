@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { aggregateBattleStressSamples } from "./battle-stress-telemetry.mjs";
 
 const host = "127.0.0.1";
 const port = Number(process.env.BATTLE_STRESS_PORT || 3000);
@@ -141,7 +142,30 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
-      const telemetry = await waitFor(async () => evaluate("(() => { const e = window.__rtsEngine; const p = [...document.querySelectorAll('[role=\"status\"]')].find(n => n.textContent?.includes('PERFORMANCE MONITOR')); if (!e || !p || p.style.display === 'none') return null; const t = p.textContent || ''; const samples = Number(t.match(/Capture Samples\\s+(\\d+)/)?.[1] || 0); if (samples < " + minCaptureSamples + ") return null; const value = re => Number((t.match(re)?.[1] || '').replaceAll(',', '') || NaN); return { samples, state: e.gameState, simulatedSeconds: e.stats.gameDuration, fps: value(/Frame FPS\\s+([\\d.]+)/), frameAverageMs: value(/Frame ms avg\\s+([\\d.]+)/), p95Ms: value(/Frame ms p95\\s+([\\d.]+)/), hitchMs: value(/Max hitch ms\\s+([\\d.]+)/), simulationAverageMs: value(/Simulation ms\\s+([\\d.]+)/), simulationMaxMs: value(/Simulation ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), renderAverageMs: value(/Render call ms\\s+([\\d.]+)/), renderMaxMs: value(/Render call ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), aiDecisionLastMs: value(/AI Think ms\\s+([\\d.]+)/), aiDecisionAverageMs: value(/AI Think ms\\s+[\\d.]+ last \\/ ([\\d.]+)/), aiDecisionMaxMs: value(/AI Think ms\\s+[\\d.]+ last \\/ [\\d.]+ avg \\/ ([\\d.]+)/), aiHeartbeat: value(/AI Heartbeat\\s+(\\d+)/), aStarSearches: value(/A\\* Searches\\s+(\\d+)/), aStarAiSearches: value(/A\\* Searches\\s+\\d+ total \\/ (\\d+)/), aStarEmptyPaths: value(/A\\* Searches\\s+\\d+ total \\/ \\d+ AI \\/ (\\d+)/), aStarAverageMs: value(/A\\* Search ms\\s+([\\d.]+)/), aStarMaxMs: value(/A\\* Search ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), drawCalls: value(/Draw Calls\\s+([\\d,]+)/), triangles: value(/Triangles\\s+([\\d,]+)/), renderer: t.match(/Renderer\\s+([^\\n]+)/)?.[1]?.trim() || 'unknown' }; })()"), 30000, count + "-unit F3 telemetry");
+      const capture = await waitFor(
+        async () => evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            const overlay = [...document.querySelectorAll('[role="status"]')].find(
+              (node) => node.textContent?.includes('PERFORMANCE MONITOR'),
+            );
+            if (!e || !overlay || overlay.style.display === 'none') return null;
+            const samples = Array.isArray(e.performanceSamples) ? e.performanceSamples : [];
+            if (samples.length < ${minCaptureSamples}) return null;
+            return {
+              state: e.gameState,
+              simulatedSeconds: e.stats.gameDuration,
+              samples,
+            };
+          })()
+        `),
+        30000,
+        count + "-unit F3 telemetry",
+      );
+      // Aggregate the complete bounded F3 capture, not just the final 500 ms overlay window.
+      const telemetry = aggregateBattleStressSamples(capture.samples);
+      telemetry.state = capture.state;
+      telemetry.simulatedSeconds = capture.simulatedSeconds;
 
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
