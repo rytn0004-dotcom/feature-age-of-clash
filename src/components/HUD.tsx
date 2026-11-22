@@ -102,6 +102,7 @@ export const HUD: React.FC<HUDProps> = ({
   const [techTreeFilter, setTechTreeFilter] = useState<'all' | 'eco' | 'counter' | 'doctrine' | 'fortify'>('all');
   const [isHudCompact, setIsHudCompact] = useState(false);
   const [showEconomyPanel, setShowEconomyPanel] = useState(false);
+  const [isEconomyPinned, setIsEconomyPinned] = useState(false);
   const [economyNetRates, setEconomyNetRates] = useState<EconomyNetRates | null>(null);
   const economySnapshotsRef = useRef<EconomyResourceSnapshot[]>([]);
 
@@ -140,6 +141,7 @@ export const HUD: React.FC<HUDProps> = ({
         setShowAgeModal(false);
         setShowTechTreeModal(false);
         setShowEconomyPanel(false);
+        setIsEconomyPinned(false);
       }
     };
     window.addEventListener('keydown', onModalKeyDown, true);
@@ -729,10 +731,10 @@ export const HUD: React.FC<HUDProps> = ({
   const allCivTechs = getAllTechsForCiv(humanCivId);
   const buildableTypes = getBuildableTypesForCiv(humanCivId, observedAge);
   const economyResourceRows = [
-    { key: 'food' as const, label: '糧食', icon: '🌾', stock: observedRes.food, gross: observedTelemetry.incomePerMin.food, workers: observedTelemetry.workersByResource.food, tone: 'amber' },
-    { key: 'wood' as const, label: '木材', icon: '🪵', stock: observedRes.wood, gross: observedTelemetry.incomePerMin.wood, workers: observedTelemetry.workersByResource.wood, tone: 'emerald' },
-    { key: 'gold' as const, label: '黃金', icon: '🪙', stock: observedRes.gold, gross: observedTelemetry.incomePerMin.gold, workers: observedTelemetry.workersByResource.gold, tone: 'yellow' },
-    { key: 'stone' as const, label: '石料', icon: '🪨', stock: observedRes.stone, gross: observedTelemetry.incomePerMin.stone, workers: observedTelemetry.workersByResource.stone, tone: 'slate' },
+    { key: 'food' as const, label: '糧食', icon: '🌾', stock: observedRes.food, gross: observedTelemetry.incomePerMin.food, delivered: observedTelemetry.deliveredIncomePerMin.food, workers: observedTelemetry.workersByResource.food, tone: 'amber' },
+    { key: 'wood' as const, label: '木材', icon: '🪵', stock: observedRes.wood, gross: observedTelemetry.incomePerMin.wood, delivered: observedTelemetry.deliveredIncomePerMin.wood, workers: observedTelemetry.workersByResource.wood, tone: 'emerald' },
+    { key: 'gold' as const, label: '黃金', icon: '🪙', stock: observedRes.gold, gross: observedTelemetry.incomePerMin.gold, delivered: observedTelemetry.deliveredIncomePerMin.gold, workers: observedTelemetry.workersByResource.gold, tone: 'yellow' },
+    { key: 'stone' as const, label: '石料', icon: '🪨', stock: observedRes.stone, gross: observedTelemetry.incomePerMin.stone, delivered: observedTelemetry.deliveredIncomePerMin.stone, workers: observedTelemetry.workersByResource.stone, tone: 'slate' },
   ];
   const nextAgeInfo = NEXT_AGE_INFO[observedAge];
   const ageResourceShortfall = nextAgeInfo
@@ -751,7 +753,9 @@ export const HUD: React.FC<HUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between select-none z-10">
       {/* ================= TOP PERIMETER STATUS CLUSTER ================= */}
-      <header className="flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none">
+      <header className="relative flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none"
+        onMouseEnter={() => setShowEconomyPanel(true)}
+        onMouseLeave={() => { if (!isEconomyPinned) setShowEconomyPanel(false); }}>
         {/* Primary economy row: all four resources and population stay visible without horizontal scrolling. */}
         <div
           data-top-resource-bar="true"
@@ -763,7 +767,7 @@ export const HUD: React.FC<HUDProps> = ({
             data-resource-pill="food"
             aria-label={`糧食庫存：${formatResourceCount(observedRes.food)}`}
             className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow whitespace-nowrap"
-            title={`糧食庫存：${formatResourceCount(observedRes.food)} · 產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
+            title={`糧食庫存：${formatResourceCount(observedRes.food)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.food}/分 · 不計運輸：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
           >
             <span className="text-xs">🌾</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">糧</span>
@@ -775,7 +779,7 @@ export const HUD: React.FC<HUDProps> = ({
               {formatCompactResourceCount(observedRes.food)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{formatCompactResourceCount(observedTelemetry.incomePerMin.food)}/m·{observedTelemetry.workersByResource.food}
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.food)}/m·{observedTelemetry.workersByResource.food}
             </span>
           </div>
 
@@ -784,7 +788,7 @@ export const HUD: React.FC<HUDProps> = ({
             data-resource-pill="wood"
             aria-label={`木材庫存：${formatResourceCount(observedRes.wood)}`}
             className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow whitespace-nowrap"
-            title={`木材庫存：${formatResourceCount(observedRes.wood)} · 產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
+            title={`木材庫存：${formatResourceCount(observedRes.wood)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.wood}/分 · 不計運輸：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
           >
             <span className="text-xs">🪵</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">木</span>
@@ -796,7 +800,7 @@ export const HUD: React.FC<HUDProps> = ({
               {formatCompactResourceCount(observedRes.wood)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{formatCompactResourceCount(observedTelemetry.incomePerMin.wood)}/m·{observedTelemetry.workersByResource.wood}
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.wood)}/m·{observedTelemetry.workersByResource.wood}
             </span>
           </div>
 
@@ -805,7 +809,7 @@ export const HUD: React.FC<HUDProps> = ({
             data-resource-pill="gold"
             aria-label={`黃金庫存：${formatResourceCount(observedRes.gold)}`}
             className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow whitespace-nowrap"
-            title={`黃金庫存：${formatResourceCount(observedRes.gold)} · 產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
+            title={`黃金庫存：${formatResourceCount(observedRes.gold)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.gold}/分 · 不計運輸：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
           >
             <span className="text-xs">🪙</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">金</span>
@@ -817,7 +821,7 @@ export const HUD: React.FC<HUDProps> = ({
               {formatCompactResourceCount(observedRes.gold)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{formatCompactResourceCount(observedTelemetry.incomePerMin.gold)}/m·{observedTelemetry.workersByResource.gold}
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.gold)}/m·{observedTelemetry.workersByResource.gold}
             </span>
           </div>
 
@@ -826,7 +830,7 @@ export const HUD: React.FC<HUDProps> = ({
             data-resource-pill="stone"
             aria-label={`石料庫存：${formatResourceCount(observedRes.stone)}`}
             className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow whitespace-nowrap"
-            title={`石料庫存：${formatResourceCount(observedRes.stone)} · 產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
+            title={`石料庫存：${formatResourceCount(observedRes.stone)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.stone}/分 · 不計運輸：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
           >
             <span className="text-xs">🪨</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">石</span>
@@ -838,7 +842,7 @@ export const HUD: React.FC<HUDProps> = ({
               {formatCompactResourceCount(observedRes.stone)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{formatCompactResourceCount(observedTelemetry.incomePerMin.stone)}/m·{observedTelemetry.workersByResource.stone}
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.stone)}/m·{observedTelemetry.workersByResource.stone}
             </span>
           </div>
 
@@ -937,13 +941,17 @@ export const HUD: React.FC<HUDProps> = ({
             type="button"
             data-economy-toggle="true"
             aria-expanded={showEconomyPanel}
+            aria-pressed={isEconomyPinned}
             aria-controls="economy-overview-panel"
-            onClick={() => setShowEconomyPanel((open) => !open)}
-            className={`flex items-center gap-1 px-2.5 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors ${showEconomyPanel ? 'border-emerald-400/70 text-emerald-200' : 'border-emerald-500/35 text-slate-200 hover:border-emerald-400'}`}
-            title="檢視資源淨變化、村民配置與升時代準備度"
+            onClick={() => {
+              setIsEconomyPinned((pinned) => !pinned);
+              setShowEconomyPanel(true);
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors ${isEconomyPinned ? 'border-emerald-400/80 text-emerald-100' : showEconomyPanel ? 'border-emerald-400/70 text-emerald-200' : 'border-emerald-500/35 text-slate-200 hover:border-emerald-400'}`}
+            title={isEconomyPinned ? '已固定經濟面板；再次點擊解除固定' : '移入頂部經濟區自動展開；點擊固定面板'}
           >
             <Activity className="w-3.5 h-3.5 text-emerald-300" />
-            <span className="text-[11px] font-extrabold">經濟</span>
+            <span className="text-[11px] font-extrabold">{isEconomyPinned ? '經濟 · 固定' : '經濟'}</span>
           </button>
 
           {/* Idle Villagers Fast Access */}
@@ -1126,14 +1134,12 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
         </div>
-      </header>
-
       {showEconomyPanel && (
         <section
           id="economy-overview-panel"
           data-economy-panel="true"
           aria-label="經濟總覽"
-          className="fixed top-28 left-2 z-40 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
+          className="absolute top-full left-2 z-40 mt-1 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
         >
           <div className="flex items-center justify-between gap-3 mb-2">
             <div>
@@ -1143,7 +1149,7 @@ export const HUD: React.FC<HUDProps> = ({
             <button
               type="button"
               data-economy-close="true"
-              onClick={() => setShowEconomyPanel(false)}
+              onClick={() => { setIsEconomyPinned(false); setShowEconomyPanel(false); }}
               className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
               aria-label="關閉經濟總覽"
             >
@@ -1184,7 +1190,8 @@ export const HUD: React.FC<HUDProps> = ({
                     <span className={`text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
                   </div>
                   <div className="mt-1 text-lg font-black tabular-nums">{formatResourceCount(resource.stock)}</div>
-                  <div className="mt-1 text-[10px] text-slate-400">採集／據點估算：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
+                  <div className="mt-1 text-[10px] text-slate-400">不計運輸的採集／據點產能：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
+                  <div className="text-[10px] font-semibold text-emerald-200 tabular-nums">扣除往返運輸後估算入庫：+{Math.round(resource.delivered).toLocaleString('zh-TW')}/分</div>
                   <div className={`text-[10px] font-bold tabular-nums ${net === undefined ? 'text-slate-500' : net < -0.05 ? 'text-orange-300' : net > 0.05 ? 'text-emerald-300' : 'text-slate-400'}`}>
                     {net === undefined ? '淨變化：資料收集中' : `淨變化：${formatNetRate(net)}`}
                   </div>
@@ -1243,10 +1250,12 @@ export const HUD: React.FC<HUDProps> = ({
             </section>
           </div>
           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
-            淨變化根據最近約 20 秒遊戲時間的庫存差額計算，因此會包含招募、建造、研發與升時代消耗；初次開啟需累積至少 8 秒遊戲時間。暫停時趨勢不更新。
+            村民入庫估算依目前採集速度、負載量、移動速度與 A* 地形／建築繞行路線，計入採集點到合適存放建築的往返時間；不含戰鬥受阻、野生動物擊殺等待等臨時因素。淨變化則根據最近約 20 秒遊戲時間的庫存差額計算，包含所有收入與支出。
           </p>
         </section>
       )}
+
+      </header>
 
       {/* ================= DYNAMIC ALERT BANNERS ================= */}
       <div className="fixed top-14 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-none">
