@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/battle-stress-regression-tests]
   pull_request:
     branches: [main, feature/hud-field-engineering-tdz-fix]
 
@@ -18,3 +18,37 @@ jobs:
       - run: bun run lint
       - run: bun run test
       - run: bun run build
+
+  browser-stress:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+          install-dependencies: true
+      - name: Run headless Chromium battle stress scenarios
+        run: bun run test:browser
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          BATTLE_STRESS_SCENARIOS: 100,200,400
+          BATTLE_STRESS_SEED: 20261122
+          BATTLE_STRESS_MAP: highland_basin
+          BATTLE_STRESS_MIN_SAMPLES: 8
+      - name: Upload browser stress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: battle-stress-browser-report
+          path: artifacts/battle-stress-browser-report.json
+          if-no-files-found: warn

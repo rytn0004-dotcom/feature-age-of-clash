@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import {
   canAfford,
   canAssembleFieldRam,
+  estimateConstructionTimeRemaining,
+  getConstructionWorkerMultiplier,
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  selectAiWorkerResourceType,
   selectAiWorkerReassignment,
+  shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
   deductCost,
   addResources,
@@ -37,8 +41,19 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
-import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS } from './mods';
-import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
+import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
+import {
+  canResearchTech,
+  getAllTechsForBuilding,
+  getCivilizationConfig,
+  getCivilizationBuildSpeedMultiplier,
+  getLandmarkTrainingSpeedMultiplier,
+  getTrainingTimeMultiplier,
+  getCappedProductionSpeedMultiplier,
+  getEffectiveProductionDuration,
+  getEffectiveUnitTrainingDuration,
+  PRODUCTION_TIME_SCALE,
+} from './civilizations';
 
 test('progression: military production buildings unlock at the intended ages', async () => {
   const { getBuildableTypesForCiv, isBuildingBuildableForCiv } = await import('./civilizations');
@@ -263,6 +278,26 @@ test('spatial: balanced resource selection distributes workers across available 
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 30)?.id, 'wood-free');
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'gold', assigned, 30)?.id, 'gold-near');
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 3), null);
+
+  const boarNode: ResourceNode = {
+    id: 'dangerous-boar',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 1,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+  };
+  assert.equal(
+    findBalancedResourceNode(0, 0, [boarNode], 'food'),
+    null,
+    'Routine worker balancing must not send a single villager to an aggressive boar'
+  );
+  assert.equal(
+    findBalancedResourceNode(0, 0, [boarNode], 'food', new Map(), Infinity, true)?.id,
+    'dangerous-boar',
+    'A coordinated hunting order may explicitly authorize the dangerous node'
+  );
 });
 
 test('collision: resolveUnitBuildingCollisions pushes units out of solid building core while leaving auto-channel', async () => {
@@ -753,6 +788,138 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
   assert.equal(starvedAlloc.food + starvedAlloc.wood + starvedAlloc.gold + starvedAlloc.stone, 8);
   assert.ok(starvedAlloc.food >= 4, `Expected >=4 workers on food when starving, got ${JSON.stringify(starvedAlloc)}`);
+
+  // The AI should reserve more gold while short of the next-age target, then
+  // release that labor once the age-up threshold is reached.
+  const ageOnePreparing = computeAiWorkerAllocation(
+    { food: 250, wood: 300, gold: 100, stone: 60 }, 8, 'balanced_eco', 1
+  );
+  const ageOneReady = computeAiWorkerAllocation(
+    { food: 500, wood: 300, gold: 250, stone: 60 }, 8, 'balanced_eco', 1
+  );
+  assert.ok(ageOnePreparing.gold > ageOneReady.gold, 'Age I AI should increase gold allocation while preparing 400 food / 200 gold.');
+  assert.equal(
+    ageOnePreparing.food + ageOnePreparing.wood + ageOnePreparing.gold + ageOnePreparing.stone,
+    8
+  );
+
+  const ageTwoPreparing = computeAiWorkerAllocation(
+    { food: 700, wood: 200, gold: 200, stone: 60 }, 8, 'military_eco', 2
+  );
+  const ageTwoReady = computeAiWorkerAllocation(
+    { food: 1500, wood: 200, gold: 800, stone: 60 }, 8, 'military_eco', 2
+  );
+  assert.ok(ageTwoPreparing.gold > ageTwoReady.gold, 'Age II AI should redirect labor toward the 1200 food / 600 gold target.');
+  assert.equal(
+    ageTwoPreparing.food + ageTwoPreparing.wood + ageTwoPreparing.gold + ageTwoPreparing.stone,
+    8
+  );
+});
+
+test('AI economy: worker allocation reacts to sustained resource flow without abandoning stock targets', async () => {
+  const { computeAiWorkerAllocation } = await import('./rules');
+  const resources = { food: 1500, wood: 700, gold: 1500, stone: 600 };
+  const stable = computeAiWorkerAllocation(resources, 16, 'balanced_eco', 3);
+  const flowAware = computeAiWorkerAllocation(resources, 16, 'balanced_eco', 3, {
+    food: -30,
+    wood: 24,
+    gold: 0,
+    stone: 0,
+  });
+
+  assert.ok(
+    flowAware.food > stable.food,
+    'A sustained food deficit should redirect some workers toward food while stock is below the age target'
+  );
+  assert.ok(
+    flowAware.wood < stable.wood,
+    'A healthy wood surplus should release some gatherers when wood stock is already safe'
+  );
+  assert.equal(
+    flowAware.food + flowAware.wood + flowAware.gold + flowAware.stone,
+    16,
+    'Flow-aware allocation must still distribute every worker exactly once'
+  );
+  assert.ok(flowAware.food >= 1, 'The allocation must retain a minimum food workforce');
+});
+
+test('AI economy: predict resource depletion before the active workforce exhausts a node', () => {
+  assert.equal(shouldRelocateFromResourceNode(24, 2, 12), true);
+  assert.equal(shouldRelocateFromResourceNode(24.01, 2, 12), false);
+  assert.equal(
+    shouldRelocateFromResourceNode(120, 2, 12),
+    false,
+    'A healthy reserve should not trigger premature worker movement'
+  );
+  assert.equal(
+    shouldRelocateFromResourceNode(0, 0, 12),
+    false,
+    'A node with no active gatherers does not need proactive relocation'
+  );
+  assert.equal(shouldRelocateFromResourceNode(Number.NaN, 2, 12), false);
+  assert.equal(shouldRelocateFromResourceNode(10, 2, Number.NaN), false);
+});
+
+test('AI worker production counts queued villagers and protects the next-age landmark reserve', async () => {
+  const { shouldAiQueueWorker } = await import('./rules');
+  const medievalWorkerCost = { food: 50, wood: 0, gold: 0, stone: 0 };
+  const ageTwoReserve = { food: 400, wood: 0, gold: 200, stone: 0 };
+  const base = {
+    workerCount: 3,
+    queuedWorkerCount: 0,
+    workerCap: 12,
+    resources: { food: 100, wood: 100, gold: 0, stone: 0 },
+    workerCost: medievalWorkerCost,
+    ageUpReserve: ageTwoReserve,
+    minimumWorkersForAgeUp: 5,
+  };
+
+  assert.equal(
+    shouldAiQueueWorker({ ...base, queuedWorkerCount: 1 }),
+    true,
+    'AI may queue the workers needed to reach its next-age workforce threshold'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 5, resources: { food: 449, wood: 100, gold: 200, stone: 0 } }),
+    false,
+    'Once the minimum workforce is reached, training cannot consume the landmark food reserve'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 5, resources: { food: 450, wood: 100, gold: 200, stone: 0 } }),
+    true,
+    'A worker may be queued when its cost leaves the exact landmark reserve intact'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 10, queuedWorkerCount: 2 }),
+    false,
+    'Workers already in production count toward the personality cap'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 12 }),
+    false,
+    'AI cannot exceed its configured worker cap'
+  );
+
+  const animeWorkerCost = { food: 55, wood: 0, gold: 10, stone: 0 };
+  assert.equal(
+    shouldAiQueueWorker({
+      ...base,
+      workerCount: 5,
+      resources: { food: 455, wood: 100, gold: 210, stone: 0 },
+      workerCost: animeWorkerCost,
+    }),
+    true,
+    'Civilization-specific worker costs are included before checking the landmark reserve'
+  );
+  assert.equal(
+    shouldAiQueueWorker({
+      ...base,
+      workerCount: 5,
+      resources: { food: 454, wood: 100, gold: 210, stone: 0 },
+      workerCost: animeWorkerCost,
+    }),
+    false
+  );
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
@@ -2204,9 +2371,9 @@ test('resource-module-upgrade: rich vein tiers, effective gather multipliers, te
   // Live worker allocation + /min telemetry including shrines
   const villagerDef = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
   const nodes = [
-    { id: 'n_food', resourceType: 'food' as const, subtype: 'hunt' as const, nodeTier: 'standard' as const, amount: 300 },
-    { id: 'n_gold', resourceType: 'gold' as const, subtype: 'gold' as const, nodeTier: 'rich' as const, amount: 2200 },
-    { id: 'n_wood', resourceType: 'wood' as const, subtype: 'wood' as const, nodeTier: 'standard' as const, amount: 300 },
+    { id: 'n_food', resourceType: 'food' as const, subtype: 'hunt' as const, nodeTier: 'standard' as const, amount: 300, x: 18, z: 0 },
+    { id: 'n_gold', resourceType: 'gold' as const, subtype: 'gold' as const, nodeTier: 'rich' as const, amount: 2200, x: 32, z: 0 },
+    { id: 'n_wood', resourceType: 'wood' as const, subtype: 'wood' as const, nodeTier: 'standard' as const, amount: 300, x: 24, z: 8 },
   ];
   const workers = [
     { faction: 'player' as const, hp: 55, state: 'gathering' as const, unitDef: villagerDef, targetResourceNodeId: 'n_food' },
@@ -2228,6 +2395,37 @@ test('resource-module-upgrade: rich vein tiers, effective gather multipliers, te
   assert.ok(telemetry.incomePerMin.food >= 38 && telemetry.incomePerMin.food <= 42);
   assert.ok(telemetry.incomePerMin.gold >= 165 && telemetry.incomePerMin.gold <= 170);
   assert.equal(telemetry.incomePerMin.stone, 120);
+  assert.deepEqual(telemetry.deliveredIncomePerMin, telemetry.incomePerMin, 'Callers without a route model retain the theoretical telemetry fallback.');
+
+  // With a world delivery model, long walks lower the estimate of resources
+  // actually deposited while passive shrine income remains fully credited.
+  const deliveryWorker = {
+    faction: 'player' as const,
+    hp: 55,
+    state: 'gathering' as const,
+    unitDef: villagerDef,
+    targetResourceNodeId: 'n_food',
+    x: 10,
+    z: 0,
+  };
+  const routeAwareTelemetry = computeFactionResourceTelemetry(
+    'player',
+    [deliveryWorker],
+    nodes,
+    shrines,
+    [],
+    false,
+    (_worker, node) => node.id === 'n_food' ? 24 : null,
+  );
+  assert.ok(routeAwareTelemetry.deliveredIncomePerMin.food < routeAwareTelemetry.incomePerMin.food,
+    'Walking to the granary / town center must reduce expected food delivered per minute.');
+  assert.equal(routeAwareTelemetry.deliveredIncomePerMin.gold, 120,
+    'Passive shrine income is not reduced by villager walking time.');
+  const withoutDropOff = computeFactionResourceTelemetry(
+    'player', [deliveryWorker], nodes, [], [], false, () => null
+  );
+  assert.equal(withoutDropOff.deliveredIncomePerMin.food, 0,
+    'A worker without a valid drop-off should not be credited with recurring deposited output.');
 
   // Map generator spawns rich deposits in mid-map contested zones strictly >= 23.5m away from starter TCs
   const spawns = generateSpawnPositions(2, 58).map((sp, idx) => ({ id: `p${idx}`, x: sp.x, z: sp.z }));
@@ -2341,6 +2539,19 @@ test('field engineering: ram assembly uses one shared Age II, research, infantry
   assert.equal(canAssembleFieldRam(2, [FIELD_RAM_TECH_ID], 4, resources).ok, true);
 });
 
+
+test('field-assembled battering rams use the shared 1.12 production time scale', async () => {
+  const {
+    FIELD_RAM_ASSEMBLY_BASE_DURATION,
+    FIELD_RAM_ASSEMBLY_DURATION,
+    estimateFieldRamAssemblyDuration,
+  } = await import('./rules');
+  assert.equal(FIELD_RAM_ASSEMBLY_BASE_DURATION, 18);
+  assert.equal(FIELD_RAM_ASSEMBLY_DURATION, 20.16);
+  assert.equal(estimateFieldRamAssemblyDuration(4), 20.16);
+  assert.equal(estimateFieldRamAssemblyDuration(3), 26.88);
+  assert.equal(estimateFieldRamAssemblyDuration(2), null);
+});
 
 test('AI siege: all personalities field-assemble battering rams instead of training them from buildings', async () => {
   const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
@@ -2530,6 +2741,34 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
     ),
     null,
     'Do not churn workers for one-worker differences'
+  );
+
+  assert.equal(
+    selectAiWorkerResourceType(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['wood', 'gold', 'stone']
+    ),
+    'stone',
+    'An unavailable food source must not be treated as an eligible worker destination'
+  );
+  assert.equal(
+    selectAiWorkerResourceType(
+      { food: 1, wood: 1, gold: 1, stone: 1 },
+      { food: 1, wood: 1, gold: 1, stone: 1 },
+      ['food', 'wood', 'gold', 'stone']
+    ),
+    null,
+    'Do not assign extra workers when all available targets are already filled'
+  );
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 2 },
+      ['wood', 'gold', 'stone']
+    ),
+    { from: 'wood', to: 'stone' },
+    'Reassignment must choose the largest deficit with an available deposit'
   );
 });
 
@@ -3019,6 +3258,223 @@ test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit c
   }
   assert.throws(() => createBattleStressPlan(150, 12345), /100, 200, or 400/);
   assert.throws(() => createBattleStressPlan(100, Number.NaN), /finite number/);
+});
+
+test('wild deer (山羌): panic re-arms only after disengagement and cooldown, never while a hunter shadows it', async () => {
+  const { stepWildAnimalState, triggerWildAnimalPanic } = await import('./rules');
+  const deer: ResourceNode = {
+    id: 'deer_hysteresis',
+    resourceType: 'food',
+    subtype: 'hunt',
+    x: 0,
+    z: 0,
+    amount: 300,
+    maxAmount: 300,
+    animalHp: 32,
+    animalMaxHp: 32,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+
+  triggerWildAnimalPanic(deer, -3, 0, 100, 1);
+  assert.equal(deer.animalPanicSuppressed, true);
+
+  const shadowingStep = stepWildAnimalState(
+    deer,
+    { x: -16.4, z: 0, d: 16.4 },
+    101.2,
+    0.05,
+    () => false,
+    () => 0.5,
+  );
+  assert.equal(shadowingStep.isFleeing, false);
+  assert.equal(deer.animalPanicSuppressed, true, 'A nearby hunter must not re-trigger the same encounter');
+
+  stepWildAnimalState(deer, { x: -16.6, z: 0, d: 16.6 }, 101.3, 0.05, () => false, () => 0.5);
+  assert.equal(deer.animalPanicSuppressed, false, 'The deer re-arms only after crossing the disengage radius');
+  assert.ok((deer.animalFleeCooldown || 0) > 101.3, 'Re-arming must still retain a short calm cooldown');
+
+  const cooldownStep = stepWildAnimalState(deer, { x: -2, z: 0, d: 2 }, 102, 0.05, () => false, () => 0.5);
+  assert.equal(cooldownStep.isFleeing, false, 'A fresh panic is blocked until the cooldown expires');
+
+  const renewedThreat = stepWildAnimalState(deer, { x: -2, z: 0, d: 2 }, 103, 0.05, () => false, () => 0.5);
+  assert.equal(renewedThreat.isFleeing, true, 'A genuinely new encounter can trigger a new finite panic');
+});
+
+test('wild boar (野豬): aggression refreshes safely, dead animals ignore provocation, and blocked charges stop', async () => {
+  const { stepWildBoarState, triggerWildBoarAggression } = await import('./rules');
+  const boar: ResourceNode = {
+    id: 'boar_guard_test',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 0,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 200,
+    animalMaxHp: 200,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+
+  triggerWildBoarAggression(boar, 'hunter-1', 10);
+  triggerWildBoarAggression(boar, 'hunter-2', 11);
+  assert.equal(boar.animalAggroTargetId, 'hunter-2');
+  assert.equal(boar.animalAggroUntil, 19, 'A newer hit refreshes the aggression leash from its own timestamp');
+
+  const blockedCharge = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => true);
+  assert.equal(blockedCharge.isCharging, false);
+  assert.equal(blockedCharge.distMoved, 0);
+  assert.equal(boar.x, 0);
+  assert.equal(boar.z, 0);
+
+  boar.animalAlive = false;
+  boar.animalAggroTargetId = undefined;
+  boar.animalAggroUntil = 0;
+  triggerWildBoarAggression(boar, 'late-hit', 15);
+  assert.equal(boar.animalAggroTargetId, undefined, 'Dead boars cannot reacquire attackers');
+  assert.equal(boar.animalAggroUntil, 0);
+});
+
+
+
+test('production timing bonuses are applied only to their intended civilization and unit categories', () => {
+  assert.equal(getCivilizationBuildSpeedMultiplier('medieval', INITIAL_MODS), 1);
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', INITIAL_MODS), 1.05);
+  assert.equal(getCivilizationBuildSpeedMultiplier('fantasy', INITIAL_MODS), 1);
+
+  const disabledAnimeMods = INITIAL_MODS.map((mod) =>
+    mod.id === 'mod_anime' ? { ...mod, enabled: false } : mod
+  );
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', disabledAnimeMods), 1);
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', []), 1);
+
+  assert.equal(getLandmarkTrainingSpeedMultiplier(['landmark_barracks'], 'melee'), 1.35);
+  assert.equal(getLandmarkTrainingSpeedMultiplier(['landmark_barracks'], 'ranged'), 1);
+  assert.equal(getLandmarkTrainingSpeedMultiplier([], 'melee'), 1);
+
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'melee'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'ranged'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'cavalry'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'worker'), 1);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'siege'), 1);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz']), 0.75);
+});
+
+
+test('cooperative construction follows the requested contribution curve', () => {
+  assert.equal(getConstructionWorkerMultiplier(0), 0);
+  assert.equal(getConstructionWorkerMultiplier(1), 1);
+  assert.equal(getConstructionWorkerMultiplier(2), 1.75);
+  assert.equal(getConstructionWorkerMultiplier(3), 2.35);
+  assert.equal(getConstructionWorkerMultiplier(4), 2.85);
+  assert.equal(getConstructionWorkerMultiplier(5), 3.35);
+  assert.equal(getConstructionWorkerMultiplier(6), 3.85);
+  assert.equal(getConstructionWorkerMultiplier(8), 4.85);
+  assert.equal(getConstructionWorkerMultiplier(10), 5.85);
+  assert.equal(getConstructionWorkerMultiplier(-2), 0);
+  assert.equal(getConstructionWorkerMultiplier(Number.NaN), 0);
+});
+
+test('construction ETA shares the live builder and civilization speed formula', () => {
+  const near = (actual: number | null, expected: number) => {
+    assert.ok(actual !== null && Math.abs(actual - expected) < 1e-9, `expected ${actual} to be near ${expected}`);
+  };
+  near(estimateConstructionTimeRemaining(40, 0.1, 1), 36 * 1.12);
+  near(estimateConstructionTimeRemaining(40, 0.1, 2), (36 * 1.12) / 1.75);
+  near(estimateConstructionTimeRemaining(40, 0.1, 4), (36 * 1.12) / 2.85);
+  assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
+  assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1, 0), null);
+});
+
+test('age-up landmark durations match the requested single-builder completion targets', () => {
+  const ageTwoLandmarks = [DEFAULT_BUILDINGS.landmark_aachen, DEFAULT_BUILDINGS.landmark_barracks];
+  const ageThreeLandmarks = [DEFAULT_BUILDINGS.landmark_guildhall, DEFAULT_BUILDINGS.landmark_citadel];
+  const ageFourLandmarks = [DEFAULT_BUILDINGS.landmark_observatory, DEFAULT_BUILDINGS.landmark_arsenal];
+
+  for (const landmark of ageTwoLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 224) < 1e-9);
+  }
+  for (const landmark of ageThreeLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 263.2) < 1e-9);
+  }
+  for (const landmark of ageFourLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 336) < 1e-9);
+  }
+});
+
+
+test('production times use a 1.12 time scale and all speed bonuses share a 1.12x ceiling', () => {
+  assert.equal(PRODUCTION_TIME_SCALE, 1.12);
+  assert.equal(getCappedProductionSpeedMultiplier(1), 1);
+  assert.equal(getCappedProductionSpeedMultiplier(1.05, 1.08), 1.12);
+  assert.equal(getCappedProductionSpeedMultiplier(1.25, 1.35), 1.12);
+  assert.equal(getEffectiveProductionDuration(22), 24.64);
+  assert.equal(getEffectiveProductionDuration(22, 1.25, 1.35), 22);
+  assert.equal(getEffectiveUnitTrainingDuration(22), 24.64);
+  assert.equal(getEffectiveUnitTrainingDuration(22, 0.75), 22);
+  assert.equal(getEffectiveUnitTrainingDuration(22, 1, 1.25, 1.35), 22);
+});
+
+test('all civilization villager archetypes have a consistent 22-second base training time', () => {
+  const villagerIds = new Set(['villager', 'anime_spirit_harvester', 'fantasy_goblin_sapper']);
+  const workers = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS].filter(
+    (unit) => villagerIds.has(unit.id)
+  );
+  assert.equal(workers.length, 3, 'Each civilization must provide one villager archetype');
+  workers.forEach((worker) => assert.equal(worker.stats.trainTime, 22, worker.id));
+});
+
+
+test('AI resource-demand forecast expands bounded buffers for sustained stock drain', async () => {
+  const { computeAiResourceDemandTargets } = await import('./rules');
+  assert.deepEqual(computeAiResourceDemandTargets(2), { food: 1200, wood: 280, gold: 600, stone: 120 });
+  assert.deepEqual(computeAiResourceDemandTargets(2, { food: -240, wood: -320, gold: -900, stone: -24 }), {
+    food: 1200, wood: 700, gold: 1500, stone: 120,
+  });
+  assert.deepEqual(computeAiResourceDemandTargets(4, { food: -5000, wood: -5000, gold: -5000, stone: -5000 }), {
+    food: 1750, wood: 850, gold: 625, stone: 650,
+  });
+});
+
+test('AI age-up saving stops for active landmarks and yields to genuine emergencies', async () => {
+  const { shouldAiSaveForNextAge, shouldAiDeferOptionalMilitaryProduction } = await import('./rules');
+  const readiness = {
+    age: 1, gameTime: 45, workerCount: 7, minimumWorkers: 5, minimumGameTime: 35,
+    landmarkActive: false,
+    resources: { food: 280, wood: 120, gold: 120, stone: 0 },
+    ageUpCost: { food: 400, wood: 0, gold: 200, stone: 0 },
+  };
+  assert.equal(shouldAiSaveForNextAge(readiness), true);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, landmarkActive: true }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, gameTime: 34.9 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, workerCount: 4 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, resources: { food: 400, wood: 0, gold: 200, stone: 0 } }), false);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 0 }), true);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 2, underAttack: 0 }), false);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 1 }), false);
+});
+
+test('AI resource-camp payback requires dense supply and meaningful delivered-income gain', async () => {
+  const { estimateAiResourceCampPaybackSeconds } = await import('./rules');
+  const gatherers = [
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 30, proposedTravelDistance: 6 },
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 34, proposedTravelDistance: 7 },
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 32, proposedTravelDistance: 6 },
+  ];
+  const payback = estimateAiResourceCampPaybackSeconds({ resourceType: 'wood', totalNodeAmount: 1200, gatherers, woodCost: 140 });
+  assert.ok(payback !== null && payback > 0 && payback <= 180);
+  assert.equal(estimateAiResourceCampPaybackSeconds({ resourceType: 'wood', totalNodeAmount: 200, gatherers, woodCost: 140 }), null);
+  assert.equal(estimateAiResourceCampPaybackSeconds({ resourceType: 'gold', totalNodeAmount: 1200, gatherers: gatherers.slice(0, 1), woodCost: 140 }), null);
+  assert.equal(estimateAiResourceCampPaybackSeconds({
+    resourceType: 'stone', totalNodeAmount: 1200,
+    gatherers: gatherers.map((worker) => ({ ...worker, proposedTravelDistance: 29 })),
+    woodCost: 140,
+  }), null);
 });
 
 

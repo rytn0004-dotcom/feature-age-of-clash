@@ -312,6 +312,12 @@ export interface UnitEntity extends EntityCommon {
   pathCooldown?: number;
   lastProgressCheckPos?: { x: number; z: number };
   stuckAccumulator?: number;
+  /** Continuous time below the movement-progress threshold while a path goal remains active. */
+  stuckDuration?: number;
+  /** Cooldown between forced A* refreshes after a sustained movement stall. */
+  pathRecoveryCooldown?: number;
+  /** Lifetime count of forced path refreshes triggered by movement-stall detection. */
+  pathRecoveryCount?: number;
   /** Continuous assault on the same building (sapping / sustained torching) */
   siegeTargetId?: string;
   siegeChannelTime?: number;

@@ -268,7 +268,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 II 封建地標】聖潔教堂光環：全體村民採集效率 +25%，可駐紮 12 名單位庇護。',
     maxHp: 3500,
     cost: { food: 400, wood: 0, gold: 200, stone: 0 },
-    buildTime: 40,
+    buildTime: 200 / 0.9, // one villager completes Age I → II in 200s after the 10% foundation start
     trainableUnits: [],
     buildingArmor: 14,
     maxGarrison: 12,
@@ -283,7 +283,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 II 封建地標】軍事革新中心：軍事攻擊力 +3，可駐紮 14 名單位與部署攻城衝車。',
     maxHp: 3500,
     cost: { food: 400, wood: 0, gold: 200, stone: 0 },
-    buildTime: 40,
+    buildTime: 200 / 0.9, // one villager completes Age I → II in 200s after the 10% foundation start
     trainableUnits: ['swordsman', 'knight', 'battering_ram'],
     attack: 16,
     range: 16,
@@ -301,7 +301,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 III 城堡地標】帝國貿易總署：自動產出黃金與石料，可駐紮 12 名人員。',
     maxHp: 4500,
     cost: { food: 1200, wood: 0, gold: 600, stone: 0 },
-    buildTime: 55,
+    buildTime: 235 / 0.9, // one villager completes Age II → III in 235s after the 10% foundation start
     trainableUnits: [],
     producesResource: { type: 'gold', amountPerSec: 1.5 },
     buildingArmor: 15,
@@ -317,7 +317,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 III 城堡地標】重裝要塞，提供 20 人口、18 駐防槽與重型防禦弩砲。',
     maxHp: 5200,
     cost: { food: 1200, wood: 0, gold: 600, stone: 0 },
-    buildTime: 55,
+    buildTime: 235 / 0.9, // one villager completes Age II → III in 235s after the 10% foundation start
     trainableUnits: ['knight', 'battering_ram', 'catapult'],
     attack: 40,
     range: 22,
@@ -336,7 +336,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 IV 帝王地標】破除戰爭迷霧照亮敵軍全圖陣地，全軍護甲 +4、生命 +20%，可駐紮 14 名人員。',
     maxHp: 6000,
     cost: { food: 2400, wood: 0, gold: 1200, stone: 0 },
-    buildTime: 75,
+    buildTime: 300 / 0.9, // one villager completes Age III → IV in 300s after the 10% foundation start
     trainableUnits: [],
     buildingArmor: 16,
     maxGarrison: 14,
@@ -351,7 +351,7 @@ export const DEFAULT_BUILDINGS: Record<BuildingType, BuildingDefinition> = {
     description: '【時代 IV 帝王地標】終極攻城軍火庫，可生產手推砲與巨型投石機，可駐紮 16 名友軍。',
     maxHp: 6000,
     cost: { food: 2400, wood: 0, gold: 1200, stone: 0 },
-    buildTime: 75,
+    buildTime: 300 / 0.9, // one villager completes Age III → IV in 300s after the 10% foundation start
     trainableUnits: ['battering_ram', 'catapult', 'bombard_cannon'],
     attack: 45,
     range: 24,
@@ -412,7 +412,7 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
       speed: 3.0,
       attackRate: 0.7,
       cost: { food: 50, wood: 0, gold: 0, stone: 0 },
-      trainTime: 8,
+      trainTime: 22,
       gatherSpeed: 0.5833, // 35 resources per 60 seconds
       carryCapacity: 15,
     },
@@ -838,7 +838,7 @@ export const ANIME_UNITS: UnitDefinition[] = [
       speed: 3.15,
       attackRate: 0.72,
       cost: { food: 55, wood: 0, gold: 10, stone: 0 },
-      trainTime: 7,
+      trainTime: 22,
       gatherSpeed: 0.62,
       carryCapacity: 15,
     },
@@ -986,7 +986,7 @@ export const FANTASY_UNITS: UnitDefinition[] = [
       speed: 3.15,
       attackRate: 0.72,
       cost: { food: 50, wood: 15, gold: 10, stone: 0 },
-      trainTime: 6,
+      trainTime: 22,
       gatherSpeed: 0.6,
       carryCapacity: 15,
     },

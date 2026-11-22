@@ -19,13 +19,71 @@ import {
   TechDefinition,
   UnitCategory,
 } from '../types/game';
-import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
+import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
+import { estimateDeliveredResourcePerMinute } from './economyInsights';
 
 export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+/** Field-assembled battering rams follow the same global production time scale. */
+export const FIELD_RAM_ASSEMBLY_BASE_DURATION = 18;
+export const FIELD_RAM_ASSEMBLY_DURATION = getEffectiveProductionDuration(FIELD_RAM_ASSEMBLY_BASE_DURATION);
+
+/** Ready-builder estimate for the 4-person project; fewer than 3 cancels assembly. */
+export function estimateFieldRamAssemblyDuration(readyBuilderCount: number): number | null {
+  const readyCount = Math.floor(Number.isFinite(readyBuilderCount) ? readyBuilderCount : 0);
+  if (readyCount < 3) return null;
+  return +(FIELD_RAM_ASSEMBLY_DURATION * 4 / readyCount).toFixed(3);
+}
+
 
 export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
+
+/**
+ * Builder contribution curve requested for cooperative construction:
+ * worker 1 = 1.00; workers 2–5 add 0.75 / 0.60 / 0.50 / 0.50;
+ * every worker after the fifth adds a further 0.50.
+ *
+ * This gives the first builder full value while keeping additional builders
+ * useful without allowing them to multiply construction speed linearly.
+ */
+const INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS = [1, 0.75, 0.6, 0.5, 0.5] as const;
+const ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION = 0.5;
+
+export function getConstructionWorkerMultiplier(workerCount: number): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(workerCount) ? workerCount : 0));
+  if (count === 0) return 0;
+
+  const initialCount = Math.min(count, INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  const initialMultiplier = INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS
+    .slice(0, initialCount)
+    .reduce((total, contribution) => total + contribution, 0);
+  const additionalCount = Math.max(0, count - INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  return +(initialMultiplier + additionalCount * ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION).toFixed(3);
+}
+
+/** Returns null when there are no active builders or the inputs are invalid. */
+export function estimateConstructionTimeRemaining(
+  buildTime: number,
+  progress: number,
+  workerCount: number,
+  constructionSpeedMultiplier = 1
+): number | null {
+  if (
+    !Number.isFinite(buildTime) ||
+    buildTime <= 0 ||
+    !Number.isFinite(progress) ||
+    !Number.isFinite(constructionSpeedMultiplier) ||
+    constructionSpeedMultiplier <= 0
+  ) {
+    return null;
+  }
+  const workerMultiplier = getConstructionWorkerMultiplier(workerCount);
+  if (workerMultiplier <= 0) return null;
+  const cappedSpeed = getCappedProductionSpeedMultiplier(constructionSpeedMultiplier);
+  const remainingBaseWork = Math.max(0, 1 - Math.max(0, Math.min(1, progress))) * buildTime;
+  return getEffectiveProductionDuration(remainingBaseWork, cappedSpeed) / workerMultiplier;
+}
 
 /**
  * AI combat units withdraw to friendly garrisons when critically damaged.
@@ -79,7 +137,6 @@ export function shouldAiUnitLeaveShelter(
     : 0.72;
   return Math.max(0, hp) / maxHp >= threshold;
 }
-
 /** A live unit can reserve one shelter slot while it is actively walking to that garrison. */
 export interface GarrisonReservationUnit {
   id: string;
@@ -902,6 +959,68 @@ export function evaluateAiPlan(
   };
 }
 
+
+/** Build stock targets from next-age cost and the rolling, observed net burn rate. */
+export function computeAiResourceDemandTargets(
+  age: AgeLevel | number,
+  netRates?: Partial<Record<ResourceType, number>>
+): Resources {
+  const nextAgeCost = age < 2 ? { food: 400, gold: 200 } : age < 3 ? { food: 1200, gold: 600 } : age < 4 ? { food: 2400, gold: 1200 } : null;
+  const targets: Resources = {
+    food: Math.max(700, nextAgeCost?.food || 0),
+    wood: age < 2 ? 220 : age < 3 ? 280 : 340,
+    gold: Math.max(250, nextAgeCost?.gold || 0),
+    stone: age < 2 ? 40 : age < 3 ? 120 : age < 4 ? 200 : 260,
+  };
+  if (!netRates) return targets;
+  for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+    const rate = netRates[type];
+    if (!Number.isFinite(rate) || (rate as number) >= -4) continue;
+    const base = targets[type];
+    // Bound the forecast so a temporary spending spike cannot destabilize allocation.
+    targets[type] = Math.min(base * 2.5, Math.max(base, Math.abs(rate as number) * 2.5));
+  }
+  return targets;
+}
+
+export interface AiAgeUpSavingReadiness {
+  age: number;
+  gameTime: number;
+  workerCount: number;
+  minimumWorkers: number;
+  minimumGameTime: number;
+  landmarkActive: boolean;
+  resources: Resources;
+  ageUpCost: Resources | null;
+}
+
+/** Saves for the next landmark only while its construction has not started. */
+export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
+  if (
+    !Number.isFinite(input.age) || input.age < 1 || input.age >= 4 ||
+    !Number.isFinite(input.gameTime) || !Number.isFinite(input.workerCount) ||
+    !Number.isFinite(input.minimumWorkers) || !Number.isFinite(input.minimumGameTime) ||
+    input.landmarkActive || !input.ageUpCost ||
+    input.workerCount < input.minimumWorkers || input.gameTime < input.minimumGameTime
+  ) return false;
+  return !canAfford(input.resources, input.ageUpCost);
+}
+
+/** Keep the age-up reserve unless an active attack or undersized army needs defense. */
+export function shouldAiDeferOptionalMilitaryProduction(input: {
+  savingForAgeUp: boolean;
+  armyCount: number;
+  underAttack: number;
+  minimumDefenseArmy?: number;
+}): boolean {
+  const minimumArmy = Number.isFinite(input.minimumDefenseArmy)
+    ? Math.max(0, Math.floor(input.minimumDefenseArmy as number))
+    : 3;
+  return input.savingForAgeUp && Number.isFinite(input.armyCount) &&
+    input.armyCount >= minimumArmy && Number.isFinite(input.underAttack) &&
+    input.underAttack <= 0;
+}
+
 /**
  * Computes desired worker allocation across food/wood/gold/stone based on current Age,
  * resource deficits, and active gather_priority script mode.
@@ -910,7 +1029,8 @@ export function computeAiWorkerAllocation(
   resources: Resources,
   workerCount: number,
   gatherFocus = 'balanced_eco',
-  age: AgeLevel | number = 1
+  age: AgeLevel | number = 1,
+  netRates?: Partial<Record<ResourceType, number>>
 ): Record<ResourceType, number> {
   const result: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
   if (workerCount <= 0) return result;
@@ -932,11 +1052,49 @@ export function computeAiWorkerAllocation(
     weights = { food: 0.52, wood: 0.3, gold: 0.13, stone: 0.05 };
   }
 
+  // Reserve a gradual share of labor for the next age instead of waiting for
+  // food/gold to fall below tiny emergency thresholds. The boost fades to zero
+  // as each age-up resource target is reached, preventing post-upgrade hoarding.
+  const nextAgeCost =
+    age < 2
+      ? { food: 400, gold: 200 }
+      : age < 3
+      ? { food: 1200, gold: 600 }
+      : age < 4
+      ? { food: 2400, gold: 1200 }
+      : null;
+  if (nextAgeCost) {
+    const foodReserveGap = Math.max(0, Math.min(1, (nextAgeCost.food - Math.max(0, resources.food)) / nextAgeCost.food));
+    const goldReserveGap = Math.max(0, Math.min(1, (nextAgeCost.gold - Math.max(0, resources.gold)) / nextAgeCost.gold));
+    weights.food += foodReserveGap * 0.28;
+    weights.gold += goldReserveGap * 0.26;
+  }
+
   // Dynamic deficit correction: boost starved essentials without starving everything else
   if (resources.food < 110) weights.food += 0.26;
   if (resources.wood < 110) weights.wood += 0.22;
   if (resources.gold < 70 && workerCount >= 4) weights.gold += 0.18;
   if (age >= 2 && resources.stone < 60 && workerCount >= 7) weights.stone += 0.1;
+
+  // Use rolling inventory flow as a bounded correction, not as the sole source
+  // of truth. Discrete construction / army purchases can create short negative
+  // bursts, so only react while stock is still below a soft safety target.
+  if (netRates) {
+    const stockTargets = computeAiResourceDemandTargets(age, netRates);
+
+    for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+      const netPerMinute = netRates[type];
+      if (!Number.isFinite(netPerMinute)) continue;
+
+      const stock = Math.max(0, resources[type] || 0);
+      const target = stockTargets[type];
+      if (netPerMinute! < -4 && stock < target * 1.5) {
+        weights[type] += Math.min(0.2, (-netPerMinute! - 4) / 60);
+      } else if (netPerMinute! > 8 && stock > target) {
+        weights[type] = Math.max(0.04, weights[type] - Math.min(0.12, (netPerMinute! - 8) / 120));
+      }
+    }
+  }
 
   const totalW = weights.food + weights.wood + weights.gold + weights.stone;
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -968,12 +1126,79 @@ export function computeAiWorkerAllocation(
   return result;
 }
 
+/**
+ * Prevent AI worker queues from overshooting their economic target or consuming
+ * the resources reserved for the next-age landmark.
+ *
+ * Queued villagers count as committed workers. The minimum workforce needed
+ * for the next age may still be reached, but once that threshold is met, the
+ * next worker must be affordable without dipping into the landmark reserve.
+ */
+export function shouldAiQueueWorker(options: {
+  workerCount: number;
+  queuedWorkerCount: number;
+  workerCap: number;
+  resources: Resources;
+  workerCost: Resources;
+  ageUpReserve: Resources;
+  minimumWorkersForAgeUp: number;
+}): boolean {
+  const committedWorkers =
+    Math.max(0, Math.floor(Number.isFinite(options.workerCount) ? options.workerCount : 0)) +
+    Math.max(0, Math.floor(Number.isFinite(options.queuedWorkerCount) ? options.queuedWorkerCount : 0));
+  const workerCap = Math.max(0, Math.floor(Number.isFinite(options.workerCap) ? options.workerCap : 0));
+  if (committedWorkers >= workerCap) return false;
+
+  const resourceTypes: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const canAffordWorker = resourceTypes.every(
+    (type) => (options.resources[type] || 0) >= (options.workerCost[type] || 0)
+  );
+  if (!canAffordWorker) return false;
+
+  const minimumWorkers = Math.max(
+    0,
+    Math.floor(Number.isFinite(options.minimumWorkersForAgeUp) ? options.minimumWorkersForAgeUp : 0)
+  );
+  if (committedWorkers < minimumWorkers) return true;
+
+  return resourceTypes.every(
+    (type) =>
+      (options.resources[type] || 0) - (options.workerCost[type] || 0) >=
+      (options.ageUpReserve[type] || 0)
+  );
+}
+
+/** Selects the largest unmet resource target that currently has a live node. */
+export function selectAiWorkerResourceType(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[]
+): ResourceType | null {
+  const available = new Set(availableTypes);
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 0;
+
+  for (const type of types) {
+    if (!available.has(type)) continue;
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  return recipient;
+}
+
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,
-  desiredAlloc: Readonly<Record<ResourceType, number>>
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone']
 ): { from: ResourceType; to: ResourceType } | null {
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const available = new Set(availableTypes);
   let donor: ResourceType | null = null;
   let donorSurplus = 1;
   let recipient: ResourceType | null = null;
@@ -986,6 +1211,7 @@ export function selectAiWorkerReassignment(
       donorSurplus = surplus;
     }
 
+    if (!available.has(type)) continue;
     const deficit = desiredAlloc[type] - activeCounts[type];
     if (deficit > recipientDeficit) {
       recipient = type;
@@ -1028,6 +1254,88 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
 
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
+
+
+export interface AiResourceCampWorkerProfile {
+  gatherPerSecond: number;
+  carryCapacity: number;
+  moveSpeed: number;
+  currentTravelDistance: number;
+  proposedTravelDistance: number;
+}
+
+/** Estimate the simulated-seconds payback for a new resource drop-off camp. */
+export function estimateAiResourceCampPaybackSeconds(input: {
+  resourceType: ResourceType;
+  totalNodeAmount: number;
+  gatherers: readonly AiResourceCampWorkerProfile[];
+  woodCost: number;
+  minimumGatherers?: number;
+  minimumDistanceSaved?: number;
+  maximumPaybackSeconds?: number;
+}): number | null {
+  const minimumGatherers = Number.isFinite(input.minimumGatherers) ? Math.max(1, Math.floor(input.minimumGatherers as number)) : 3;
+  const minimumDistanceSaved = Number.isFinite(input.minimumDistanceSaved) ? Math.max(0, input.minimumDistanceSaved as number) : 8;
+  const maximumPaybackSeconds = Number.isFinite(input.maximumPaybackSeconds) ? Math.max(0, input.maximumPaybackSeconds as number) : 180;
+  if (
+    (input.resourceType !== 'wood' && input.resourceType !== 'gold' && input.resourceType !== 'stone') ||
+    !Number.isFinite(input.totalNodeAmount) || input.totalNodeAmount <= 0 ||
+    !Number.isFinite(input.woodCost) || input.woodCost <= 0 ||
+    input.gatherers.length < minimumGatherers
+  ) return null;
+
+  let totalGatherRate = 0;
+  let currentDeliveredPerMinute = 0;
+  let proposedDeliveredPerMinute = 0;
+  let weightedDistanceSaved = 0;
+  for (const worker of input.gatherers) {
+    if (
+      !Number.isFinite(worker.gatherPerSecond) || worker.gatherPerSecond <= 0 ||
+      !Number.isFinite(worker.carryCapacity) || worker.carryCapacity <= 0 ||
+      !Number.isFinite(worker.moveSpeed) || worker.moveSpeed <= 0 ||
+      !Number.isFinite(worker.currentTravelDistance) || worker.currentTravelDistance < 0 ||
+      !Number.isFinite(worker.proposedTravelDistance) || worker.proposedTravelDistance < 0
+    ) return null;
+    totalGatherRate += worker.gatherPerSecond;
+    weightedDistanceSaved += worker.currentTravelDistance - worker.proposedTravelDistance;
+    currentDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.currentTravelDistance);
+    proposedDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.proposedTravelDistance);
+  }
+  if (
+    totalGatherRate <= 0 ||
+    input.totalNodeAmount < totalGatherRate * 90 ||
+    weightedDistanceSaved / input.gatherers.length < minimumDistanceSaved
+  ) return null;
+
+  const throughputGain = proposedDeliveredPerMinute - currentDeliveredPerMinute;
+  if (throughputGain <= 0) return null;
+  const resourceValue = input.resourceType === 'gold' ? 1.2 : 1;
+  const paybackSeconds = (input.woodCost * 60) / (throughputGain * resourceValue);
+  return Number.isFinite(paybackSeconds) && paybackSeconds <= maximumPaybackSeconds ? +paybackSeconds.toFixed(2) : null;
+}
+
+/**
+ * Predicts whether a resource node will run dry before gatherers can reasonably
+ * finish relocating. Rates are total active gathering output in resources/sec.
+ */
+export function shouldRelocateFromResourceNode(
+  remainingAmount: number,
+  totalGatherRatePerSecond: number,
+  relocationLeadTimeSeconds = 12
+): boolean {
+  if (
+    !Number.isFinite(remainingAmount) ||
+    remainingAmount < 0 ||
+    !Number.isFinite(totalGatherRatePerSecond) ||
+    totalGatherRatePerSecond <= 0 ||
+    !Number.isFinite(relocationLeadTimeSeconds) ||
+    relocationLeadTimeSeconds <= 0
+  ) {
+    return false;
+  }
+
+  return remainingAmount <= totalGatherRatePerSecond * relocationLeadTimeSeconds;
+}
 
 export function getNodeTierGatherMultiplier(nodeTier?: ResourceNode['nodeTier']): number {
   return nodeTier === 'rich' ? RICH_NODE_GATHER_MULTIPLIER : 1.0;
@@ -1089,13 +1397,17 @@ export function findBalancedResourceNode(
   nodes: ResourceNode[],
   type: ResourceType | undefined,
   assignedCounts: ReadonlyMap<string, number> = new Map(),
-  maxDistance = Infinity
+  maxDistance = Infinity,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
+    // Wild boars can injure isolated villagers; automatic economy dispatch
+    // leaves them to deliberate hunting parties unless explicitly authorized.
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     const distance = getDistance(x, z, node.x, node.z);
     if (distance > maxDistance) continue;
 
@@ -2990,8 +3302,26 @@ export interface FactionResourceTelemetry {
     idle: number;
   };
   totalWorkers: number;
+  /** Theoretical gather speed + passive shrine income, before transport walking time. */
   incomePerMin: ResourceIncomeRate;
+  /** Estimated resources actually deposited, after gather time and round-trip delivery travel. */
+  deliveredIncomePerMin: ResourceIncomeRate;
 }
+
+export type ResourceDeliveryWorker = Pick<
+  UnitEntity,
+  'unitDef' | 'x' | 'z'
+>;
+
+export type ResourceDeliveryNode = Pick<
+  ResourceNode,
+  'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount' | 'x' | 'z'
+>;
+
+export type EstimateResourceDeliveryTravel = (
+  worker: ResourceDeliveryWorker,
+  node: ResourceDeliveryNode
+) => number | null;
 
 /**
  * Computes real-time worker allocation counts and estimated per-minute income
@@ -3003,17 +3333,15 @@ export function computeFactionResourceTelemetry(
     Pick<
       UnitEntity,
       'faction' | 'hp' | 'state' | 'unitDef' | 'targetResourceNodeId' | 'carryingResource'
-    >
+    > & Partial<Pick<UnitEntity, 'x' | 'z'>>
   >,
-  resourceNodes: Array<Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>>,
+  resourceNodes: Array<ResourceDeliveryNode>,
   contestedPoints: Array<Pick<ContestedPoint, 'ownerFaction' | 'shrineType' | 'siegeSupplyActive'>>,
   researchedTechs: string[],
-  hasStarOath = false
+  hasStarOath = false,
+  estimateDeliveryTravel?: EstimateResourceDeliveryTravel
 ): FactionResourceTelemetry {
-  const nodeById = new Map<
-    string,
-    Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>
-  >();
+  const nodeById = new Map<string, ResourceDeliveryNode>();
   for (const n of resourceNodes) {
     nodeById.set(n.id, n);
   }
@@ -3027,6 +3355,7 @@ export function computeFactionResourceTelemetry(
     idle: 0,
   };
   const incomeRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
+  const deliveredRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
   let totalWorkers = 0;
 
   for (const u of units) {
@@ -3052,7 +3381,29 @@ export function computeFactionResourceTelemetry(
               researchedTechs,
               hasStarOath
             );
-        incomeRaw[resType] += baseGatherPerSec * 60 * mult;
+        const gatherPerSecond = baseGatherPerSec * mult;
+        const theoreticalPerMin = gatherPerSecond * 60;
+        incomeRaw[resType] += theoreticalPerMin;
+
+        if (estimateDeliveryTravel) {
+          if (targetNode && Number.isFinite(u.x) && Number.isFinite(u.z)) {
+            const travelDistance = estimateDeliveryTravel(
+              u as ResourceDeliveryWorker,
+              targetNode
+            );
+            if (travelDistance !== null && Number.isFinite(travelDistance) && travelDistance >= 0) {
+              deliveredRaw[resType] += estimateDeliveredResourcePerMinute(
+                gatherPerSecond,
+                u.unitDef.stats.carryCapacity,
+                u.unitDef.stats.speed,
+                travelDistance
+              );
+            }
+          }
+        } else {
+          // Preserve theoretical telemetry for callers without a world/drop-off model.
+          deliveredRaw[resType] += theoreticalPerMin;
+        }
         continue;
       }
     }
@@ -3068,6 +3419,10 @@ export function computeFactionResourceTelemetry(
     incomeRaw.wood += perSec.wood * 60;
     incomeRaw.gold += perSec.gold * 60;
     incomeRaw.stone += perSec.stone * 60;
+    deliveredRaw.food += perSec.food * 60;
+    deliveredRaw.wood += perSec.wood * 60;
+    deliveredRaw.gold += perSec.gold * 60;
+    deliveredRaw.stone += perSec.stone * 60;
   }
 
   return {
@@ -3078,6 +3433,12 @@ export function computeFactionResourceTelemetry(
       wood: Math.round(incomeRaw.wood),
       gold: Math.round(incomeRaw.gold),
       stone: Math.round(incomeRaw.stone),
+    },
+    deliveredIncomePerMin: {
+      food: Math.round(deliveredRaw.food),
+      wood: Math.round(deliveredRaw.wood),
+      gold: Math.round(deliveredRaw.gold),
+      stone: Math.round(deliveredRaw.stone),
     },
   };
 }

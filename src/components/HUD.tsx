@@ -23,11 +23,16 @@ import {
   FlaskConical,
   ChevronDown,
   Check,
+  Activity,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
+import { formatCompactResourceCount, formatResourceCount } from '../game/resourceFormatting';
+import { calculateAgeResourceShortfall, calculateEconomyNetRates, getResourceHealthStatus } from '../game/economyInsights';
+import { getAgeResourceProgress } from '../game/ageProgress';
+import type { EconomyNetRates, EconomyResourceSnapshot } from '../game/economyInsights';
 import {
   canAfford,
   canAssembleFieldRam,
@@ -97,6 +102,10 @@ export const HUD: React.FC<HUDProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [techTreeFilter, setTechTreeFilter] = useState<'all' | 'eco' | 'counter' | 'doctrine' | 'fortify'>('all');
   const [isHudCompact, setIsHudCompact] = useState(false);
+  const [showEconomyPanel, setShowEconomyPanel] = useState(false);
+  const [isEconomyPinned, setIsEconomyPinned] = useState(false);
+  const [economyNetRates, setEconomyNetRates] = useState<EconomyNetRates | null>(null);
+  const economySnapshotsRef = useRef<EconomyResourceSnapshot[]>([]);
 
   useEffect(() => {
     if (!showSpeedMenu) return;
@@ -124,7 +133,7 @@ export const HUD: React.FC<HUDProps> = ({
   }, [engine]);
 
   useEffect(() => {
-    if (!showHotkeysModal && !showAgeModal && !showTechTreeModal) return;
+    if (!showHotkeysModal && !showAgeModal && !showTechTreeModal && !showEconomyPanel) return;
     const onModalKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
         e.preventDefault();
@@ -132,11 +141,13 @@ export const HUD: React.FC<HUDProps> = ({
         setShowHotkeysModal(false);
         setShowAgeModal(false);
         setShowTechTreeModal(false);
+        setShowEconomyPanel(false);
+        setIsEconomyPinned(false);
       }
     };
     window.addEventListener('keydown', onModalKeyDown, true);
     return () => window.removeEventListener('keydown', onModalKeyDown, true);
-  }, [showHotkeysModal, showAgeModal, showTechTreeModal]);
+  }, [showHotkeysModal, showAgeModal, showTechTreeModal, showEconomyPanel]);
 
   const NEXT_AGE_INFO: Record<
     number,
@@ -175,6 +186,15 @@ export const HUD: React.FC<HUDProps> = ({
     ? engine.buildings.find((b) => b.id === engine.selectedBuildingId)
     : null;
 
+  const [, setBuildingTimingRefresh] = useState(0);
+  useEffect(() => {
+    if (!selectedBuilding || engine.gameState !== 'playing') return;
+    const interval = window.setInterval(() => {
+      setBuildingTimingRefresh((value) => value + 1);
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [engine, selectedBuilding?.id, engine.gameState]);
+
   const selectedNode = engine.selectedNodeId
     ? engine.resourceNodes.find((n) => n.id === engine.selectedNodeId)
     : null;
@@ -195,6 +215,37 @@ export const HUD: React.FC<HUDProps> = ({
   const observedMaxPop = observedPopStats.max;
   const observedTelemetry = engine.getFactionResourceTelemetry(observedFactionId);
   const autoReseedEnabled = engine.isAutoReseedFarmsEnabled(observedFactionId);
+
+  // Sample stock on simulated match time only while the optional economy panel is open.
+  // This avoids a permanent timer and keeps the rate comparable across game-speed settings.
+  useEffect(() => {
+    if (!showEconomyPanel) return;
+    economySnapshotsRef.current = [];
+    setEconomyNetRates(null);
+
+    const captureEconomySnapshot = () => {
+      if (engine.gameState !== 'playing') return;
+      const next: EconomyResourceSnapshot = {
+        gameTime: engine.stats.gameDuration,
+        resources: { ...engine.getResourcesForFaction(observedFactionId) },
+      };
+      const history = economySnapshotsRef.current;
+      const last = history[history.length - 1];
+      if (last && next.gameTime <= last.gameTime) return;
+      history.push(next);
+
+      // Keep a rolling ~20-second simulated window, bounded to at most 16 samples.
+      while (history.length > 2 && next.gameTime - history[1].gameTime >= 20) history.shift();
+      while (history.length > 16) history.shift();
+      if (history.length >= 2) {
+        setEconomyNetRates(calculateEconomyNetRates(history[0], next));
+      }
+    };
+
+    captureEconomySnapshot();
+    const interval = window.setInterval(captureEconomySnapshot, 3000);
+    return () => window.clearInterval(interval);
+  }, [engine, observedFactionId, showEconomyPanel]);
 
   const isMinimapDraggingRef = useRef(false);
   const lastGroupClickRef = useRef<{ num: number; time: number }>({ num: 0, time: 0 });
@@ -689,6 +740,20 @@ export const HUD: React.FC<HUDProps> = ({
   const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
   const allCivTechs = getAllTechsForCiv(humanCivId);
   const buildableTypes = getBuildableTypesForCiv(humanCivId, observedAge);
+  const economyResourceRows = [
+    { key: 'food' as const, label: '糧食', icon: '🌾', stock: observedRes.food, gross: observedTelemetry.incomePerMin.food, delivered: observedTelemetry.deliveredIncomePerMin.food, workers: observedTelemetry.workersByResource.food, tone: 'amber' },
+    { key: 'wood' as const, label: '木材', icon: '🪵', stock: observedRes.wood, gross: observedTelemetry.incomePerMin.wood, delivered: observedTelemetry.deliveredIncomePerMin.wood, workers: observedTelemetry.workersByResource.wood, tone: 'emerald' },
+    { key: 'gold' as const, label: '黃金', icon: '🪙', stock: observedRes.gold, gross: observedTelemetry.incomePerMin.gold, delivered: observedTelemetry.deliveredIncomePerMin.gold, workers: observedTelemetry.workersByResource.gold, tone: 'yellow' },
+    { key: 'stone' as const, label: '石料', icon: '🪨', stock: observedRes.stone, gross: observedTelemetry.incomePerMin.stone, delivered: observedTelemetry.deliveredIncomePerMin.stone, workers: observedTelemetry.workersByResource.stone, tone: 'slate' },
+  ];
+  const nextAgeInfo = NEXT_AGE_INFO[observedAge];
+  const ageResourceShortfall = nextAgeInfo
+    ? calculateAgeResourceShortfall(observedRes, nextAgeInfo.cost)
+    : null;
+  const ageResourceProgress = nextAgeInfo
+    ? getAgeResourceProgress(observedRes, nextAgeInfo.cost)
+    : null;
+  const formatNetRate = (rate: number) => `${rate >= 0 ? '+' : ''}${Math.round(rate).toLocaleString('zh-TW')}/遊戲分鐘`;
   const compactBuildTypes: BuildingType[] = [
     'house',
     humanCiv.uniqueBuildingType,
@@ -701,12 +766,265 @@ export const HUD: React.FC<HUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between select-none z-10">
       {/* ================= TOP PERIMETER STATUS CLUSTER ================= */}
-      <header className="flex justify-between items-center gap-2 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/85 to-transparent pointer-events-none">
-        {/* Resource Badges */}
+      <header className="relative flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none">
+        <div
+          data-economy-hover-zone="true"
+          className="relative pointer-events-none"
+          onMouseEnter={() => setShowEconomyPanel(true)}
+          onMouseLeave={() => { if (!isEconomyPinned) setShowEconomyPanel(false); }}
+        >
+        {/* Primary economy row: all four resources and population stay visible without horizontal scrolling. */}
         <div
           data-top-resource-bar="true"
-          className="flex items-center gap-1 overflow-x-auto py-0.5 pointer-events-auto whitespace-nowrap"
+          data-resource-bar-layout="fixed-grid"
+          className="grid w-full min-w-0 grid-cols-5 gap-1 pointer-events-auto"
         >
+          {/* Food */}
+          <div
+            data-resource-pill="food"
+            aria-label={`糧食庫存：${formatResourceCount(observedRes.food)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`糧食庫存：${formatResourceCount(observedRes.food)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.food}/分 · 不計運輸：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
+          >
+            <span className="text-xs">🌾</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">糧</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">糧食</span>
+            <span data-resource-value="food" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-amber-400 tabular-nums">
+              {formatResourceCount(observedRes.food)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="food" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-amber-400 tabular-nums">
+              {formatCompactResourceCount(observedRes.food)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.food)}/m·{observedTelemetry.workersByResource.food}
+            </span>
+          </div>
+
+          {/* Wood */}
+          <div
+            data-resource-pill="wood"
+            aria-label={`木材庫存：${formatResourceCount(observedRes.wood)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`木材庫存：${formatResourceCount(observedRes.wood)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.wood}/分 · 不計運輸：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
+          >
+            <span className="text-xs">🪵</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">木</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">木材</span>
+            <span data-resource-value="wood" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-emerald-400 tabular-nums">
+              {formatResourceCount(observedRes.wood)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="wood" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-emerald-400 tabular-nums">
+              {formatCompactResourceCount(observedRes.wood)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.wood)}/m·{observedTelemetry.workersByResource.wood}
+            </span>
+          </div>
+
+          {/* Gold */}
+          <div
+            data-resource-pill="gold"
+            aria-label={`黃金庫存：${formatResourceCount(observedRes.gold)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`黃金庫存：${formatResourceCount(observedRes.gold)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.gold}/分 · 不計運輸：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
+          >
+            <span className="text-xs">🪙</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">金</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">黃金</span>
+            <span data-resource-value="gold" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-yellow-300 tabular-nums">
+              {formatResourceCount(observedRes.gold)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="gold" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-yellow-300 tabular-nums">
+              {formatCompactResourceCount(observedRes.gold)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.gold)}/m·{observedTelemetry.workersByResource.gold}
+            </span>
+          </div>
+
+          {/* Stone */}
+          <div
+            data-resource-pill="stone"
+            aria-label={`石料庫存：${formatResourceCount(observedRes.stone)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`石料庫存：${formatResourceCount(observedRes.stone)} · 估算入庫：+${observedTelemetry.deliveredIncomePerMin.stone}/分 · 不計運輸：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
+          >
+            <span className="text-xs">🪨</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">石</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">石料</span>
+            <span data-resource-value="stone" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-slate-300 tabular-nums">
+              {formatResourceCount(observedRes.stone)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="stone" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-slate-300 tabular-nums">
+              {formatCompactResourceCount(observedRes.stone)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{formatCompactResourceCount(observedTelemetry.deliveredIncomePerMin.stone)}/m·{observedTelemetry.workersByResource.stone}
+            </span>
+          </div>
+
+          {/* Population */}
+          <div
+            data-population-badge="true"
+            aria-label="人口"
+            className={`col-span-1 flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow min-w-0 overflow-hidden whitespace-nowrap ${
+              observedPop >= observedMaxPop
+                ? 'border-rose-500/70'
+                : observedPopStats.totalReserved >= observedMaxPop
+                ? 'border-amber-400/70'
+                : 'border-blue-500/30'
+            }`}
+            title={
+              observedPopStats.totalReserved >= observedMaxPop
+                ? '人口已達上限！請選取村民建造「房屋」(快捷鍵 E) 提升 +5 人口上限'
+                : '目前人口 / 人口上限（建造房屋可 +5 人口）'
+            }
+          >
+            <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">人</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">人口</span>
+            <span
+              data-population-value="true"
+              className={`text-xs font-extrabold tabular-nums ${
+                observedPop >= observedMaxPop
+                  ? 'text-rose-400'
+                  : observedPopStats.totalReserved >= observedMaxPop
+                  ? 'text-amber-300'
+                  : 'text-blue-300'
+              }`}
+            >
+              {observedPop}/{observedMaxPop}
+            </span>
+          </div>
+
+        </div>
+
+      {showEconomyPanel && (
+        <section
+          id="economy-overview-panel"
+          data-economy-panel="true"
+          aria-label="經濟總覽"
+          className="absolute top-full left-0 z-40 mt-1 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <h2 className="text-sm font-black tracking-wide text-emerald-200">經濟總覽</h2>
+              <p className="text-[10px] text-slate-400">以遊戲時間取樣；淨變化包含收入與所有資源支出</p>
+            </div>
+            <button
+              type="button"
+              data-economy-close="true"
+              onClick={() => { setIsEconomyPinned(false); setShowEconomyPanel(false); }}
+              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
+              aria-label="關閉經濟總覽"
+            >
+              關閉 ✕
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {economyResourceRows.map((resource) => {
+              const net = economyNetRates?.[resource.key];
+              const health = net === undefined ? null : getResourceHealthStatus(resource.stock, net);
+              const statusLabel = !health
+                ? '收集趨勢中'
+                : health.status === 'critical'
+                ? '短缺危險'
+                : health.status === 'warning'
+                ? '短缺警戒'
+                : health.status === 'draining'
+                ? '庫存下降'
+                : health.status === 'growing'
+                ? '庫存增加'
+                : '大致持平';
+              const statusTone = !health
+                ? 'text-slate-400'
+                : health.status === 'critical'
+                ? 'text-rose-300'
+                : health.status === 'warning'
+                ? 'text-amber-300'
+                : health.status === 'draining'
+                ? 'text-orange-300'
+                : health.status === 'growing'
+                ? 'text-emerald-300'
+                : 'text-slate-300';
+              return (
+                <article key={resource.key} data-economy-resource={resource.key} className="min-w-0 rounded-lg border border-slate-700/80 bg-slate-900/85 p-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-slate-300">{resource.icon} {resource.label}</span>
+                    <span className={`text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
+                  </div>
+                  <div className="mt-1 text-lg font-black tabular-nums">{formatResourceCount(resource.stock)}</div>
+                  <div className="mt-1 text-[10px] text-slate-400">不計運輸的採集／據點產能：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
+                  <div className="text-[10px] font-semibold text-emerald-200 tabular-nums">扣除往返運輸後估算入庫：+{Math.round(resource.delivered).toLocaleString('zh-TW')}/分</div>
+                  <div className={`text-[10px] font-bold tabular-nums ${net === undefined ? 'text-slate-500' : net < -0.05 ? 'text-orange-300' : net > 0.05 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                    {net === undefined ? '淨變化：資料收集中' : `淨變化：${formatNetRate(net)}`}
+                  </div>
+                  {health?.runwayMinutes !== null && health?.runwayMinutes !== undefined && (
+                    <div className="mt-1 text-[10px] text-rose-200">依目前速度約 {health.runwayMinutes.toFixed(1)} 遊戲分鐘耗盡</div>
+                  )}
+                  <div className="mt-1 text-[10px] text-slate-500">採集村民 {resource.workers} 人</div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">村民工作配置</h3>
+              <div className="space-y-2">
+                {[
+                  { key: 'food', label: '糧食', count: observedTelemetry.workersByResource.food, color: 'bg-amber-400' },
+                  { key: 'wood', label: '木材', count: observedTelemetry.workersByResource.wood, color: 'bg-emerald-400' },
+                  { key: 'gold', label: '黃金', count: observedTelemetry.workersByResource.gold, color: 'bg-yellow-300' },
+                  { key: 'stone', label: '石料', count: observedTelemetry.workersByResource.stone, color: 'bg-slate-300' },
+                  { key: 'building', label: '建築', count: observedTelemetry.workersByResource.building, color: 'bg-orange-400' },
+                  { key: 'idle', label: '閒置', count: observedTelemetry.workersByResource.idle, color: 'bg-rose-400' },
+                ].map((group) => (
+                  <div key={group.key} className="grid grid-cols-[44px_1fr_28px] items-center gap-2 text-[10px]">
+                    <span className="text-slate-400">{group.label}</span>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div className={`h-full rounded-full ${group.color}`} style={{ width: `${observedTelemetry.totalWorkers > 0 ? (group.count / observedTelemetry.totalWorkers) * 100 : 0}%` }} />
+                    </div>
+                    <span className="text-right font-bold tabular-nums text-slate-200">{group.count}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 border-t border-slate-700 pt-2 text-[10px] text-slate-400">
+                總村民 {observedTelemetry.totalWorkers} 人 · 閒置 {observedTelemetry.workersByResource.idle} 人 · 建築中 {observedTelemetry.workersByResource.building} 人
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">升時代準備度</h3>
+              {nextAgeInfo && ageResourceShortfall ? (
+                <>
+                  <div className="text-sm font-black text-amber-200">{nextAgeInfo.name}</div>
+                  <div className="mt-2 space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">糧食需求 {formatResourceCount(nextAgeInfo.cost.food)}</span><strong className={ageResourceShortfall.food > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.food > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.food)}` : '已足夠'}</strong></div>
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">黃金需求 {formatResourceCount(nextAgeInfo.cost.gold)}</span><strong className={ageResourceShortfall.gold > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.gold > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.gold)}` : '已足夠'}</strong></div>
+                  </div>
+                  <div className={`mt-3 rounded-md px-2 py-1.5 text-center text-xs font-black ${ageResourceShortfall.ready ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/10 text-amber-200'}`}>
+                    {ageResourceShortfall.ready ? '資源已達升時代門檻' : '仍需累積指定資源'}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-slate-500">此處只檢查升時代糧食與黃金門檻；地標建造條件、工人配置與戰場安全仍需另外確認。</p>
+                </>
+              ) : (
+                <div className="rounded-md bg-cyan-500/10 px-2 py-3 text-xs font-bold text-cyan-200">已達最高時代，沒有下一階段資源門檻。</div>
+              )}
+            </section>
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+            村民入庫估算依目前採集速度、負載量、移動速度與 A* 地形／建築繞行路線，計入採集點到合適存放建築的往返時間；不含戰鬥受阻、野生動物擊殺等待等臨時因素。淨變化則根據最近約 20 秒遊戲時間的庫存差額計算，包含所有收入與支出。
+          </p>
+        </section>
+      )}
+
+        </div>
+
+        {/* Secondary status and controls are separated from the resource grid so they cannot push resources off-screen. */}
+        <div className="flex flex-col gap-1.5 min-w-0 sm:flex-row sm:items-center sm:justify-between">
+          <div data-top-status-bar="true" className="flex min-w-0 flex-wrap items-center gap-1 pointer-events-auto">
           {isSpectator && observedParticipant && (
             <div
               data-spectator-watching="true"
@@ -722,103 +1040,8 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
           )}
 
-          {/* Food */}
-          <div
-            data-resource-pill="food"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
-          >
-            <span className="text-xs">🌾</span>
-            <span className="text-[11px] font-bold text-slate-300">糧食</span>
-            <span className="text-xs font-extrabold text-amber-400 tabular-nums">
-              {Math.floor(observedRes.food)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.food}/m·{observedTelemetry.workersByResource.food}
-            </span>
-          </div>
-
-          {/* Wood */}
-          <div
-            data-resource-pill="wood"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
-          >
-            <span className="text-xs">🪵</span>
-            <span className="text-[11px] font-bold text-slate-300">木材</span>
-            <span className="text-xs font-extrabold text-emerald-400 tabular-nums">
-              {Math.floor(observedRes.wood)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.wood}/m·{observedTelemetry.workersByResource.wood}
-            </span>
-          </div>
-
-          {/* Gold */}
-          <div
-            data-resource-pill="gold"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
-          >
-            <span className="text-xs">🪙</span>
-            <span className="text-[11px] font-bold text-slate-300">黃金</span>
-            <span className="text-xs font-extrabold text-yellow-300 tabular-nums">
-              {Math.floor(observedRes.gold)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.gold}/m·{observedTelemetry.workersByResource.gold}
-            </span>
-          </div>
-
-          {/* Stone */}
-          <div
-            data-resource-pill="stone"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
-          >
-            <span className="text-xs">🪨</span>
-            <span className="text-[11px] font-bold text-slate-300">石料</span>
-            <span className="text-xs font-extrabold text-slate-300 tabular-nums">
-              {Math.floor(observedRes.stone)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.stone}/m·{observedTelemetry.workersByResource.stone}
-            </span>
-          </div>
-
-          {/* Population */}
-          <div
-            data-population-badge="true"
-            className={`flex items-center gap-1 px-2 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap ${
-              observedPop >= observedMaxPop
-                ? 'border-rose-500/70'
-                : observedPopStats.totalReserved >= observedMaxPop
-                ? 'border-amber-400/70'
-                : 'border-blue-500/30'
-            }`}
-            title={
-              observedPopStats.totalReserved >= observedMaxPop
-                ? '人口已達上限！請選取村民建造「房屋」(快捷鍵 E) 提升 +5 人口上限'
-                : '目前人口 / 人口上限（建造房屋可 +5 人口）'
-            }
-          >
-            <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
-            <span className="text-[11px] font-bold text-slate-300">人口</span>
-            <span
-              className={`text-xs font-extrabold tabular-nums ${
-                observedPop >= observedMaxPop
-                  ? 'text-rose-400'
-                  : observedPopStats.totalReserved >= observedMaxPop
-                  ? 'text-amber-300'
-                  : 'text-blue-300'
-              }`}
-            >
-              {observedPop}/{observedMaxPop}
-            </span>
-          </div>
-
           {/* Age Advancement Indicator */}
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-900/95 border border-amber-500/50 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div className="flex items-center gap-1 px-1.5 sm:px-2 py-1 bg-slate-900/95 border border-amber-500/50 rounded-lg shadow shrink-0 whitespace-nowrap">
             <span className="text-xs">🏛️</span>
             <span className="text-[11px] font-black text-amber-300">
               {observedAge === 1 && '時代 I · 黑暗'}
@@ -837,6 +1060,28 @@ export const HUD: React.FC<HUDProps> = ({
             )}
           </div>
 
+          {!isSpectator && nextAgeInfo && ageResourceProgress && (
+            <button
+              type="button"
+              data-age-progress="true"
+              onClick={() => setShowAgeModal(true)}
+              title={`晉升至 ${nextAgeInfo.name}：糧食 ${Math.floor(observedRes.food)}/${nextAgeInfo.cost.food}，黃金 ${Math.floor(observedRes.gold)}/${nextAgeInfo.cost.gold}。點擊查看地標選擇。`}
+              aria-label={`下一時代資源準備度 ${Math.round(ageResourceProgress.overallRatio * 100)}%`}
+              className="flex min-w-[112px] items-center gap-1.5 px-2 py-1 rounded-lg border border-amber-500/35 bg-slate-900/90 text-[10px] font-bold text-amber-100 shadow cursor-pointer hover:bg-slate-800 transition-colors"
+            >
+              <span className="shrink-0">晉升</span>
+              <span className="relative h-1.5 w-12 overflow-hidden rounded-full bg-slate-700">
+                <span
+                  className={`absolute inset-y-0 left-0 rounded-full ${ageResourceProgress.ready ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                  style={{ width: `${Math.round(ageResourceProgress.overallRatio * 100)}%` }}
+                />
+              </span>
+              <span className={ageResourceProgress.ready ? 'text-emerald-300' : 'text-amber-200'}>
+                {ageResourceProgress.ready ? '資源達標' : `${Math.round(ageResourceProgress.overallRatio * 100)}%`}
+              </span>
+            </button>
+          )}
+
           {/* Civilization & Interactive Tech Tree Summary Button */}
           <button
             type="button"
@@ -851,6 +1096,25 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="text-[11px] font-extrabold text-white">
               {humanCiv.shortName} · <span className="text-cyan-300 tabular-nums">科技 {researchedTechs.length}/{allCivTechs.length}</span>
             </span>
+          </button>
+
+          {/* Economy overview toggle */}
+          <button
+            type="button"
+            data-economy-toggle="true"
+            aria-expanded={showEconomyPanel}
+            aria-pressed={isEconomyPinned}
+            aria-controls="economy-overview-panel"
+            onClick={() => {
+              const nextPinned = !isEconomyPinned;
+              setIsEconomyPinned(nextPinned);
+              setShowEconomyPanel(nextPinned);
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors ${isEconomyPinned ? 'border-emerald-400/80 text-emerald-100' : showEconomyPanel ? 'border-emerald-400/70 text-emerald-200' : 'border-emerald-500/35 text-slate-200 hover:border-emerald-400'}`}
+            title={isEconomyPinned ? '已固定經濟面板；再次點擊解除固定' : '移入頂部經濟區自動展開；點擊固定面板'}
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-300" />
+            <span className="text-[11px] font-extrabold">{isEconomyPinned ? '經濟 · 固定' : '經濟'}</span>
           </button>
 
           {/* Idle Villagers Fast Access */}
@@ -878,7 +1142,8 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
 
         {/* Top-Right Utility Cluster */}
-        <div className="flex items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap">
+        <div data-top-utility-bar="true"
+          className="min-w-0 w-full flex flex-wrap items-center justify-start gap-1.5 pointer-events-auto whitespace-nowrap sm:w-auto sm:justify-end">
           {/* Game Speed Split Control + Arrow Dropdown */}
           <div ref={speedMenuRef} className="relative flex items-center shrink-0">
             <div className="flex items-center bg-slate-900/90 border border-slate-700 rounded-lg overflow-hidden shadow">
@@ -1030,6 +1295,7 @@ export const HUD: React.FC<HUDProps> = ({
           <div className="px-2.5 py-1.5 bg-slate-950/90 text-amber-400 font-mono text-xs font-bold border border-slate-800 rounded-lg shrink-0 whitespace-nowrap">
             {formatTime(engine.stats.gameDuration)}
           </div>
+        </div>
         </div>
       </header>
 
@@ -1442,11 +1708,13 @@ export const HUD: React.FC<HUDProps> = ({
                         {compactBuildTypes.map((bType) => {
                           const bDef = DEFAULT_BUILDINGS[bType];
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
+                          const buildSeconds = engine.getBuildingConstructionDuration(bType, engine.humanPlayerId);
                           return (
                             <button
                               key={bType}
                               onClick={() => engine.startPlacement(bType)}
                               disabled={!canBuild}
+                              title={`${bDef.name} · 單村民建造約 ${Math.ceil(buildSeconds)} 秒`}
                               className={`px-2 py-0.5 disabled:opacity-40 text-[10px] font-bold rounded border cursor-pointer ${
                                 bDef.civExclusive
                                   ? 'bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border-cyan-500/60'
@@ -1474,12 +1742,14 @@ export const HUD: React.FC<HUDProps> = ({
                     {selectedBuilding.isConstructed && selectedBuilding.buildingDef.trainableUnits.length > 0 && (
                       <div className="flex gap-1 ml-auto shrink-0">
                         {selectedBuilding.buildingDef.trainableUnits.map((uId) => {
-                          const uDef = engine.findUnitDef(uId);
+                          const uDef = engine.findUnitDef(uId, selectedBuilding.faction);
                           if (!uDef) return null;
+                          const trainingSeconds = engine.getUnitTrainingDuration(selectedBuilding.id, uId) ?? uDef.stats.trainTime * 1.12;
                           return (
                             <button
                               key={uId}
                               onClick={() => engine.trainUnit(selectedBuilding.id, uId)}
+                              title={`${uDef.name} · 生產時間約 ${Math.ceil(trainingSeconds)} 秒`}
                               className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 rounded border border-slate-700 cursor-pointer"
                             >
                               招募{uDef.name.slice(0, 2)}
@@ -1808,6 +2078,7 @@ export const HUD: React.FC<HUDProps> = ({
                           const bDef = DEFAULT_BUILDINGS[bType];
                           const ageLocked = !!(bDef.requiredAge && observedAge < bDef.requiredAge);
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
+                          const buildSeconds = engine.getBuildingConstructionDuration(bType, engine.humanPlayerId);
                           const isCivUnique = !!bDef.civExclusive;
                           const hotkey = BUILDING_HOTKEYS[bType];
                           return (
@@ -1827,7 +2098,7 @@ export const HUD: React.FC<HUDProps> = ({
                                   ? 'bg-amber-950/60 hover:bg-amber-900/70 text-amber-200 border-amber-500/70 shadow cursor-pointer'
                                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700/60 cursor-pointer'
                               }`}
-                              title={`${bDef.name}${hotkey ? ` [${hotkey}]` : ''} - ${bDef.description}`}
+                              title={`${bDef.name}${hotkey ? ` [${hotkey}]` : ''} · 單村民建造約 ${Math.ceil(buildSeconds)} 秒 - ${bDef.description}`}
                             >
                               <span className="truncate max-w-full flex items-center gap-0.5 font-bold">
                                 {hotkey && !ageLocked && (
@@ -1950,7 +2221,7 @@ export const HUD: React.FC<HUDProps> = ({
                               : fieldRamInProgress
                               ? '已有野戰衝車正在組裝'
                               : fieldRamCheck.reason ||
-                                '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
+                                '消耗 4 名步兵與 140 木材、60 黃金；4 人就位約 20.2 秒、3 人約 26.9 秒後完成野戰衝車（快捷鍵 E）'
                           }
                         >
                           [{FIELD_ENGINEERING_HOTKEY}] 野戰組裝衝車 · 4 步兵
@@ -2022,6 +2293,7 @@ export const HUD: React.FC<HUDProps> = ({
               const bldgTechs = getAllTechsForBuilding(selectedBuilding.buildingType, bCiv);
               const bldgResearched = engine.getResearchedTechs(selectedBuilding.faction);
               const activeTech = selectedBuilding.activeTechId ? findTechDef(selectedBuilding.activeTechId) : null;
+              const buildingTiming = engine.getBuildingTimingEstimate(selectedBuilding.id);
               const bFactionAge = engine.ageByFaction[selectedBuilding.faction] || observedAge;
               const bArmor = getEffectiveBuildingArmor(selectedBuilding, bFactionAge, bldgResearched);
               const bCombatStats = getBuildingCombatStats(
@@ -2058,6 +2330,23 @@ export const HUD: React.FC<HUDProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {(!selectedBuilding.isConstructed || selectedBuilding.wallBreached) && (
+                    <div
+                      data-building-timing="true"
+                      className="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1 rounded bg-amber-950/30 border border-amber-500/25 text-[10px]"
+                    >
+                      <span className="text-amber-200">
+                        🔨 現場施工者 {buildingTiming.constructionWorkers} 名
+                        · 協作效率 ×{buildingTiming.constructionWorkerMultiplier.toFixed(2)}
+                      </span>
+                      <span className="font-mono font-bold text-amber-100">
+                        {buildingTiming.constructionRemainingSeconds === null
+                          ? '等待施工者到位'
+                          : `預估剩餘 ${formatTime(Math.ceil(buildingTiming.constructionRemainingSeconds))}（遊戲時間）`}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Building Combat & Defense Stats Inspection */}
                   <div
@@ -2260,9 +2549,14 @@ export const HUD: React.FC<HUDProps> = ({
                   {/* Active Tech Research Progress */}
                   {activeTech && (
                     <div className="text-[11px] text-cyan-300 space-y-0.5">
-                      <div className="flex justify-between">
+                      <div className="flex flex-wrap justify-between gap-1">
                         <span>{activeTech.icon} 研發中：{activeTech.name}</span>
-                        <span className="font-mono font-bold">{Math.round((selectedBuilding.researchProgress || 0) * 100)}%</span>
+                        <span className="font-mono font-bold">
+                          {Math.round((selectedBuilding.researchProgress || 0) * 100)}%
+                          {buildingTiming.researchRemainingSeconds !== null
+                            ? ` · 剩餘 ${formatTime(Math.ceil(buildingTiming.researchRemainingSeconds))}`
+                            : ''}
+                        </span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
@@ -2276,9 +2570,21 @@ export const HUD: React.FC<HUDProps> = ({
                   {/* Production Queue with Per-Unit Cancellation */}
                   {selectedBuilding.queue.length > 0 && (
                     <div data-production-queue="true" className="text-[11px] text-amber-300 space-y-1 bg-amber-950/25 border border-amber-500/30 rounded-lg px-2 py-1.5">
-                      <div className="flex justify-between items-center">
+                      <div className="flex flex-wrap justify-between items-center gap-1">
                         <span className="font-bold">⚙️ 生產中單位隊列 ({selectedBuilding.queue.length})</span>
                         <span className="font-mono font-bold">{Math.round(selectedBuilding.queueProgress * 100)}%</span>
+                      </div>
+                      <div className="flex flex-wrap justify-between gap-1 text-[10px] text-amber-200/90">
+                        <span>
+                          {buildingTiming.trainingRemainingSeconds !== null
+                            ? `下一單位約 ${formatTime(Math.ceil(buildingTiming.trainingRemainingSeconds))}`
+                            : '等待生產'}
+                        </span>
+                        {buildingTiming.queueRemainingSeconds !== null && (
+                          <span>
+                            全佇列約 {formatTime(Math.ceil(buildingTiming.queueRemainingSeconds))}
+                          </span>
+                        )}
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
@@ -2353,6 +2659,7 @@ export const HUD: React.FC<HUDProps> = ({
                           {selectedBuilding.buildingDef.trainableUnits.map((uId, uIdx) => {
                             const uDef = engine.findUnitDef(uId, selectedBuilding.faction);
                             if (!uDef) return null;
+                            const trainingSeconds = engine.getUnitTrainingDuration(selectedBuilding.id, uId) ?? uDef.stats.trainTime * 1.12;
                             const ageLocked = !!(uDef.requiredAge && observedAge < uDef.requiredAge);
                             const affordable = canAfford(engine.playerResources, uDef.stats.cost);
                             const isXpHero = uId === XP_ELIGIBLE_UNIT_ID && bCiv === 'anime';
@@ -2361,6 +2668,7 @@ export const HUD: React.FC<HUDProps> = ({
                               <button
                                 key={uId}
                                 data-train-unit={uId}
+                                data-train-duration-seconds={Math.ceil(trainingSeconds)}
                                 disabled={!affordable || ageLocked}
                                 onClick={() => engine.trainUnit(selectedBuilding.id, uId)}
                                 className={`flex items-center gap-2 px-2 py-1 rounded border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
@@ -2372,7 +2680,7 @@ export const HUD: React.FC<HUDProps> = ({
                                     ? 'bg-amber-950/60 hover:bg-amber-900/70 border-amber-400/70 text-amber-100'
                                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/80 text-slate-200'
                                 }`}
-                                title={`${uDef.name}${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
+                                title={`${uDef.name} · 生產時間約 ${Math.ceil(trainingSeconds)} 秒${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
                               >
                                 <UnitPortrait
                                   unitId={uId}
@@ -2441,6 +2749,7 @@ export const HUD: React.FC<HUDProps> = ({
                             const affordable = canAfford(engine.playerResources, tech.cost);
                             const disabled = isSpectator || isDone || !!selectedBuilding.activeTechId || !checkRes.ok || !affordable;
                             const techHotkey = TECH_SLOT_HOTKEYS[tIdx];
+                            const researchSeconds = engine.getTechResearchDuration(selectedBuilding.id, tech.id) ?? tech.researchTime;
 
                             return (
                               <button
@@ -2462,7 +2771,7 @@ export const HUD: React.FC<HUDProps> = ({
                                     ? 'bg-indigo-950/75 hover:bg-indigo-900/80 border-amber-400/70 text-white cursor-pointer'
                                     : 'bg-slate-800 hover:bg-slate-700 border-cyan-500/50 text-white cursor-pointer'
                                 }`}
-                                title={`${tech.name}${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})${!checkRes.ok && checkRes.reason ? ` [${checkRes.reason}]` : ''}`}
+                                title={`${tech.name} · 研發時間約 ${Math.ceil(researchSeconds)} 秒${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})${!checkRes.ok && checkRes.reason ? ` [${checkRes.reason}]` : ''}`}
                               >
                                 <span className="text-[11px] font-bold flex items-center gap-1 flex-wrap">
                                   {techHotkey && !isDone && !exclusionConflict && (
@@ -3188,6 +3497,7 @@ export const HUD: React.FC<HUDProps> = ({
                             setShowAgeModal(false);
                             engine.startPlacement(lmId);
                           }}
+                          title={`${lmDef.name} · 單村民建造約 ${Math.ceil(engine.getBuildingConstructionDuration(lmId, engine.humanPlayerId))} 秒`}
                           disabled={!affordable || hasBuilt}
                           className={`px-4 py-1.5 rounded-lg text-xs font-black shadow transition-all cursor-pointer ${
                             hasBuilt
