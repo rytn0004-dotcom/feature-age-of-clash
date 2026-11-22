@@ -1,3 +1,5 @@
+import type { UnitCategory } from '../types/game';
+
 export interface FormationMovementMember {
   id: string;
   x: number;
@@ -295,4 +297,162 @@ export function getFormationNarrowPassageTrafficScale(
 
   if (isQueuingAtEntrance && occupants.length >= capacity) return 0;
   return 1;
+}
+
+
+export type FormationTacticalRole = 'frontline' | 'backline' | 'flank' | 'siege';
+
+export interface FormationTacticalMember {
+  id: string;
+  category: UnitCategory;
+}
+
+export interface FormationTacticalSlot {
+  x: number;
+  z: number;
+  role: FormationTacticalRole;
+  lateralOffset: number;
+  distanceFromTarget: number;
+}
+
+export interface FormationTacticalSlotInput {
+  unitId: string;
+  members: readonly FormationTacticalMember[];
+  category: UnitCategory;
+  groupOrigin: { x: number; z: number };
+  memberPosition: { x: number; z: number };
+  target: { x: number; z: number; radius: number };
+  attackRange: number;
+  unitRadius: number;
+}
+
+/** Stable, role-aware combat positions around a target. All slots remain inside weapon reach. */
+export function getFormationTacticalSlot(
+  input: FormationTacticalSlotInput,
+): FormationTacticalSlot | null {
+  const {
+    unitId,
+    members,
+    category,
+    groupOrigin,
+    memberPosition,
+    target,
+  } = input;
+  const attackRange = Number.isFinite(input.attackRange)
+    ? Math.max(0.8, Math.min(24, input.attackRange))
+    : 0.8;
+  const targetRadius = Number.isFinite(target.radius)
+    ? Math.max(0, target.radius)
+    : 0;
+  const unitRadius = Number.isFinite(input.unitRadius)
+    ? Math.max(0.1, input.unitRadius)
+    : 0.4;
+
+  if (
+    category === 'worker' ||
+    members.length < 2 ||
+    ![groupOrigin.x, groupOrigin.z, memberPosition.x, memberPosition.z, target.x, target.z].every(Number.isFinite)
+  ) {
+    return null;
+  }
+
+  const role: FormationTacticalRole =
+    category === 'cavalry'
+      ? 'flank'
+      : category === 'siege'
+        ? 'siege'
+        : attackRange > 2.5 && (category === 'ranged' || category === 'special')
+          ? 'backline'
+          : 'frontline';
+
+  const sameRoleMembers = members
+    .filter((member) => member.category === category)
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const slotIndex = sameRoleMembers.findIndex((member) => member.id === unitId);
+  if (slotIndex < 0 || sameRoleMembers.length === 0) return null;
+
+  let forwardX = target.x - groupOrigin.x;
+  let forwardZ = target.z - groupOrigin.z;
+  let forwardLength = Math.hypot(forwardX, forwardZ);
+  if (forwardLength < 0.001) {
+    forwardX = target.x - memberPosition.x;
+    forwardZ = target.z - memberPosition.z;
+    forwardLength = Math.hypot(forwardX, forwardZ);
+  }
+  if (forwardLength < 0.001) {
+    forwardX = 1;
+    forwardZ = 0;
+    forwardLength = 1;
+  }
+  forwardX /= forwardLength;
+  forwardZ /= forwardLength;
+  const sideX = -forwardZ;
+  const sideZ = forwardX;
+
+  const maxCenterDistance = Math.max(
+    targetRadius + unitRadius + 0.12,
+    attackRange + targetRadius - 0.22,
+  );
+  let baseDistance = targetRadius + unitRadius + 0.42;
+  let lateralOffset = 0;
+
+  if (role === 'flank') {
+    // Alternate cavalry across both sides, then widen each side by rank.
+    const side = slotIndex % 2 === 0 ? -1 : 1;
+    const rank = Math.floor(slotIndex / 2);
+    baseDistance = Math.min(0.48, maxCenterDistance * 0.22);
+    const maxLateral = Math.sqrt(Math.max(0, maxCenterDistance ** 2 - baseDistance ** 2));
+    lateralOffset = side * Math.min(maxLateral, 1.15 + rank * 0.78);
+  } else if (role === 'backline' || role === 'siege') {
+    const preferredStandOff = attackRange * (role === 'siege' ? 0.8 : 0.72);
+    baseDistance = targetRadius + Math.max(2.4, Math.min(role === 'siege' ? 14 : 11, preferredStandOff));
+    baseDistance = Math.min(baseDistance, Math.max(targetRadius + 0.35, maxCenterDistance - 0.18));
+    const spacing = role === 'siege' ? 2.3 : 1.85;
+    const centered = (slotIndex - (sameRoleMembers.length - 1) / 2) * spacing;
+    const maxLateral = Math.sqrt(Math.max(0, maxCenterDistance ** 2 - baseDistance ** 2));
+    lateralOffset = Math.max(-maxLateral, Math.min(maxLateral, centered));
+  } else {
+    const spacing = 1.35;
+    const centered = (slotIndex - (sameRoleMembers.length - 1) / 2) * spacing;
+    baseDistance = Math.min(baseDistance, Math.max(targetRadius + 0.25, maxCenterDistance - 0.2));
+    const maxLateral = Math.sqrt(Math.max(0, maxCenterDistance ** 2 - baseDistance ** 2));
+    lateralOffset = Math.max(-maxLateral, Math.min(maxLateral, centered));
+  }
+
+  const x =
+    target.x -
+    forwardX * baseDistance +
+    sideX * lateralOffset;
+  const z =
+    target.z -
+    forwardZ * baseDistance +
+    sideZ * lateralOffset;
+  const distanceFromTarget = Math.hypot(x - target.x, z - target.z);
+
+  return {
+    x,
+    z,
+    role,
+    lateralOffset,
+    distanceFromTarget,
+  };
+}
+
+/** Avoids rebuilding tactical slots every frame; moving targets refresh only after a meaningful displacement. */
+export function shouldRefreshFormationTacticalSlot(
+  currentTargetId: string | undefined,
+  currentAnchor: { x: number; z: number } | undefined,
+  nextTargetId: string,
+  nextTarget: { x: number; z: number },
+  refreshDistance = 3.25,
+): boolean {
+  if (currentTargetId !== nextTargetId || !currentAnchor) return true;
+  if (
+    ![currentAnchor.x, currentAnchor.z, nextTarget.x, nextTarget.z, refreshDistance].every(Number.isFinite) ||
+    refreshDistance < 0
+  ) {
+    return true;
+  }
+  return Math.hypot(nextTarget.x - currentAnchor.x, nextTarget.z - currentAnchor.z) >= refreshDistance;
 }
