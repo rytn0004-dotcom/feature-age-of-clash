@@ -1527,6 +1527,8 @@ export class RtsEngine {
       seed: plan.seed,
       mapPreset: this.mapPreset,
     };
+    // Capture the initial pathfinding burst from the first stress-test frame.
+    this.togglePerformanceOverlay();
     this.onResourcesChange?.(this.playerResources);
     this.onStateChange?.();
     this.onSelectionChange?.();
