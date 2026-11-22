@@ -1107,6 +1107,29 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
 
+/**
+ * Predicts whether a resource node will run dry before gatherers can reasonably
+ * finish relocating. Rates are total active gathering output in resources/sec.
+ */
+export function shouldRelocateFromResourceNode(
+  remainingAmount: number,
+  totalGatherRatePerSecond: number,
+  relocationLeadTimeSeconds = 12
+): boolean {
+  if (
+    !Number.isFinite(remainingAmount) ||
+    remainingAmount < 0 ||
+    !Number.isFinite(totalGatherRatePerSecond) ||
+    totalGatherRatePerSecond <= 0 ||
+    !Number.isFinite(relocationLeadTimeSeconds) ||
+    relocationLeadTimeSeconds <= 0
+  ) {
+    return false;
+  }
+
+  return remainingAmount <= totalGatherRatePerSecond * relocationLeadTimeSeconds;
+}
+
 export function getNodeTierGatherMultiplier(nodeTier?: ResourceNode['nodeTier']): number {
   return nodeTier === 'rich' ? RICH_NODE_GATHER_MULTIPLIER : 1.0;
 }
