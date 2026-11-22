@@ -1907,13 +1907,15 @@ export class RtsEngine {
   private prepareUnitMeshForDecorationBatch(mesh: THREE.Group): void {
     const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
     const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    mesh.userData.unitContactShadowMesh = shadow;
+    mesh.userData.unitFactionRingMesh = factionRing;
     if (shadow) shadow.visible = false;
     if (factionRing) factionRing.visible = false;
   }
 
   private writeUnitDecorationInstances(mesh: THREE.Group): void {
-    const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
-    const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    const shadow = mesh.userData.unitContactShadowMesh as THREE.Mesh | undefined;
+    const factionRing = mesh.userData.unitFactionRingMesh as THREE.Mesh | undefined;
     const shadowBatch = this.unitContactShadowBatch;
     const ringBatch = this.unitFactionRingBatch;
     if (!shadow || !factionRing || !shadowBatch || !ringBatch) {
