@@ -310,6 +310,8 @@ export interface UnitEntity extends EntityCommon {
   formationTacticalAnchor?: { x: number; z: number };
   formationTacticalGoal?: { x: number; z: number };
   formationTacticalRole?: 'frontline' | 'backline' | 'flank' | 'siege';
+  /** True when this unit is part of a mixed infantry shield-wall screen. */
+  formationTacticalShieldWall?: boolean;
   /** Repeating route used by guards assigned to patrol a friendly wall chain. */
   wallPatrolRoute?: Array<{ x: number; z: number }>;
   wallPatrolIndex?: number;
