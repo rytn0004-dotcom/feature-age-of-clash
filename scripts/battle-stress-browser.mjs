@@ -142,6 +142,44 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
+      const inspectResourceBar = async (width, height) => {
+        await send("Emulation.setDeviceMetricsOverride", {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, sessionId);
+        await sleep(100);
+        const layout = await evaluate(`
+          (() => {
+            const bar = document.querySelector('[data-top-resource-bar="true"]');
+            if (!bar) return null;
+            const bounds = bar.getBoundingClientRect();
+            const pills = [...bar.querySelectorAll('[data-resource-pill], [data-population-badge]')];
+            return {
+              count: pills.length,
+              width: bar.clientWidth,
+              scrollWidth: bar.scrollWidth,
+              visibleCount: pills.filter((pill) => {
+                const rect = pill.getBoundingClientRect();
+                return rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+              }).length,
+              viewportWidth: window.innerWidth,
+            };
+          })()
+        `);
+        assert.ok(layout, "Resource bar is missing at " + width + "px.");
+        assert.equal(layout.count, 5, "Expected four resources and population at " + width + "px.");
+        assert.ok(layout.width > 0, "Resource bar has no width at " + width + "px.");
+        assert.ok(layout.scrollWidth <= layout.width + 1, "Resource bar requires horizontal scrolling at " + width + "px.");
+        assert.equal(layout.visibleCount, 5, "One or more resource badges are clipped at " + width + "px.");
+        return layout;
+      };
+      const resourceLayouts = {
+        desktop: await inspectResourceBar(1280, 800),
+        compact: await inspectResourceBar(390, 844),
+      };
+      await send("Emulation.setDeviceMetricsOverride", {
+        width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
+      }, sessionId);
+
       const capture = await waitFor(
         async () => evaluate(`
           (() => {
@@ -179,7 +217,7 @@ async function main() {
       assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
-      report.scenarios.push({ count, initial, telemetry, exceptionCount: exceptions.length });
+      report.scenarios.push({ count, initial, resourceLayouts, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
