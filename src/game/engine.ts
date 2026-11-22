@@ -170,7 +170,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
 } from './collision';
-import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
+import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles, worldToGrid } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import {
@@ -193,12 +193,20 @@ import {
   shouldRecoverStalledPath,
 } from './movementDiagnostics';
 import {
+  findNarrowPassageOnRoute,
   getFormationCohesionSpeedScale,
   getFormationMoveProgress,
+  getFormationNarrowPassageTrafficScale,
   measureFormationRegroup,
   type FormationMovementMember,
+  type FormationNarrowPassage,
   type FormationRegroupState,
 } from './formationMovement';
+type FormationRegroupRuntimeState = FormationRegroupState & {
+  members: FormationMovementMember[];
+  narrowPassage?: FormationNarrowPassage;
+};
+
 import {
   ControlGroupsMap,
   createEmptyControlGroups,
@@ -396,7 +404,11 @@ export class RtsEngine {
   public controlGroups: ControlGroupsMap = createEmptyControlGroups();
   private lastGroupKeyTime: Record<number, number> = {};
   private movementGroupSequence = 0;
-  private formationRegroupByGroup = new Map<string, FormationRegroupState>();
+  private formationRegroupByGroup = new Map<string, FormationRegroupRuntimeState>();
+  private formationPassageCacheByGroup = new Map<
+    string,
+    { grid: NavGrid; scannedAt: number; passage: FormationNarrowPassage | null }
+  >();
   private idleCycleIdx = 0;
   private militaryBldgCycleIdx = 0;
 
@@ -5189,6 +5201,41 @@ export class RtsEngine {
     });
   }
 
+  private measureNavCorridorWidth(
+    navGrid: NavGrid,
+    x: number,
+    z: number,
+    directionX: number,
+    directionZ: number,
+  ): number {
+    if (![x, z, directionX, directionZ].every(Number.isFinite)) return 0;
+    const sideX = -directionZ;
+    const sideZ = directionX;
+    const isWalkable = (offset: number): boolean => {
+      const cell = worldToGrid(
+        x + sideX * offset,
+        z + sideZ * offset,
+        navGrid.halfExtent,
+        navGrid.cellSize,
+        navGrid.dim,
+      );
+      return navGrid.blocked[cell.gz * navGrid.dim + cell.gx] === 0;
+    };
+    if (!isWalkable(0)) return 0;
+
+    let leftWidth = 0;
+    let rightWidth = 0;
+    for (let offset = navGrid.cellSize; offset <= 4.5; offset += navGrid.cellSize) {
+      if (isWalkable(offset)) leftWidth = offset;
+      else break;
+    }
+    for (let offset = navGrid.cellSize; offset <= 4.5; offset += navGrid.cellSize) {
+      if (isWalkable(-offset)) rightWidth = offset;
+      else break;
+    }
+    return leftWidth + rightWidth + navGrid.cellSize;
+  }
+
   private refreshFormationRegroupState(): void {
     this.formationRegroupByGroup.clear();
     const membersByGroup = new Map<string, FormationMovementMember[]>();
@@ -5221,8 +5268,103 @@ export class RtsEngine {
     }
 
     for (const [groupId, members] of membersByGroup) {
-      const state = measureFormationRegroup(members);
-      if (state) this.formationRegroupByGroup.set(groupId, state);
+      const measuredState = measureFormationRegroup(members);
+      const stalledUnits = this.units
+        .filter(
+          (unit) =>
+            unit.formationGroupId === groupId &&
+            unit.hp > 0 &&
+            (unit.stuckDuration || 0) >= 1.8 &&
+            (unit.stuckDuration || 0) < 4.5,
+        )
+        .sort(
+          (a, b) =>
+            (b.stuckDuration || 0) - (a.stuckDuration || 0) ||
+            a.id.localeCompare(b.id),
+        );
+      let cached = this.formationPassageCacheByGroup.get(groupId);
+
+      if (stalledUnits.length > 0 || cached) {
+        const navGrid = this.getNavGrid();
+        const shouldScan =
+          !cached ||
+          cached.grid !== navGrid ||
+          (!cached.passage && this.simTime - cached.scannedAt >= 1.2);
+        if (shouldScan && stalledUnits.length > 0) {
+          const stalledUnit = stalledUnits[0];
+          const goalX =
+            stalledUnit.targetX ??
+            (stalledUnit.formationOrderGoal && stalledUnit.formationOrderGoal.x);
+          const goalZ =
+            stalledUnit.targetZ ??
+            (stalledUnit.formationOrderGoal && stalledUnit.formationOrderGoal.z);
+          if (goalX !== undefined && goalZ !== undefined) {
+            const pathIsCurrent =
+              !!stalledUnit.waypoints?.length &&
+              !!stalledUnit.pathGoal &&
+              getDistance(stalledUnit.pathGoal.x, stalledUnit.pathGoal.z, goalX, goalZ) <= 1.8;
+            const route = pathIsCurrent
+              ? stalledUnit.waypoints!
+              : findPath(stalledUnit.x, stalledUnit.z, goalX, goalZ, navGrid);
+            const passage = findNarrowPassageOnRoute(
+              [{ x: stalledUnit.x, z: stalledUnit.z }, ...route],
+              (x, z, directionX, directionZ) =>
+                this.measureNavCorridorWidth(navGrid, x, z, directionX, directionZ),
+            );
+            cached = { grid: navGrid, scannedAt: this.simTime, passage };
+            this.formationPassageCacheByGroup.set(groupId, cached);
+          } else {
+            cached = { grid: navGrid, scannedAt: this.simTime, passage: null };
+            this.formationPassageCacheByGroup.set(groupId, cached);
+          }
+        } else if (cached && cached.grid !== navGrid) {
+          cached = { grid: navGrid, scannedAt: this.simTime, passage: null };
+          this.formationPassageCacheByGroup.set(groupId, cached);
+        }
+      }
+
+      const passage = cached?.passage || undefined;
+      const activeMembers = members.filter(
+        (member) =>
+          !Number.isFinite(member.stuckDuration) ||
+          (member.stuckDuration as number) < 4.5,
+      );
+      const hasMembersNearPassage = !!passage && activeMembers.some((member) => {
+        const dx = member.x - passage.x;
+        const dz = member.z - passage.z;
+        const along = dx * passage.directionX + dz * passage.directionZ;
+        const lateral = dx * -passage.directionZ + dz * passage.directionX;
+        return (
+          Math.abs(along) <= passage.halfLength + 8.5 &&
+          Math.abs(lateral) <= passage.width * 0.5 + 8.5
+        );
+      });
+
+      if (measuredState || hasMembersNearPassage) {
+        const progressValues = activeMembers.map((member) =>
+          getFormationMoveProgress(
+            member.x,
+            member.z,
+            member.formationOrderOrigin,
+            member.formationOrderGoal,
+          ),
+        );
+        this.formationRegroupByGroup.set(groupId, {
+          slowestProgress:
+            measuredState?.slowestProgress ??
+            (progressValues.length > 0 ? Math.min(...progressValues) : 0),
+          activeMemberCount: measuredState?.activeMemberCount ?? activeMembers.length,
+          stalledMemberCount: measuredState?.stalledMemberCount ?? 0,
+          members,
+          narrowPassage: passage,
+        });
+      } else {
+        this.formationPassageCacheByGroup.delete(groupId);
+      }
+    }
+
+    for (const groupId of this.formationPassageCacheByGroup.keys()) {
+      if (!membersByGroup.has(groupId)) this.formationPassageCacheByGroup.delete(groupId);
     }
   }
 
@@ -5599,7 +5741,12 @@ export class RtsEngine {
     const regroupState = unit.formationGroupId
       ? this.formationRegroupByGroup.get(unit.formationGroupId)
       : undefined;
-    if (regroupState && unit.formationOrderOrigin && unit.formationOrderGoal) {
+    if (
+      regroupState &&
+      regroupState.stalledMemberCount > 0 &&
+      unit.formationOrderOrigin &&
+      unit.formationOrderGoal
+    ) {
       const progress = getFormationMoveProgress(
         unit.x,
         unit.z,
@@ -5608,6 +5755,21 @@ export class RtsEngine {
       );
       speed *= getFormationCohesionSpeedScale(progress, regroupState.slowestProgress, true);
     }
+    const trafficScale =
+      regroupState?.narrowPassage
+        ? getFormationNarrowPassageTrafficScale(
+            unit.id,
+            regroupState.members,
+            regroupState.narrowPassage,
+          )
+        : 1;
+    if (trafficScale < 0.999) {
+      // Waiting for a squadmate is deliberate traffic control, not a pathfinding stall.
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+    }
+    speed *= trafficScale;
     const dx = (activeTarget.x - unit.x) / distToWp;
     const dz = (activeTarget.z - unit.z) / distToWp;
     const stepLen = Math.min(distToWp, speed * dt);
