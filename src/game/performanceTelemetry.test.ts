@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatPerformanceTelemetryCsv, getAverageAiDecisionMs, recordAiDecisionTiming } from './performanceTelemetry';
+import {
+  formatPerformanceTelemetryCsv,
+  getAverageAiDecisionMs,
+  recordAiDecisionTiming,
+  getAveragePathSearchMs,
+  recordPathSearchTiming,
+  EMPTY_PATH_SEARCH_TIMING,
+} from './performanceTelemetry';
 import { EMPTY_AI_DECISION_TIMING } from './performanceTelemetry';
 import type { AiDecisionTiming, PerformanceSample } from './performanceTelemetry';
 
@@ -16,6 +23,12 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     simulationUpdateMaxMs: 17.4,
     renderCallAverageMs: 3.7,
     renderCallMaxMs: 6.2,
+    pathSearchSamples: 23,
+    aiPathSearchSamples: 18,
+    emptyPathSearches: 2,
+    aiEmptyPathSearches: 2,
+    pathSearchAverageMs: 0.34,
+    pathSearchMaxMs: 2.1,
     drawCalls: 120,
     triangles: 45000,
     geometries: 88,
@@ -73,6 +86,7 @@ test('performance telemetry: exports stable columns and numeric samples', () => 
   assert.ok(row.includes('2.25'));
   assert.ok(row.includes('17.4'));
   assert.ok(row.includes('6.2'));
+  assert.ok(row.includes('2.1'));
 });
 
 test('performance telemetry: empty captures still produce a usable header', () => {
@@ -115,4 +129,25 @@ test('AI decision timing: empty and invalid measurements are safe', () => {
   assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, Number.NaN), EMPTY_AI_DECISION_TIMING);
   assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, Number.POSITIVE_INFINITY), EMPTY_AI_DECISION_TIMING);
   assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, -1), EMPTY_AI_DECISION_TIMING);
+});
+
+test('path-search timing: counts AI and empty routes separately', () => {
+  let timing = EMPTY_PATH_SEARCH_TIMING;
+  timing = recordPathSearchTiming(timing, 0.2, true, true);
+  timing = recordPathSearchTiming(timing, 0.6, false, true);
+  timing = recordPathSearchTiming(timing, 1.4, true, false);
+
+  assert.equal(timing.sampleCount, 3);
+  assert.equal(timing.aiSampleCount, 2);
+  assert.equal(timing.emptyPathCount, 1);
+  assert.equal(timing.aiEmptyPathCount, 1);
+  assert.equal(timing.totalMs, 2.2);
+  assert.equal(timing.maxMs, 1.4);
+  assert.equal(getAveragePathSearchMs(timing), 2.2 / 3);
+});
+
+test('path-search timing: empty and invalid measurements are safe', () => {
+  assert.equal(getAveragePathSearchMs(EMPTY_PATH_SEARCH_TIMING), 0);
+  assert.equal(recordPathSearchTiming(EMPTY_PATH_SEARCH_TIMING, Number.NaN, true, false), EMPTY_PATH_SEARCH_TIMING);
+  assert.equal(recordPathSearchTiming(EMPTY_PATH_SEARCH_TIMING, -1, false, true), EMPTY_PATH_SEARCH_TIMING);
 });
