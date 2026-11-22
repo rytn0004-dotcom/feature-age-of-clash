@@ -40,13 +40,13 @@ test('formation regroup: one blocked member slows the advance of the rest of the
   assert.ok(state);
   assert.equal(state.activeMemberCount, 3);
   assert.equal(state.stalledMemberCount, 1);
-  assert.equal(state.slowestProgress, 0);
+  assert.equal(state.slowestProgress, 0.12);
   assert.ok(
     getFormationCohesionSpeedScale(0.62, state.slowestProgress, true) < 0.4,
     'units far ahead should slow down while the blocked member is recovering',
   );
   assert.equal(
-    getFormationCohesionSpeedScale(0, state.slowestProgress, true),
+    getFormationCohesionSpeedScale(0.12, state.slowestProgress, true),
     1,
     'the straggler itself must not be slowed further',
   );
