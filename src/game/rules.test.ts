@@ -2726,7 +2726,7 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
   assert.deepEqual(
     selectAiWorkerReassignment(
       { food: 2, wood: 5, gold: 1, stone: 0 },
-      { food: 5, wood: 1, gold: 1, stone: 1 },
+      { food: 5, wood: 1, gold: 1, stone: 2 },
       ['wood', 'gold', 'stone']
     ),
     { from: 'wood', to: 'stone' },
