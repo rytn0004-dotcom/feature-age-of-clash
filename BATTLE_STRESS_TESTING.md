@@ -24,6 +24,20 @@
 4. 量測中可隨時按 F4 匯出 CSV；每 0.5 秒記錄 FPS、平均/P95 frame time、最大 hitch、Draw Calls、Triangles、Geometries、Textures、存活單位、AI 各行為狀態、疑似停滯單位數、最大停滯秒數、路徑自動恢復累計次數、AI 決策心跳/累積器、AI 決策耗時的最近值/平均值/最大值、模擬更新耗時平均/最大值、渲染呼叫 CPU 耗時平均/最大值、A* 搜尋總數/AI 搜尋數/無路徑數/A* 耗時平均最大值、生產佇列、研發數、投射物、粒子、畫質、速度、文明/AI 人數及視窗尺寸。單次擷取最多保留 3,600 筆（約 30 分鐘），超出時保留最近資料。
 5. 每個規模至少重跑兩次；比較時不要混用不同硬體或不同畫質設定。
 
+## 瀏覽器自動化回歸
+
+CI 的 `browser-stress` job 使用 headless Chromium 和 Vite 開發模式，依序啟動 100、200、400 單位的固定 seed 情境。腳本位於 `scripts/battle-stress-browser.mjs`，可用 `bun run test:browser` 執行。
+
+自動檢查會讀取執行中 `window.__rtsEngine` 的真實狀態，確認：
+- 遊戲成功進入 playing、單位實際數量符合 100/200/400、四個參與勢力全為 AI。
+- seed 與地圖設定和測試參數一致。
+- F3 監視器成功產生樣本，模擬時鐘有前進，FPS、P95 frame time、最大 hitch、Draw Calls 和 Triangles 都是有效值。
+- 量測期間沒有未捕捉的 JavaScript 例外。
+
+CI 會將 `artifacts/battle-stress-browser-report.json` 上傳為 workflow artifact，保留瀏覽器版本、各單位規模和量測值，方便不同提交之間比較。可使用 `BATTLE_STRESS_SCENARIOS`、`BATTLE_STRESS_SEED`、`BATTLE_STRESS_MAP` 覆寫執行情境；`CHROME_BIN` 可指定 Chrome 執行檔。
+
+這個 job 是 headless Chromium / SwiftShader 的自動化回歸，不會將 FPS 設為跨硬體通用的固定門檻；它主要攔截場景無法啟動、單位數錯誤、模擬停止、效能監視器失效或 JavaScript 例外。軟體渲染數值不能當成玩家 GPU 的效能預測，也不能取代實機長時間對戰。正式硬體的效能基準、每規模至少 3 分鐘及 10 分鐘長時間穩定性，仍需另外記錄。
+
 ## 判讀與限制
 
 - F3 顯示即時資料；F4 匯出本次 F3 開啟後收集的逐段 CSV，不會自動上傳或跨場次保存。
@@ -39,7 +53,7 @@
 
 ## CI
 
-此壓測回歸分支以 PR #53 的功能分支為基底；CI 工作流程已允許針對該整合分支的 pull request 執行驗證。
+此壓測回歸分支以 PR #53 的功能分支為基底；CI 工作流程已允許針對該整合分支的 pull request 執行 lint、單元測試、production build 與 Chromium 瀏覽器壓測。
 
 ## 本次回歸測試
 
