@@ -256,6 +256,8 @@ import {
   createStoneQuarryMesh,
   createTreeMesh,
   createUnitMesh,
+  createUnitContactShadowBatch,
+  createUnitFactionRingBatch,
   updateUnitVisualLod,
   updateBuildingVisualLod,
   updateDistanceShadowLod,
@@ -432,6 +434,11 @@ export class RtsEngine {
 
   // Meshes cache
   private unitMeshes = new Map<string, THREE.Group>();
+  private unitContactShadowBatch: THREE.InstancedMesh | null = null;
+  private unitFactionRingBatch: THREE.InstancedMesh | null = null;
+  private unitDecorationDummy = new THREE.Object3D();
+  private unitDecorationColor = new THREE.Color();
+  private unitDecorationInstanceCursor = 0;
   private buildingMeshes = new Map<string, THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
@@ -592,6 +599,9 @@ export class RtsEngine {
     this.createPerformanceOverlay();
 
     this.scene = new THREE.Scene();
+    this.unitContactShadowBatch = createUnitContactShadowBatch();
+    this.unitFactionRingBatch = createUnitFactionRingBatch();
+    this.scene.add(this.unitContactShadowBatch, this.unitFactionRingBatch);
     this.scene.background = new THREE.Color(0xc4e0f2);
     this.scene.fog = new THREE.FogExp2(0xc4e0f2, 0.0044);
 
@@ -1894,6 +1904,73 @@ export class RtsEngine {
     });
   }
 
+  private prepareUnitMeshForDecorationBatch(mesh: THREE.Group): void {
+    const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
+    const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    if (shadow) shadow.visible = false;
+    if (factionRing) factionRing.visible = false;
+  }
+
+  private writeUnitDecorationInstances(mesh: THREE.Group): void {
+    const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
+    const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    const shadowBatch = this.unitContactShadowBatch;
+    const ringBatch = this.unitFactionRingBatch;
+    if (!shadow || !factionRing || !shadowBatch || !ringBatch) {
+      if (shadow) shadow.visible = true;
+      if (factionRing) factionRing.visible = true;
+      return;
+    }
+
+    const instanceIndex = this.unitDecorationInstanceCursor;
+    if (instanceIndex >= shadowBatch.instanceMatrix.count || instanceIndex >= ringBatch.instanceMatrix.count) {
+      // Keep decoration visible if a custom scenario exceeds the preallocated instancing capacity.
+      shadow.visible = true;
+      factionRing.visible = true;
+      return;
+    }
+
+    shadow.visible = false;
+    factionRing.visible = false;
+    const rootScale = mesh.scale.x;
+    this.unitDecorationDummy.position.set(
+      mesh.position.x,
+      mesh.position.y + shadow.position.y * mesh.scale.y,
+      mesh.position.z,
+    );
+    this.unitDecorationDummy.rotation.set(0, 0, 0);
+    const shadowScale = Math.abs(shadow.scale.x * rootScale);
+    this.unitDecorationDummy.scale.set(shadowScale, shadowScale, shadowScale);
+    this.unitDecorationDummy.updateMatrix();
+    shadowBatch.setMatrixAt(instanceIndex, this.unitDecorationDummy.matrix);
+
+    this.unitDecorationDummy.position.y = mesh.position.y + factionRing.position.y * mesh.scale.y;
+    const ringScale = Math.abs(factionRing.scale.x * rootScale);
+    this.unitDecorationDummy.scale.set(ringScale, ringScale, ringScale);
+    this.unitDecorationDummy.updateMatrix();
+    ringBatch.setMatrixAt(instanceIndex, this.unitDecorationDummy.matrix);
+
+    const ringMaterial = factionRing.material as THREE.MeshBasicMaterial;
+    this.unitDecorationColor.copy(ringMaterial.color);
+    ringBatch.setColorAt(instanceIndex, this.unitDecorationColor);
+    this.unitDecorationInstanceCursor++;
+  }
+
+  private finalizeUnitDecorationInstances(): void {
+    const count = this.unitDecorationInstanceCursor;
+    if (this.unitContactShadowBatch) {
+      this.unitContactShadowBatch.count = count;
+      if (count > 0) this.unitContactShadowBatch.instanceMatrix.needsUpdate = true;
+    }
+    if (this.unitFactionRingBatch) {
+      this.unitFactionRingBatch.count = count;
+      if (count > 0) {
+        this.unitFactionRingBatch.instanceMatrix.needsUpdate = true;
+        if (this.unitFactionRingBatch.instanceColor) this.unitFactionRingBatch.instanceColor.needsUpdate = true;
+      }
+    }
+  }
+
   public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number, stableId?: string): UnitEntity {
     const id = stableId || `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const team = this.getParticipant(faction)?.team ?? (faction === 'player' ? 1 : 2);
@@ -1946,6 +2023,7 @@ export class RtsEngine {
       level: unit.level || 1,
       visualSeed: unit.id,
     });
+    this.prepareUnitMeshForDecorationBatch(mesh);
     mesh.position.set(x, 0, z);
     Object.assign(mesh.userData, { type: 'unit', id, faction, team });
     this.scene.add(mesh);
@@ -4923,6 +5001,8 @@ export class RtsEngine {
     resolveUnitBuildingCollisions(this.units, this.buildings);
     resolveUnitResourceCollisions(this.units, this.resourceNodes);
 
+    // Unit decoration batches replace the per-unit contact-shadow and faction-ring draw calls.
+    this.unitDecorationInstanceCursor = 0;
     // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
@@ -4934,6 +5014,7 @@ export class RtsEngine {
         }
         mesh.visible = true;
         mesh.position.set(unit.x, 0, unit.z);
+        this.writeUnitDecorationInstances(mesh);
         this.animateUnitMesh(unit, mesh, dt);
       }
     }
@@ -4964,8 +5045,11 @@ export class RtsEngine {
       if (p >= 1) {
         this.scene.remove(de.mesh);
         this.dyingEffects.splice(i, 1);
+      } else {
+        this.writeUnitDecorationInstances(de.mesh);
       }
     }
+    this.finalizeUnitDecorationInstances();
 
     for (let i = this.collapsingBuildings.length - 1; i >= 0; i--) {
       const cb = this.collapsingBuildings[i];
@@ -11133,8 +11217,9 @@ export class RtsEngine {
         researchedTechIds: techs,
         unitId: unit.unitDefId,
         level: unit.level || 1,
-      visualSeed: unit.id,
+        visualSeed: unit.id,
       });
+      this.prepareUnitMeshForDecorationBatch(next);
       next.position.copy(pos);
       next.rotation.y = rotY;
       Object.assign(next.userData, {
