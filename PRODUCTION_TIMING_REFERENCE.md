@@ -6,43 +6,43 @@ All values are **simulation seconds**. They are the data-driven baseline, not gu
 
 ## Timing rules
 
-- Unit production uses `UnitStats.trainTime`. One production building works on one queue item at a time; different buildings can produce in parallel.
-- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress. Effective builder work follows this requested curve: builder 1 contributes `1.00`; builders 2–5 add `0.75, 0.60, 0.50, 0.50`; every builder from number 6 onward adds `0.50`. With (N) builders already in working range:
+- Unit production uses `UnitStats.trainTime`. All unit queues use one shared duration formula: `actual time = base trainTime × 1.12 ÷ capped combined speed`. All technology, landmark and Royal Foundry production bonuses stack multiplicatively, then the combined speed is capped at **1.12×**. A queue processes one unit at a time; different production buildings can work in parallel.
+- All three civilization worker units use a 22-second base `trainTime`; without an accelerator, the actual queue duration is **24.64 seconds**. With the maximum 1.12× combined accelerator, the duration bottoms out at 22 seconds.
+- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress. All buildings and wall repairs use the same 1.12 time scale. Builder cooperation remains a separate multiplier: builder 1 contributes `1.00`; builders 2–5 add `0.75, 0.60, 0.50, 0.50`; every builder from number 6 onward adds `0.50`. With (N) builders already in working range:
 
-  `actual work time = 0.9 × buildTime ÷ (civilization build-speed multiplier × summed builder contribution)`
+  `actual work time = 0.9 × buildTime × 1.12 ÷ (capped civilization build speed × summed builder contribution)`
 
-  Walking to the site is additional. The same diminishing-return curve applies to wall repairs. The selected-building panel shows the live in-range builder count, effective cooperative multiplier and remaining-time estimate.
-- Research uses `TechDefinition.researchTime`. An allied, completed Royal Foundry within 16 world units of the research building grants 1.25× research speed (80% of listed time). The foundry does not accelerate research performed inside itself.
-- The Royal Foundry aura also grants 1.25× production speed to unit queues in nearby allied production buildings (80% of listed unit time).
-- The White Tower landmark grants 1.35× melee-infantry production speed (about 74.1% of listed time). This is now applied by the training queue.
-- The Age II Blitz Doctrine multiplies production duration by 0.75 for melee, ranged and cavalry units. It does not apply to workers, siege or special units.
-- Anime civilization's mod has 1.05× build speed. This now applies to construction and wall repair; the resulting work duration is 1/1.05 (about 95.2%) of neutral time. Medieval and fantasy are 1.0×.
-- The listed times are base times. Applicable bonuses stack multiplicatively.
+  Civilization/build-speed bonuses are capped at 1.12×; cooperative builder contribution is not subject to that cap. Walking to the site is additional. The selected-building panel shows the live in-range builder count, cooperative multiplier and remaining-time estimate.
+- Research uses `TechDefinition.researchTime` and does not receive the extra 1.12 time scale. Its speed bonuses are nevertheless capped at 1.12×. An allied, completed Royal Foundry within 16 world units of a research building therefore reduces research time to at least 89.3% of its listed time; the foundry does not accelerate research performed inside itself.
+- The Royal Foundry aura nominally grants 1.25× production and research speed; its effective contribution is limited by the shared 1.12× cap.
+- The White Tower nominally grants 1.35× melee-infantry training speed, and the Age II Blitz Doctrine nominally reduces eligible production duration by 25%. Both are included in the same 1.12× combined cap; neither can push actual production above that ceiling. Blitz still excludes workers, siege and special units.
+- Anime civilization's configured 1.05× build speed remains active and is included in the 1.12× construction cap. Medieval and Fantasy are 1.0×.
+- Hovering a unit, building or technology production option in the HUD displays its current estimated output / build / research time, including the bonuses currently applicable to that location.
 
 ## Building construction times
 
-The third column is the one-villager work time from initial placement to completion in a neutral-speed civilization (90% of the stored `buildTime`, because the placed foundation starts at 10%). Anime's time is this column divided by 1.05.
+The third column is the actual one-villager work time from initial placement to completion in a neutral-speed civilization: `0.9 × stored buildTime × 1.12`. Anime's time is this column divided by 1.05 (subject to the same 1.12× speed ceiling).
 
 | Building | Stored buildTime | One villager, neutral |
 |---|---:|---:|
-| Town Center | 35 s | 31.5 s |
-| House | 9 s | 8.1 s |
-| Barracks | 20 s | 18 s |
-| Archery Range | 20 s | 18 s |
-| Stable | 22 s | 19.8 s |
-| Siege Workshop | 28 s | 25.2 s |
-| Dock | 16 s | 14.4 s |
-| Farm | 10 s | 9 s |
-| Granary | 14 s | 12.6 s |
-| Lumber Camp | 15 s | 13.5 s |
-| Mining Camp | 15 s | 13.5 s |
-| Wall segment | 8 s | 7.2 s per segment |
-| Gate | 22 s | 19.8 s |
-| Watch Tower | 20 s | 18 s |
-| Castle | 45 s | 40.5 s |
-| Royal Foundry (Medieval unique) | 22 s | 19.8 s |
-| Spirit Shrine (Anime unique) | 20 s | 18 s |
-| Mana Well (Fantasy unique) | 21 s | 18.9 s |
+| Town Center | 35 s | 35.28 s |
+| House | 9 s | 9.07 s |
+| Barracks | 20 s | 20.16 s |
+| Archery Range | 20 s | 20.16 s |
+| Stable | 22 s | 22.18 s |
+| Siege Workshop | 28 s | 28.22 s |
+| Dock | 16 s | 16.13 s |
+| Farm | 10 s | 10.08 s |
+| Granary | 14 s | 14.11 s |
+| Lumber Camp | 15 s | 15.12 s |
+| Mining Camp | 15 s | 15.12 s |
+| Wall segment | 8 s | 8.06 s per segment |
+| Gate | 22 s | 22.18 s |
+| Watch Tower | 20 s | 20.16 s |
+| Castle | 45 s | 45.36 s |
+| Royal Foundry (Medieval unique) | 22 s | 22.18 s |
+| Spirit Shrine (Anime unique) | 20 s | 20.16 s |
+| Mana Well (Fantasy unique) | 21 s | 21.17 s |
 
 ### Age-up landmarks
 
@@ -50,20 +50,20 @@ Age advancement is **not a separate research timer**. The age changes when the c
 
 | Age unlocked | Landmark choices | Stored buildTime | One villager, neutral |
 |---|---|---:|---:|
-| Age II | Aachen Chapel / White Tower Armoury | 222.22 s (internal) | **200 s** |
-| Age III | Guild Hall / Citadel Keep | 261.11 s (internal) | **235 s** |
-| Age IV | Imperial Observatory / Crimson Arsenal | 333.33 s (internal) | **300 s** |
+| Age II | Aachen Chapel / White Tower Armoury | 222.22 s (internal) | **224 s** |
+| Age III | Guild Hall / Citadel Keep | 261.11 s (internal) | **263.2 s** |
+| Age IV | Imperial Observatory / Crimson Arsenal | 333.33 s (internal) | **336 s** |
 
-These are the exact one-villager completion targets in a neutral-speed civilization. Internally, landmark `buildTime` is scaled by `1 / 0.9` because every placed foundation starts at 10% progress; the HUD's remaining-time estimate still reports the requested 200 / 235 / 300 seconds. Anime's 1.05× construction bonus reduces the actual times to approximately 190.5 / 223.8 / 285.7 seconds.
+These one-villager neutral times include the global 1.12 production-time scale. Internally, landmark `buildTime` is scaled by `1 / 0.9` because every placed foundation starts at 10% progress. Anime's 1.05× construction bonus reduces the actual times to approximately 213.3 / 250.7 / 320 seconds.
 
 | Builders | Contribution multiplier | Age I → II | Age II → III | Age III → IV |
 |---:|---:|---:|---:|---:|
-| 1 | ×1.00 | 200 s | 235 s | 300 s |
-| 2 | ×1.75 | 114.3 s | 134.3 s | 171.4 s |
-| 3 | ×2.35 | 85.1 s | 100 s | 127.7 s |
-| 4 | ×2.85 | 70.2 s | 82.5 s | 105.3 s |
-| 5 | ×3.35 | 59.7 s | 70.1 s | 89.6 s |
-| 6 | ×3.85 | 51.9 s | 61 s | 77.9 s |
+| 1 | ×1.00 | 224 s | 263.2 s | 336 s |
+| 2 | ×1.75 | 128 s | 150.4 s | 192 s |
+| 3 | ×2.35 | 95.3 s | 112 s | 143 s |
+| 4 | ×2.85 | 78.6 s | 92.4 s | 117.9 s |
+| 5 | ×3.35 | 66.9 s | 78.6 s | 100.3 s |
+| 6 | ×3.85 | 58.2 s | 68.4 s | 87.3 s |
 
 With the requested curve, four builders provide 2.85 worker-equivalents and five provide 3.35. A sixth and each later builder adds 0.50 more worker-equivalents, so cooperative construction remains faster while the first worker is the most efficient.
 
@@ -73,37 +73,38 @@ With the requested curve, four builders provide 2.85 worker-equivalents and five
 The selected-building HUD now estimates:
 
 - Construction / wall repair remaining time from builders actually inside the work radius, civilization construction speed and the shared diminishing-return curve. If no builder is working in range, it reports that it is waiting for workers rather than inventing a countdown.
-- Research remaining time from progress, research duration and nearby Royal Foundry aura.
-- Current unit and total queue remaining time from each queued unit's training duration, category-scoped technology, White Tower melee bonus and nearby Royal Foundry aura.
+- Research remaining time from progress, research duration and the capped Royal Foundry aura.
+- Current unit and total queue remaining time from each queued unit's scaled training duration, category-scoped technology, White Tower melee bonus and capped Royal Foundry aura.
+- Build-menu, training and research option hover text uses these same effective timers, rather than showing only the raw data-field value.
 
 These are simulation-time estimates. They do not include future population blocking, interruptions, unit deaths, builder travel, or a future change in the number of active builders. The HUD refreshes selected-building estimates twice per second.
 
 ## Unit production times
 
-All are base `trainTime` values, before the Forge, White Tower or Blitz bonuses. The production building listed is the normal civilization roster location.
+The second time column is the real unboosted queue duration: `base trainTime × 1.12`. Live tooltips may show a shorter duration when current accelerators apply, but their combined speed cannot exceed 1.12×. The production building listed is the normal civilization roster location.
 
-| Civilization / roster | Unit | Production building / method | Base time |
-|---|---|---|---:|
-| Shared | Scout Rider | Stable (all civilizations) | 10 s |
-| Shared naval | Fishing Boat | Dock | 10 s |
-| Shared naval | Transport Boat | Dock | 18 s |
-| Shared naval | War Galley | Dock | 22 s |
-| Medieval | Villager | Town Center | 8 s |
-| Medieval | Swordsman | Barracks | 12 s |
-| Medieval | Longbowman | Archery Range | 11 s |
-| Medieval | Royal Knight | Stable | 20 s |
-| Medieval | Catapult | Siege Workshop | 24 s |
-| Medieval | Bombard Cannon | Siege Workshop | 26 s |
-| Medieval | Greek-fire Siphon | Siege Workshop | 26 s |
-| Anime | Spirit Gatherer | Town Center | 7 s |
-| Anime | Soul Reaper | Barracks | 14 s |
-| Anime | Leaf Shinobi | Archery Range | 10 s |
-| Anime | Ki Striker | Archery Range | 16 s |
-| Fantasy | Goblin Sapper | Town Center | 6 s |
-| Fantasy | Grove Warden | Barracks | 13 s |
-| Fantasy | Archmage | Archery Range | 15 s |
-| Fantasy | Holy Paladin | Stable | 18 s |
-| Fantasy | Ancient Treant | Siege Workshop | 22 s |
+| Civilization / roster | Unit | Production building / method | Base trainTime | Neutral output |
+|---|---|---|---:|---:|
+| Shared | Scout Rider | Stable (all civilizations) | 10 s | 11.2 s |
+| Shared naval | Fishing Boat | Dock | 10 s | 11.2 s |
+| Shared naval | Transport Boat | Dock | 18 s | 20.16 s |
+| Shared naval | War Galley | Dock | 22 s | 24.64 s |
+| Medieval | Villager | Town Center | 22 s | **24.64 s** |
+| Medieval | Swordsman | Barracks | 12 s | 13.44 s |
+| Medieval | Longbowman | Archery Range | 11 s | 12.32 s |
+| Medieval | Royal Knight | Stable | 20 s | 22.4 s |
+| Medieval | Catapult | Siege Workshop | 24 s | 26.88 s |
+| Medieval | Bombard Cannon | Siege Workshop | 26 s | 29.12 s |
+| Medieval | Greek-fire Siphon | Siege Workshop | 26 s | 29.12 s |
+| Anime | Spirit Gatherer | Town Center | 22 s | **24.64 s** |
+| Anime | Soul Reaper | Barracks | 14 s | 15.68 s |
+| Anime | Leaf Shinobi | Archery Range | 10 s | 11.2 s |
+| Anime | Ki Striker | Archery Range | 16 s | 17.92 s |
+| Fantasy | Goblin Sapper | Town Center | 22 s | **24.64 s** |
+| Fantasy | Grove Warden | Barracks | 13 s | 14.56 s |
+| Fantasy | Archmage | Archery Range | 15 s | 16.8 s |
+| Fantasy | Holy Paladin | Stable | 18 s | 20.16 s |
+| Fantasy | Ancient Treant | Siege Workshop | 22 s | 24.64 s |
 
 ### Special case: Battering Ram
 
@@ -191,10 +192,10 @@ Prerequisites: Precision Sawmill Gear requires Double-Bit Axe; Preserved Rations
 
 ## Implementation findings and balance watchlist
 
-1. **Construction stacking is linear.** Four builders are four times as fast as one. This makes Age-up landmarks finish in roughly 9–17 seconds with four builders once the resource threshold is met. Consider a diminishing-return curve or a soft cap after timing has been benchmarked in real matches.
+1. **Construction has diminishing returns.** Four builders contribute 2.85 worker-equivalents rather than 4.0; the separate 1.12× production-time scale slows the neutral one-builder baseline without removing the reward for cooperative work.
 2. **Age-up time is not just the landmark timer.** The practical path includes resource accumulation, builders walking to the site, and the 16-second Field Engineering research before a field ram can be assembled.
 3. **A stored unit train time is not always the in-game method.** Battering Ram is the clearest example: the playable path is the 4-infantry assembly project, not a normal queue item.
-4. **Production modifiers must match their descriptions.** This branch now applies Anime's configured 1.05× build speed, White Tower's 1.35× melee training speed, and the Blitz Doctrine only to its declared melee/ranged/cavalry categories.
+4. **Production modifiers share a hard ceiling.** Unit training and building construction scale by 1.12, while all stacked speed bonuses are capped at 1.12×. Worker base training is standardized at 22 seconds across civilizations; hover text and live queue ETAs use the same effective-duration functions.
 5. **Research building access matters.** A technology's own age requirement does not override the age requirement of its production/research building.
 
 Source of truth: `src/game/mods.ts`, `src/game/civilizations.ts`, `src/game/engine.ts`, and `src/types/game.ts`.
