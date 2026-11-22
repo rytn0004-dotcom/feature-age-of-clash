@@ -7,7 +7,9 @@ import {
   getFormationCohesionSpeedScale,
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
+  getFormationTacticalSlot,
   measureFormationRegroup,
+  shouldRefreshFormationTacticalSlot,
 } from './formationMovement';
 
 const origin = { x: 0, z: 0 };
@@ -149,5 +151,114 @@ test('formation terrain flow: exited and permanently unreachable units do not re
       passage,
     ),
     1,
+  );
+});
+
+
+test('combat tactics: infantry slots form a stable frontline without exceeding melee range', () => {
+  const members = [
+    { id: 'inf-03', category: 'melee' as const },
+    { id: 'inf-01', category: 'melee' as const },
+    { id: 'inf-02', category: 'melee' as const },
+    { id: 'archer-01', category: 'ranged' as const },
+  ];
+  const slot = getFormationTacticalSlot({
+    unitId: 'inf-01',
+    members,
+    category: 'melee',
+    groupOrigin: { x: 0, z: 0 },
+    memberPosition: { x: 0, z: 0 },
+    target: { x: 20, z: 0, radius: 0.45 },
+    attackRange: 1.8,
+    unitRadius: 0.4,
+  });
+
+  assert.ok(slot);
+  assert.equal(slot.role, 'frontline');
+  assert.ok(slot.distanceFromTarget <= 0.45 + 1.8 - 0.22 + 0.001);
+  assert.ok(slot.lateralOffset < 0, 'stable ID sorting places the first infantry slot on the left side');
+});
+
+test('combat tactics: ranged units stay behind the target approach line while inside weapon range', () => {
+  const members = [
+    { id: 'archer-01', category: 'ranged' as const },
+    { id: 'archer-02', category: 'ranged' as const },
+    { id: 'inf-01', category: 'melee' as const },
+  ];
+  const slot = getFormationTacticalSlot({
+    unitId: 'archer-02',
+    members,
+    category: 'ranged',
+    groupOrigin: { x: 0, z: 0 },
+    memberPosition: { x: 0, z: 0 },
+    target: { x: 30, z: 0, radius: 0.5 },
+    attackRange: 8,
+    unitRadius: 0.4,
+  });
+
+  assert.ok(slot);
+  assert.equal(slot.role, 'backline');
+  assert.ok(slot.x < 30);
+  assert.ok(slot.distanceFromTarget <= 8 + 0.5 - 0.22 + 0.001);
+  assert.ok(slot.distanceFromTarget >= 5);
+});
+
+test('combat tactics: cavalry alternates across both flanks without stacking on the same point', () => {
+  const members = Array.from({ length: 4 }, (_, index) => ({
+    id: \`cav-\${index + 1}\`,
+    category: 'cavalry' as const,
+  }));
+  const slots = members.map((member) =>
+    getFormationTacticalSlot({
+      unitId: member.id,
+      members,
+      category: 'cavalry',
+      groupOrigin: { x: 0, z: 0 },
+      memberPosition: { x: 0, z: 0 },
+      target: { x: 20, z: 0, radius: 0.45 },
+      attackRange: 2.4,
+      unitRadius: 0.58,
+    }),
+  );
+
+  assert.ok(slots.every(Boolean));
+  assert.equal(slots[0]!.role, 'flank');
+  assert.ok(slots[0]!.lateralOffset < 0);
+  assert.ok(slots[1]!.lateralOffset > 0);
+  assert.ok(slots[2]!.lateralOffset < 0);
+  assert.ok(Math.abs(slots[2]!.lateralOffset) > Math.abs(slots[0]!.lateralOffset));
+  assert.ok(new Set(slots.map((slot) => \`\${slot!.x.toFixed(2)}:\${slot!.z.toFixed(2)}\`)).size > 2);
+  assert.ok(slots.every((slot) => slot!.distanceFromTarget <= 2.4 + 0.45 - 0.22 + 0.001));
+});
+
+test('combat tactics: target motion refreshes slots only after the hysteresis threshold', () => {
+  assert.equal(
+    shouldRefreshFormationTacticalSlot('target-a', { x: 10, z: 10 }, 'target-a', { x: 12, z: 10 }),
+    false,
+  );
+  assert.equal(
+    shouldRefreshFormationTacticalSlot('target-a', { x: 10, z: 10 }, 'target-a', { x: 14, z: 10 }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshFormationTacticalSlot('target-a', { x: 10, z: 10 }, 'target-b', { x: 10, z: 10 }),
+    true,
+  );
+});
+
+test('combat tactics: workers and non-member units never receive tactical combat slots', () => {
+  const members = [{ id: 'worker-01', category: 'worker' as const }];
+  assert.equal(
+    getFormationTacticalSlot({
+      unitId: 'worker-01',
+      members,
+      category: 'worker',
+      groupOrigin: { x: 0, z: 0 },
+      memberPosition: { x: 0, z: 0 },
+      target: { x: 20, z: 0, radius: 0.5 },
+      attackRange: 1,
+      unitRadius: 0.32,
+    }),
+    null,
   );
 });
