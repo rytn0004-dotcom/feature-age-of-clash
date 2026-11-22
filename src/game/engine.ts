@@ -193,6 +193,13 @@ import {
   shouldRecoverStalledPath,
 } from './movementDiagnostics';
 import {
+  getFormationCohesionSpeedScale,
+  getFormationMoveProgress,
+  measureFormationRegroup,
+  type FormationMovementMember,
+  type FormationRegroupState,
+} from './formationMovement';
+import {
   ControlGroupsMap,
   createEmptyControlGroups,
   pruneControlGroups,
@@ -388,6 +395,8 @@ export class RtsEngine {
   // Control Groups (1-9) & Quick Cycling Indices
   public controlGroups: ControlGroupsMap = createEmptyControlGroups();
   private lastGroupKeyTime: Record<number, number> = {};
+  private movementGroupSequence = 0;
+  private formationRegroupByGroup = new Map<string, FormationRegroupState>();
   private idleCycleIdx = 0;
   private militaryBldgCycleIdx = 0;
 
@@ -2995,18 +3004,19 @@ export class RtsEngine {
   public issueMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction))
+      .sort((a, b) => a.id.localeCompare(b.id));
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
     sound.playOrder();
     this.spawnCommandIndicator(x, z, 'move');
 
-    // Formation dispersion
-    const count = playerUnits.length;
-    const spacing = 1.5;
-    const cols = Math.ceil(Math.sqrt(count));
+    const goal = {
+      x: Math.max(-95, Math.min(95, x)),
+      z: Math.max(-95, Math.min(95, z)),
+    };
 
-    // Transport with cargo: move then unload near destination
+    // Transport with cargo: move then unload near destination.
     const transports = playerUnits.filter((u) => u.unitDefId === 'transport_boat');
     if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
       const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
@@ -3015,8 +3025,9 @@ export class RtsEngine {
         return;
       }
       transports.forEach((boat) => {
-        boat.targetX = Math.max(-95, Math.min(95, x));
-        boat.targetZ = Math.max(-95, Math.min(95, z));
+        this.clearFormationMovement(boat);
+        boat.targetX = goal.x;
+        boat.targetZ = goal.z;
         boat.attackMoveGoal = null;
         boat.targetEntityId = undefined;
         boat.waypoints = undefined;
@@ -3027,17 +3038,56 @@ export class RtsEngine {
       return;
     }
 
-    playerUnits.forEach((unit, idx) => {
-      const row = Math.floor(idx / cols);
-      const col = idx % cols;
-      const ox = (col - (cols - 1) / 2) * spacing;
-      const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
-      const tx = Math.max(-95, Math.min(95, x + ox));
-      const tz = Math.max(-95, Math.min(95, z + oz));
+    // Combat groups use the same role lanes as AI: melee screens the front, cavalry
+    // spreads to the flanks, ranged/special units stay protected, and siege remains rearward.
+    const combatUnits = playerUnits.filter(
+      (unit) =>
+        unit.unitDef.category !== 'worker' &&
+        !unit.unitDef.isNaval &&
+        unit.unitDefId !== 'transport_boat',
+    );
+    const formationSlots = new Map(
+      layoutCombatFormation(combatUnits, goal).map((slot) => [slot.unitId, slot] as const),
+    );
+    const groupOrigin = combatUnits.length > 0
+      ? {
+          x: combatUnits.reduce((sum, unit) => sum + unit.x, 0) / combatUnits.length,
+          z: combatUnits.reduce((sum, unit) => sum + unit.z, 0) / combatUnits.length,
+        }
+      : goal;
+    const groupId = combatUnits.length > 1
+      ? `player:${combatUnits[0].faction}:${++this.movementGroupSequence}`
+      : undefined;
+
+    // Workers and naval units stay in a compact reserve line behind the combat formation.
+    const reserveUnits = playerUnits.filter((unit) => !formationSlots.has(unit.id));
+    const reserveCols = Math.max(1, Math.ceil(Math.sqrt(reserveUnits.length)));
+    const dx = goal.x - groupOrigin.x;
+    const dz = goal.z - groupOrigin.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const dirX = dx / length;
+    const dirZ = dz / length;
+    const sideX = -dirZ;
+    const sideZ = dirX;
+
+    playerUnits.forEach((unit) => {
+      const slot = formationSlots.get(unit.id);
+      const reserveIndex = reserveUnits.findIndex((entry) => entry.id === unit.id);
+      const reserveRow = Math.floor(Math.max(0, reserveIndex) / reserveCols);
+      const reserveCol = Math.max(0, reserveIndex) % reserveCols;
+      const reserveSpacing = 1.7;
+      const reserveLateral = (reserveCol - (reserveCols - 1) / 2) * reserveSpacing;
+      const reserveDepth = 11 + reserveRow * reserveSpacing;
+      const target = slot
+        ? { x: slot.x, z: slot.z }
+        : {
+            x: Math.max(-95, Math.min(95, goal.x - dirX * reserveDepth + sideX * reserveLateral)),
+            z: Math.max(-95, Math.min(95, goal.z - dirZ * reserveDepth + sideZ * reserveLateral)),
+          };
 
       if (queue) {
         if (!unit.commandQueue) unit.commandQueue = [];
-        unit.commandQueue.push({ type: 'move', x: tx, z: tz });
+        unit.commandQueue.push({ type: 'move', x: target.x, z: target.z });
         unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
@@ -3045,8 +3095,8 @@ export class RtsEngine {
       unit.commandQueue = undefined;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
-      unit.targetX = tx;
-      unit.targetZ = tz;
+      unit.targetX = target.x;
+      unit.targetZ = target.z;
       unit.attackMoveGoal = null;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
@@ -3054,8 +3104,12 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
+      if (groupId && slot) this.assignFormationMovement(unit, groupId, groupOrigin, goal);
+      else this.clearFormationMovement(unit);
       unit.state = 'moving';
-      unit.currentActionText = '👣 行軍移動中';
+      unit.currentActionText = slot
+        ? `👣 陣形行軍 · ${slot.role === 'frontline' ? '前排' : slot.role === 'backline' ? '遠程' : slot.role === 'flank' ? '側翼' : slot.role === 'siege' ? '攻城' : '支援'}`
+        : '👣 行軍移動中';
     });
   }
 
@@ -3084,6 +3138,7 @@ export class RtsEngine {
     }
 
     playerUnits.forEach((unit) => {
+      this.clearFormationMovement(unit);
       unit.attackMoveGoal = null;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
@@ -5098,7 +5153,65 @@ export class RtsEngine {
     });
   }
 
+  private refreshFormationRegroupState(): void {
+    this.formationRegroupByGroup.clear();
+    const membersByGroup = new Map<string, FormationMovementMember[]>();
+
+    for (const unit of this.units) {
+      const groupId = unit.formationGroupId;
+      const origin = unit.formationOrderOrigin;
+      const goal = unit.formationOrderGoal;
+      if (
+        unit.hp <= 0 ||
+        unit.garrisonedInBuildingId ||
+        !groupId ||
+        !origin ||
+        !goal ||
+        (unit.state !== 'moving' && unit.state !== 'attacking')
+      ) {
+        continue;
+      }
+
+      const members = membersByGroup.get(groupId) || [];
+      members.push({
+        id: unit.id,
+        x: unit.x,
+        z: unit.z,
+        stuckDuration: unit.stuckDuration,
+        formationOrderOrigin: origin,
+        formationOrderGoal: goal,
+      });
+      membersByGroup.set(groupId, members);
+    }
+
+    for (const [groupId, members] of membersByGroup) {
+      const state = measureFormationRegroup(members);
+      if (state) this.formationRegroupByGroup.set(groupId, state);
+    }
+  }
+
+  private assignFormationMovement(
+    unit: UnitEntity,
+    groupId: string,
+    origin: { x: number; z: number },
+    goal: { x: number; z: number },
+  ): void {
+    unit.formationGroupId = groupId;
+    unit.formationOrderOrigin = { ...origin };
+    unit.formationOrderGoal = { ...goal };
+    unit.stuckDuration = 0;
+    unit.stuckAccumulator = 0;
+    unit.pathRecoveryCooldown = 0;
+  }
+
+  private clearFormationMovement(unit: UnitEntity): void {
+    unit.formationGroupId = undefined;
+    unit.formationOrderOrigin = undefined;
+    unit.formationOrderGoal = undefined;
+  }
+
   private updateUnits(dt: number) {
+    this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
     let anyDied = false;
 
@@ -5446,7 +5559,19 @@ export class RtsEngine {
     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
     const rootSlow = (unit as any)._rootSlowUntil && (unit as any)._rootSlowUntil > this.simTime ? 0.55 : 1;
     const relicSlow = this.starRelicCarrierId === unit.id ? STAR_RELIC_CARRY_SPEED : 1;
-    const speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
+    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
+    const regroupState = unit.formationGroupId
+      ? this.formationRegroupByGroup.get(unit.formationGroupId)
+      : undefined;
+    if (regroupState && unit.formationOrderOrigin && unit.formationOrderGoal) {
+      const progress = getFormationMoveProgress(
+        unit.x,
+        unit.z,
+        unit.formationOrderOrigin,
+        unit.formationOrderGoal,
+      );
+      speed *= getFormationCohesionSpeedScale(progress, regroupState.slowestProgress, true);
+    }
     const dx = (activeTarget.x - unit.x) / distToWp;
     const dz = (activeTarget.z - unit.z) / distToWp;
     const stepLen = Math.min(distToWp, speed * dt);
@@ -5483,6 +5608,7 @@ export class RtsEngine {
       unit.targetZ = unit.wallPatrolRoute[index].z;
     }
     if (unit.targetX === undefined || unit.targetZ === undefined) {
+      this.clearFormationMovement(unit);
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.currentActionText = '💤 待命中 (閒置)';
@@ -5507,6 +5633,7 @@ export class RtsEngine {
       unit.stuckDuration = 0;
       unit.stuckAccumulator = 0;
       unit.pathRecoveryCooldown = 0;
+      this.clearFormationMovement(unit);
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.velocity = { x: 0, z: 0 };
@@ -10079,9 +10206,35 @@ export class RtsEngine {
 
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
+          const formationGroupId = `ai:${aiId}:${combatCmd.type}:${stronghold.id}`;
+          const existingFormationMember = strikeUnits.find(
+            (unit) =>
+              unit.formationGroupId === formationGroupId &&
+              unit.formationOrderOrigin &&
+              unit.formationOrderGoal &&
+              getDistance(unit.formationOrderGoal.x, unit.formationOrderGoal.z, goalX, goalZ) <= 2,
+          );
+          const formationOrigin = existingFormationMember?.formationOrderOrigin || {
+            x: strikeUnits.reduce((sum, unit) => sum + unit.x, 0) / Math.max(1, strikeUnits.length),
+            z: strikeUnits.reduce((sum, unit) => sum + unit.z, 0) / Math.max(1, strikeUnits.length),
+          };
           const formationSlots = new Map(
             layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry] as const)
           );
+
+          strikeUnits.forEach((unit) => {
+            if (unit.unitDef.category !== 'worker') {
+              if (
+                unit.formationGroupId !== formationGroupId ||
+                !unit.formationOrderGoal ||
+                getDistance(unit.formationOrderGoal.x, unit.formationOrderGoal.z, goalX, goalZ) > 2
+              ) {
+                this.assignFormationMovement(unit, formationGroupId, formationOrigin, { x: goalX, z: goalZ });
+              }
+            } else {
+              this.clearFormationMovement(unit);
+            }
+          });
 
           strikeUnits.forEach((unit, idx) => {
             const slot = formationSlots.get(unit.id);
@@ -10147,6 +10300,7 @@ export class RtsEngine {
             const assignedPreyId = raidTargetByUnit.get(unit.id);
             const prey = assignedPreyId ? exposedWorkerById.get(assignedPreyId) : undefined;
             if (isRaider && prey) {
+              this.clearFormationMovement(unit);
               const goalChanged =
                 !unit.attackMoveGoal ||
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, prey.x, prey.z) > 3;
@@ -10162,6 +10316,7 @@ export class RtsEngine {
 
             // A stable subset of raiders pressures economy buildings; avoid a fresh random roll every AI tick.
             if (isRaider && ecoBuilding && idx % 3 === 1) {
+              this.clearFormationMovement(unit);
               const goalChanged =
                 !unit.attackMoveGoal ||
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, ecoBuilding.x, ecoBuilding.z) > 3;
