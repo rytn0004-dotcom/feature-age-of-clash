@@ -5,6 +5,10 @@ export interface PerformanceSample {
   frameAverageMs: number;
   frameP95Ms: number;
   maxHitchMs: number;
+  simulationUpdateAverageMs: number;
+  simulationUpdateMaxMs: number;
+  renderCallAverageMs: number;
+  renderCallMaxMs: number;
   drawCalls: number;
   triangles: number;
   geometries: number;
@@ -55,6 +59,10 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'frameAverageMs',
   'frameP95Ms',
   'maxHitchMs',
+  'simulationUpdateAverageMs',
+  'simulationUpdateMaxMs',
+  'renderCallAverageMs',
+  'renderCallMaxMs',
   'drawCalls',
   'triangles',
   'geometries',
