@@ -876,7 +876,8 @@ export function computeAiWorkerAllocation(
   resources: Resources,
   workerCount: number,
   gatherFocus = 'balanced_eco',
-  age: AgeLevel | number = 1
+  age: AgeLevel | number = 1,
+  netRates?: Partial<Record<ResourceType, number>>
 ): Record<ResourceType, number> {
   const result: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
   if (workerCount <= 0) return result;
@@ -921,6 +922,31 @@ export function computeAiWorkerAllocation(
   if (resources.wood < 110) weights.wood += 0.22;
   if (resources.gold < 70 && workerCount >= 4) weights.gold += 0.18;
   if (age >= 2 && resources.stone < 60 && workerCount >= 7) weights.stone += 0.1;
+
+  // Use rolling inventory flow as a bounded correction, not as the sole source
+  // of truth. Discrete construction / army purchases can create short negative
+  // bursts, so only react while stock is still below a soft safety target.
+  if (netRates) {
+    const stockTargets: Record<ResourceType, number> = {
+      food: nextAgeCost?.food ?? 700,
+      wood: age < 2 ? 220 : age < 3 ? 280 : 340,
+      gold: nextAgeCost?.gold ?? 250,
+      stone: age < 2 ? 40 : age < 3 ? 120 : age < 4 ? 200 : 260,
+    };
+
+    for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+      const netPerMinute = netRates[type];
+      if (!Number.isFinite(netPerMinute)) continue;
+
+      const stock = Math.max(0, resources[type] || 0);
+      const target = stockTargets[type];
+      if (netPerMinute! < -4 && stock < target * 1.5) {
+        weights[type] += Math.min(0.2, (-netPerMinute! - 4) / 60);
+      } else if (netPerMinute! > 8 && stock > target) {
+        weights[type] = Math.max(0.04, weights[type] - Math.min(0.12, (netPerMinute! - 8) / 120));
+      }
+    }
+  }
 
   const totalW = weights.food + weights.wood + weights.gold + weights.stone;
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
