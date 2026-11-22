@@ -3520,3 +3520,25 @@ test('garrison shelter selection: nearest free shelter is deterministic and does
   assert.equal(selectNearestGarrisonShelter(0, 0, survivingShelters.map((s) => ({ ...s, freeSlots: 0 }))), null);
   assert.equal(selectNearestGarrisonShelter(Number.NaN, 0, survivingShelters), null);
 });
+
+test('combat formations widen their lateral spacing for larger armies', async () => {
+  const { layoutCombatFormation } = await import('./rules');
+  const makeUnits = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `melee-${String(index).padStart(3, '0')}`,
+      x: 0,
+      z: 0,
+      unitDef: { category: 'melee' as const },
+    }));
+  const lateralWidth = (count: number) => {
+    const slots = layoutCombatFormation(makeUnits(count), { x: 30, z: 0 });
+    const lateral = slots.map((slot) => slot.z);
+    return Math.max(...lateral) - Math.min(...lateral);
+  };
+
+  assert.ok(
+    lateralWidth(40) > lateralWidth(8),
+    'larger armies should reserve wider frontline spacing instead of collapsing into a narrow clump',
+  );
+  assert.equal(layoutCombatFormation(makeUnits(1), { x: 30, z: 0 }).length, 1);
+});
