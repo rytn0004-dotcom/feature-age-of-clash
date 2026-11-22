@@ -12,6 +12,10 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     frameAverageMs: 16.2,
     frameP95Ms: 21.4,
     maxHitchMs: 42.1,
+    simulationUpdateAverageMs: 8.1,
+    simulationUpdateMaxMs: 17.4,
+    renderCallAverageMs: 3.7,
+    renderCallMaxMs: 6.2,
     drawCalls: 120,
     triangles: 45000,
     geometries: 88,
@@ -60,13 +64,15 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
 test('performance telemetry: exports stable columns and numeric samples', () => {
   const csv = formatPerformanceTelemetryCsv([makeSample()]);
   const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-  assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,/);
+  assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,simulationUpdateAverageMs,simulationUpdateMaxMs,renderCallAverageMs,renderCallMaxMs,/);
   assert.match(header, /aiAliveUnits,aiStalledUnits,aiPathRecoveryCount,aiMaxStuckSeconds/);
   assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds,aiDecisionTimingSamples,aiDecisionLastMs,aiDecisionAverageMs,aiDecisionMaxMs/);
   assert.ok(row.includes('59.8'));
   assert.ok(row.includes('45000'));
   assert.ok(row.includes('highland_basin'));
   assert.ok(row.includes('2.25'));
+  assert.ok(row.includes('17.4'));
+  assert.ok(row.includes('6.2'));
 });
 
 test('performance telemetry: empty captures still produce a usable header', () => {
