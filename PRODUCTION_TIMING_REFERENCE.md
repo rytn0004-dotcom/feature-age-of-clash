@@ -7,7 +7,7 @@ All values are **simulation seconds**. They are the data-driven baseline, not gu
 ## Timing rules
 
 - Unit production uses `UnitStats.trainTime`. One production building works on one queue item at a time; different buildings can produce in parallel.
-- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress. Effective builder work is subject to diminishing returns: contributions for the first eight builders are `1.00, 0.65, 0.45, 0.30, 0.20, 0.14, 0.10, 0.07`; additional builders add no more work. With (N) builders already in working range:
+- Construction uses `BuildingDefinition.buildTime`. A placed building begins at 10% progress. Effective builder work follows this requested curve: builder 1 contributes `1.00`; builders 2–5 add `0.75, 0.60, 0.50, 0.50`; every builder from number 6 onward adds `0.50`. With (N) builders already in working range:
 
   `actual work time = 0.9 × buildTime ÷ (civilization build-speed multiplier × summed builder contribution)`
 
@@ -50,11 +50,22 @@ Age advancement is **not a separate research timer**. The age changes when the c
 
 | Age unlocked | Landmark choices | Stored buildTime | One villager, neutral |
 |---|---|---:|---:|
-| Age II | Aachen Chapel / White Tower Armoury | 40 s | 36 s |
-| Age III | Guild Hall / Citadel Keep | 55 s | 49.5 s |
-| Age IV | Imperial Observatory / Crimson Arsenal | 75 s | 67.5 s |
+| Age II | Aachen Chapel / White Tower Armoury | 222.22 s (internal) | **200 s** |
+| Age III | Guild Hall / Citadel Keep | 261.11 s (internal) | **235 s** |
+| Age IV | Imperial Observatory / Crimson Arsenal | 333.33 s (internal) | **300 s** |
 
-With the diminishing-return curve, four builders provide 2.4 worker-equivalents. They need approximately 15 s / 20.6 s / 28.1 s for these three landmark tiers in a neutral-speed civilization, before travel time. Eight or more builders cap at 2.91 worker-equivalents, so piling on more villagers has sharply reduced returns.
+These are the exact one-villager completion targets in a neutral-speed civilization. Internally, landmark `buildTime` is scaled by `1 / 0.9` because every placed foundation starts at 10% progress; the HUD's remaining-time estimate still reports the requested 200 / 235 / 300 seconds. Anime's 1.05× construction bonus reduces the actual times to approximately 190.5 / 223.8 / 285.7 seconds.
+
+| Builders | Contribution multiplier | Age I → II | Age II → III | Age III → IV |
+|---:|---:|---:|---:|---:|
+| 1 | ×1.00 | 200 s | 235 s | 300 s |
+| 2 | ×1.75 | 114.3 s | 134.3 s | 171.4 s |
+| 3 | ×2.35 | 85.1 s | 100 s | 127.7 s |
+| 4 | ×2.85 | 70.2 s | 82.5 s | 105.3 s |
+| 5 | ×3.35 | 59.7 s | 70.1 s | 89.6 s |
+| 6 | ×3.85 | 51.9 s | 61 s | 77.9 s |
+
+With the requested curve, four builders provide 2.85 worker-equivalents and five provide 3.35. A sixth and each later builder adds 0.50 more worker-equivalents, so cooperative construction remains faster while the first worker is the most efficient.
 
 
 ## Live remaining-time estimates
