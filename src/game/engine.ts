@@ -3046,29 +3046,38 @@ export class RtsEngine {
         !unit.unitDef.isNaval &&
         unit.unitDefId !== 'transport_boat',
     );
-    const formationSlots = new Map(
-      layoutCombatFormation(combatUnits, goal).map((slot) => [slot.unitId, slot] as const),
-    );
     const groupOrigin = combatUnits.length > 0
       ? {
           x: combatUnits.reduce((sum, unit) => sum + unit.x, 0) / combatUnits.length,
           z: combatUnits.reduce((sum, unit) => sum + unit.z, 0) / combatUnits.length,
         }
       : goal;
+    const dx = goal.x - groupOrigin.x;
+    const dz = goal.z - groupOrigin.z;
+    const length = Math.hypot(dx, dz);
+    const dirX = length > 0.001 ? dx / length : 1;
+    const dirZ = length > 0.001 ? dz / length : 0;
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    // Shift the formation anchor forward so the role lanes are centred around the
+    // requested destination instead of leaving the whole army several units short.
+    const formationAnchor = {
+      x: goal.x + dirX * 11,
+      z: goal.z + dirZ * 11,
+    };
+    const formationSlots = new Map(
+      (combatUnits.length > 1
+        ? layoutCombatFormation(combatUnits, formationAnchor)
+        : []).map((slot) => [slot.unitId, slot] as const),
+    );
     const groupId = combatUnits.length > 1
       ? `player:${combatUnits[0].faction}:${++this.movementGroupSequence}`
       : undefined;
-
-    // Workers and naval units stay in a compact reserve line behind the combat formation.
-    const reserveUnits = playerUnits.filter((unit) => !formationSlots.has(unit.id));
+    const soloCombatIds = new Set(combatUnits.length === 1 ? combatUnits.map((unit) => unit.id) : []);
+    const reserveUnits = playerUnits.filter(
+      (unit) => !formationSlots.has(unit.id) && !soloCombatIds.has(unit.id),
+    );
     const reserveCols = Math.max(1, Math.ceil(Math.sqrt(reserveUnits.length)));
-    const dx = goal.x - groupOrigin.x;
-    const dz = goal.z - groupOrigin.z;
-    const length = Math.hypot(dx, dz) || 1;
-    const dirX = dx / length;
-    const dirZ = dz / length;
-    const sideX = -dirZ;
-    const sideZ = dirX;
 
     playerUnits.forEach((unit) => {
       const slot = formationSlots.get(unit.id);
@@ -3078,12 +3087,23 @@ export class RtsEngine {
       const reserveSpacing = 1.7;
       const reserveLateral = (reserveCol - (reserveCols - 1) / 2) * reserveSpacing;
       const reserveDepth = 11 + reserveRow * reserveSpacing;
+      const reserveTarget = combatUnits.length === 0
+        ? {
+            x: goal.x + reserveLateral,
+            z: goal.z + (reserveRow - (Math.ceil(reserveUnits.length / reserveCols) - 1) / 2) * reserveSpacing,
+          }
+        : {
+            x: goal.x - dirX * reserveDepth + sideX * reserveLateral,
+            z: goal.z - dirZ * reserveDepth + sideZ * reserveLateral,
+          };
       const target = slot
         ? { x: slot.x, z: slot.z }
-        : {
-            x: Math.max(-95, Math.min(95, goal.x - dirX * reserveDepth + sideX * reserveLateral)),
-            z: Math.max(-95, Math.min(95, goal.z - dirZ * reserveDepth + sideZ * reserveLateral)),
-          };
+        : soloCombatIds.has(unit.id)
+          ? goal
+          : {
+              x: Math.max(-95, Math.min(95, reserveTarget.x)),
+              z: Math.max(-95, Math.min(95, reserveTarget.z)),
+            };
 
       if (queue) {
         if (!unit.commandQueue) unit.commandQueue = [];
