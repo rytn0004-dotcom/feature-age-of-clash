@@ -141,7 +141,7 @@ test('path-search timing: counts AI and empty routes separately', () => {
   assert.equal(timing.aiSampleCount, 2);
   assert.equal(timing.emptyPathCount, 1);
   assert.equal(timing.aiEmptyPathCount, 1);
-  assert.equal(timing.totalMs, 2.2);
+  assert.ok(Math.abs(timing.totalMs - 2.2) < 1e-9, 'elapsed time should add within floating-point tolerance');
   assert.equal(timing.maxMs, 1.4);
   assert.equal(getAveragePathSearchMs(timing), 2.2 / 3);
 });
