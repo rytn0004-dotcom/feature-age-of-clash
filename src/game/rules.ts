@@ -1167,13 +1167,17 @@ export function findBalancedResourceNode(
   nodes: ResourceNode[],
   type: ResourceType | undefined,
   assignedCounts: ReadonlyMap<string, number> = new Map(),
-  maxDistance = Infinity
+  maxDistance = Infinity,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
+    // Wild boars can injure isolated villagers; automatic economy dispatch
+    // leaves them to deliberate hunting parties unless explicitly authorized.
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     const distance = getDistance(x, z, node.x, node.z);
     if (distance > maxDistance) continue;
 
