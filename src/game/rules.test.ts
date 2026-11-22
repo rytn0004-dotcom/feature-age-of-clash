@@ -277,6 +277,26 @@ test('spatial: balanced resource selection distributes workers across available 
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 30)?.id, 'wood-free');
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'gold', assigned, 30)?.id, 'gold-near');
   assert.equal(findBalancedResourceNode(0, 0, nodes, 'wood', assigned, 3), null);
+
+  const boarNode: ResourceNode = {
+    id: 'dangerous-boar',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 1,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+  };
+  assert.equal(
+    findBalancedResourceNode(0, 0, [boarNode], 'food'),
+    null,
+    'Routine worker balancing must not send a single villager to an aggressive boar'
+  );
+  assert.equal(
+    findBalancedResourceNode(0, 0, [boarNode], 'food', new Map(), Infinity, true)?.id,
+    'dangerous-boar',
+    'A coordinated hunting order may explicitly authorize the dangerous node'
+  );
 });
 
 test('collision: resolveUnitBuildingCollisions pushes units out of solid building core while leaving auto-channel', async () => {
