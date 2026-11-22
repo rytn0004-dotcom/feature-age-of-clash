@@ -43,6 +43,8 @@ import {
   getAvailableTechsForBuilding,
   getBuildableTypesForCiv,
   getCivilizationConfig,
+  getCivilizationBuildSpeedMultiplier,
+  getLandmarkTrainingSpeedMultiplier,
   isBuildingBuildableForCiv,
   getLevelTitle,
   getResourceGatherTechMultiplier,
@@ -6224,11 +6226,16 @@ export class RtsEngine {
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
+      const constructionSpeedMultiplier = getCivilizationBuildSpeedMultiplier(
+        this.getCivilizationForFaction(bldg.faction),
+        this.activeMods
+      );
       if (repairingWall) {
-        const repairSpeed = bldg.maxHp / (bldg.buildingDef.buildTime * 0.65);
+        const repairSpeed =
+          (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) * constructionSpeedMultiplier;
         bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
       } else {
-        const buildSpeed = 1 / bldg.buildingDef.buildTime;
+        const buildSpeed = constructionSpeedMultiplier / bldg.buildingDef.buildTime;
         bldg.buildProgress += buildSpeed * dt;
         bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
       }
@@ -7567,8 +7574,17 @@ export class RtsEngine {
         const currentUnitId = bldg.queue[0];
         const uDef = this.findUnitDef(currentUnitId, bldg.faction);
         if (uDef) {
-          const trainTimeMult = getTrainingTimeMultiplier(this.getResearchedTechs(bldg.faction));
-          const speed = speedBonusMult / Math.max(2, uDef.stats.trainTime * trainTimeMult);
+          const trainTimeMult = getTrainingTimeMultiplier(
+            this.getResearchedTechs(bldg.faction),
+            uDef.category
+          );
+          const landmarkTrainingSpeed = getLandmarkTrainingSpeedMultiplier(
+            this.landmarksByFaction[bldg.faction] || [],
+            uDef.category
+          );
+          const speed =
+            (speedBonusMult * landmarkTrainingSpeed) /
+            Math.max(2, uDef.stats.trainTime * trainTimeMult);
           bldg.queueProgress += speed * dt;
 
           const pop = this.getPopulationStats(bldg.faction);
