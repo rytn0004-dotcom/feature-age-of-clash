@@ -23,12 +23,15 @@ import {
   FlaskConical,
   ChevronDown,
   Check,
+  Activity,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
 import { formatCompactResourceCount, formatResourceCount } from '../game/resourceFormatting';
+import { calculateAgeResourceShortfall, calculateEconomyNetRates, getResourceHealthStatus } from '../game/economyInsights';
+import type { EconomyNetRates, EconomyResourceSnapshot } from '../game/economyInsights';
 import {
   canAfford,
   canAssembleFieldRam,
@@ -98,6 +101,9 @@ export const HUD: React.FC<HUDProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [techTreeFilter, setTechTreeFilter] = useState<'all' | 'eco' | 'counter' | 'doctrine' | 'fortify'>('all');
   const [isHudCompact, setIsHudCompact] = useState(false);
+  const [showEconomyPanel, setShowEconomyPanel] = useState(false);
+  const [economyNetRates, setEconomyNetRates] = useState<EconomyNetRates | null>(null);
+  const economySnapshotsRef = useRef<EconomyResourceSnapshot[]>([]);
 
   useEffect(() => {
     if (!showSpeedMenu) return;
@@ -196,6 +202,37 @@ export const HUD: React.FC<HUDProps> = ({
   const observedMaxPop = observedPopStats.max;
   const observedTelemetry = engine.getFactionResourceTelemetry(observedFactionId);
   const autoReseedEnabled = engine.isAutoReseedFarmsEnabled(observedFactionId);
+
+  // Sample stock on simulated match time only while the optional economy panel is open.
+  // This avoids a permanent timer and keeps the rate comparable across game-speed settings.
+  useEffect(() => {
+    if (!showEconomyPanel) return;
+    economySnapshotsRef.current = [];
+    setEconomyNetRates(null);
+
+    const captureEconomySnapshot = () => {
+      if (engine.gameState !== 'playing') return;
+      const next: EconomyResourceSnapshot = {
+        gameTime: engine.stats.gameDuration,
+        resources: { ...engine.getResourcesForFaction(observedFactionId) },
+      };
+      const history = economySnapshotsRef.current;
+      const last = history[history.length - 1];
+      if (last && next.gameTime <= last.gameTime) return;
+      history.push(next);
+
+      // Keep a rolling ~20-second simulated window, bounded to at most 16 samples.
+      while (history.length > 2 && next.gameTime - history[1].gameTime >= 20) history.shift();
+      while (history.length > 16) history.shift();
+      if (history.length >= 2) {
+        setEconomyNetRates(calculateEconomyNetRates(history[0], next));
+      }
+    };
+
+    captureEconomySnapshot();
+    const interval = window.setInterval(captureEconomySnapshot, 3000);
+    return () => window.clearInterval(interval);
+  }, [engine, observedFactionId, showEconomyPanel]);
 
   const isMinimapDraggingRef = useRef(false);
   const lastGroupClickRef = useRef<{ num: number; time: number }>({ num: 0, time: 0 });
@@ -690,6 +727,17 @@ export const HUD: React.FC<HUDProps> = ({
   const fieldRamInProgress = engine.hasActiveFieldRamAssembly(observedFactionId);
   const allCivTechs = getAllTechsForCiv(humanCivId);
   const buildableTypes = getBuildableTypesForCiv(humanCivId, observedAge);
+  const economyResourceRows = [
+    { key: 'food' as const, label: '糧食', icon: '🌾', stock: observedRes.food, gross: observedTelemetry.incomePerMin.food, workers: observedTelemetry.workersByResource.food, tone: 'amber' },
+    { key: 'wood' as const, label: '木材', icon: '🪵', stock: observedRes.wood, gross: observedTelemetry.incomePerMin.wood, workers: observedTelemetry.workersByResource.wood, tone: 'emerald' },
+    { key: 'gold' as const, label: '黃金', icon: '🪙', stock: observedRes.gold, gross: observedTelemetry.incomePerMin.gold, workers: observedTelemetry.workersByResource.gold, tone: 'yellow' },
+    { key: 'stone' as const, label: '石料', icon: '🪨', stock: observedRes.stone, gross: observedTelemetry.incomePerMin.stone, workers: observedTelemetry.workersByResource.stone, tone: 'slate' },
+  ];
+  const nextAgeInfo = NEXT_AGE_INFO[observedAge];
+  const ageResourceShortfall = nextAgeInfo
+    ? calculateAgeResourceShortfall(observedRes, nextAgeInfo.cost)
+    : null;
+  const formatNetRate = (rate: number) => `${rate >= 0 ? '+' : ''}${Math.round(rate).toLocaleString('zh-TW')}/遊戲分鐘`;
   const compactBuildTypes: BuildingType[] = [
     'house',
     humanCiv.uniqueBuildingType,
@@ -883,6 +931,20 @@ export const HUD: React.FC<HUDProps> = ({
             </span>
           </button>
 
+          {/* Economy overview toggle */}
+          <button
+            type="button"
+            data-economy-toggle="true"
+            aria-expanded={showEconomyPanel}
+            aria-controls="economy-overview-panel"
+            onClick={() => setShowEconomyPanel((open) => !open)}
+            className={`flex items-center gap-1 px-2.5 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap cursor-pointer transition-colors ${showEconomyPanel ? 'border-emerald-400/70 text-emerald-200' : 'border-emerald-500/35 text-slate-200 hover:border-emerald-400'}`}
+            title="檢視資源淨變化、村民配置與升時代準備度"
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-300" />
+            <span className="text-[11px] font-extrabold">經濟</span>
+          </button>
+
           {/* Idle Villagers Fast Access */}
           {!isSpectator && (() => {
             const idleWorkers = playerUnits.filter(
@@ -1064,6 +1126,126 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
         </div>
       </header>
+
+      {showEconomyPanel && (
+        <section
+          id="economy-overview-panel"
+          data-economy-panel="true"
+          aria-label="經濟總覽"
+          className="fixed top-20 left-2 z-40 w-[min(96vw,620px)] max-h-[72vh] overflow-y-auto overscroll-contain rounded-xl border border-emerald-500/35 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur-md pointer-events-auto"
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <h2 className="text-sm font-black tracking-wide text-emerald-200">經濟總覽</h2>
+              <p className="text-[10px] text-slate-400">以遊戲時間取樣；淨變化包含收入與所有資源支出</p>
+            </div>
+            <button
+              type="button"
+              data-economy-close="true"
+              onClick={() => setShowEconomyPanel(false)}
+              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 cursor-pointer"
+              aria-label="關閉經濟總覽"
+            >
+              關閉 ✕
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {economyResourceRows.map((resource) => {
+              const net = economyNetRates?.[resource.key];
+              const health = net === undefined ? null : getResourceHealthStatus(resource.stock, net);
+              const statusLabel = !health
+                ? '收集趨勢中'
+                : health.status === 'critical'
+                ? '短缺危險'
+                : health.status === 'warning'
+                ? '短缺警戒'
+                : health.status === 'draining'
+                ? '庫存下降'
+                : health.status === 'growing'
+                ? '庫存增加'
+                : '大致持平';
+              const statusTone = !health
+                ? 'text-slate-400'
+                : health.status === 'critical'
+                ? 'text-rose-300'
+                : health.status === 'warning'
+                ? 'text-amber-300'
+                : health.status === 'draining'
+                ? 'text-orange-300'
+                : health.status === 'growing'
+                ? 'text-emerald-300'
+                : 'text-slate-300';
+              return (
+                <article key={resource.key} data-economy-resource={resource.key} className="min-w-0 rounded-lg border border-slate-700/80 bg-slate-900/85 p-2">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-slate-300">{resource.icon} {resource.label}</span>
+                    <span className={`text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
+                  </div>
+                  <div className="mt-1 text-lg font-black tabular-nums">{formatResourceCount(resource.stock)}</div>
+                  <div className="mt-1 text-[10px] text-slate-400">採集／據點估算：+{Math.round(resource.gross).toLocaleString('zh-TW')}/分</div>
+                  <div className={`text-[10px] font-bold tabular-nums ${net === undefined ? 'text-slate-500' : net < -0.05 ? 'text-orange-300' : net > 0.05 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                    {net === undefined ? '淨變化：資料收集中' : `淨變化：${formatNetRate(net)}`}
+                  </div>
+                  {health?.runwayMinutes !== null && health?.runwayMinutes !== undefined && (
+                    <div className="mt-1 text-[10px] text-rose-200">依目前速度約 {health.runwayMinutes.toFixed(1)} 遊戲分鐘耗盡</div>
+                  )}
+                  <div className="mt-1 text-[10px] text-slate-500">採集村民 {resource.workers} 人</div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">村民工作配置</h3>
+              <div className="space-y-2">
+                {[
+                  { key: 'food', label: '糧食', count: observedTelemetry.workersByResource.food, color: 'bg-amber-400' },
+                  { key: 'wood', label: '木材', count: observedTelemetry.workersByResource.wood, color: 'bg-emerald-400' },
+                  { key: 'gold', label: '黃金', count: observedTelemetry.workersByResource.gold, color: 'bg-yellow-300' },
+                  { key: 'stone', label: '石料', count: observedTelemetry.workersByResource.stone, color: 'bg-slate-300' },
+                  { key: 'building', label: '建築', count: observedTelemetry.workersByResource.building, color: 'bg-orange-400' },
+                  { key: 'idle', label: '閒置', count: observedTelemetry.workersByResource.idle, color: 'bg-rose-400' },
+                ].map((group) => (
+                  <div key={group.key} className="grid grid-cols-[44px_1fr_28px] items-center gap-2 text-[10px]">
+                    <span className="text-slate-400">{group.label}</span>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div className={`h-full rounded-full ${group.color}`} style={{ width: `${observedTelemetry.totalWorkers > 0 ? (group.count / observedTelemetry.totalWorkers) * 100 : 0}%` }} />
+                    </div>
+                    <span className="text-right font-bold tabular-nums text-slate-200">{group.count}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 border-t border-slate-700 pt-2 text-[10px] text-slate-400">
+                總村民 {observedTelemetry.totalWorkers} 人 · 閒置 {observedTelemetry.workersByResource.idle} 人 · 建築中 {observedTelemetry.workersByResource.building} 人
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-slate-700 bg-slate-900/75 p-2.5">
+              <h3 className="text-xs font-black text-slate-200 mb-2">升時代準備度</h3>
+              {nextAgeInfo && ageResourceShortfall ? (
+                <>
+                  <div className="text-sm font-black text-amber-200">{nextAgeInfo.name}</div>
+                  <div className="mt-2 space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">糧食需求 {formatResourceCount(nextAgeInfo.cost.food)}</span><strong className={ageResourceShortfall.food > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.food > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.food)}` : '已足夠'}</strong></div>
+                    <div className="flex justify-between gap-2"><span className="text-slate-400">黃金需求 {formatResourceCount(nextAgeInfo.cost.gold)}</span><strong className={ageResourceShortfall.gold > 0 ? 'text-rose-300' : 'text-emerald-300'}>{ageResourceShortfall.gold > 0 ? `還差 ${formatResourceCount(ageResourceShortfall.gold)}` : '已足夠'}</strong></div>
+                  </div>
+                  <div className={`mt-3 rounded-md px-2 py-1.5 text-center text-xs font-black ${ageResourceShortfall.ready ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/10 text-amber-200'}`}>
+                    {ageResourceShortfall.ready ? '資源已達升時代門檻' : '仍需累積指定資源'}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-slate-500">此處只檢查升時代糧食與黃金門檻；地標建造條件、工人配置與戰場安全仍需另外確認。</p>
+                </>
+              ) : (
+                <div className="rounded-md bg-cyan-500/10 px-2 py-3 text-xs font-bold text-cyan-200">已達最高時代，沒有下一階段資源門檻。</div>
+              )}
+            </section>
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+            淨變化根據最近約 20 秒遊戲時間的庫存差額計算，因此會包含招募、建造、研發與升時代消耗；初次開啟需累積至少 8 秒遊戲時間。暫停時趨勢不更新。
+          </p>
+        </section>
+      )}
 
       {/* ================= DYNAMIC ALERT BANNERS ================= */}
       <div className="fixed top-14 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-none">
