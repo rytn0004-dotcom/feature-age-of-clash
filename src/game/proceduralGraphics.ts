@@ -727,6 +727,16 @@ export function addContactShadow(group: THREE.Group, radius: number): THREE.Mesh
   return mesh;
 }
 
+/** A single instanced draw call for all unit contact shadows in an RTS match. */
+export function createUnitContactShadowBatch(capacity = 8192): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(shadowGeo, shadowMat, Math.max(1, Math.floor(capacity)));
+  batch.name = 'unitContactShadowBatch';
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
+}
+
 // Subtle architectural edge rounding; radius is kept small to preserve silhouette.
 // Rounded building blocks are immutable after creation; cache by exact dimensions
 // so repeated houses/towers reuse one vertex/index buffer instead of rebuilding it.
@@ -8735,6 +8745,28 @@ function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
   return material;
 }
 
+const unitFactionRingBatchMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.85,
+  depthWrite: false,
+});
+
+/** A single instanced draw call for unit faction rings; per-instance colors preserve faction identity. */
+export function createUnitFactionRingBatch(capacity = 8192): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(
+    sharedUnitFactionRingGeometry,
+    unitFactionRingBatchMaterial,
+    Math.max(1, Math.floor(capacity)),
+  );
+  batch.name = 'unitFactionRingBatch';
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
+}
+
 export function getUnitVisualFlags(ctx?: UnitVisualContext) {
   const age = ctx?.age || 1;
   const techs = ctx?.researchedTechIds || [];
@@ -8775,6 +8807,7 @@ export function createUnitMesh(
   addContactShadow(group, 0.72 * s);
 
   const factionRing = new THREE.Mesh(sharedUnitFactionRingGeometry, getUnitFactionRingMaterial(colors.ring));
+  factionRing.name = 'unitFactionRing';
   factionRing.scale.setScalar(s);
   factionRing.position.y = 0.025;
   group.add(factionRing);
