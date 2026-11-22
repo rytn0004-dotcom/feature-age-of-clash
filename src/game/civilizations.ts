@@ -1063,6 +1063,49 @@ export function getCivilizationBuildSpeedMultiplier(
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
 }
 
+/**
+ * Production is intentionally paced slightly slower than the data-field baseline.
+ * All production-speed bonuses (civilization, technology, landmark and forge)
+ * share one global ceiling so their multiplicative stacking cannot create runaway queues.
+ */
+export const PRODUCTION_TIME_SCALE = 1.12;
+export const MAX_PRODUCTION_SPEED_MULTIPLIER = 1.12;
+
+export function getCappedProductionSpeedMultiplier(...multipliers: number[]): number {
+  const combined = multipliers.reduce((total, value) => {
+    const safeValue = Number.isFinite(value) && value > 0 ? value : 1;
+    return total * safeValue;
+  }, 1);
+  return +Math.min(MAX_PRODUCTION_SPEED_MULTIPLIER, Math.max(0.05, combined)).toFixed(3);
+}
+
+/** Duration for one production action, with all speed bonuses sharing the 1.12x ceiling. */
+export function getEffectiveProductionDuration(
+  baseDuration: number,
+  ...speedMultipliers: number[]
+): number {
+  if (!Number.isFinite(baseDuration) || baseDuration <= 0) return 0;
+  return +(baseDuration * PRODUCTION_TIME_SCALE /
+    getCappedProductionSpeedMultiplier(...speedMultipliers)).toFixed(3);
+}
+
+/** Unit training applies research duration modifiers as speed bonuses, then caps the combined result. */
+export function getEffectiveUnitTrainingDuration(
+  trainTime: number,
+  technologyTimeMultiplier = 1,
+  ...speedMultipliers: number[]
+): number {
+  const safeTechTimeMultiplier =
+    Number.isFinite(technologyTimeMultiplier) && technologyTimeMultiplier > 0
+      ? technologyTimeMultiplier
+      : 1;
+  return getEffectiveProductionDuration(
+    Math.max(2, Number.isFinite(trainTime) ? trainTime : 2),
+    1 / safeTechTimeMultiplier,
+    ...speedMultipliers
+  );
+}
+
 /** The White Tower's +35% production bonus applies only to melee infantry. */
 export function getLandmarkTrainingSpeedMultiplier(
   landmarks: readonly LandmarkType[],
