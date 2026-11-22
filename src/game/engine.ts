@@ -283,6 +283,10 @@ export class RtsEngine {
   private performanceWindowStart = 0;
   private performanceLastFrameTime = 0;
   private performanceFrameTimes: number[] = [];
+  private performanceSimulationTotalMs = 0;
+  private performanceSimulationMaxMs = 0;
+  private performanceRenderCallTotalMs = 0;
+  private performanceRenderCallMaxMs = 0;
   private performanceCaptureStartedAt = 0;
   private performanceSamples: PerformanceSample[] = [];
   private qualityWindowStart = 0;
@@ -4103,13 +4107,17 @@ export class RtsEngine {
       this.performanceWindowStart = performance.now();
       this.performanceLastFrameTime = this.performanceWindowStart;
       this.performanceFrameTimes = [];
+      this.performanceSimulationTotalMs = 0;
+      this.performanceSimulationMaxMs = 0;
+      this.performanceRenderCallTotalMs = 0;
+      this.performanceRenderCallMaxMs = 0;
       this.performanceCaptureStartedAt = this.performanceWindowStart;
       this.performanceSamples = [];
       this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
     }
   }
 
-  private updatePerformanceOverlay(now: number): void {
+  private updatePerformanceOverlay(now: number, simulationUpdateMs: number, renderCallMs: number): void {
     if (!this.performanceOverlayVisible || !this.performanceOverlay) return;
 
     if (this.performanceLastFrameTime > 0) {
@@ -4118,11 +4126,21 @@ export class RtsEngine {
     }
     this.performanceLastFrameTime = now;
     this.performanceFrameCount += 1;
+    if (Number.isFinite(simulationUpdateMs) && simulationUpdateMs > 0) {
+      this.performanceSimulationTotalMs += simulationUpdateMs;
+      this.performanceSimulationMaxMs = Math.max(this.performanceSimulationMaxMs, simulationUpdateMs);
+    }
+    if (Number.isFinite(renderCallMs) && renderCallMs > 0) {
+      this.performanceRenderCallTotalMs += renderCallMs;
+      this.performanceRenderCallMaxMs = Math.max(this.performanceRenderCallMaxMs, renderCallMs);
+    }
     const elapsedMs = now - this.performanceWindowStart;
     if (elapsedMs < 500) return;
 
     const fps = (this.performanceFrameCount * 1000) / Math.max(1, elapsedMs);
     const frameTimes = summarizeFrameTimes(this.performanceFrameTimes);
+    const simulationUpdateAverageMs = this.performanceSimulationTotalMs / Math.max(1, this.performanceFrameCount);
+    const renderCallAverageMs = this.performanceRenderCallTotalMs / Math.max(1, this.performanceFrameCount);
     const activeParticles = this.particlePool.reduce((total, particle) => total + (particle.active ? 1 : 0), 0);
     const aliveUnits = this.units.reduce((total, unit) => total + (unit.hp > 0 ? 1 : 0), 0);
     const renderInfo = this.renderer.info;
@@ -4159,6 +4177,10 @@ export class RtsEngine {
       frameAverageMs: frameTimes.averageMs,
       frameP95Ms: frameTimes.p95Ms,
       maxHitchMs: frameTimes.maxMs,
+      simulationUpdateAverageMs,
+      simulationUpdateMaxMs: this.performanceSimulationMaxMs,
+      renderCallAverageMs,
+      renderCallMaxMs: this.performanceRenderCallMaxMs,
       drawCalls: render.calls,
       triangles: render.triangles,
       geometries: memory.geometries,
@@ -4212,6 +4234,8 @@ export class RtsEngine {
       `Frame ms avg     ${frameTimes.averageMs.toFixed(2)}`,
       `Frame ms p95     ${frameTimes.p95Ms.toFixed(2)}`,
       `Max hitch ms     ${frameTimes.maxMs.toFixed(2)}`,
+      `Simulation ms    ${simulationUpdateAverageMs.toFixed(2)} avg / ${this.performanceSimulationMaxMs.toFixed(2)} max`,
+      `Render call ms   ${renderCallAverageMs.toFixed(2)} avg / ${this.performanceRenderCallMaxMs.toFixed(2)} max`,
       `Draw Calls       ${render.calls.toLocaleString()}`,
       `Triangles        ${render.triangles.toLocaleString()}`,
       `Geometries       ${memory.geometries.toLocaleString()}`,
@@ -4234,6 +4258,10 @@ export class RtsEngine {
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
     this.performanceFrameTimes = [];
+    this.performanceSimulationTotalMs = 0;
+    this.performanceSimulationMaxMs = 0;
+    this.performanceRenderCallTotalMs = 0;
+    this.performanceRenderCallMaxMs = 0;
   }
 
   private exportPerformanceTelemetry(): void {
@@ -4273,12 +4301,16 @@ export class RtsEngine {
       const now = performance.now();
       const rawDt = Math.max(0.001, (now - lastTime) / 1000);
       lastTime = now;
+      let simulationUpdateMs = 0;
       if (this.gameState === 'playing') {
         const { stepDt, steps } = computeSimulationSubsteps(rawDt, this.gameSpeed, this.isSoftwareGl);
+        const measureSimulation = this.performanceOverlayVisible;
+        const simulationStartedAt = measureSimulation ? performance.now() : 0;
         for (let s = 0; s < steps; s++) {
           this.updateSimulation(stepDt);
           this.stats.gameDuration += stepDt;
         }
+        if (measureSimulation) simulationUpdateMs = performance.now() - simulationStartedAt;
       } else if (this.gameState === 'title') {
         // Atmospheric live camera pan over the battlefield
         const t = now * 0.0003;
@@ -4291,9 +4323,16 @@ export class RtsEngine {
       this.nodeMeshes.forEach((mesh) => {
         if (mesh.userData.fishAssetLod) updateFishAssetAnimations(mesh, rawDt);
       });
-      this.renderer.render(this.scene, this.camera);
+      let renderCallMs = 0;
+      if (this.performanceOverlayVisible) {
+        const renderStartedAt = performance.now();
+        this.renderer.render(this.scene, this.camera);
+        renderCallMs = performance.now() - renderStartedAt;
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
       this.updateAdaptiveQuality(now);
-      this.updatePerformanceOverlay(now);
+      this.updatePerformanceOverlay(now, simulationUpdateMs, renderCallMs);
 
       if (this.isSoftwareGl) {
         this.afterDraw(tick);
