@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   FORMATION_REGROUP_ABANDON_STALL_SECONDS,
   FORMATION_REGROUP_STALL_SECONDS,
+  findNarrowPassageOnRoute,
   getFormationCohesionSpeedScale,
   getFormationMoveProgress,
+  getFormationNarrowPassageTrafficScale,
   measureFormationRegroup,
 } from './formationMovement';
 
@@ -70,4 +72,82 @@ test('formation regroup: speed scale is bounded and never accelerates a member',
   assert.equal(getFormationCohesionSpeedScale(0.5, 0.5, true), 1);
   assert.ok(getFormationCohesionSpeedScale(1, 0, true) >= 0.25);
   assert.ok(getFormationCohesionSpeedScale(1, 0, true) <= 1);
+});
+
+
+test('formation terrain flow: detects a sustained narrow section on an A* route', () => {
+  const route = [{ x: 0, z: 0 }, { x: 20, z: 0 }];
+  const passage = findNarrowPassageOnRoute(route, (x) => (x >= 6 && x <= 14 ? 2 : 12));
+
+  assert.ok(passage);
+  assert.ok(passage.x >= 6 && passage.x <= 14);
+  assert.equal(passage.width, 2);
+  assert.ok(passage.halfLength >= 1.6);
+  assert.ok(Math.abs(passage.directionX - 1) < 0.001);
+  assert.ok(Math.abs(passage.directionZ) < 0.001);
+});
+
+test('formation terrain flow: open routes and endpoint-only constrictions are ignored', () => {
+  assert.equal(
+    findNarrowPassageOnRoute(
+      [{ x: 0, z: 0 }, { x: 20, z: 0 }],
+      () => 12,
+    ),
+    null,
+  );
+  assert.equal(
+    findNarrowPassageOnRoute(
+      [{ x: 0, z: 0 }, { x: 20, z: 0 }],
+      (x) => (x < 2 || x > 18 ? 1.5 : 12),
+    ),
+    null,
+  );
+});
+
+test('formation terrain flow: a clear unit passes while the next unit queues at the entrance', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: 1,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const members = [
+    { id: 'front', x: 5.5, z: 0 },
+    { id: 'next', x: 2.3, z: 0 },
+  ];
+
+  assert.equal(getFormationNarrowPassageTrafficScale('front', members, passage), 1);
+  assert.equal(getFormationNarrowPassageTrafficScale('next', members, passage), 0.12);
+});
+
+test('formation terrain flow: exited and permanently unreachable units do not reserve passage capacity', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: 1,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  assert.equal(
+    getFormationNarrowPassageTrafficScale(
+      'next',
+      [{ id: 'front', x: 8.5, z: 0 }, { id: 'next', x: 2.3, z: 0 }],
+      passage,
+    ),
+    1,
+  );
+  assert.equal(
+    getFormationNarrowPassageTrafficScale(
+      'next',
+      [
+        { id: 'trapped', x: 5, z: 0, stuckDuration: FORMATION_REGROUP_ABANDON_STALL_SECONDS },
+        { id: 'next', x: 2.3, z: 0 },
+      ],
+      passage,
+    ),
+    1,
+  );
 });
