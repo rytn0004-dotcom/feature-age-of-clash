@@ -200,6 +200,7 @@ import {
   getFormationTacticalSlot,
   measureFormationRegroup,
   shouldRefreshFormationTacticalSlot,
+  shouldAiCavalryDisengage,
   type FormationMovementMember,
   type FormationTacticalMember,
   type FormationTacticalRole,
@@ -5429,13 +5430,14 @@ export class RtsEngine {
     unit.formationTacticalAnchor = undefined;
     unit.formationTacticalGoal = undefined;
     unit.formationTacticalRole = undefined;
+    unit.formationTacticalShieldWall = undefined;
   }
 
   private resolveFormationTacticalSlot(
     unit: UnitEntity,
     target: UnitEntity | BuildingEntity,
     targetRadius: number,
-  ): { x: number; z: number; role: FormationTacticalRole } | null {
+  ): { x: number; z: number; role: FormationTacticalRole; shieldWall: boolean } | null {
     const groupId = unit.formationGroupId;
     const groupOrigin = unit.formationOrderOrigin;
     const members = groupId ? this.formationTacticalMembersByGroup.get(groupId) : undefined;
@@ -5445,7 +5447,11 @@ export class RtsEngine {
     }
 
     const targetAnchor = { x: target.x, z: target.z };
+    const shieldWallComposition =
+      members.filter((member) => member.category === 'melee').length >= 2 &&
+      members.some((member) => member.category === 'ranged');
     if (
+      shieldWallComposition !== !!unit.formationTacticalShieldWall ||
       shouldRefreshFormationTacticalSlot(
         unit.formationTacticalTargetId,
         unit.formationTacticalAnchor,
@@ -5472,6 +5478,7 @@ export class RtsEngine {
       unit.formationTacticalAnchor = targetAnchor;
       unit.formationTacticalGoal = { x: tacticalSlot.x, z: tacticalSlot.z };
       unit.formationTacticalRole = tacticalSlot.role;
+      unit.formationTacticalShieldWall = tacticalSlot.shieldWall;
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
@@ -5481,6 +5488,7 @@ export class RtsEngine {
     return {
       ...unit.formationTacticalGoal,
       role: unit.formationTacticalRole,
+      shieldWall: !!unit.formationTacticalShieldWall,
     };
   }
 
@@ -6055,7 +6063,7 @@ export class RtsEngine {
       this.moveUnitAlongPath(unit, tacticalSlot.x, tacticalSlot.z, dt);
       const roleLabel =
         tacticalSlot.role === 'frontline'
-          ? '步兵防線'
+          ? tacticalSlot.shieldWall ? '步兵盾牆' : '步兵防線'
           : tacticalSlot.role === 'backline'
             ? '遠程射位'
             : tacticalSlot.role === 'flank'
@@ -9438,6 +9446,91 @@ export class RtsEngine {
         }
       }
 
+      // Cavalry operating away from the base also need a way to break contact.
+      // Only evaluate already-wounded riders, then compare local combat numbers
+      // so healthy scouts and evenly matched charges are not pulled out of battle.
+      const disengagingCavalry = aiArmy
+        .filter(
+          (unit) =>
+            unit.unitDef.category === 'cavalry' &&
+            unit.hp > 0 &&
+            !unit.garrisonedInBuildingId &&
+            unit.state !== 'garrisoning' &&
+            unit.hp / Math.max(1, unit.maxHp) <= (personality === 'defensive' ? 0.58 : 0.5)
+        )
+        .map((unit) => {
+          const radiusSquared = 11.5 * 11.5;
+          const nearbyEnemyCount = this.units.filter(
+            (enemy) =>
+              enemy.hp > 0 &&
+              !enemy.garrisonedInBuildingId &&
+              enemy.unitDef.category !== 'worker' &&
+              this.isHostile({ faction: aiId, team: aiTeam }, enemy) &&
+              (enemy.x - unit.x) ** 2 + (enemy.z - unit.z) ** 2 <= radiusSquared
+          ).length;
+          const nearbyAllyCount = aiArmy.filter(
+            (ally) =>
+              ally.hp > 0 &&
+              !ally.garrisonedInBuildingId &&
+              (ally.x - unit.x) ** 2 + (ally.z - unit.z) ** 2 <= radiusSquared
+          ).length;
+          return {
+            unit,
+            shouldDisengage: shouldAiCavalryDisengage({
+              hp: unit.hp,
+              maxHp: unit.maxHp,
+              nearbyEnemyCount,
+              nearbyAllyCount,
+              personality,
+            }),
+          };
+        })
+        .filter((entry) => entry.shouldDisengage)
+        .sort(
+          (a, b) =>
+            a.unit.hp / Math.max(1, a.unit.maxHp) -
+            b.unit.hp / Math.max(1, b.unit.maxHp)
+        );
+
+      if (disengagingCavalry.length > 0) {
+        const fieldShelters = aiBuildings
+          .filter((building) => building.hp > 0 && building.isConstructed && getBuildingMaxGarrison(building) > 0)
+          .map((building) => ({
+            id: building.id,
+            x: building.x,
+            z: building.z,
+            bldg: building,
+            freeSlots: getAvailableGarrisonSlots(
+              getBuildingMaxGarrison(building),
+              building.garrisonedUnitIds?.length || 0,
+              countPendingGarrisonReservations(building.id, building.faction, aiUnits)
+            ),
+          }))
+          .filter((shelter) => shelter.freeSlots > 0);
+
+        for (const entry of disengagingCavalry) {
+          const rider = entry.unit;
+          const shelter = selectNearestGarrisonShelter(rider.x, rider.z, fieldShelters);
+          if (!shelter) continue;
+          shelter.freeSlots--;
+          this.clearFormationMovement(rider);
+          rider.targetGarrisonBuildingId = shelter.bldg.id;
+          rider.targetEntityId = undefined;
+          rider.targetBuildingId = undefined;
+          rider.targetResourceNodeId = undefined;
+          rider.attackMoveGoal = null;
+          rider.commandQueue = undefined;
+          rider.wallPatrolRoute = undefined;
+          rider.wallPatrolIndex = undefined;
+          rider.waypoints = undefined;
+          rider.pathGoal = undefined;
+          rider.pathCooldown = 0;
+          rider.velocity = { x: 0, z: 0 };
+          rider.state = 'garrisoning';
+          rider.currentActionText = '🐎 騎兵脫戰 · 反包圍撤退';
+        }
+      }
+
       const enemyArmyCount = this.units.filter(
         (u) => u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category !== 'worker' && this.isHostile({ faction: aiId, team: aiTeam }, u)
       ).length;
@@ -10516,6 +10609,20 @@ export class RtsEngine {
                   maxEnemyRangeFromCentroid: 32,
                 })
               : null;
+          // Keep the main ranged line on one high-value target. Raiding units
+          // are excluded so their worker-harassment orders remain independent.
+          const rangedStrikeUnits = strikeUnits.filter(
+            (unit, index) =>
+              unit.unitDef.category === 'ranged' &&
+              index % 3 !== 0 &&
+              unit.unitDef.stats.speed < 3.6
+          );
+          const rangedFocusTarget =
+            rangedStrikeUnits.length >= 2
+              ? selectClusterFocusTarget(rangedStrikeUnits, this.units, this.buildings, {
+                  maxEnemyRangeFromCentroid: 32,
+                })
+              : null;
 
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
@@ -10655,19 +10762,25 @@ export class RtsEngine {
               this.units,
               targetContext
             );
-            const chosen = optimalLocal || clusterTarget || stronghold;
+            const chosen =
+              unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
+                ? rangedFocusTarget
+                : optimalLocal || clusterTarget || stronghold;
             const currentTarget =
               (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
               (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
-            const targetChanged = shouldSwitchCombatTarget(
-              unit,
-              currentTarget,
-              chosen,
-              this.units,
-              targetContext,
-              18
-            );
+            const targetChanged =
+              unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
+                ? currentTarget?.id !== rangedFocusTarget.id
+                : shouldSwitchCombatTarget(
+                    unit,
+                    currentTarget,
+                    chosen,
+                    this.units,
+                    targetContext,
+                    18
+                  );
             const goalChanged =
               !unit.attackMoveGoal ||
               getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
@@ -10676,7 +10789,10 @@ export class RtsEngine {
               unit.attackMoveGoal = { x: goalX, z: goalZ };
               unit.waypoints = undefined;
               unit.state = 'attacking';
-              unit.currentActionText = '集群進攻';
+              unit.currentActionText =
+                unit.unitDef.category === 'ranged' && rangedFocusTarget
+                  ? '🏹 集中火力 · 共同目標'
+                  : '集群進攻';
             }
           });
         }
