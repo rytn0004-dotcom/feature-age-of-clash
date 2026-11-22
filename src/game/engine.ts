@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { createEntityIdIndex } from './entityLookup';
 import {
+  createCombatSpatialIndex,
+  queryCombatSpatialIndex,
+  type CombatSpatialIndex,
+} from './combatSpatialIndex';
+import {
   AgeLevel,
   BuildingEntity,
   BuildingType,
@@ -155,6 +160,7 @@ import {
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
   shouldSwitchCombatTarget,
+  type CombatTargetContext,
   isWallLinkedToTower,
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
@@ -367,6 +373,9 @@ export class RtsEngine {
 
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
+  private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
+  private combatUnitLookupById = new Map<string, UnitEntity>();
+  private combatBuildingLookupById = new Map<string, BuildingEntity>();
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
   private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
@@ -5036,6 +5045,7 @@ export class RtsEngine {
       this.aiTickAccumulator = 0;
       this.aiDecisionCount += 1;
       const aiDecisionStartedAt = performance.now();
+      this.rebuildCombatSpatialIndex();
       try {
         this.evaluateAiLogic();
       } finally {
@@ -5433,6 +5443,41 @@ export class RtsEngine {
     unit.formationTacticalShieldWall = undefined;
   }
 
+  private rebuildCombatSpatialIndex(): void {
+    this.combatSpatialIndex = createCombatSpatialIndex(this.units, this.buildings);
+  }
+
+  /**
+   * Uses one nearby-candidate query for both hostile target scoring and local ally
+   * focus bonuses. The existing scoring function still applies exact range,
+   * hostility, counter-unit and target-priority checks.
+   */
+  private selectNearbyCombatTarget(
+    attacker: UnitEntity,
+    maxSearchRange: number,
+    includeBuildings = true,
+    context: CombatTargetContext = {},
+  ): UnitEntity | BuildingEntity | null {
+    if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+    const safeRange = Number.isFinite(maxSearchRange)
+      ? Math.max(0, maxSearchRange)
+      : Infinity;
+    const queryRadius = Math.max(16, safeRange);
+    const candidates = queryCombatSpatialIndex(
+      this.combatSpatialIndex!,
+      attacker.x,
+      attacker.z,
+      queryRadius,
+    );
+    return selectOptimalCombatTarget(
+      attacker,
+      candidates.units,
+      includeBuildings ? candidates.buildings : [],
+      candidates.units,
+      { ...context, maxSearchRange: safeRange },
+    );
+  }
+
   private resolveFormationTacticalSlot(
     unit: UnitEntity,
     target: UnitEntity | BuildingEntity,
@@ -5493,6 +5538,9 @@ export class RtsEngine {
   }
 
   private updateUnits(dt: number) {
+    this.combatUnitLookupById = createEntityIdIndex(this.units);
+    this.combatBuildingLookupById = createEntityIdIndex(this.buildings);
+    this.rebuildCombatSpatialIndex();
     this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
     let anyDied = false;
@@ -5551,7 +5599,10 @@ export class RtsEngine {
       if (unit.garrisonedInBuildingId) {
         if (unit.garrisonedInBuildingId.startsWith('transport:')) {
           const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
-          const boat = this.units.find((b) => b.id === boatId && b.hp > 0);
+          const boat = this.combatUnitLookupById.get(boatId);
+          if (boat && boat.hp <= 0) {
+            // A dead transport is ignored; the unit is released below.
+          }
           if (!boat) {
             unit.garrisonedInBuildingId = undefined;
             unit.state = 'idle';
@@ -5591,7 +5642,7 @@ export class RtsEngine {
       switch (unit.state) {
         case 'moving':
           if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker') {
-            const patrolThreat = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, { maxSearchRange: 10 });
+            const patrolThreat = this.selectNearbyCombatTarget(unit, 10);
             if (patrolThreat) {
               unit.targetEntityId = patrolThreat.id;
               unit.waypoints = undefined;
@@ -5601,9 +5652,10 @@ export class RtsEngine {
             }
           }
           if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
-            const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
-            });
+            const enemy = this.selectNearbyCombatTarget(
+              unit,
+              Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
+            );
             if (enemy) {
               unit.targetEntityId = enemy.id;
               unit.waypoints = undefined;
@@ -5643,9 +5695,10 @@ export class RtsEngine {
           }
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
           if (unit.unitDef.category !== 'worker') {
-            const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
-            });
+            const enemy = this.selectNearbyCombatTarget(
+              unit,
+              Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
+            );
             if (enemy) {
               unit.targetEntityId = enemy.id;
               unit.waypoints = undefined;
@@ -5964,8 +6017,8 @@ export class RtsEngine {
       return;
     }
 
-    let targetUnit = this.units.find((u) => u.id === unit.targetEntityId);
-    let targetBuilding = this.buildings.find((b) => b.id === unit.targetEntityId);
+    let targetUnit = this.combatUnitLookupById.get(unit.targetEntityId);
+    let targetBuilding = this.combatBuildingLookupById.get(unit.targetEntityId);
     if (
       targetUnit &&
       targetUnit.unitDefId === 'transport_boat' &&
@@ -5997,9 +6050,11 @@ export class RtsEngine {
           target.type === 'building' &&
           unit.unitDef.category !== 'siege' &&
           unit.unitDefId !== 'fantasy_treant';
-        const nearbyThreat = selectOptimalCombatTarget(unit, this.units, shouldSwitchOffBuilding ? [] : this.buildings, this.units, {
-          maxSearchRange: Math.max(11, unit.unitDef.stats.range + 6),
-        });
+        const nearbyThreat = this.selectNearbyCombatTarget(
+          unit,
+          Math.max(11, unit.unitDef.stats.range + 6),
+          !shouldSwitchOffBuilding,
+        );
         if (nearbyThreat && nearbyThreat.id !== target.id && (shouldSwitchOffBuilding || nearbyThreat.hp < nearbyThreat.maxHp * 0.45)) {
           unit.targetEntityId = nearbyThreat.id;
           unit.waypoints = undefined;
@@ -6014,9 +6069,10 @@ export class RtsEngine {
       this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
-      const followUp = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-        maxSearchRange: Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
-      });
+      const followUp = this.selectNearbyCombatTarget(
+        unit,
+        Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
+      );
       if (followUp && (!this.isHumanControlled(unit.faction) || !!unit.attackMoveGoal)) {
         unit.targetEntityId = followUp.id;
         unit.state = 'attacking';
@@ -10467,7 +10523,7 @@ export class RtsEngine {
             maxSearchRange: 30,
           };
           const bestTarget =
-            selectOptimalCombatTarget(unit, this.units, [], this.units, targetContext) || activeThreat;
+            this.selectNearbyCombatTarget(unit, targetContext.maxSearchRange || 30, false, targetContext) || activeThreat;
 
           if (bestTarget) {
             const currentTarget =
@@ -10522,9 +10578,7 @@ export class RtsEngine {
 
         aiArmy.forEach((unit, idx) => {
           if (unit.state === 'idle') {
-            const nearbyEnemy = selectOptimalCombatTarget(unit, this.units, [], this.units, {
-              maxSearchRange: 14,
-            });
+            const nearbyEnemy = this.selectNearbyCombatTarget(unit, 14, false);
             if (nearbyEnemy) {
               unit.targetEntityId = nearbyEnemy.id;
               unit.waypoints = undefined;
@@ -10755,12 +10809,11 @@ export class RtsEngine {
               clusterFocusTargetId: clusterTarget?.id,
               maxSearchRange: 28,
             };
-            const optimalLocal = selectOptimalCombatTarget(
+            const optimalLocal = this.selectNearbyCombatTarget(
               unit,
-              this.units,
-              this.buildings,
-              this.units,
-              targetContext
+              targetContext.maxSearchRange || 28,
+              true,
+              targetContext,
             );
             const chosen =
               unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
