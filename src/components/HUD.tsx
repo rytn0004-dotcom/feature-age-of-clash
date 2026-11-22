@@ -185,6 +185,15 @@ export const HUD: React.FC<HUDProps> = ({
     ? engine.buildings.find((b) => b.id === engine.selectedBuildingId)
     : null;
 
+  const [, setBuildingTimingRefresh] = useState(0);
+  useEffect(() => {
+    if (!selectedBuilding || engine.gameState !== 'playing') return;
+    const interval = window.setInterval(() => {
+      setBuildingTimingRefresh((value) => value + 1);
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [engine, selectedBuilding?.id, engine.gameState]);
+
   const selectedNode = engine.selectedNodeId
     ? engine.resourceNodes.find((n) => n.id === engine.selectedNodeId)
     : null;
@@ -2253,6 +2262,7 @@ export const HUD: React.FC<HUDProps> = ({
               const bldgTechs = getAllTechsForBuilding(selectedBuilding.buildingType, bCiv);
               const bldgResearched = engine.getResearchedTechs(selectedBuilding.faction);
               const activeTech = selectedBuilding.activeTechId ? findTechDef(selectedBuilding.activeTechId) : null;
+              const buildingTiming = engine.getBuildingTimingEstimate(selectedBuilding.id);
               const bFactionAge = engine.ageByFaction[selectedBuilding.faction] || observedAge;
               const bArmor = getEffectiveBuildingArmor(selectedBuilding, bFactionAge, bldgResearched);
               const bCombatStats = getBuildingCombatStats(
@@ -2289,6 +2299,23 @@ export const HUD: React.FC<HUDProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {(!selectedBuilding.isConstructed || selectedBuilding.wallBreached) && (
+                    <div
+                      data-building-timing="true"
+                      className="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1 rounded bg-amber-950/30 border border-amber-500/25 text-[10px]"
+                    >
+                      <span className="text-amber-200">
+                        🔨 現場施工者 {buildingTiming.constructionWorkers} 名
+                        · 協作效率 ×{buildingTiming.constructionWorkerMultiplier.toFixed(2)}
+                      </span>
+                      <span className="font-mono font-bold text-amber-100">
+                        {buildingTiming.constructionRemainingSeconds === null
+                          ? '等待施工者到位'
+                          : `預估剩餘 ${formatTime(Math.ceil(buildingTiming.constructionRemainingSeconds))}（遊戲時間）`}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Building Combat & Defense Stats Inspection */}
                   <div
@@ -2491,9 +2518,14 @@ export const HUD: React.FC<HUDProps> = ({
                   {/* Active Tech Research Progress */}
                   {activeTech && (
                     <div className="text-[11px] text-cyan-300 space-y-0.5">
-                      <div className="flex justify-between">
+                      <div className="flex flex-wrap justify-between gap-1">
                         <span>{activeTech.icon} 研發中：{activeTech.name}</span>
-                        <span className="font-mono font-bold">{Math.round((selectedBuilding.researchProgress || 0) * 100)}%</span>
+                        <span className="font-mono font-bold">
+                          {Math.round((selectedBuilding.researchProgress || 0) * 100)}%
+                          {buildingTiming.researchRemainingSeconds !== null
+                            ? ` · 剩餘 ${formatTime(Math.ceil(buildingTiming.researchRemainingSeconds))}`
+                            : ''}
+                        </span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
@@ -2507,9 +2539,21 @@ export const HUD: React.FC<HUDProps> = ({
                   {/* Production Queue with Per-Unit Cancellation */}
                   {selectedBuilding.queue.length > 0 && (
                     <div data-production-queue="true" className="text-[11px] text-amber-300 space-y-1 bg-amber-950/25 border border-amber-500/30 rounded-lg px-2 py-1.5">
-                      <div className="flex justify-between items-center">
+                      <div className="flex flex-wrap justify-between items-center gap-1">
                         <span className="font-bold">⚙️ 生產中單位隊列 ({selectedBuilding.queue.length})</span>
                         <span className="font-mono font-bold">{Math.round(selectedBuilding.queueProgress * 100)}%</span>
+                      </div>
+                      <div className="flex flex-wrap justify-between gap-1 text-[10px] text-amber-200/90">
+                        <span>
+                          {buildingTiming.trainingRemainingSeconds !== null
+                            ? `下一單位約 ${formatTime(Math.ceil(buildingTiming.trainingRemainingSeconds))}`
+                            : '等待生產'}
+                        </span>
+                        {buildingTiming.queueRemainingSeconds !== null && (
+                          <span>
+                            全佇列約 {formatTime(Math.ceil(buildingTiming.queueRemainingSeconds))}
+                          </span>
+                        )}
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
