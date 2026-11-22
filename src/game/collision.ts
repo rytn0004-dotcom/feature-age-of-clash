@@ -118,7 +118,8 @@ const COLLISION_CELL_SIZE = 8;
 interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
 interface CollisionIndex<T> {
   buckets: Map<string, CollisionEntry<T>[]>;
-  entries: Map<number, CollisionEntry<T>>;
+  entries: Array<CollisionEntry<T> | undefined>;
+  entryCount: number;
   maxRadius: number;
 }
 
@@ -126,12 +127,26 @@ function collisionKey(x: number, z: number): string {
   return `${Math.floor(x / COLLISION_CELL_SIZE)}:${Math.floor(z / COLLISION_CELL_SIZE)}`;
 }
 
+/** Identifies the grid cells touched by a query rectangle, not merely the owner's cell. */
+function collisionQueryKey(x: number, z: number, reach: number): string {
+  const minX = Math.floor((x - reach) / COLLISION_CELL_SIZE);
+  const maxX = Math.floor((x + reach) / COLLISION_CELL_SIZE);
+  const minZ = Math.floor((z - reach) / COLLISION_CELL_SIZE);
+  const maxZ = Math.floor((z + reach) / COLLISION_CELL_SIZE);
+  return `${minX}:${maxX}:${minZ}:${maxZ}`;
+}
+
 function createCollisionIndex<T extends { x: number; z: number }>(
   items: readonly T[],
   radiusOf: (item: T) => number,
   include: (item: T) => boolean = () => true
 ): CollisionIndex<T> {
-  const result: CollisionIndex<T> = { buckets: new Map(), entries: new Map(), maxRadius: 0 };
+  const result: CollisionIndex<T> = {
+    buckets: new Map(),
+    entries: new Array<CollisionEntry<T> | undefined>(items.length),
+    entryCount: 0,
+    maxRadius: 0,
+  };
   items.forEach((item, index) => {
     if (!include(item) || !Number.isFinite(item.x) || !Number.isFinite(item.z)) return;
     const radius = radiusOf(item);
@@ -141,7 +156,8 @@ function createCollisionIndex<T extends { x: number; z: number }>(
     const bucket = result.buckets.get(key);
     if (bucket) bucket.push(entry);
     else result.buckets.set(key, [entry]);
-    result.entries.set(index, entry);
+    result.entries[index] = entry;
+    result.entryCount++;
     result.maxRadius = Math.max(result.maxRadius, radius);
   });
   return result;
@@ -150,9 +166,9 @@ function createCollisionIndex<T extends { x: number; z: number }>(
 function moveCollisionEntry<T extends { x: number; z: number }>(
   index: CollisionIndex<T>,
   entry: CollisionEntry<T>
-): void {
+): boolean {
   const nextKey = collisionKey(entry.item.x, entry.item.z);
-  if (nextKey === entry.key) return;
+  if (nextKey === entry.key) return false;
   const oldBucket = index.buckets.get(entry.key);
   if (oldBucket) {
     const at = oldBucket.indexOf(entry);
@@ -163,6 +179,7 @@ function moveCollisionEntry<T extends { x: number; z: number }>(
   const nextBucket = index.buckets.get(nextKey);
   if (nextBucket) nextBucket.push(entry);
   else index.buckets.set(nextKey, [entry]);
+  return true;
 }
 
 function nearbyCollisionEntries<T extends { x: number; z: number }>(
@@ -195,14 +212,35 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
   );
 
   for (let i = 0; i < units.length; i++) {
-    const first = index.entries.get(i);
+    const first = index.entries[i];
     const u1 = units[i];
     if (!first) continue;
     const processed = new Set<number>();
+    const reach = first.radius + index.maxRadius;
+    let cachedQueryKey = '';
+    let candidates: CollisionEntry<UnitEntity>[] = [];
+    let candidateCursor = 0;
+
     while (true) {
-      const next = nearbyCollisionEntries(index, u1.x, u1.z, first.radius + index.maxRadius)
-        .find((entry) => entry.index > i && !processed.has(entry.index));
+      const nextQueryKey = collisionQueryKey(u1.x, u1.z, reach);
+      if (nextQueryKey !== cachedQueryKey) {
+        // Rebuild only when the query's covered cells change. A collision that
+        // moves either participant into another bucket invalidates this cache.
+        candidates = nearbyCollisionEntries(index, u1.x, u1.z, reach);
+        candidateCursor = 0;
+        cachedQueryKey = nextQueryKey;
+      }
+
+      let next: CollisionEntry<UnitEntity> | undefined;
+      while (candidateCursor < candidates.length) {
+        const candidate = candidates[candidateCursor++];
+        if (candidate.index > i && !processed.has(candidate.index)) {
+          next = candidate;
+          break;
+        }
+      }
       if (!next) break;
+
       processed.add(next.index);
       const u2 = next.item;
       if (u2.hp <= 0 || u2.garrisonedInBuildingId) continue;
@@ -225,8 +263,9 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
       u1.z -= nz * push;
       u2.x += nx * push;
       u2.z += nz * push;
-      moveCollisionEntry(index, first);
-      moveCollisionEntry(index, next);
+      if (moveCollisionEntry(index, first) || moveCollisionEntry(index, next)) {
+        cachedQueryKey = '';
+      }
     }
   }
 }
@@ -234,14 +273,31 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
 /** Resolves unit/building collisions; only nearby solid buildings reach the exact test. */
 export function resolveUnitBuildingCollisions(units: UnitEntity[], buildings: BuildingEntity[]): void {
   const index = createCollisionIndex(buildings, getBuildingCollisionRadius, (building) => building.hp > 0);
-  if (index.entries.size === 0) return;
+  if (index.entryCount === 0) return;
   for (const unit of units) {
     if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
     const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
     const processed = new Set<number>();
+    const reach = unitRadius + index.maxRadius;
+    let cachedQueryKey = '';
+    let candidates: CollisionEntry<BuildingEntity>[] = [];
+    let candidateCursor = 0;
     while (true) {
-      const next = nearbyCollisionEntries(index, unit.x, unit.z, unitRadius + index.maxRadius)
-        .find((entry) => !processed.has(entry.index));
+      const nextQueryKey = collisionQueryKey(unit.x, unit.z, reach);
+      if (nextQueryKey !== cachedQueryKey) {
+        candidates = nearbyCollisionEntries(index, unit.x, unit.z, reach);
+        candidateCursor = 0;
+        cachedQueryKey = nextQueryKey;
+      }
+
+      let next: CollisionEntry<BuildingEntity> | undefined;
+      while (candidateCursor < candidates.length) {
+        const candidate = candidates[candidateCursor++];
+        if (!processed.has(candidate.index)) {
+          next = candidate;
+          break;
+        }
+      }
       if (!next) break;
       processed.add(next.index);
       const building = next.item;
@@ -266,14 +322,31 @@ export function resolveUnitResourceCollisions(units: UnitEntity[], nodes: Resour
     (node) => getResourceColliderRadius(node.resourceType, node.subtype),
     (node) => node.amount > 0 && !(node.resourceType === 'food' && (!node.subtype || node.subtype === 'farm'))
   );
-  if (index.entries.size === 0) return;
+  if (index.entryCount === 0) return;
   for (const unit of units) {
     if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
     const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
     const processed = new Set<number>();
+    const reach = unitRadius + index.maxRadius;
+    let cachedQueryKey = '';
+    let candidates: CollisionEntry<ResourceNode>[] = [];
+    let candidateCursor = 0;
     while (true) {
-      const next = nearbyCollisionEntries(index, unit.x, unit.z, unitRadius + index.maxRadius)
-        .find((entry) => !processed.has(entry.index));
+      const nextQueryKey = collisionQueryKey(unit.x, unit.z, reach);
+      if (nextQueryKey !== cachedQueryKey) {
+        candidates = nearbyCollisionEntries(index, unit.x, unit.z, reach);
+        candidateCursor = 0;
+        cachedQueryKey = nextQueryKey;
+      }
+
+      let next: CollisionEntry<ResourceNode> | undefined;
+      while (candidateCursor < candidates.length) {
+        const candidate = candidates[candidateCursor++];
+        if (!processed.has(candidate.index)) {
+          next = candidate;
+          break;
+        }
+      }
       if (!next) break;
       processed.add(next.index);
       const node = next.item;
