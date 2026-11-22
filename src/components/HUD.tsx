@@ -28,6 +28,7 @@ import { RtsEngine } from '../game/engine';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
+import { formatCompactResourceCount, formatResourceCount } from '../game/resourceFormatting';
 import {
   canAfford,
   canAssembleFieldRam,
@@ -711,72 +712,84 @@ export const HUD: React.FC<HUDProps> = ({
           {/* Food */}
           <div
             data-resource-pill="food"
-            aria-label="糧食"
-            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
+            aria-label={`糧食庫存：${formatResourceCount(observedRes.food)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`糧食庫存：${formatResourceCount(observedRes.food)} · 產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
           >
             <span className="text-xs">🌾</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">糧</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">糧食</span>
-            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-amber-400 tabular-nums">
-              {Math.floor(observedRes.food)}
+            <span data-resource-value="food" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-amber-400 tabular-nums">
+              {formatResourceCount(observedRes.food)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="food" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-amber-400 tabular-nums">
+              {formatCompactResourceCount(observedRes.food)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.food}/m·{observedTelemetry.workersByResource.food}
+              +{formatCompactResourceCount(observedTelemetry.incomePerMin.food)}/m·{observedTelemetry.workersByResource.food}
             </span>
           </div>
 
           {/* Wood */}
           <div
             data-resource-pill="wood"
-            aria-label="木材"
-            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
+            aria-label={`木材庫存：${formatResourceCount(observedRes.wood)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`木材庫存：${formatResourceCount(observedRes.wood)} · 產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
           >
             <span className="text-xs">🪵</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">木</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">木材</span>
-            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-emerald-400 tabular-nums">
-              {Math.floor(observedRes.wood)}
+            <span data-resource-value="wood" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-emerald-400 tabular-nums">
+              {formatResourceCount(observedRes.wood)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="wood" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-emerald-400 tabular-nums">
+              {formatCompactResourceCount(observedRes.wood)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.wood}/m·{observedTelemetry.workersByResource.wood}
+              +{formatCompactResourceCount(observedTelemetry.incomePerMin.wood)}/m·{observedTelemetry.workersByResource.wood}
             </span>
           </div>
 
           {/* Gold */}
           <div
             data-resource-pill="gold"
-            aria-label="黃金"
-            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
+            aria-label={`黃金庫存：${formatResourceCount(observedRes.gold)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`黃金庫存：${formatResourceCount(observedRes.gold)} · 產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
           >
             <span className="text-xs">🪙</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">金</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">黃金</span>
-            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-yellow-300 tabular-nums">
-              {Math.floor(observedRes.gold)}
+            <span data-resource-value="gold" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-yellow-300 tabular-nums">
+              {formatResourceCount(observedRes.gold)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="gold" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-yellow-300 tabular-nums">
+              {formatCompactResourceCount(observedRes.gold)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.gold}/m·{observedTelemetry.workersByResource.gold}
+              +{formatCompactResourceCount(observedTelemetry.incomePerMin.gold)}/m·{observedTelemetry.workersByResource.gold}
             </span>
           </div>
 
           {/* Stone */}
           <div
             data-resource-pill="stone"
-            aria-label="石料"
-            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
+            aria-label={`石料庫存：${formatResourceCount(observedRes.stone)}`}
+            className="flex min-w-0 overflow-hidden items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow whitespace-nowrap"
+            title={`石料庫存：${formatResourceCount(observedRes.stone)} · 產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
           >
             <span className="text-xs">🪨</span>
             <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">石</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">石料</span>
-            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-slate-300 tabular-nums">
-              {Math.floor(observedRes.stone)}
+            <span data-resource-value="stone" className="hidden sm:inline min-w-0 overflow-hidden text-[11px] sm:text-xs font-extrabold text-slate-300 tabular-nums">
+              {formatResourceCount(observedRes.stone)}
+            </span>
+            <span aria-hidden="true" data-resource-compact-value="stone" className="sm:hidden min-w-0 overflow-hidden text-[11px] font-extrabold text-slate-300 tabular-nums">
+              {formatCompactResourceCount(observedRes.stone)}
             </span>
             <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.stone}/m·{observedTelemetry.workersByResource.stone}
+              +{formatCompactResourceCount(observedTelemetry.incomePerMin.stone)}/m·{observedTelemetry.workersByResource.stone}
             </span>
           </div>
 
@@ -784,7 +797,7 @@ export const HUD: React.FC<HUDProps> = ({
           <div
             data-population-badge="true"
             aria-label="人口"
-            className={`col-span-4 sm:col-span-1 flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap ${
+            className={`col-span-4 sm:col-span-1 flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow min-w-0 overflow-hidden whitespace-nowrap ${
               observedPop >= observedMaxPop
                 ? 'border-rose-500/70'
                 : observedPopStats.totalReserved >= observedMaxPop
