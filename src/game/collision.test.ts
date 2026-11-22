@@ -139,7 +139,7 @@ test('collision broad phase: gathering workers keep their resource interaction r
 
 test('collision broad phase: non-harvesters are kept clear of resource nodes and farm crops stay walkable', () => {
   const soldier = makeUnit('soldier', 0.4, 0, { category: 'melee' });
-  const farmWorker = makeUnit('farm-worker', 0, 0, { category: 'worker' });
+  const farmWorker = makeUnit('farm-worker', 20, 0, { category: 'worker' });
   resolveUnitResourceCollisions(
     [soldier, farmWorker],
     [
@@ -149,5 +149,5 @@ test('collision broad phase: non-harvesters are kept clear of resource nodes and
   );
   const expected = 0.72 + getUnitColliderRadius('melee') + 0.02;
   assert.ok(Math.abs(Math.hypot(soldier.x, soldier.z) - expected) < 1e-6);
-  assert.deepEqual([farmWorker.x, farmWorker.z], [0, 0]);
+  assert.deepEqual([farmWorker.x, farmWorker.z], [20, 0]);
 });
