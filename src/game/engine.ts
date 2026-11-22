@@ -197,8 +197,12 @@ import {
   getFormationCohesionSpeedScale,
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
+  getFormationTacticalSlot,
   measureFormationRegroup,
+  shouldRefreshFormationTacticalSlot,
   type FormationMovementMember,
+  type FormationTacticalMember,
+  type FormationTacticalRole,
   type FormationNarrowPassage,
   type FormationRegroupState,
 } from './formationMovement';
@@ -405,6 +409,7 @@ export class RtsEngine {
   private lastGroupKeyTime: Record<number, number> = {};
   private movementGroupSequence = 0;
   private formationRegroupByGroup = new Map<string, FormationRegroupRuntimeState>();
+  private formationTacticalMembersByGroup = new Map<string, FormationTacticalMember[]>();
   private formationPassageCacheByGroup = new Map<
     string,
     { grid: NavGrid; scannedAt: number; passage: FormationNarrowPassage | null }
@@ -3185,6 +3190,15 @@ export class RtsEngine {
       this.spawnCommandIndicator(target.x, target.z, 'attack');
     }
 
+    const targetAnchor = target ? { x: target.x, z: target.z } : null;
+    const combatGroups = new Map<string, UnitEntity[]>();
+    for (const unit of playerUnits) {
+      if (unit.unitDef.category === 'worker' || unit.unitDef.isNaval || unit.unitDefId === 'transport_boat') continue;
+      const group = combatGroups.get(unit.faction) || [];
+      group.push(unit);
+      combatGroups.set(unit.faction, group);
+    }
+
     playerUnits.forEach((unit) => {
       this.clearFormationMovement(unit);
       unit.attackMoveGoal = null;
@@ -3199,6 +3213,19 @@ export class RtsEngine {
       unit.state = 'attacking';
       unit.currentActionText = '⚔️ 奔赴交戰';
     });
+
+    if (targetAnchor) {
+      for (const [faction, members] of combatGroups) {
+        members.sort((a, b) => a.id.localeCompare(b.id));
+        if (members.length < 2) continue;
+        const origin = {
+          x: members.reduce((sum, unit) => sum + unit.x, 0) / members.length,
+          z: members.reduce((sum, unit) => sum + unit.z, 0) / members.length,
+        };
+        const groupId = `player-attack:${faction}:${++this.movementGroupSequence}`;
+        members.forEach((unit) => this.assignFormationMovement(unit, groupId, origin, targetAnchor));
+      }
+    }
   }
 
   private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string; name: string } {
@@ -5238,6 +5265,7 @@ export class RtsEngine {
 
   private refreshFormationRegroupState(): void {
     this.formationRegroupByGroup.clear();
+    this.formationTacticalMembersByGroup.clear();
     const membersByGroup = new Map<string, FormationMovementMember[]>();
 
     for (const unit of this.units) {
@@ -5265,6 +5293,13 @@ export class RtsEngine {
         formationOrderGoal: goal,
       });
       membersByGroup.set(groupId, members);
+      const tacticalMembers = this.formationTacticalMembersByGroup.get(groupId) || [];
+      tacticalMembers.push({ id: unit.id, category: unit.unitDef.category });
+      this.formationTacticalMembersByGroup.set(groupId, tacticalMembers);
+    }
+
+    for (const tacticalMembers of this.formationTacticalMembersByGroup.values()) {
+      tacticalMembers.sort((a, b) => a.id.localeCompare(b.id));
     }
 
     for (const [groupId, members] of membersByGroup) {
@@ -5386,6 +5421,67 @@ export class RtsEngine {
     unit.formationGroupId = undefined;
     unit.formationOrderOrigin = undefined;
     unit.formationOrderGoal = undefined;
+    this.clearFormationTacticalState(unit);
+  }
+
+  private clearFormationTacticalState(unit: UnitEntity): void {
+    unit.formationTacticalTargetId = undefined;
+    unit.formationTacticalAnchor = undefined;
+    unit.formationTacticalGoal = undefined;
+    unit.formationTacticalRole = undefined;
+  }
+
+  private resolveFormationTacticalSlot(
+    unit: UnitEntity,
+    target: UnitEntity | BuildingEntity,
+    targetRadius: number,
+  ): { x: number; z: number; role: FormationTacticalRole } | null {
+    const groupId = unit.formationGroupId;
+    const groupOrigin = unit.formationOrderOrigin;
+    const members = groupId ? this.formationTacticalMembersByGroup.get(groupId) : undefined;
+    if (!groupId || !groupOrigin || !members || members.length < 2) {
+      this.clearFormationTacticalState(unit);
+      return null;
+    }
+
+    const targetAnchor = { x: target.x, z: target.z };
+    if (
+      shouldRefreshFormationTacticalSlot(
+        unit.formationTacticalTargetId,
+        unit.formationTacticalAnchor,
+        target.id,
+        targetAnchor,
+      )
+    ) {
+      const tacticalSlot = getFormationTacticalSlot({
+        unitId: unit.id,
+        members,
+        category: unit.unitDef.category,
+        groupOrigin,
+        memberPosition: { x: unit.x, z: unit.z },
+        target: { ...targetAnchor, radius: targetRadius },
+        attackRange: unit.unitDef.stats.range,
+        unitRadius: getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
+      });
+      if (!tacticalSlot) {
+        this.clearFormationTacticalState(unit);
+        return null;
+      }
+
+      unit.formationTacticalTargetId = target.id;
+      unit.formationTacticalAnchor = targetAnchor;
+      unit.formationTacticalGoal = { x: tacticalSlot.x, z: tacticalSlot.z };
+      unit.formationTacticalRole = tacticalSlot.role;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+    }
+
+    if (!unit.formationTacticalGoal || !unit.formationTacticalRole) return null;
+    return {
+      ...unit.formationTacticalGoal,
+      role: unit.formationTacticalRole,
+    };
   }
 
   private updateUnits(dt: number) {
@@ -5854,6 +5950,7 @@ export class RtsEngine {
 
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
+      this.clearFormationTacticalState(unit);
       unit.state = 'idle';
       unit.currentActionText = '💤 待命中 (閒置)';
       return;
@@ -5906,6 +6003,7 @@ export class RtsEngine {
     }
 
     if (!target || target.hp <= 0 || (target.type === 'unit' && (target as UnitEntity).garrisonedInBuildingId)) {
+      this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
       const followUp = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
@@ -5949,9 +6047,26 @@ export class RtsEngine {
           )
         : getBuildingCollisionRadius(target as BuildingEntity);
     const effectiveDist = Math.max(0, dist - targetRadius);
+    const tacticalSlot = this.resolveFormationTacticalSlot(unit, target, targetRadius);
+    if (
+      tacticalSlot &&
+      getDistance(unit.x, unit.z, tacticalSlot.x, tacticalSlot.z) > 0.9
+    ) {
+      this.moveUnitAlongPath(unit, tacticalSlot.x, tacticalSlot.z, dt);
+      const roleLabel =
+        tacticalSlot.role === 'frontline'
+          ? '步兵防線'
+          : tacticalSlot.role === 'backline'
+            ? '遠程射位'
+            : tacticalSlot.role === 'flank'
+              ? '騎兵側翼'
+              : '攻城後列';
+      unit.currentActionText = `⚔️ 戰術部署 · ${roleLabel}`;
+      return;
+    }
 
     if (effectiveDist > range) {
-      this.moveUnitAlongPath(unit, target.x, target.z, dt);
+      this.moveUnitAlongPath(unit, tacticalSlot?.x ?? target.x, tacticalSlot?.z ?? target.z, dt);
     } else {
       // A unit already in weapon range is engaging, not movement-stalled.
       unit.stuckDuration = 0;
