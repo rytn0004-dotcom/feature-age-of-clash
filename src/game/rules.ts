@@ -868,6 +868,68 @@ export function evaluateAiPlan(
   };
 }
 
+
+/** Build stock targets from next-age cost and the rolling, observed net burn rate. */
+export function computeAiResourceDemandTargets(
+  age: AgeLevel | number,
+  netRates?: Partial<Record<ResourceType, number>>
+): Resources {
+  const nextAgeCost = age < 2 ? { food: 400, gold: 200 } : age < 3 ? { food: 1200, gold: 600 } : age < 4 ? { food: 2400, gold: 1200 } : null;
+  const targets: Resources = {
+    food: Math.max(700, nextAgeCost?.food || 0),
+    wood: age < 2 ? 220 : age < 3 ? 280 : 340,
+    gold: Math.max(250, nextAgeCost?.gold || 0),
+    stone: age < 2 ? 40 : age < 3 ? 120 : age < 4 ? 200 : 260,
+  };
+  if (!netRates) return targets;
+  for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+    const rate = netRates[type];
+    if (!Number.isFinite(rate) || (rate as number) >= -4) continue;
+    const base = targets[type];
+    // Bound the forecast so a temporary spending spike cannot destabilize allocation.
+    targets[type] = Math.min(base * 2.5, Math.max(base, Math.abs(rate as number) * 2.5));
+  }
+  return targets;
+}
+
+export interface AiAgeUpSavingReadiness {
+  age: number;
+  gameTime: number;
+  workerCount: number;
+  minimumWorkers: number;
+  minimumGameTime: number;
+  landmarkActive: boolean;
+  resources: Resources;
+  ageUpCost: Resources | null;
+}
+
+/** Saves for the next landmark only while its construction has not started. */
+export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
+  if (
+    !Number.isFinite(input.age) || input.age < 1 || input.age >= 4 ||
+    !Number.isFinite(input.gameTime) || !Number.isFinite(input.workerCount) ||
+    !Number.isFinite(input.minimumWorkers) || !Number.isFinite(input.minimumGameTime) ||
+    input.landmarkActive || !input.ageUpCost ||
+    input.workerCount < input.minimumWorkers || input.gameTime < input.minimumGameTime
+  ) return false;
+  return !canAfford(input.resources, input.ageUpCost);
+}
+
+/** Keep the age-up reserve unless an active attack or undersized army needs defense. */
+export function shouldAiDeferOptionalMilitaryProduction(input: {
+  savingForAgeUp: boolean;
+  armyCount: number;
+  underAttack: number;
+  minimumDefenseArmy?: number;
+}): boolean {
+  const minimumArmy = Number.isFinite(input.minimumDefenseArmy)
+    ? Math.max(0, Math.floor(input.minimumDefenseArmy as number))
+    : 3;
+  return input.savingForAgeUp && Number.isFinite(input.armyCount) &&
+    input.armyCount >= minimumArmy && Number.isFinite(input.underAttack) &&
+    input.underAttack <= 0;
+}
+
 /**
  * Computes desired worker allocation across food/wood/gold/stone based on current Age,
  * resource deficits, and active gather_priority script mode.
@@ -927,12 +989,7 @@ export function computeAiWorkerAllocation(
   // of truth. Discrete construction / army purchases can create short negative
   // bursts, so only react while stock is still below a soft safety target.
   if (netRates) {
-    const stockTargets: Record<ResourceType, number> = {
-      food: nextAgeCost?.food ?? 700,
-      wood: age < 2 ? 220 : age < 3 ? 280 : 340,
-      gold: nextAgeCost?.gold ?? 250,
-      stone: age < 2 ? 40 : age < 3 ? 120 : age < 4 ? 200 : 260,
-    };
+    const stockTargets = computeAiResourceDemandTargets(age, netRates);
 
     for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
       const netPerMinute = netRates[type];
@@ -1106,6 +1163,65 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
 
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
+
+
+export interface AiResourceCampWorkerProfile {
+  gatherPerSecond: number;
+  carryCapacity: number;
+  moveSpeed: number;
+  currentTravelDistance: number;
+  proposedTravelDistance: number;
+}
+
+/** Estimate the simulated-seconds payback for a new resource drop-off camp. */
+export function estimateAiResourceCampPaybackSeconds(input: {
+  resourceType: ResourceType;
+  totalNodeAmount: number;
+  gatherers: readonly AiResourceCampWorkerProfile[];
+  woodCost: number;
+  minimumGatherers?: number;
+  minimumDistanceSaved?: number;
+  maximumPaybackSeconds?: number;
+}): number | null {
+  const minimumGatherers = Number.isFinite(input.minimumGatherers) ? Math.max(1, Math.floor(input.minimumGatherers as number)) : 3;
+  const minimumDistanceSaved = Number.isFinite(input.minimumDistanceSaved) ? Math.max(0, input.minimumDistanceSaved as number) : 8;
+  const maximumPaybackSeconds = Number.isFinite(input.maximumPaybackSeconds) ? Math.max(0, input.maximumPaybackSeconds as number) : 180;
+  if (
+    (input.resourceType !== 'wood' && input.resourceType !== 'gold' && input.resourceType !== 'stone') ||
+    !Number.isFinite(input.totalNodeAmount) || input.totalNodeAmount <= 0 ||
+    !Number.isFinite(input.woodCost) || input.woodCost <= 0 ||
+    input.gatherers.length < minimumGatherers
+  ) return null;
+
+  let totalGatherRate = 0;
+  let currentDeliveredPerMinute = 0;
+  let proposedDeliveredPerMinute = 0;
+  let weightedDistanceSaved = 0;
+  for (const worker of input.gatherers) {
+    if (
+      !Number.isFinite(worker.gatherPerSecond) || worker.gatherPerSecond <= 0 ||
+      !Number.isFinite(worker.carryCapacity) || worker.carryCapacity <= 0 ||
+      !Number.isFinite(worker.moveSpeed) || worker.moveSpeed <= 0 ||
+      !Number.isFinite(worker.currentTravelDistance) || worker.currentTravelDistance < 0 ||
+      !Number.isFinite(worker.proposedTravelDistance) || worker.proposedTravelDistance < 0
+    ) return null;
+    totalGatherRate += worker.gatherPerSecond;
+    weightedDistanceSaved += worker.currentTravelDistance - worker.proposedTravelDistance;
+    currentDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.currentTravelDistance);
+    proposedDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.proposedTravelDistance);
+  }
+  if (
+    totalGatherRate <= 0 ||
+    input.totalNodeAmount < totalGatherRate * 90 ||
+    weightedDistanceSaved / input.gatherers.length < minimumDistanceSaved
+  ) return null;
+
+  const throughputGain = proposedDeliveredPerMinute - currentDeliveredPerMinute;
+  if (throughputGain <= 0) return null;
+  const resourceValue = input.resourceType === 'gold' ? 1.2 : 1;
+  const paybackSeconds = (input.woodCost * 60) / (throughputGain * resourceValue);
+  return Number.isFinite(paybackSeconds) && paybackSeconds <= maximumPaybackSeconds ? +paybackSeconds.toFixed(2) : null;
+}
 
 /**
  * Predicts whether a resource node will run dry before gatherers can reasonably
