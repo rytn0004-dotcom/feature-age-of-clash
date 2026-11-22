@@ -108,15 +108,15 @@ The second time column is the real unboosted queue duration: `base trainTime × 
 
 ### Special case: Battering Ram
 
-The unit definition stores `trainTime: 18` seconds, but the normal `trainUnit` queue rejects direct Battering Ram production. The playable route is field assembly:
+The unit definition stores `trainTime: 18` seconds, but the normal `trainUnit` queue rejects direct Battering Ram production. The playable route is field assembly, which now follows the global 1.12 production-time scale:
 
 - Age II and the shared Field Engineering technology are required.
 - Cost: 140 wood and 60 gold.
-- Four melee infantry are selected; the assembly advances at 18 s when all four are in position.
-- If only three builders are in the ready radius, it takes 24 s. If fewer than three remain, the project is cancelled.
+- Four melee infantry are selected; when all four are in the ready radius, assembly takes **20.16 s** (`18 × 1.12`).
+- If only three builders remain in the ready radius, it takes **26.88 s**. If fewer than three remain, the project is cancelled.
 - Unit travel and gathering the technology/cost are additional.
 
-Thus the data-field value and the actual production path happen to share an 18-second reference, but the unit is not normally queued like a Catapult.
+The stored `trainTime` remains a baseline reference; the actual battlefield assembly duration is scaled and is not a normal Catapult-style queue item.
 
 ## Technology research times
 
