@@ -11,6 +11,9 @@ export interface PerformanceSample {
   textures: number;
   aliveUnits: number;
   aiAliveUnits: number;
+  aiStalledUnits: number;
+  aiPathRecoveryCount: number;
+  aiMaxStuckSeconds: number;
   aiIdleUnits: number;
   aiMovingUnits: number;
   aiAttackingUnits: number;
@@ -54,6 +57,9 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'textures',
   'aliveUnits',
   'aiAliveUnits',
+  'aiStalledUnits',
+  'aiPathRecoveryCount',
+  'aiMaxStuckSeconds',
   'aiIdleUnits',
   'aiMovingUnits',
   'aiAttackingUnits',
