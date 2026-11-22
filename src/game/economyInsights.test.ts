@@ -23,9 +23,10 @@ test('economy net flow waits for a meaningful window and rejects invalid samples
 });
 
 test('resource risk estimates depletion in game minutes', () => {
-  assert.deepEqual(getResourceHealthStatus(50, -60), { status: 'warning', runwayMinutes: 0.8333333333333334 });
-  assert.equal(getResourceHealthStatus(120, -60).status, 'draining');
-  assert.equal(getResourceHealthStatus(180, -60).status, 'draining');
+  assert.deepEqual(getResourceHealthStatus(50, -60), { status: 'critical', runwayMinutes: 0.8333333333333334 });
+  assert.equal(getResourceHealthStatus(120, -60).status, 'warning');
+  assert.equal(getResourceHealthStatus(180, -60).status, 'warning');
+  assert.equal(getResourceHealthStatus(240, -60).status, 'draining');
   assert.equal(getResourceHealthStatus(180, 30).status, 'growing');
   assert.equal(getResourceHealthStatus(100, 0).status, 'stable');
   assert.equal(getResourceHealthStatus(0, -1).status, 'critical');
