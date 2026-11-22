@@ -840,6 +840,24 @@ export function computeAiWorkerAllocation(
     weights = { food: 0.52, wood: 0.3, gold: 0.13, stone: 0.05 };
   }
 
+  // Reserve a gradual share of labor for the next age instead of waiting for
+  // food/gold to fall below tiny emergency thresholds. The boost fades to zero
+  // as each age-up resource target is reached, preventing post-upgrade hoarding.
+  const nextAgeCost =
+    age < 2
+      ? { food: 400, gold: 200 }
+      : age < 3
+      ? { food: 1200, gold: 600 }
+      : age < 4
+      ? { food: 2400, gold: 1200 }
+      : null;
+  if (nextAgeCost) {
+    const foodReserveGap = Math.max(0, Math.min(1, (nextAgeCost.food - Math.max(0, resources.food)) / nextAgeCost.food));
+    const goldReserveGap = Math.max(0, Math.min(1, (nextAgeCost.gold - Math.max(0, resources.gold)) / nextAgeCost.gold));
+    weights.food += foodReserveGap * 0.28;
+    weights.gold += goldReserveGap * 0.26;
+  }
+
   // Dynamic deficit correction: boost starved essentials without starving everything else
   if (resources.food < 110) weights.food += 0.26;
   if (resources.wood < 110) weights.wood += 0.22;
