@@ -26,6 +26,10 @@ export interface PerformanceSample {
   aiResearchingBuildings: number;
   aiDecisionCount: number;
   aiDecisionAccumulatorSeconds: number;
+  aiDecisionTimingSamples: number;
+  aiDecisionLastMs: number;
+  aiDecisionAverageMs: number;
+  aiDecisionMaxMs: number;
   projectileCount: number;
   activeParticles: number;
   particleCapacity: number;
@@ -72,6 +76,10 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'aiResearchingBuildings',
   'aiDecisionCount',
   'aiDecisionAccumulatorSeconds',
+  'aiDecisionTimingSamples',
+  'aiDecisionLastMs',
+  'aiDecisionAverageMs',
+  'aiDecisionMaxMs',
   'projectileCount',
   'activeParticles',
   'particleCapacity',
@@ -107,4 +115,40 @@ export function formatPerformanceTelemetryCsv(samples: readonly PerformanceSampl
     CSV_COLUMNS.map((column) => escapeCsvValue(sample[column])).join(','),
   );
   return '\uFEFF' + [header, ...rows].join('\r\n');
+}
+
+export interface AiDecisionTiming {
+  sampleCount: number;
+  totalMs: number;
+  lastMs: number;
+  maxMs: number;
+}
+
+export const EMPTY_AI_DECISION_TIMING: AiDecisionTiming = {
+  sampleCount: 0,
+  totalMs: 0,
+  lastMs: 0,
+  maxMs: 0,
+};
+
+/** Records wall-clock duration for one synchronous AI planning pass without keeping an unbounded history. */
+export function recordAiDecisionTiming(
+  previous: AiDecisionTiming,
+  elapsedMs: number,
+): AiDecisionTiming {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return previous;
+
+  const lastMs = elapsedMs;
+  const totalMs = previous.totalMs + elapsedMs;
+  const sampleCount = previous.sampleCount + 1;
+  return {
+    sampleCount,
+    totalMs,
+    lastMs,
+    maxMs: Math.max(previous.maxMs, elapsedMs),
+  };
+}
+
+export function getAverageAiDecisionMs(timing: AiDecisionTiming): number {
+  return timing.sampleCount > 0 ? timing.totalMs / timing.sampleCount : 0;
 }
