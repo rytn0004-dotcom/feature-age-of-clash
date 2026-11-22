@@ -85,6 +85,8 @@ import {
   layoutWallChain,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
+  estimateConstructionTimeRemaining,
+  getConstructionWorkerMultiplier,
   computeGarrisonDefenseProfile,
   computeSimulationSubsteps,
   computeSpatialAudioGain,
@@ -1601,6 +1603,124 @@ export class RtsEngine {
 
   public getPopulationStats(faction: FactionId) {
     return getFactionPopulationStats(faction, this.buildings, this.units);
+  }
+
+  /**
+   * Shared live estimate for the selected-building HUD. Uses the same range,
+   * forge aura and production modifiers as the simulation update.
+   */
+  public getBuildingTimingEstimate(buildingId: string): {
+    constructionWorkers: number;
+    constructionWorkerMultiplier: number;
+    constructionRemainingSeconds: number | null;
+    researchRemainingSeconds: number | null;
+    trainingRemainingSeconds: number | null;
+    queueRemainingSeconds: number | null;
+  } {
+    const building = this.buildings.find((entry) => entry.id === buildingId);
+    const empty = {
+      constructionWorkers: 0,
+      constructionWorkerMultiplier: 0,
+      constructionRemainingSeconds: null,
+      researchRemainingSeconds: null,
+      trainingRemainingSeconds: null,
+      queueRemainingSeconds: null,
+    };
+    if (!building || building.hp <= 0) return empty;
+
+    const repairingWall =
+      !!building.wallBreached && !!building.buildingDef.isWall && building.isConstructed;
+    const constructionSpeedMultiplier = getCivilizationBuildSpeedMultiplier(
+      this.getCivilizationForFaction(building.faction),
+      this.activeMods
+    );
+    const buildingRadius = Math.max(
+      getBuildingCollisionRadius(building),
+      repairingWall ? building.buildingDef.size : 0
+    );
+    const buildReach = Math.max(2.2, buildingRadius + 1.55);
+    const constructionWorkers =
+      !building.isConstructed || repairingWall
+        ? this.units.filter(
+            (worker) =>
+              worker.hp > 0 &&
+              worker.faction === building.faction &&
+              worker.state === 'building' &&
+              worker.targetBuildingId === building.id &&
+              !worker.garrisonedInBuildingId &&
+              getDistance(worker.x, worker.z, building.x, building.z) <= buildReach
+          ).length
+        : 0;
+    const constructionWorkerMultiplier = getConstructionWorkerMultiplier(constructionWorkers);
+
+    let constructionRemainingSeconds: number | null = null;
+    if (repairingWall && constructionWorkerMultiplier > 0) {
+      const repairRate =
+        (building.maxHp / (building.buildingDef.buildTime * 0.65)) *
+        constructionSpeedMultiplier *
+        constructionWorkerMultiplier;
+      constructionRemainingSeconds =
+        repairRate > 0 ? Math.max(0, building.maxHp - building.hp) / repairRate : null;
+    } else if (!building.isConstructed) {
+      constructionRemainingSeconds = estimateConstructionTimeRemaining(
+        building.buildingDef.buildTime,
+        building.buildProgress,
+        constructionWorkers,
+        constructionSpeedMultiplier
+      );
+    }
+
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    const productionSpeedMultiplier = hasNearbyForge ? 1.25 : 1;
+    let researchRemainingSeconds: number | null = null;
+    if (building.activeTechId) {
+      const tech = findTechDef(building.activeTechId);
+      if (tech) {
+        researchRemainingSeconds =
+          (Math.max(0, 1 - (building.researchProgress || 0)) * tech.researchTime) /
+          productionSpeedMultiplier;
+      }
+    }
+
+    let trainingRemainingSeconds: number | null = null;
+    let queueRemainingSeconds: number | null = null;
+    if (building.queue.length > 0) {
+      const researched = this.getResearchedTechs(building.faction);
+      const landmarks = this.landmarksByFaction[building.faction] || [];
+      let totalSeconds = 0;
+      building.queue.forEach((unitId, index) => {
+        const unitDef = this.findUnitDef(unitId, building.faction);
+        if (!unitDef) return;
+        const techMultiplier = getTrainingTimeMultiplier(researched, unitDef.category);
+        const landmarkMultiplier = getLandmarkTrainingSpeedMultiplier(landmarks, unitDef.category);
+        const duration =
+          Math.max(2, unitDef.stats.trainTime * techMultiplier) /
+          (productionSpeedMultiplier * landmarkMultiplier);
+        const remaining = index === 0
+          ? duration * (1 - Math.max(0, Math.min(1, building.queueProgress)))
+          : duration;
+        totalSeconds += remaining;
+        if (index === 0) trainingRemainingSeconds = remaining;
+      });
+      queueRemainingSeconds = totalSeconds;
+    }
+
+    return {
+      constructionWorkers,
+      constructionWorkerMultiplier,
+      constructionRemainingSeconds,
+      researchRemainingSeconds,
+      trainingRemainingSeconds,
+      queueRemainingSeconds,
+    };
   }
 
   public getAvailableUnitDefs(faction: FactionId): UnitDefinition[] {
