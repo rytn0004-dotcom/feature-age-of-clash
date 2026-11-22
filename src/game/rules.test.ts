@@ -3248,10 +3248,11 @@ test('production times use a 1.12 time scale and all speed bonuses share a 1.12x
   assert.equal(getEffectiveUnitTrainingDuration(22, 1, 1.25, 1.35), 22);
 });
 
-test('all civilization worker units have a consistent 22-second base training time', () => {
+test('all civilization villager archetypes have a consistent 22-second base training time', () => {
+  const villagerIds = new Set(['villager', 'anime_spirit_harvester', 'fantasy_goblin_sapper']);
   const workers = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS].filter(
-    (unit) => unit.category === 'worker'
+    (unit) => villagerIds.has(unit.id)
   );
-  assert.ok(workers.length >= 3, 'Each civilization must provide a worker unit');
+  assert.equal(workers.length, 3, 'Each civilization must provide one villager archetype');
   workers.forEach((worker) => assert.equal(worker.stats.trainTime, 22, worker.id));
 });
