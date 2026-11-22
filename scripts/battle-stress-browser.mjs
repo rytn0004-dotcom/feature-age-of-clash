@@ -166,6 +166,7 @@ async function main() {
                 kind: pill.dataset.resourcePill || 'population',
                 width: pill.clientWidth,
                 scrollWidth: pill.scrollWidth,
+                top: rect.top,
                 amountVisible: !!amount,
                 amountText: amount?.textContent?.trim() || '',
                 amountInside: !amount || (() => {
@@ -174,12 +175,15 @@ async function main() {
                 })(),
               };
             });
+            const pillTops = pillMetrics.map((pill) => pill.top);
+            const singleRow = pillTops.length === 5 && Math.max(...pillTops) - Math.min(...pillTops) <= 2;
             const overlaps = statusBounds.left < utilityBounds.right &&
               statusBounds.right > utilityBounds.left &&
               statusBounds.top < utilityBounds.bottom &&
               statusBounds.bottom > utilityBounds.top;
             return {
               count: pills.length,
+              singleRow,
               width: bar.clientWidth,
               scrollWidth: bar.scrollWidth,
               visibleCount: pills.filter((pill) => {
@@ -200,6 +204,7 @@ async function main() {
         `);
         assert.ok(layout, "Resource/status/utility HUD is incomplete at " + width + "px.");
         assert.equal(layout.count, 5, "Expected four resources and population at " + width + "px.");
+        assert.equal(layout.singleRow, true, "Four resources and population must stay on one row at " + width + "px.");
         assert.ok(layout.width > 0, "Resource bar has no width at " + width + "px.");
         assert.ok(layout.scrollWidth <= layout.width + 1, "Resource bar requires horizontal scrolling at " + width + "px.");
         assert.equal(layout.visibleCount, 5, "One or more resource badges are clipped at " + width + "px.");
