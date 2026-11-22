@@ -5647,7 +5647,8 @@ export class RtsEngine {
             continue;
           }
         }
-        const hostCandidate = this.combatBuildingLookupById.get(unit.garrisonedInBuildingId);
+        const hostId = unit.garrisonedInBuildingId;
+        const hostCandidate = hostId ? this.combatBuildingLookupById.get(hostId) : undefined;
         const hostBldg = hostCandidate && hostCandidate.hp > 0 && hostCandidate.isConstructed
           ? hostCandidate
           : undefined;
