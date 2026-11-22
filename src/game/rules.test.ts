@@ -2230,9 +2230,9 @@ test('resource-module-upgrade: rich vein tiers, effective gather multipliers, te
   // Live worker allocation + /min telemetry including shrines
   const villagerDef = MEDIEVAL_UNITS.find((u) => u.id === 'villager')!;
   const nodes = [
-    { id: 'n_food', resourceType: 'food' as const, subtype: 'hunt' as const, nodeTier: 'standard' as const, amount: 300 },
-    { id: 'n_gold', resourceType: 'gold' as const, subtype: 'gold' as const, nodeTier: 'rich' as const, amount: 2200 },
-    { id: 'n_wood', resourceType: 'wood' as const, subtype: 'wood' as const, nodeTier: 'standard' as const, amount: 300 },
+    { id: 'n_food', resourceType: 'food' as const, subtype: 'hunt' as const, nodeTier: 'standard' as const, amount: 300, x: 18, z: 0 },
+    { id: 'n_gold', resourceType: 'gold' as const, subtype: 'gold' as const, nodeTier: 'rich' as const, amount: 2200, x: 32, z: 0 },
+    { id: 'n_wood', resourceType: 'wood' as const, subtype: 'wood' as const, nodeTier: 'standard' as const, amount: 300, x: 24, z: 8 },
   ];
   const workers = [
     { faction: 'player' as const, hp: 55, state: 'gathering' as const, unitDef: villagerDef, targetResourceNodeId: 'n_food' },
@@ -2254,6 +2254,37 @@ test('resource-module-upgrade: rich vein tiers, effective gather multipliers, te
   assert.ok(telemetry.incomePerMin.food >= 38 && telemetry.incomePerMin.food <= 42);
   assert.ok(telemetry.incomePerMin.gold >= 165 && telemetry.incomePerMin.gold <= 170);
   assert.equal(telemetry.incomePerMin.stone, 120);
+  assert.deepEqual(telemetry.deliveredIncomePerMin, telemetry.incomePerMin, 'Callers without a route model retain the theoretical telemetry fallback.');
+
+  // With a world delivery model, long walks lower the estimate of resources
+  // actually deposited while passive shrine income remains fully credited.
+  const deliveryWorker = {
+    faction: 'player' as const,
+    hp: 55,
+    state: 'gathering' as const,
+    unitDef: villagerDef,
+    targetResourceNodeId: 'n_food',
+    x: 10,
+    z: 0,
+  };
+  const routeAwareTelemetry = computeFactionResourceTelemetry(
+    'player',
+    [deliveryWorker],
+    nodes,
+    shrines,
+    [],
+    false,
+    (_worker, node) => node.id === 'n_food' ? 24 : null,
+  );
+  assert.ok(routeAwareTelemetry.deliveredIncomePerMin.food < routeAwareTelemetry.incomePerMin.food,
+    'Walking to the granary / town center must reduce expected food delivered per minute.');
+  assert.equal(routeAwareTelemetry.deliveredIncomePerMin.gold, 120,
+    'Passive shrine income is not reduced by villager walking time.');
+  const withoutDropOff = computeFactionResourceTelemetry(
+    'player', [deliveryWorker], nodes, [], [], false, () => null
+  );
+  assert.equal(withoutDropOff.deliveredIncomePerMin.food, 0,
+    'A worker without a valid drop-off should not be credited with recurring deposited output.');
 
   // Map generator spawns rich deposits in mid-map contested zones strictly >= 23.5m away from starter TCs
   const spawns = generateSpawnPositions(2, 58).map((sp, idx) => ({ id: `p${idx}`, x: sp.x, z: sp.z }));
