@@ -2195,7 +2195,7 @@ export const HUD: React.FC<HUDProps> = ({
                               : fieldRamInProgress
                               ? '已有野戰衝車正在組裝'
                               : fieldRamCheck.reason ||
-                                '消耗 4 名步兵與 140 木材、60 黃金；約 18 秒後完成野戰衝車（快捷鍵 E）'
+                                '消耗 4 名步兵與 140 木材、60 黃金；4 人就位約 20.2 秒、3 人約 26.9 秒後完成野戰衝車（快捷鍵 E）'
                           }
                         >
                           [{FIELD_ENGINEERING_HOTKEY}] 野戰組裝衝車 · 4 步兵
