@@ -1716,12 +1716,14 @@ export const HUD: React.FC<HUDProps> = ({
                     {selectedBuilding.isConstructed && selectedBuilding.buildingDef.trainableUnits.length > 0 && (
                       <div className="flex gap-1 ml-auto shrink-0">
                         {selectedBuilding.buildingDef.trainableUnits.map((uId) => {
-                          const uDef = engine.findUnitDef(uId);
+                          const uDef = engine.findUnitDef(uId, selectedBuilding.faction);
                           if (!uDef) return null;
+                          const trainingSeconds = engine.getUnitTrainingDuration(selectedBuilding.id, uId) ?? uDef.stats.trainTime * 1.12;
                           return (
                             <button
                               key={uId}
                               onClick={() => engine.trainUnit(selectedBuilding.id, uId)}
+                              title={`${uDef.name} · 生產時間約 ${Math.ceil(trainingSeconds)} 秒`}
                               className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-amber-300 rounded border border-slate-700 cursor-pointer"
                             >
                               招募{uDef.name.slice(0, 2)}
