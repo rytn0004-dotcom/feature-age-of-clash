@@ -29,20 +29,26 @@ export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 
 export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
 
 /**
- * Additional builders remain useful, but each contributes less work than the
- * previous one. The first eight workers provide at most 2.91 worker-equivalents.
- * This is intentionally deterministic and shared by construction, repair and
- * the player-facing time estimate.
+ * Builder contribution curve requested for cooperative construction:
+ * worker 1 = 1.00; workers 2–5 add 0.75 / 0.60 / 0.50 / 0.50;
+ * every worker after the fifth adds a further 0.50.
+ *
+ * This gives the first builder full value while keeping additional builders
+ * useful without allowing them to multiply construction speed linearly.
  */
-const CONSTRUCTION_WORKER_CONTRIBUTIONS = [1, 0.65, 0.45, 0.3, 0.2, 0.14, 0.1, 0.07] as const;
+const INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS = [1, 0.75, 0.6, 0.5, 0.5] as const;
+const ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION = 0.5;
 
 export function getConstructionWorkerMultiplier(workerCount: number): number {
   const count = Math.max(0, Math.floor(Number.isFinite(workerCount) ? workerCount : 0));
-  let multiplier = 0;
-  for (let index = 0; index < Math.min(count, CONSTRUCTION_WORKER_CONTRIBUTIONS.length); index++) {
-    multiplier += CONSTRUCTION_WORKER_CONTRIBUTIONS[index];
-  }
-  return +multiplier.toFixed(3);
+  if (count === 0) return 0;
+
+  const initialCount = Math.min(count, INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  const initialMultiplier = INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS
+    .slice(0, initialCount)
+    .reduce((total, contribution) => total + contribution, 0);
+  const additionalCount = Math.max(0, count - INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  return +(initialMultiplier + additionalCount * ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION).toFixed(3);
 }
 
 /** Returns null when there are no active builders or the inputs are invalid. */
