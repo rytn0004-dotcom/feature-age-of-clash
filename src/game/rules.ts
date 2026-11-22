@@ -941,6 +941,48 @@ export function computeAiWorkerAllocation(
   return result;
 }
 
+/**
+ * Prevent AI worker queues from overshooting their economic target or consuming
+ * the resources reserved for the next-age landmark.
+ *
+ * Queued villagers count as committed workers. The minimum workforce needed
+ * for the next age may still be reached, but once that threshold is met, the
+ * next worker must be affordable without dipping into the landmark reserve.
+ */
+export function shouldAiQueueWorker(options: {
+  workerCount: number;
+  queuedWorkerCount: number;
+  workerCap: number;
+  resources: Resources;
+  workerCost: Resources;
+  ageUpReserve: Resources;
+  minimumWorkersForAgeUp: number;
+}): boolean {
+  const committedWorkers =
+    Math.max(0, Math.floor(Number.isFinite(options.workerCount) ? options.workerCount : 0)) +
+    Math.max(0, Math.floor(Number.isFinite(options.queuedWorkerCount) ? options.queuedWorkerCount : 0));
+  const workerCap = Math.max(0, Math.floor(Number.isFinite(options.workerCap) ? options.workerCap : 0));
+  if (committedWorkers >= workerCap) return false;
+
+  const resourceTypes: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const canAffordWorker = resourceTypes.every(
+    (type) => (options.resources[type] || 0) >= (options.workerCost[type] || 0)
+  );
+  if (!canAffordWorker) return false;
+
+  const minimumWorkers = Math.max(
+    0,
+    Math.floor(Number.isFinite(options.minimumWorkersForAgeUp) ? options.minimumWorkersForAgeUp : 0)
+  );
+  if (committedWorkers < minimumWorkers) return true;
+
+  return resourceTypes.every(
+    (type) =>
+      (options.resources[type] || 0) - (options.workerCost[type] || 0) >=
+      (options.ageUpReserve[type] || 0)
+  );
+}
+
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,
