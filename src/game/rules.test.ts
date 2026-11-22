@@ -3428,3 +3428,51 @@ test('all civilization villager archetypes have a consistent 22-second base trai
   assert.equal(workers.length, 3, 'Each civilization must provide one villager archetype');
   workers.forEach((worker) => assert.equal(worker.stats.trainTime, 22, worker.id));
 });
+
+
+test('AI resource-demand forecast expands bounded buffers for sustained stock drain', async () => {
+  const { computeAiResourceDemandTargets } = await import('./rules');
+  assert.deepEqual(computeAiResourceDemandTargets(2), { food: 1200, wood: 280, gold: 600, stone: 120 });
+  assert.deepEqual(computeAiResourceDemandTargets(2, { food: -240, wood: -320, gold: -900, stone: -24 }), {
+    food: 1200, wood: 700, gold: 1500, stone: 120,
+  });
+  assert.deepEqual(computeAiResourceDemandTargets(4, { food: -5000, wood: -5000, gold: -5000, stone: -5000 }), {
+    food: 1750, wood: 850, gold: 625, stone: 650,
+  });
+});
+
+test('AI age-up saving stops for active landmarks and yields to genuine emergencies', async () => {
+  const { shouldAiSaveForNextAge, shouldAiDeferOptionalMilitaryProduction } = await import('./rules');
+  const readiness = {
+    age: 1, gameTime: 45, workerCount: 7, minimumWorkers: 5, minimumGameTime: 35,
+    landmarkActive: false,
+    resources: { food: 280, wood: 120, gold: 120, stone: 0 },
+    ageUpCost: { food: 400, wood: 0, gold: 200, stone: 0 },
+  };
+  assert.equal(shouldAiSaveForNextAge(readiness), true);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, landmarkActive: true }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, gameTime: 34.9 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, workerCount: 4 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...readiness, resources: { food: 400, wood: 0, gold: 200, stone: 0 } }), false);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 0 }), true);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 2, underAttack: 0 }), false);
+  assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 1 }), false);
+});
+
+test('AI resource-camp payback requires dense supply and meaningful delivered-income gain', async () => {
+  const { estimateAiResourceCampPaybackSeconds } = await import('./rules');
+  const gatherers = [
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 30, proposedTravelDistance: 6 },
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 34, proposedTravelDistance: 7 },
+    { gatherPerSecond: 2, carryCapacity: 10, moveSpeed: 3, currentTravelDistance: 32, proposedTravelDistance: 6 },
+  ];
+  const payback = estimateAiResourceCampPaybackSeconds({ resourceType: 'wood', totalNodeAmount: 1200, gatherers, woodCost: 140 });
+  assert.ok(payback !== null && payback > 0 && payback <= 180);
+  assert.equal(estimateAiResourceCampPaybackSeconds({ resourceType: 'wood', totalNodeAmount: 200, gatherers, woodCost: 140 }), null);
+  assert.equal(estimateAiResourceCampPaybackSeconds({ resourceType: 'gold', totalNodeAmount: 1200, gatherers: gatherers.slice(0, 1), woodCost: 140 }), null);
+  assert.equal(estimateAiResourceCampPaybackSeconds({
+    resourceType: 'stone', totalNodeAmount: 1200,
+    gatherers: gatherers.map((worker) => ({ ...worker, proposedTravelDistance: 29 })),
+    woodCost: 140,
+  }), null);
+});
