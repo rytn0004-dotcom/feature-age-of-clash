@@ -3020,3 +3020,82 @@ test('battle stress plans: seeded 100/200/400 all-AI scenarios keep exact unit c
   assert.throws(() => createBattleStressPlan(150, 12345), /100, 200, or 400/);
   assert.throws(() => createBattleStressPlan(100, Number.NaN), /finite number/);
 });
+
+test('wild deer (山羌): panic re-arms only after disengagement and cooldown, never while a hunter shadows it', async () => {
+  const { stepWildAnimalState, triggerWildAnimalPanic } = await import('./rules');
+  const deer: ResourceNode = {
+    id: 'deer_hysteresis',
+    resourceType: 'food',
+    subtype: 'hunt',
+    x: 0,
+    z: 0,
+    amount: 300,
+    maxAmount: 300,
+    animalHp: 32,
+    animalMaxHp: 32,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+
+  triggerWildAnimalPanic(deer, -3, 0, 100, 1);
+  assert.equal(deer.animalPanicSuppressed, true);
+
+  const shadowingStep = stepWildAnimalState(
+    deer,
+    { x: -16.4, z: 0, d: 16.4 },
+    101.2,
+    0.05,
+    () => false,
+    () => 0.5,
+  );
+  assert.equal(shadowingStep.isFleeing, false);
+  assert.equal(deer.animalPanicSuppressed, true, 'A nearby hunter must not re-trigger the same encounter');
+
+  stepWildAnimalState(deer, { x: -16.6, z: 0, d: 16.6 }, 101.3, 0.05, () => false, () => 0.5);
+  assert.equal(deer.animalPanicSuppressed, false, 'The deer re-arms only after crossing the disengage radius');
+  assert.ok((deer.animalFleeCooldown || 0) > 101.3, 'Re-arming must still retain a short calm cooldown');
+
+  const cooldownStep = stepWildAnimalState(deer, { x: -2, z: 0, d: 2 }, 102, 0.05, () => false, () => 0.5);
+  assert.equal(cooldownStep.isFleeing, false, 'A fresh panic is blocked until the cooldown expires');
+
+  const renewedThreat = stepWildAnimalState(deer, { x: -2, z: 0, d: 2 }, 103, 0.05, () => false, () => 0.5);
+  assert.equal(renewedThreat.isFleeing, true, 'A genuinely new encounter can trigger a new finite panic');
+});
+
+test('wild boar (野豬): aggression refreshes safely, dead animals ignore provocation, and blocked charges stop', async () => {
+  const { stepWildBoarState, triggerWildBoarAggression } = await import('./rules');
+  const boar: ResourceNode = {
+    id: 'boar_guard_test',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 0,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 200,
+    animalMaxHp: 200,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+  };
+
+  triggerWildBoarAggression(boar, 'hunter-1', 10);
+  triggerWildBoarAggression(boar, 'hunter-2', 11);
+  assert.equal(boar.animalAggroTargetId, 'hunter-2');
+  assert.equal(boar.animalAggroUntil, 19, 'A newer hit refreshes the aggression leash from its own timestamp');
+
+  const blockedCharge = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => true);
+  assert.equal(blockedCharge.isCharging, false);
+  assert.equal(blockedCharge.distMoved, 0);
+  assert.equal(boar.x, 0);
+  assert.equal(boar.z, 0);
+
+  boar.animalAlive = false;
+  boar.animalAggroTargetId = undefined;
+  boar.animalAggroUntil = 0;
+  triggerWildBoarAggression(boar, 'late-hit', 15);
+  assert.equal(boar.animalAggroTargetId, undefined, 'Dead boars cannot reacquire attackers');
+  assert.equal(boar.animalAggroUntil, 0);
+});
+
