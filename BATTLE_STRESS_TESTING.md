@@ -21,13 +21,14 @@
 1. 使用相同瀏覽器、視窗尺寸、縮放比例、地圖與 seed。
 2. 載入後先暖機 30 秒，再按 F3 開啟效能監視器；F3 開啟時開始新的量測區段。
 3. 每個規模至少觀察 3 分鐘；另做一次 10 分鐘長時間混戰觀察。
-4. 量測中可隨時按 F4 匯出 CSV；每 0.5 秒記錄 FPS、平均/P95 frame time、最大 hitch、Draw Calls、Triangles、Geometries、Textures、存活單位、AI 各行為狀態、疑似停滯單位數、最大停滯秒數、路徑自動恢復累計次數、AI 決策心跳/累積器、AI 決策耗時的最近值/平均值/最大值、生產佇列、研發數、投射物、粒子、畫質、速度、文明/AI 人數及視窗尺寸。單次擷取最多保留 3,600 筆（約 30 分鐘），超出時保留最近資料。
+4. 量測中可隨時按 F4 匯出 CSV；每 0.5 秒記錄 FPS、平均/P95 frame time、最大 hitch、Draw Calls、Triangles、Geometries、Textures、存活單位、AI 各行為狀態、疑似停滯單位數、最大停滯秒數、路徑自動恢復累計次數、AI 決策心跳/累積器、AI 決策耗時的最近值/平均值/最大值、模擬更新耗時平均/最大值、渲染呼叫 CPU 耗時平均/最大值、生產佇列、研發數、投射物、粒子、畫質、速度、文明/AI 人數及視窗尺寸。單次擷取最多保留 3,600 筆（約 30 分鐘），超出時保留最近資料。
 5. 每個規模至少重跑兩次；比較時不要混用不同硬體或不同畫質設定。
 
 ## 判讀與限制
 
 - F3 顯示即時資料；F4 匯出本次 F3 開啟後收集的逐段 CSV，不會自動上傳或跨場次保存。
 - Draw Calls / Triangles 是監視器更新當下讀取的 renderer 統計，不應誤稱為整場平均值。
+- Simulation ms 包含該影格內所有模擬子步驟的 CPU 耗時；Render call ms 只代表 JavaScript 呼叫 Three.js renderer.render 的 CPU 牆鐘耗時，不是 GPU 完成時間。兩者用來初步分辨模擬與渲染提交瓶頸。
 - 瀏覽器分頁背景節流、視窗失焦、GPU 軟體渲染會使數據失真，必須註明。
 - CI 的 TypeScript、單元測試與 production build 不能取代實際瀏覽器會戰。
 - AI 心跳每次呼叫決策評估器時遞增；同時量測每次 AI 決策評估器的實際牆鐘耗時，提供最近/平均/最大耗時與樣本數，不保留無界歷史陣列；狀態統計涵蓋 idle、moving、attacking、gathering、returning_resource、building、assembling、garrisoning。
