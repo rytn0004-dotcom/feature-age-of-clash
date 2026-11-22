@@ -5615,7 +5615,10 @@ export class RtsEngine {
             continue;
           }
         }
-        const hostBldg = this.buildings.find((b) => b.id === unit.garrisonedInBuildingId && b.hp > 0 && b.isConstructed);
+        const hostCandidate = this.combatBuildingLookupById.get(unit.garrisonedInBuildingId);
+        const hostBldg = hostCandidate && hostCandidate.hp > 0 && hostCandidate.isConstructed
+          ? hostCandidate
+          : undefined;
         if (!hostBldg) {
           unit.garrisonedInBuildingId = undefined;
           unit.state = 'idle';
