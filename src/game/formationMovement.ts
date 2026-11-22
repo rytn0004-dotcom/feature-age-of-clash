@@ -285,7 +285,7 @@ export function getFormationNarrowPassageTrafficScale(
         (Math.abs(other.along - currentLocal.along) <= 0.4 && member.id < current.id)
       );
     }).length;
-    return unitsAhead >= capacity ? 0.12 : 1;
+    return unitsAhead >= capacity ? 0 : 1;
   }
 
   const isQueuingAtEntrance =
@@ -293,6 +293,6 @@ export function getFormationNarrowPassageTrafficScale(
     currentLocal.along >= -halfLength - 3.8 &&
     Math.abs(currentLocal.lateral) <= corridorHalfWidth + 3.0;
 
-  if (isQueuingAtEntrance && occupants.length >= capacity) return 0.12;
+  if (isQueuingAtEntrance && occupants.length >= capacity) return 0;
   return 1;
 }
