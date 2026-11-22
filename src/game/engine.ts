@@ -88,6 +88,9 @@ import {
   selectAiWorkerResourceType,
   selectAiWorkerReassignment,
   shouldRelocateFromResourceNode,
+  estimateAiResourceCampPaybackSeconds,
+  shouldAiSaveForNextAge,
+  shouldAiDeferOptionalMilitaryProduction,
   calculateWallChainCost,
   WallChainPoint,
   layoutWallChain,
@@ -333,6 +336,7 @@ export class RtsEngine {
   private aiEconomyFlowByFaction = new Map<string, AiEconomyFlowState>();
   private aiWorkerRebalanceReadyAt = new Map<string, number>();
   private aiNodeRelocationReadyAt = new Map<string, number>();
+  private aiCampPlacementReadyAt = new Map<string, number>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public enemyResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public activeMods: GameMod[] = JSON.parse(JSON.stringify(INITIAL_MODS));
@@ -1136,6 +1140,7 @@ export class RtsEngine {
     this.aiEconomyFlowByFaction.clear();
     this.aiWorkerRebalanceReadyAt.clear();
     this.aiNodeRelocationReadyAt.clear();
+    this.aiCampPlacementReadyAt.clear();
     this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
@@ -9516,9 +9521,97 @@ export class RtsEngine {
               this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z);
             }
           } else if (aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55) {
-            const mineNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 38);
+            const mineNode =
+              findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 38) ||
+              findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'stone', 38);
             if (mineNode && getDistance(anchorX, anchorZ, mineNode.x, mineNode.z) > 15) {
-              this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z);
+              if (this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z)) {
+                this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
+              }
+            }
+          } else if (
+            aiRes.wood >= 140 &&
+            aiWorkers.length >= 6 &&
+            this.stats.gameDuration >= (this.aiCampPlacementReadyAt.get(aiId) || 0)
+          ) {
+            // Add camps only when a sustained gatherer cluster can repay its route savings.
+            const assignedGatherers = aiEconomicWorkers.flatMap((worker) => {
+              if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return [];
+              const node = resourceNodeById.get(worker.targetResourceNodeId);
+              if (!node || node.amount <= 0 || !['wood', 'gold', 'stone'].includes(node.resourceType)) return [];
+              return [{ worker, node }];
+            });
+            const processedClusters = new Set<string>();
+            let bestCamp: {
+              buildingType: 'lumber_camp' | 'mining_camp';
+              centerX: number;
+              centerZ: number;
+              angle: number;
+              score: number;
+            } | null = null;
+
+            for (const seed of assignedGatherers) {
+              const cluster = assignedGatherers.filter((entry) =>
+                entry.node.resourceType === seed.node.resourceType &&
+                getDistance(seed.node.x, seed.node.z, entry.node.x, entry.node.z) <= 13
+              );
+              if (cluster.length < 3) continue;
+              const nodeIds = [...new Set(cluster.map((entry) => entry.node.id))].sort();
+              const clusterKey = nodeIds.join('|');
+              if (processedClusters.has(clusterKey)) continue;
+              processedClusters.add(clusterKey);
+
+              const totalNodeAmount = nodeIds.reduce(
+                (total, nodeId) => total + Math.max(0, resourceNodeById.get(nodeId)?.amount || 0),
+                0
+              );
+              const centerX = cluster.reduce((total, entry) => total + entry.node.x, 0) / cluster.length;
+              const centerZ = cluster.reduce((total, entry) => total + entry.node.z, 0) / cluster.length;
+              const buildingType = seed.node.resourceType === 'wood' ? 'lumber_camp' : 'mining_camp';
+              const hasNearbyCamp = aiBuildings.some((building) =>
+                building.buildingType === buildingType &&
+                getDistance(centerX, centerZ, building.x, building.z) <= 14
+              );
+              if (hasNearbyCamp) continue;
+
+              const angle = Math.atan2(anchorZ - centerZ, anchorX - centerX);
+              const spot = this.findSafeAiBuildSpot(centerX, centerZ, buildingType, angle, 5, 11);
+              if (!spot) continue;
+
+              const profiles = cluster.flatMap(({ worker, node }) => {
+                const currentTravelDistance = this.estimateResourceDeliveryTravelDistance(aiId, worker, node);
+                if (currentTravelDistance === null) return [];
+                return [{
+                  gatherPerSecond: (worker.unitDef.stats.gatherSpeed || 2) *
+                    getEffectiveGatherMultiplier(node, aiGatherTechs, aiHasStarOath),
+                  carryCapacity: worker.unitDef.stats.carryCapacity,
+                  moveSpeed: worker.unitDef.stats.speed,
+                  currentTravelDistance,
+                  proposedTravelDistance: Math.max(2, getDistance(node.x, node.z, spot.x, spot.z) - 4.5),
+                }];
+              });
+              const payback = estimateAiResourceCampPaybackSeconds({
+                resourceType: seed.node.resourceType,
+                totalNodeAmount,
+                gatherers: profiles,
+                woodCost: DEFAULT_BUILDINGS[buildingType].cost.wood,
+                minimumGatherers: 3,
+                minimumDistanceSaved: 8,
+                maximumPaybackSeconds: 180,
+              });
+              if (payback === null) continue;
+              const score = profiles.reduce(
+                (total, profile) => total + profile.currentTravelDistance - profile.proposedTravelDistance,
+                0
+              ) - payback * 0.2;
+              if (!bestCamp || score > bestCamp.score) bestCamp = { buildingType, centerX, centerZ, angle, score };
+            }
+
+            if (bestCamp && this.tryAiConstructBuilding(
+              aiId, bestCamp.buildingType, aiActiveWorkers,
+              bestCamp.centerX, bestCamp.centerZ, bestCamp.angle, 5, 11
+            )) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
           }
         }
@@ -9528,7 +9621,14 @@ export class RtsEngine {
       const researched = this.getResearchedTechs(aiId);
       const nextAgeLandmark: LandmarkType | null =
         aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
-      const nextAgeCost = nextAgeLandmark ? DEFAULT_BUILDINGS[nextAgeLandmark].cost : null;
+      const nextAgeLandmarkActive = !!nextAgeLandmark && (
+        !!this.landmarksByFaction[aiId]?.includes(nextAgeLandmark) ||
+        aiBuildings.some((building) => building.buildingType === nextAgeLandmark)
+      );
+      // A started landmark has already committed its cost; do not reserve it twice.
+      const nextAgeCost = nextAgeLandmark && !nextAgeLandmarkActive
+        ? DEFAULT_BUILDINGS[nextAgeLandmark].cost
+        : null;
       const reserveFood = nextAgeCost?.food || 0;
       const reserveGold = nextAgeCost?.gold || 0;
       const enemyComposition = {
@@ -9606,24 +9706,21 @@ export class RtsEngine {
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
-      const savingForAge2 =
-        aiAge === 1 &&
-        aiWorkers.length >= 5 &&
-        this.stats.gameDuration >= 35 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_barracks') &&
-        (aiRes.food < 400 || aiRes.gold < 200);
-      const savingForAge3 =
-        aiAge === 2 &&
-        aiWorkers.length >= 6 &&
-        this.stats.gameDuration >= 90 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_citadel') &&
-        (aiRes.food < 1200 || aiRes.gold < 600);
-      const savingForAge4 =
-        aiAge === 3 &&
-        aiWorkers.length >= 8 &&
-        this.stats.gameDuration >= 180 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
-        (aiRes.food < 2400 || aiRes.gold < 1200);
+      const savingForAgeUp = shouldAiSaveForNextAge({
+        age: aiAge,
+        gameTime: this.stats.gameDuration,
+        workerCount: aiWorkers.length,
+        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
+        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
+        landmarkActive: nextAgeLandmarkActive,
+        resources: aiRes,
+        ageUpCost: nextAgeCost,
+      });
+      const deferOptionalMilitaryProduction = shouldAiDeferOptionalMilitaryProduction({
+        savingForAgeUp,
+        armyCount: aiArmy.length,
+        underAttack,
+      });
 
       // Derive the worker cap and next-age workforce target from the active
       // personality's own AI rules, rather than maintaining a second set of
@@ -9693,7 +9790,7 @@ export class RtsEngine {
             ) {
               continue;
             }
-          } else if ((savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
+          } else if (deferOptionalMilitaryProduction) {
             continue;
           }
           const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
