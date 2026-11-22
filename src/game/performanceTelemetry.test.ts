@@ -17,6 +17,9 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     textures: 34,
     aliveUnits: 100,
     aiAliveUnits: 86,
+    aiStalledUnits: 3,
+    aiPathRecoveryCount: 5,
+    aiMaxStuckSeconds: 2.25,
     aiIdleUnits: 5,
     aiMovingUnits: 20,
     aiAttackingUnits: 30,
@@ -53,11 +56,12 @@ test('performance telemetry: exports stable columns and numeric samples', () => 
   const csv = formatPerformanceTelemetryCsv([makeSample()]);
   const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
   assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,/);
-  assert.match(header, /aiAliveUnits,aiIdleUnits,aiMovingUnits,aiAttackingUnits/);
+  assert.match(header, /aiAliveUnits,aiStalledUnits,aiPathRecoveryCount,aiMaxStuckSeconds/);
   assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds/);
   assert.ok(row.includes('59.8'));
   assert.ok(row.includes('45000'));
   assert.ok(row.includes('highland_basin'));
+  assert.ok(row.includes('2.25'));
 });
 
 test('performance telemetry: empty captures still produce a usable header', () => {
