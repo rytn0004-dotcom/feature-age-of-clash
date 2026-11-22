@@ -701,12 +701,118 @@ export const HUD: React.FC<HUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between select-none z-10">
       {/* ================= TOP PERIMETER STATUS CLUSTER ================= */}
-      <header className="flex justify-between items-center gap-2 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/85 to-transparent pointer-events-none">
-        {/* Resource Badges */}
+      <header className="flex flex-col gap-1.5 p-1.5 md:px-3 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent pointer-events-none">
+        {/* Primary economy row: all four resources and population stay visible without horizontal scrolling. */}
         <div
           data-top-resource-bar="true"
-          className="flex items-center gap-1 overflow-x-auto py-0.5 pointer-events-auto whitespace-nowrap"
+          data-resource-bar-layout="fixed-grid"
+          className="grid w-full min-w-0 grid-cols-5 gap-1 pointer-events-auto"
         >
+          {/* Food */}
+          <div
+            data-resource-pill="food"
+            aria-label="糧食"
+            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
+          >
+            <span className="text-xs">🌾</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">糧食</span>
+            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-amber-400 tabular-nums">
+              {Math.floor(observedRes.food)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.food}/m·{observedTelemetry.workersByResource.food}
+            </span>
+          </div>
+
+          {/* Wood */}
+          <div
+            data-resource-pill="wood"
+            aria-label="木材"
+            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
+          >
+            <span className="text-xs">🪵</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">木材</span>
+            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-emerald-400 tabular-nums">
+              {Math.floor(observedRes.wood)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.wood}/m·{observedTelemetry.workersByResource.wood}
+            </span>
+          </div>
+
+          {/* Gold */}
+          <div
+            data-resource-pill="gold"
+            aria-label="黃金"
+            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
+          >
+            <span className="text-xs">🪙</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">黃金</span>
+            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-yellow-300 tabular-nums">
+              {Math.floor(observedRes.gold)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.gold}/m·{observedTelemetry.workersByResource.gold}
+            </span>
+          </div>
+
+          {/* Stone */}
+          <div
+            data-resource-pill="stone"
+            aria-label="石料"
+            className="flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
+            title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
+          >
+            <span className="text-xs">🪨</span>
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">石料</span>
+            <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-slate-300 tabular-nums">
+              {Math.floor(observedRes.stone)}
+            </span>
+            <span className="hidden xl:inline text-[9px] font-mono text-emerald-300/90 tabular-nums">
+              +{observedTelemetry.incomePerMin.stone}/m·{observedTelemetry.workersByResource.stone}
+            </span>
+          </div>
+
+          {/* Population */}
+          <div
+            data-population-badge="true"
+            aria-label="人口"
+            className={`flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap ${
+              observedPop >= observedMaxPop
+                ? 'border-rose-500/70'
+                : observedPopStats.totalReserved >= observedMaxPop
+                ? 'border-amber-400/70'
+                : 'border-blue-500/30'
+            }`}
+            title={
+              observedPopStats.totalReserved >= observedMaxPop
+                ? '人口已達上限！請選取村民建造「房屋」(快捷鍵 E) 提升 +5 人口上限'
+                : '目前人口 / 人口上限（建造房屋可 +5 人口）'
+            }
+          >
+            <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
+            <span className="hidden lg:inline text-[11px] font-bold text-slate-300">人口</span>
+            <span
+              className={`text-xs font-extrabold tabular-nums ${
+                observedPop >= observedMaxPop
+                  ? 'text-rose-400'
+                  : observedPopStats.totalReserved >= observedMaxPop
+                  ? 'text-amber-300'
+                  : 'text-blue-300'
+              }`}
+            >
+              {observedPop}/{observedMaxPop}
+            </span>
+          </div>
+
+        </div>
+
+        {/* Secondary status and controls are separated from the resource grid so they cannot push resources off-screen. */}
+        <div className="flex flex-col gap-1.5 min-w-0 sm:flex-row sm:items-center sm:justify-between">
+          <div data-top-status-bar="true" className="flex min-w-0 flex-wrap items-center gap-1 pointer-events-auto">
           {isSpectator && observedParticipant && (
             <div
               data-spectator-watching="true"
@@ -722,103 +828,8 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
           )}
 
-          {/* Food */}
-          <div
-            data-resource-pill="food"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-amber-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
-          >
-            <span className="text-xs">🌾</span>
-            <span className="text-[11px] font-bold text-slate-300">糧食</span>
-            <span className="text-xs font-extrabold text-amber-400 tabular-nums">
-              {Math.floor(observedRes.food)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.food}/m·{observedTelemetry.workersByResource.food}
-            </span>
-          </div>
-
-          {/* Wood */}
-          <div
-            data-resource-pill="wood"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-emerald-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
-          >
-            <span className="text-xs">🪵</span>
-            <span className="text-[11px] font-bold text-slate-300">木材</span>
-            <span className="text-xs font-extrabold text-emerald-400 tabular-nums">
-              {Math.floor(observedRes.wood)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.wood}/m·{observedTelemetry.workersByResource.wood}
-            </span>
-          </div>
-
-          {/* Gold */}
-          <div
-            data-resource-pill="gold"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-yellow-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
-          >
-            <span className="text-xs">🪙</span>
-            <span className="text-[11px] font-bold text-slate-300">黃金</span>
-            <span className="text-xs font-extrabold text-yellow-300 tabular-nums">
-              {Math.floor(observedRes.gold)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.gold}/m·{observedTelemetry.workersByResource.gold}
-            </span>
-          </div>
-
-          {/* Stone */}
-          <div
-            data-resource-pill="stone"
-            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900/92 border border-slate-500/30 rounded-lg shadow shrink-0 whitespace-nowrap"
-            title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
-          >
-            <span className="text-xs">🪨</span>
-            <span className="text-[11px] font-bold text-slate-300">石料</span>
-            <span className="text-xs font-extrabold text-slate-300 tabular-nums">
-              {Math.floor(observedRes.stone)}
-            </span>
-            <span className="text-[9px] font-mono text-emerald-300/90 tabular-nums">
-              +{observedTelemetry.incomePerMin.stone}/m·{observedTelemetry.workersByResource.stone}
-            </span>
-          </div>
-
-          {/* Population */}
-          <div
-            data-population-badge="true"
-            className={`flex items-center gap-1 px-2 py-1 bg-slate-900/92 border rounded-lg shadow shrink-0 whitespace-nowrap ${
-              observedPop >= observedMaxPop
-                ? 'border-rose-500/70'
-                : observedPopStats.totalReserved >= observedMaxPop
-                ? 'border-amber-400/70'
-                : 'border-blue-500/30'
-            }`}
-            title={
-              observedPopStats.totalReserved >= observedMaxPop
-                ? '人口已達上限！請選取村民建造「房屋」(快捷鍵 E) 提升 +5 人口上限'
-                : '目前人口 / 人口上限（建造房屋可 +5 人口）'
-            }
-          >
-            <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
-            <span className="text-[11px] font-bold text-slate-300">人口</span>
-            <span
-              className={`text-xs font-extrabold tabular-nums ${
-                observedPop >= observedMaxPop
-                  ? 'text-rose-400'
-                  : observedPopStats.totalReserved >= observedMaxPop
-                  ? 'text-amber-300'
-                  : 'text-blue-300'
-              }`}
-            >
-              {observedPop}/{observedMaxPop}
-            </span>
-          </div>
-
           {/* Age Advancement Indicator */}
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-900/95 border border-amber-500/50 rounded-lg shadow shrink-0 whitespace-nowrap">
+          <div className="flex items-center gap-1 px-1.5 sm:px-2 py-1 bg-slate-900/95 border border-amber-500/50 rounded-lg shadow shrink-0 whitespace-nowrap">
             <span className="text-xs">🏛️</span>
             <span className="text-[11px] font-black text-amber-300">
               {observedAge === 1 && '時代 I · 黑暗'}
@@ -877,8 +888,10 @@ export const HUD: React.FC<HUDProps> = ({
           })()}
         </div>
 
+          </div>
+
         {/* Top-Right Utility Cluster */}
-        <div className="flex items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap">
+        <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap sm:justify-end">
           {/* Game Speed Split Control + Arrow Dropdown */}
           <div ref={speedMenuRef} className="relative flex items-center shrink-0">
             <div className="flex items-center bg-slate-900/90 border border-slate-700 rounded-lg overflow-hidden shadow">
@@ -1030,6 +1043,7 @@ export const HUD: React.FC<HUDProps> = ({
           <div className="px-2.5 py-1.5 bg-slate-950/90 text-amber-400 font-mono text-xs font-bold border border-slate-800 rounded-lg shrink-0 whitespace-nowrap">
             {formatTime(engine.stats.gameDuration)}
           </div>
+        </div>
         </div>
       </header>
 
