@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { createEntityIdIndex } from './entityLookup';
 import {
   AgeLevel,
   BuildingEntity,
@@ -5651,6 +5652,11 @@ export class RtsEngine {
             unit.unitDef.visual.color,
             unit.id
           );
+          if (this.isHumanControlled(unit.faction)) {
+            const spatialGain = this.getSpatialAudioScale(unit.x, unit.z);
+            if (unit.unitDef.category === 'special') sound.playMagicShot(spatialGain);
+            else if (unit.unitDef.category === 'ranged') sound.playArrowShot(spatialGain);
+          }
         } else {
           let dmg: number;
           if (target.type === 'building') {
@@ -5714,6 +5720,12 @@ export class RtsEngine {
           }
 
           target.hp -= dmg;
+          if (
+            target.type === 'unit' &&
+            (this.isHumanControlled(unit.faction) || this.isHumanControlled(target.faction))
+          ) {
+            sound.playSwordHit(this.getSpatialAudioScale(target.x, target.z));
+          }
           if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, unit.unitDef.category === 'siege');
           (target as any).lastDamagedTime = performance.now();
           (target as any).hitFlashTimer = 0.085;
@@ -8083,11 +8095,18 @@ export class RtsEngine {
   }
 
   private updateProjectiles(dt: number) {
+    if (this.projectiles.length === 0) return;
+
+    // Resolve projectile target/attacker IDs in O(1) instead of rescanning both entity
+    // arrays for every arrow, spell, and siege shot in a crowded battle.
+    // The helper intentionally preserves Array.find's first-match behavior for duplicate IDs.
+    const unitsById = createEntityIdIndex(this.units);
+    const buildingsById = createEntityIdIndex(this.buildings);
     const remaining: Projectile[] = [];
 
     for (const proj of this.projectiles) {
-      const targetUnit = this.units.find((u) => u.id === proj.targetEntityId);
-      const targetBldg = this.buildings.find((b) => b.id === proj.targetEntityId);
+      const targetUnit = unitsById.get(proj.targetEntityId);
+      const targetBldg = buildingsById.get(proj.targetEntityId);
       const target = targetUnit || targetBldg;
 
       if (!target || target.hp <= 0 || (target.type === 'unit' && (target as UnitEntity).garrisonedInBuildingId)) {
@@ -8102,7 +8121,7 @@ export class RtsEngine {
       if (proj.progress >= 1) {
         // Hit target!
         const attackerId = (proj as any).attackerId as string | undefined;
-        const attacker = attackerId ? this.units.find((u) => u.id === attackerId) : undefined;
+        const attacker = attackerId ? unitsById.get(attackerId) : undefined;
         let dmg: number;
         if (target.type === 'building') {
           const targetBldg = target as BuildingEntity;
