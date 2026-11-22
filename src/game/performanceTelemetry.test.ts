@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatPerformanceTelemetryCsv } from './performanceTelemetry';
-import type { PerformanceSample } from './performanceTelemetry';
+import { formatPerformanceTelemetryCsv, getAverageAiDecisionMs, recordAiDecisionTiming } from './performanceTelemetry';
+import { EMPTY_AI_DECISION_TIMING } from './performanceTelemetry';
+import type { AiDecisionTiming, PerformanceSample } from './performanceTelemetry';
 
 function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSample {
   return {
@@ -32,6 +33,10 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     aiResearchingBuildings: 2,
     aiDecisionCount: 12,
     aiDecisionAccumulatorSeconds: 0.4,
+    aiDecisionTimingSamples: 9,
+    aiDecisionLastMs: 5.2,
+    aiDecisionAverageMs: 3.1,
+    aiDecisionMaxMs: 8.7,
     projectileCount: 12,
     activeParticles: 28,
     particleCapacity: 256,
@@ -57,7 +62,7 @@ test('performance telemetry: exports stable columns and numeric samples', () => 
   const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
   assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,/);
   assert.match(header, /aiAliveUnits,aiStalledUnits,aiPathRecoveryCount,aiMaxStuckSeconds/);
-  assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds/);
+  assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds,aiDecisionTimingSamples,aiDecisionLastMs,aiDecisionAverageMs,aiDecisionMaxMs/);
   assert.ok(row.includes('59.8'));
   assert.ok(row.includes('45000'));
   assert.ok(row.includes('highland_basin'));
@@ -84,4 +89,24 @@ test('performance telemetry: spreadsheet formulas are neutralized and non-finite
   assert.ok(csv.includes("\"'=HYPERLINK(\"\"https://example.invalid\"\")\""));
   const [, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
   assert.equal(row.split(',')[2], '');
+});
+
+test('AI decision timing: accumulates count, last, average, and max without retaining frame history', () => {
+  let timing: AiDecisionTiming = EMPTY_AI_DECISION_TIMING;
+  timing = recordAiDecisionTiming(timing, 2);
+  timing = recordAiDecisionTiming(timing, 4);
+  timing = recordAiDecisionTiming(timing, 10);
+
+  assert.equal(timing.sampleCount, 3);
+  assert.equal(timing.totalMs, 16);
+  assert.equal(timing.lastMs, 10);
+  assert.equal(timing.maxMs, 10);
+  assert.equal(getAverageAiDecisionMs(timing), 16 / 3);
+});
+
+test('AI decision timing: empty and invalid measurements are safe', () => {
+  assert.equal(getAverageAiDecisionMs(EMPTY_AI_DECISION_TIMING), 0);
+  assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, Number.NaN), EMPTY_AI_DECISION_TIMING);
+  assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, Number.POSITIVE_INFINITY), EMPTY_AI_DECISION_TIMING);
+  assert.equal(recordAiDecisionTiming(EMPTY_AI_DECISION_TIMING, -1), EMPTY_AI_DECISION_TIMING);
 });
