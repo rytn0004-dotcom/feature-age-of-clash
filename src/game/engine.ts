@@ -163,6 +163,7 @@ import {
 } from './performanceTelemetry';
 import {
   advanceMovementStallDuration,
+  MOVEMENT_STALL_SAMPLE_INTERVAL_SECONDS,
   MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS,
   MOVEMENT_STALL_RECOVERY_SECONDS,
   shouldRecoverStalledPath,
@@ -5007,7 +5008,7 @@ export class RtsEngine {
 
     unit.pathRecoveryCooldown = Math.max(0, (unit.pathRecoveryCooldown || 0) - dt);
     unit.stuckAccumulator = (unit.stuckAccumulator || 0) + dt;
-    if (unit.stuckAccumulator >= 0.45) {
+    if (unit.stuckAccumulator >= MOVEMENT_STALL_SAMPLE_INTERVAL_SECONDS) {
       const elapsed = unit.stuckAccumulator;
       if (unit.lastProgressCheckPos) {
         const moved = getDistance(unit.x, unit.z, unit.lastProgressCheckPos.x, unit.lastProgressCheckPos.z);
