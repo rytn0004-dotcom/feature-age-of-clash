@@ -158,7 +158,11 @@ import {
   getAverageAiDecisionMs,
   recordAiDecisionTiming,
   EMPTY_AI_DECISION_TIMING,
+  getAveragePathSearchMs,
+  recordPathSearchTiming,
+  EMPTY_PATH_SEARCH_TIMING,
   type AiDecisionTiming,
+  type PathSearchTiming,
   type PerformanceSample,
 } from './performanceTelemetry';
 import {
@@ -287,6 +291,7 @@ export class RtsEngine {
   private performanceSimulationMaxMs = 0;
   private performanceRenderCallTotalMs = 0;
   private performanceRenderCallMaxMs = 0;
+  private pathSearchTiming: PathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
   private performanceCaptureStartedAt = 0;
   private performanceSamples: PerformanceSample[] = [];
   private qualityWindowStart = 0;
@@ -4111,6 +4116,7 @@ export class RtsEngine {
       this.performanceSimulationMaxMs = 0;
       this.performanceRenderCallTotalMs = 0;
       this.performanceRenderCallMaxMs = 0;
+      this.pathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
       this.performanceCaptureStartedAt = this.performanceWindowStart;
       this.performanceSamples = [];
       this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
@@ -4169,6 +4175,7 @@ export class RtsEngine {
     const aiPathRecoveryCount = this.aiPathRecoveryTotal;
     const aiMaxStuckSeconds = aiPathingUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0);
     const aiDecisionAverageMs = getAverageAiDecisionMs(this.aiDecisionTiming);
+    const pathSearchAverageMs = getAveragePathSearchMs(this.pathSearchTiming);
     const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
     const sample: PerformanceSample = {
       elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
@@ -4181,6 +4188,12 @@ export class RtsEngine {
       simulationUpdateMaxMs: this.performanceSimulationMaxMs,
       renderCallAverageMs,
       renderCallMaxMs: this.performanceRenderCallMaxMs,
+      pathSearchSamples: this.pathSearchTiming.sampleCount,
+      aiPathSearchSamples: this.pathSearchTiming.aiSampleCount,
+      emptyPathSearches: this.pathSearchTiming.emptyPathCount,
+      aiEmptyPathSearches: this.pathSearchTiming.aiEmptyPathCount,
+      pathSearchAverageMs,
+      pathSearchMaxMs: this.pathSearchTiming.maxMs,
       drawCalls: render.calls,
       triangles: render.triangles,
       geometries: memory.geometries,
@@ -4236,6 +4249,8 @@ export class RtsEngine {
       `Max hitch ms     ${frameTimes.maxMs.toFixed(2)}`,
       `Simulation ms    ${simulationUpdateAverageMs.toFixed(2)} avg / ${this.performanceSimulationMaxMs.toFixed(2)} max`,
       `Render call ms   ${renderCallAverageMs.toFixed(2)} avg / ${this.performanceRenderCallMaxMs.toFixed(2)} max`,
+      `A* Searches      ${this.pathSearchTiming.sampleCount} total / ${this.pathSearchTiming.aiSampleCount} AI / ${this.pathSearchTiming.emptyPathCount} empty`,
+      `A* Search ms     ${pathSearchAverageMs.toFixed(3)} avg / ${this.pathSearchTiming.maxMs.toFixed(3)} max`,
       `Draw Calls       ${render.calls.toLocaleString()}`,
       `Triangles        ${render.triangles.toLocaleString()}`,
       `Geometries       ${memory.geometries.toLocaleString()}`,
@@ -5073,7 +5088,21 @@ export class RtsEngine {
     }
 
     if (!unit.waypoints || unit.waypoints.length === 0 || (goalShifted && (!unit.pathCooldown || unit.pathCooldown <= 0))) {
-      unit.waypoints = findPath(unit.x, unit.z, goalX, goalZ, navGrid);
+      const measurePathSearch = this.performanceOverlayVisible;
+      const isAiPathSearch = measurePathSearch && this.participants.some(
+        (participant) => participant.id === unit.faction && participant.controller === 'ai'
+      );
+      const pathSearchStartedAt = measurePathSearch ? performance.now() : 0;
+      const nextWaypoints = findPath(unit.x, unit.z, goalX, goalZ, navGrid);
+      if (measurePathSearch) {
+        this.pathSearchTiming = recordPathSearchTiming(
+          this.pathSearchTiming,
+          Math.max(0, performance.now() - pathSearchStartedAt),
+          isAiPathSearch,
+          nextWaypoints.length > 0,
+        );
+      }
+      unit.waypoints = nextWaypoints;
       unit.pathGoal = { x: goalX, z: goalZ };
       unit.pathCooldown = 0.4;
     }
