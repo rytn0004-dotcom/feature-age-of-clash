@@ -760,7 +760,7 @@ export const HUD: React.FC<HUDProps> = ({
         <div
           data-top-resource-bar="true"
           data-resource-bar-layout="fixed-grid"
-          className="grid w-full min-w-0 grid-cols-4 gap-1 pointer-events-auto sm:grid-cols-5"
+          className="grid w-full min-w-0 grid-cols-5 gap-1 pointer-events-auto"
         >
           {/* Food */}
           <div
@@ -850,7 +850,7 @@ export const HUD: React.FC<HUDProps> = ({
           <div
             data-population-badge="true"
             aria-label="人口"
-            className={`col-span-4 sm:col-span-1 flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow min-w-0 overflow-hidden whitespace-nowrap ${
+            className={`col-span-1 flex min-w-0 items-center justify-center sm:justify-start gap-1 px-1 sm:px-2 py-1 bg-slate-900/92 border rounded-lg shadow min-w-0 overflow-hidden whitespace-nowrap ${
               observedPop >= observedMaxPop
                 ? 'border-rose-500/70'
                 : observedPopStats.totalReserved >= observedMaxPop
