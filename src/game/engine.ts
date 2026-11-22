@@ -5599,10 +5599,8 @@ export class RtsEngine {
       if (unit.garrisonedInBuildingId) {
         if (unit.garrisonedInBuildingId.startsWith('transport:')) {
           const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
-          const boat = this.combatUnitLookupById.get(boatId);
-          if (boat && boat.hp <= 0) {
-            // A dead transport is ignored; the unit is released below.
-          }
+          const boatCandidate = this.combatUnitLookupById.get(boatId);
+          const boat = boatCandidate && boatCandidate.hp > 0 ? boatCandidate : undefined;
           if (!boat) {
             unit.garrisonedInBuildingId = undefined;
             unit.state = 'idle';
