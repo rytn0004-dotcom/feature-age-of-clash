@@ -105,7 +105,6 @@ import {
   evaluateAiTechChoice,
   FactionResourceTelemetry,
   FARM_RESEED_WOOD_COST,
-  findBalancedResourceNode,
   findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
@@ -116,6 +115,7 @@ import {
   getEffectiveGatherMultiplier,
   getFactionPopulationStats,
   getFoodGatherMultiplier,
+  getFoodSourcePriority,
   getNodeTierGatherMultiplier,
   advanceStarRelicChannel,
   pickStarRelicSite,
@@ -5742,7 +5742,6 @@ export class RtsEngine {
       excludedNodeIds?: ReadonlySet<string>;
     } = {}
   ): ResourceNode | null {
-    const isBoat = !!worker.unitDef.isNaval || worker.unitDefId === 'fishing_boat';
     const candidates = this.resourceNodes
       .filter((node) => {
         if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) return false;
