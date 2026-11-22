@@ -4133,6 +4133,10 @@ export class RtsEngine {
     const aiBuildings = this.buildings.filter((building) => building.hp > 0 && building.isConstructed && aiFactionIds.has(building.faction));
     const aiQueuedUnits = aiBuildings.reduce((total, building) => total + building.queue.length, 0);
     const aiResearchingBuildings = aiBuildings.filter((building) => !!building.activeTechId).length;
+    const aiPathingUnits = aiUnits.filter((unit) => unit.state === 'moving' || unit.state === 'attacking');
+    const aiStalledUnits = aiPathingUnits.filter((unit) => (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length;
+    const aiPathRecoveryCount = aiPathingUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0);
+    const aiMaxStuckSeconds = aiPathingUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0);
     const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
     const sample: PerformanceSample = {
       elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
@@ -4147,12 +4151,9 @@ export class RtsEngine {
       textures: memory.textures,
       aliveUnits,
       aiAliveUnits: aiUnits.length,
-      aiStalledUnits: aiUnits.filter((unit) =>
-        (unit.state === 'moving' || unit.state === 'attacking') &&
-        (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS
-      ).length,
-      aiPathRecoveryCount: aiUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0),
-      aiMaxStuckSeconds: aiUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0),
+      aiStalledUnits,
+      aiPathRecoveryCount,
+      aiMaxStuckSeconds,
       aiIdleUnits: aiStateCounts.idle,
       aiMovingUnits: aiStateCounts.moving,
       aiAttackingUnits: aiStateCounts.attacking,
@@ -4199,8 +4200,8 @@ export class RtsEngine {
       `Textures         ${memory.textures.toLocaleString()}`,
       `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
       `AI Idle/Move/Atk  ${aiStateCounts.idle}/${aiStateCounts.moving}/${aiStateCounts.attacking}`,
-      `AI Stalled/Recover ${aiUnits.filter((unit) => (unit.state === 'moving' || unit.state === 'attacking') && (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length}/${aiUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0)}`,
-      `AI Max Stuck      ${aiUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0).toFixed(1)}s`,
+      `AI Stalled/Recover ${aiStalledUnits}/${aiPathRecoveryCount}`,
+      `AI Max Stuck      ${aiMaxStuckSeconds.toFixed(1)}s`,
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
