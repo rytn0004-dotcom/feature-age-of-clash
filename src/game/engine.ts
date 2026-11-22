@@ -4200,6 +4200,7 @@ export class RtsEngine {
       `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
       `AI Idle/Move/Atk  ${aiStateCounts.idle}/${aiStateCounts.moving}/${aiStateCounts.attacking}`,
       `AI Stalled/Recover ${aiUnits.filter((unit) => (unit.state === 'moving' || unit.state === 'attacking') && (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length}/${aiUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0)}`,
+      `AI Max Stuck      ${aiUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0).toFixed(1)}s`,
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
