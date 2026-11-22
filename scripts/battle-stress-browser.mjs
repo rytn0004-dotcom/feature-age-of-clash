@@ -222,9 +222,37 @@ async function main() {
       ]) {
         resourceLayouts[label] = await inspectResourceBar(width, height);
       }
-      await send("Emulation.setDeviceMetricsOverride", {
-        width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
-      }, sessionId);
+      // Check the economy overview panel on the narrowest viewport.
+      await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 720, deviceScaleFactor: 1, mobile: true }, sessionId);
+      const economyPanel = await evaluate(`(() => {
+        const toggle = document.querySelector('[data-economy-toggle="true"]');
+        if (!toggle) return { missingToggle: true };
+        toggle.click();
+        const panel = document.querySelector('[data-economy-panel="true"]');
+        if (!panel) return null;
+        const rect = panel.getBoundingClientRect();
+        const resources = [...panel.querySelectorAll('[data-economy-resource]')];
+        return {
+          width: rect.width, right: rect.right, top: rect.top, bottom: rect.bottom,
+          clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
+          resourceCount: resources.length,
+          visibleResources: resources.filter((node) => node.getBoundingClientRect().width > 0).length,
+          hasWorkers: panel.textContent.includes('村民工作配置'),
+          hasAgeReadiness: panel.textContent.includes('升時代準備度'),
+          closeButton: !!panel.querySelector('[data-economy-close="true"]'),
+        };
+      })()`);
+      assert.ok(economyPanel && !economyPanel.missingToggle, "Economy overview toggle is missing.");
+      assert.ok(economyPanel.width > 0 && economyPanel.right <= 321, "Economy panel exceeds the 320px viewport.");
+      assert.ok(economyPanel.bottom <= 721 && economyPanel.top >= 0, "Economy panel is clipped vertically.");
+      assert.ok(economyPanel.scrollWidth <= economyPanel.clientWidth + 1, "Economy panel requires horizontal scrolling.");
+      assert.equal(economyPanel.resourceCount, 4, "Economy panel must include four resources.");
+      assert.equal(economyPanel.visibleResources, 4, "An economy resource card is not visible.");
+      assert.equal(economyPanel.hasWorkers, true, "Worker allocation section is missing.");
+      assert.equal(economyPanel.hasAgeReadiness, true, "Age readiness section is missing.");
+      assert.equal(economyPanel.closeButton, true, "Economy close button is missing.");
+      await evaluate(`(() => document.querySelector('[data-economy-close="true"]')?.click())()`);
+      await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, sessionId);
 
       const capture = await waitFor(
         async () => evaluate(`
@@ -263,7 +291,7 @@ async function main() {
       assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
-      report.scenarios.push({ count, initial, resourceLayouts, telemetry, exceptionCount: exceptions.length });
+      report.scenarios.push({ count, initial, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
