@@ -37,8 +37,15 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon } from '../types/game';
-import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS } from './mods';
-import { canResearchTech, getAllTechsForBuilding, getCivilizationConfig } from './civilizations';
+import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
+import {
+  canResearchTech,
+  getAllTechsForBuilding,
+  getCivilizationConfig,
+  getCivilizationBuildSpeedMultiplier,
+  getLandmarkTrainingSpeedMultiplier,
+  getTrainingTimeMultiplier,
+} from './civilizations';
 
 test('progression: military production buildings unlock at the intended ages', async () => {
   const { getBuildableTypesForCiv, isBuildingBuildableForCiv } = await import('./civilizations');
@@ -3156,3 +3163,27 @@ test('wild boar (野豬): aggression refreshes safely, dead animals ignore provo
   assert.equal(boar.animalAggroUntil, 0);
 });
 
+
+
+test('production timing bonuses are applied only to their intended civilization and unit categories', () => {
+  assert.equal(getCivilizationBuildSpeedMultiplier('medieval', INITIAL_MODS), 1);
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', INITIAL_MODS), 1.05);
+  assert.equal(getCivilizationBuildSpeedMultiplier('fantasy', INITIAL_MODS), 1);
+
+  const disabledAnimeMods = INITIAL_MODS.map((mod) =>
+    mod.id === 'mod_anime' ? { ...mod, enabled: false } : mod
+  );
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', disabledAnimeMods), 1);
+  assert.equal(getCivilizationBuildSpeedMultiplier('anime', []), 1);
+
+  assert.equal(getLandmarkTrainingSpeedMultiplier(['landmark_barracks'], 'melee'), 1.35);
+  assert.equal(getLandmarkTrainingSpeedMultiplier(['landmark_barracks'], 'ranged'), 1);
+  assert.equal(getLandmarkTrainingSpeedMultiplier([], 'melee'), 1);
+
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'melee'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'ranged'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'cavalry'), 0.75);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'worker'), 1);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'siege'), 1);
+  assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz']), 0.75);
+});
