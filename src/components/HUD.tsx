@@ -888,8 +888,6 @@ export const HUD: React.FC<HUDProps> = ({
           })()}
         </div>
 
-          </div>
-
         {/* Top-Right Utility Cluster */}
         <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap sm:justify-end">
           {/* Game Speed Split Control + Arrow Dropdown */}
