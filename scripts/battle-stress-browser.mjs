@@ -222,16 +222,54 @@ async function main() {
       ]) {
         resourceLayouts[label] = await inspectResourceBar(width, height);
       }
-      // Check the economy overview panel on the narrowest viewport. React commits
-      // the panel after the click, so wait for its DOM node before measuring geometry.
+      // The compact resource strip expands on hover; clicking pins it open.
       await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 720, deviceScaleFactor: 1, mobile: true }, sessionId);
-      const economyToggle = await evaluate(`(() => {
-        const toggle = document.querySelector('[data-economy-toggle="true"]');
-        if (!toggle) return false;
-        toggle.click();
-        return true;
-      })()`);
+      const initiallyCollapsed = await evaluate(`!document.querySelector('[data-economy-panel="true"]')`);
+      assert.equal(initiallyCollapsed, true, "Economy details should be collapsed before hovering.");
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 160, y: 24 }, sessionId);
+      const economyToggle = await waitFor(
+        async () => evaluate(`!!document.querySelector('[data-economy-toggle="true"]')`),
+        5000,
+        count + "-unit economy hover target",
+      );
       assert.equal(economyToggle, true, "Economy overview toggle is missing.");
+      const hoveredPanel = await waitFor(
+        async () => evaluate(`!!document.querySelector('[data-economy-panel="true"]')`),
+        5000,
+        count + "-unit hover-expanded economy panel",
+      );
+      assert.equal(hoveredPanel, true, "Moving over the top HUD did not expand the economy panel.");
+
+      const pinOn = await evaluate(`(() => {
+        const toggle = document.querySelector('[data-economy-toggle="true"]');
+        toggle?.click();
+        return toggle?.getAttribute('aria-pressed');
+      })()`);
+      assert.equal(pinOn, "true", "First click should pin the economy panel.");
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 319, y: 400 }, sessionId);
+      await sleep(100);
+      assert.equal(
+        await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`),
+        true,
+        "Pinned economy panel closed when the pointer left the HUD.",
+      );
+
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 160, y: 24 }, sessionId);
+      const pinOff = await evaluate(`(() => {
+        const toggle = document.querySelector('[data-economy-toggle="true"]');
+        toggle?.click();
+        return toggle?.getAttribute('aria-pressed');
+      })()`);
+      assert.equal(pinOff, "false", "Second click should release the economy panel pin.");
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 319, y: 400 }, sessionId);
+      await waitFor(
+        async () => !(await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`)),
+        3000,
+        "economy hover collapse after unpin",
+      );
+
+      // Re-open by hover and validate the panel geometry and all economy sections.
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 160, y: 24 }, sessionId);
       const economyPanel = await waitFor(
         async () => evaluate(`(() => {
           const panel = document.querySelector('[data-economy-panel="true"]');
@@ -245,6 +283,7 @@ async function main() {
             visibleResources: resources.filter((node) => node.getBoundingClientRect().width > 0).length,
             hasWorkers: panel.textContent.includes('村民工作配置'),
             hasAgeReadiness: panel.textContent.includes('升時代準備度'),
+            hasDeliveredRate: panel.textContent.includes('扣除往返運輸後估算入庫'),
             closeButton: !!panel.querySelector('[data-economy-close="true"]'),
           };
         })()`),
@@ -258,9 +297,14 @@ async function main() {
       assert.equal(economyPanel.visibleResources, 4, "An economy resource card is not visible.");
       assert.equal(economyPanel.hasWorkers, true, "Worker allocation section is missing.");
       assert.equal(economyPanel.hasAgeReadiness, true, "Age readiness section is missing.");
+      assert.equal(economyPanel.hasDeliveredRate, true, "Travel-adjusted delivered rate is missing.");
       assert.equal(economyPanel.closeButton, true, "Economy close button is missing.");
-      await evaluate(`(() => document.querySelector('[data-economy-close="true"]')?.click())()`);
-      await waitFor(async () => !(await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`)), 3000, "economy panel close");
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 319, y: 400 }, sessionId);
+      await waitFor(
+        async () => !(await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`)),
+        3000,
+        "economy panel mouse-leave collapse",
+      );
       await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, sessionId);
 
       const capture = await waitFor(
