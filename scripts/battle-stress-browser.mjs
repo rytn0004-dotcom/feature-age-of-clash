@@ -160,7 +160,7 @@ async function main() {
             const pills = [...bar.querySelectorAll('[data-resource-pill], [data-population-badge]')];
             const pillMetrics = pills.map((pill) => {
               const rect = pill.getBoundingClientRect();
-              const amount = [...pill.querySelectorAll('[data-resource-value], [data-resource-compact-value]')]
+              const amount = [...pill.querySelectorAll('[data-resource-value], [data-resource-compact-value], [data-population-value]')]
                 .find((node) => node.getBoundingClientRect().width > 0);
               return {
                 kind: pill.dataset.resourcePill || 'population',
