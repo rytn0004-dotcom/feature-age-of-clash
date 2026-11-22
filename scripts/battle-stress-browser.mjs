@@ -158,6 +158,22 @@ async function main() {
             const statusBounds = status.getBoundingClientRect();
             const utilityBounds = utility.getBoundingClientRect();
             const pills = [...bar.querySelectorAll('[data-resource-pill], [data-population-badge]')];
+            const pillMetrics = pills.map((pill) => {
+              const rect = pill.getBoundingClientRect();
+              const amount = [...pill.querySelectorAll('[data-resource-value], [data-resource-compact-value]')]
+                .find((node) => node.getBoundingClientRect().width > 0);
+              return {
+                kind: pill.dataset.resourcePill || 'population',
+                width: pill.clientWidth,
+                scrollWidth: pill.scrollWidth,
+                amountVisible: !!amount,
+                amountText: amount?.textContent?.trim() || '',
+                amountInside: !amount || (() => {
+                  const amountRect = amount.getBoundingClientRect();
+                  return amountRect.left >= rect.left - 1 && amountRect.right <= rect.right + 1;
+                })(),
+              };
+            });
             const overlaps = statusBounds.left < utilityBounds.right &&
               statusBounds.right > utilityBounds.left &&
               statusBounds.top < utilityBounds.bottom &&
@@ -170,6 +186,7 @@ async function main() {
                 const rect = pill.getBoundingClientRect();
                 return rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
               }).length,
+              pillMetrics,
               headerWidth: header.clientWidth,
               headerScrollWidth: header.scrollWidth,
               utilityWidth: utility.clientWidth,
@@ -186,6 +203,8 @@ async function main() {
         assert.ok(layout.width > 0, "Resource bar has no width at " + width + "px.");
         assert.ok(layout.scrollWidth <= layout.width + 1, "Resource bar requires horizontal scrolling at " + width + "px.");
         assert.equal(layout.visibleCount, 5, "One or more resource badges are clipped at " + width + "px.");
+        assert.ok(layout.pillMetrics.every((pill) => pill.width > 0 && pill.scrollWidth <= pill.width + 1), "A resource or population tile has clipped/overflowing content at " + width + "px.");
+        assert.ok(layout.pillMetrics.every((pill) => pill.amountVisible && pill.amountInside), "A resource amount is missing or clipped at " + width + "px.");
         assert.ok(layout.headerScrollWidth <= layout.headerWidth + 1, "Top HUD header overflows at " + width + "px.");
         assert.ok(layout.utilityScrollWidth <= layout.utilityWidth + 1, "Top-right controls overflow at " + width + "px.");
         assert.ok(layout.utilityLeft >= -1 && layout.utilityRight <= width + 1, "Top-right controls are off-screen at " + width + "px.");
