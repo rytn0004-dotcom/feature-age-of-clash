@@ -378,7 +378,8 @@ async function main() {
       report.scenarios.push({ count, initial, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
-        " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
+        " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
+        " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
         telemetry.drawCalls + " draws, " + telemetry.renderer);
     }
     report.result = "passed";
