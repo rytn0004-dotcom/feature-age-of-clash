@@ -19,7 +19,7 @@ import {
   TechDefinition,
   UnitCategory,
 } from '../types/game';
-import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
+import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
 
 export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
@@ -69,8 +69,9 @@ export function estimateConstructionTimeRemaining(
   }
   const workerMultiplier = getConstructionWorkerMultiplier(workerCount);
   if (workerMultiplier <= 0) return null;
-  return (Math.max(0, 1 - Math.max(0, Math.min(1, progress))) * buildTime) /
-    (workerMultiplier * constructionSpeedMultiplier);
+  const cappedSpeed = getCappedProductionSpeedMultiplier(constructionSpeedMultiplier);
+  const remainingBaseWork = Math.max(0, 1 - Math.max(0, Math.min(1, progress))) * buildTime;
+  return getEffectiveProductionDuration(remainingBaseWork, cappedSpeed) / workerMultiplier;
 }
 
 /**
