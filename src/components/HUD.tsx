@@ -1682,11 +1682,13 @@ export const HUD: React.FC<HUDProps> = ({
                         {compactBuildTypes.map((bType) => {
                           const bDef = DEFAULT_BUILDINGS[bType];
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
+                          const buildSeconds = engine.getBuildingConstructionDuration(bType, engine.humanPlayerId);
                           return (
                             <button
                               key={bType}
                               onClick={() => engine.startPlacement(bType)}
                               disabled={!canBuild}
+                              title={`${bDef.name} · 單村民建造約 ${Math.ceil(buildSeconds)} 秒`}
                               className={`px-2 py-0.5 disabled:opacity-40 text-[10px] font-bold rounded border cursor-pointer ${
                                 bDef.civExclusive
                                   ? 'bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border-cyan-500/60'
@@ -2048,6 +2050,7 @@ export const HUD: React.FC<HUDProps> = ({
                           const bDef = DEFAULT_BUILDINGS[bType];
                           const ageLocked = !!(bDef.requiredAge && observedAge < bDef.requiredAge);
                           const canBuild = canAfford(engine.playerResources, bDef.cost);
+                          const buildSeconds = engine.getBuildingConstructionDuration(bType, engine.humanPlayerId);
                           const isCivUnique = !!bDef.civExclusive;
                           const hotkey = BUILDING_HOTKEYS[bType];
                           return (
@@ -2067,7 +2070,7 @@ export const HUD: React.FC<HUDProps> = ({
                                   ? 'bg-amber-950/60 hover:bg-amber-900/70 text-amber-200 border-amber-500/70 shadow cursor-pointer'
                                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700/60 cursor-pointer'
                               }`}
-                              title={`${bDef.name}${hotkey ? ` [${hotkey}]` : ''} - ${bDef.description}`}
+                              title={`${bDef.name}${hotkey ? ` [${hotkey}]` : ''} · 單村民建造約 ${Math.ceil(buildSeconds)} 秒 - ${bDef.description}`}
                             >
                               <span className="truncate max-w-full flex items-center gap-0.5 font-bold">
                                 {hotkey && !ageLocked && (
@@ -2628,6 +2631,7 @@ export const HUD: React.FC<HUDProps> = ({
                           {selectedBuilding.buildingDef.trainableUnits.map((uId, uIdx) => {
                             const uDef = engine.findUnitDef(uId, selectedBuilding.faction);
                             if (!uDef) return null;
+                            const trainingSeconds = engine.getUnitTrainingDuration(selectedBuilding.id, uId) ?? uDef.stats.trainTime * 1.12;
                             const ageLocked = !!(uDef.requiredAge && observedAge < uDef.requiredAge);
                             const affordable = canAfford(engine.playerResources, uDef.stats.cost);
                             const isXpHero = uId === XP_ELIGIBLE_UNIT_ID && bCiv === 'anime';
@@ -2636,6 +2640,7 @@ export const HUD: React.FC<HUDProps> = ({
                               <button
                                 key={uId}
                                 data-train-unit={uId}
+                                data-train-duration-seconds={Math.ceil(trainingSeconds)}
                                 disabled={!affordable || ageLocked}
                                 onClick={() => engine.trainUnit(selectedBuilding.id, uId)}
                                 className={`flex items-center gap-2 px-2 py-1 rounded border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
@@ -2647,7 +2652,7 @@ export const HUD: React.FC<HUDProps> = ({
                                     ? 'bg-amber-950/60 hover:bg-amber-900/70 border-amber-400/70 text-amber-100'
                                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/80 text-slate-200'
                                 }`}
-                                title={`${uDef.name}${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
+                                title={`${uDef.name} · 生產時間約 ${Math.ceil(trainingSeconds)} 秒${trainHotkey ? ` [快捷鍵 ${trainHotkey}]` : ''}${isBldgPopFull ? ' [人口已達上限，請建造房屋]' : ''} - ${uDef.description}`}
                               >
                                 <UnitPortrait
                                   unitId={uId}
@@ -2716,6 +2721,7 @@ export const HUD: React.FC<HUDProps> = ({
                             const affordable = canAfford(engine.playerResources, tech.cost);
                             const disabled = isSpectator || isDone || !!selectedBuilding.activeTechId || !checkRes.ok || !affordable;
                             const techHotkey = TECH_SLOT_HOTKEYS[tIdx];
+                            const researchSeconds = engine.getTechResearchDuration(selectedBuilding.id, tech.id) ?? tech.researchTime;
 
                             return (
                               <button
@@ -2737,7 +2743,7 @@ export const HUD: React.FC<HUDProps> = ({
                                     ? 'bg-indigo-950/75 hover:bg-indigo-900/80 border-amber-400/70 text-white cursor-pointer'
                                     : 'bg-slate-800 hover:bg-slate-700 border-cyan-500/50 text-white cursor-pointer'
                                 }`}
-                                title={`${tech.name}${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})${!checkRes.ok && checkRes.reason ? ` [${checkRes.reason}]` : ''}`}
+                                title={`${tech.name} · 研發時間約 ${Math.ceil(researchSeconds)} 秒${techHotkey ? ` [快捷鍵 ${techHotkey}]` : ''} - ${tech.description} (${tech.effectLabel})${!checkRes.ok && checkRes.reason ? ` [${checkRes.reason}]` : ''}`}
                               >
                                 <span className="text-[11px] font-bold flex items-center gap-1 flex-wrap">
                                   {techHotkey && !isDone && !exclusionConflict && (
@@ -3463,6 +3469,7 @@ export const HUD: React.FC<HUDProps> = ({
                             setShowAgeModal(false);
                             engine.startPlacement(lmId);
                           }}
+                          title={`${lmDef.name} · 單村民建造約 ${Math.ceil(engine.getBuildingConstructionDuration(lmId, engine.humanPlayerId))} 秒`}
                           disabled={!affordable || hasBuilt}
                           className={`px-4 py-1.5 rounded-lg text-xs font-black shadow transition-all cursor-pointer ${
                             hasBuilt
