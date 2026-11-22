@@ -2956,10 +2956,7 @@ export function computeFactionResourceTelemetry(
   hasStarOath = false,
   estimateDeliveryTravel?: EstimateResourceDeliveryTravel
 ): FactionResourceTelemetry {
-  const nodeById = new Map<
-    string,
-    Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>
-  >();
+  const nodeById = new Map<string, ResourceDeliveryNode>();
   for (const n of resourceNodes) {
     nodeById.set(n.id, n);
   }
