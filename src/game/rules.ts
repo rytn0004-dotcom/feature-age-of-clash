@@ -2163,34 +2163,37 @@ export function layoutCombatFormation(
       .sort((a, b) => a.id.localeCompare(b.id));
   const centered = (index: number, count: number, spacing: number) =>
     (index - (count - 1) / 2) * spacing;
+  // Keep dense formations readable as armies grow without letting their rear ranks
+  // collapse into the frontline at chokepoints.
+  const spacingScale = Math.min(1.55, 1 + Math.max(0, members.length - 8) * 0.006);
 
   const result: CombatFormationSlot[] = [];
 
   const frontline = sorted('melee');
   frontline.forEach((unit, index) =>
-    result.push(slot(unit.id, 'frontline', 5.2, centered(index, frontline.length, 2.1), index))
+    result.push(slot(unit.id, 'frontline', 5.2 * spacingScale, centered(index, frontline.length, 2.1 * spacingScale), index))
   );
 
   const backline = sorted('ranged');
   backline.forEach((unit, index) =>
-    result.push(slot(unit.id, 'backline', 11.2, centered(index, backline.length, 2.4), index))
+    result.push(slot(unit.id, 'backline', 11.2 * spacingScale, centered(index, backline.length, 2.4 * spacingScale), index))
   );
 
   const cavalry = sorted('cavalry');
   cavalry.forEach((unit, index) => {
     const rank = Math.floor(index / 2);
     const flank = index % 2 === 0 ? -1 : 1;
-    result.push(slot(unit.id, 'flank', 8.2 + rank * 1.4, flank * (5.2 + rank * 2.1), index));
+    result.push(slot(unit.id, 'flank', (8.2 + rank * 1.4) * spacingScale, flank * (5.2 + rank * 2.1) * spacingScale, index));
   });
 
   const support = sorted('special');
   support.forEach((unit, index) =>
-    result.push(slot(unit.id, 'support', 9.0, centered(index, support.length, 2.7), index))
+    result.push(slot(unit.id, 'support', 9.0 * spacingScale, centered(index, support.length, 2.7 * spacingScale), index))
   );
 
   const siege = sorted('siege');
   siege.forEach((unit, index) =>
-    result.push(slot(unit.id, 'siege', 18.5, centered(index, siege.length, 3.6), index))
+    result.push(slot(unit.id, 'siege', 18.5 * spacingScale, centered(index, siege.length, 3.6 * spacingScale), index))
   );
 
   return result.sort((a, b) => a.unitId.localeCompare(b.unitId));
