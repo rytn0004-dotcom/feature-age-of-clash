@@ -9515,19 +9515,33 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'landmark_arsenal', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.4);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
-          } else if (aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45) {
-            const woodNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'wood', 36);
-            if (woodNode && getDistance(anchorX, anchorZ, woodNode.x, woodNode.z) > 15) {
-              this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z);
+          } else if (
+            aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45 &&
+            landNodes.some((node) => node.resourceType === 'wood' && node.amount > 0 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) <= 36)
+          ) {
+            const woodNode = landNodes
+              .filter((node) => node.resourceType === 'wood' && node.amount > 0)
+              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
+              .filter((entry) => entry.distance > 15 && entry.distance <= 36)
+              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
+            if (woodNode && this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z)) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
-          } else if (aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55) {
-            const mineNode =
-              findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 38) ||
-              findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'stone', 38);
-            if (mineNode && getDistance(anchorX, anchorZ, mineNode.x, mineNode.z) > 15) {
-              if (this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z)) {
-                this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
-              }
+          } else if (
+            aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55 &&
+            landNodes.some((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') &&
+              node.amount > 0 && getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) <= 38)
+          ) {
+            const mineNode = landNodes
+              .filter((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') && node.amount > 0)
+              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
+              .filter((entry) => entry.distance > 15 && entry.distance <= 38)
+              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
+            if (mineNode && this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z)) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
           } else if (
             aiRes.wood >= 140 &&
@@ -9550,7 +9564,14 @@ export class RtsEngine {
               score: number;
             } | null = null;
 
-            for (const seed of assignedGatherers) {
+            const candidateSeeds = [...new Map(assignedGatherers.map((entry) => [entry.node.id, entry])).values()]
+              .sort((a, b) =>
+                (nodeWorkerCounts.get(b.node.id) || 0) - (nodeWorkerCounts.get(a.node.id) || 0) ||
+                b.node.amount - a.node.amount ||
+                a.node.id.localeCompare(b.node.id)
+              )
+              .slice(0, 8);
+            for (const seed of candidateSeeds) {
               const cluster = assignedGatherers.filter((entry) =>
                 entry.node.resourceType === seed.node.resourceType &&
                 getDistance(seed.node.x, seed.node.z, entry.node.x, entry.node.z) <= 13
