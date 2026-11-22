@@ -85,6 +85,7 @@ import {
   canUnitGatherNode,
   computeAiWorkerAllocation,
   shouldAiQueueWorker,
+  selectAiWorkerResourceType,
   selectAiWorkerReassignment,
   calculateWallChainCost,
   WallChainPoint,
@@ -9149,12 +9150,15 @@ export class RtsEngine {
       }
 
       const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
+      const availableResourceTypes = Array.from(
+        new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
+      );
       const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType): boolean => {
         const preferredRange = prefType === 'food' ? 38 : 36;
         const node =
           findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, preferredRange) ||
           findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, 54) ||
-          findBalancedResourceNode(worker.x, worker.z, landNodes, undefined, nodeWorkerCounts);
+          findBalancedResourceNode(worker.x, worker.z, landNodes, prefType, nodeWorkerCounts);
         if (!node) return false;
 
         worker.targetResourceNodeId = node.id;
@@ -9165,7 +9169,6 @@ export class RtsEngine {
         return true;
       };
 
-      const resourcePriorityOrder: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
       for (const w of aiEconomicWorkers) {
         if (w.state !== 'idle') continue;
         // Contest forward gold: if we are poor on gold, claim nodes closer to map center / contested
@@ -9192,21 +9195,21 @@ export class RtsEngine {
             continue;
           }
         }
-        let bestType: ResourceType = 'food';
-        let biggestNeed = -Infinity;
-        for (const rt of resourcePriorityOrder) {
-          const need = desiredAlloc[rt] - activeCounts[rt];
-          if (need > biggestNeed) {
-            biggestNeed = need;
-            bestType = rt;
-          }
-        }
-        assignWorkerToType(w, bestType);
+        const bestType = selectAiWorkerResourceType(
+          activeCounts,
+          desiredAlloc,
+          availableResourceTypes
+        );
+        if (bestType) assignWorkerToType(w, bestType);
       }
 
       // Gradually rebalance one gatherer per decision when a resource has a clear surplus
       // and another has a clear deficit. Carrying workers and builders keep their current task.
-      const workerReassignment = selectAiWorkerReassignment(activeCounts, desiredAlloc);
+      const workerReassignment = selectAiWorkerReassignment(
+        activeCounts,
+        desiredAlloc,
+        availableResourceTypes
+      );
       const rebalanceReadyAt = this.aiWorkerRebalanceReadyAt.get(aiId) || 0;
       if (workerReassignment && this.stats.gameDuration >= rebalanceReadyAt) {
         const reassignable = aiEconomicWorkers.find((worker) => {
