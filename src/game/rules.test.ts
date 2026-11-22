@@ -3207,7 +3207,7 @@ test('construction ETA shares the live builder and civilization speed formula', 
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), 36 / 1.65);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), 15);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4, 1.05), 15 / 1.05);
+  assert.ok(Math.abs(estimateConstructionTimeRemaining(40, 0.1, 4, 1.05)! - 15 / 1.05) < 1e-9);
   assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
   assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
