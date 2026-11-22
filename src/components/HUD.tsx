@@ -31,6 +31,7 @@ import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
 import { formatCompactResourceCount, formatResourceCount } from '../game/resourceFormatting';
 import { calculateAgeResourceShortfall, calculateEconomyNetRates, getResourceHealthStatus } from '../game/economyInsights';
+import { getAgeResourceProgress } from '../game/ageProgress';
 import type { EconomyNetRates, EconomyResourceSnapshot } from '../game/economyInsights';
 import {
   canAfford,
@@ -749,6 +750,9 @@ export const HUD: React.FC<HUDProps> = ({
   const ageResourceShortfall = nextAgeInfo
     ? calculateAgeResourceShortfall(observedRes, nextAgeInfo.cost)
     : null;
+  const ageResourceProgress = nextAgeInfo
+    ? getAgeResourceProgress(observedRes, nextAgeInfo.cost)
+    : null;
   const formatNetRate = (rate: number) => `${rate >= 0 ? '+' : ''}${Math.round(rate).toLocaleString('zh-TW')}/遊戲分鐘`;
   const compactBuildTypes: BuildingType[] = [
     'house',
@@ -1055,6 +1059,28 @@ export const HUD: React.FC<HUDProps> = ({
               </button>
             )}
           </div>
+
+          {!isSpectator && nextAgeInfo && ageResourceProgress && (
+            <button
+              type="button"
+              data-age-progress="true"
+              onClick={() => setShowAgeModal(true)}
+              title={`晉升至 ${nextAgeInfo.name}：糧食 ${Math.floor(observedRes.food)}/${nextAgeInfo.cost.food}，黃金 ${Math.floor(observedRes.gold)}/${nextAgeInfo.cost.gold}。點擊查看地標選擇。`}
+              aria-label={`下一時代資源準備度 ${Math.round(ageResourceProgress.overallRatio * 100)}%`}
+              className="flex min-w-[112px] items-center gap-1.5 px-2 py-1 rounded-lg border border-amber-500/35 bg-slate-900/90 text-[10px] font-bold text-amber-100 shadow cursor-pointer hover:bg-slate-800 transition-colors"
+            >
+              <span className="shrink-0">晉升</span>
+              <span className="relative h-1.5 w-12 overflow-hidden rounded-full bg-slate-700">
+                <span
+                  className={`absolute inset-y-0 left-0 rounded-full ${ageResourceProgress.ready ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                  style={{ width: `${Math.round(ageResourceProgress.overallRatio * 100)}%` }}
+                />
+              </span>
+              <span className={ageResourceProgress.ready ? 'text-emerald-300' : 'text-amber-200'}>
+                {ageResourceProgress.ready ? '資源達標' : `${Math.round(ageResourceProgress.overallRatio * 100)}%`}
+              </span>
+            </button>
+          )}
 
           {/* Civilization & Interactive Tech Tree Summary Button */}
           <button
