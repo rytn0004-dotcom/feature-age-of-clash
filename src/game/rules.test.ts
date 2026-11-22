@@ -47,6 +47,10 @@ import {
   getCivilizationBuildSpeedMultiplier,
   getLandmarkTrainingSpeedMultiplier,
   getTrainingTimeMultiplier,
+  getCappedProductionSpeedMultiplier,
+  getEffectiveProductionDuration,
+  getEffectiveUnitTrainingDuration,
+  PRODUCTION_TIME_SCALE,
 } from './civilizations';
 
 test('progression: military production buildings unlock at the intended ages', async () => {
@@ -3206,9 +3210,9 @@ test('cooperative construction follows the requested contribution curve', () => 
 });
 
 test('construction ETA shares the live builder and civilization speed formula', () => {
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), 36 / 1.75);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), 36 / 2.85);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36 * 1.12);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), (36 * 1.12) / 1.75);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), (36 * 1.12) / 2.85);
   assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
   assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
@@ -3221,12 +3225,33 @@ test('age-up landmark durations match the requested single-builder completion ta
   const ageFourLandmarks = [DEFAULT_BUILDINGS.landmark_observatory, DEFAULT_BUILDINGS.landmark_arsenal];
 
   for (const landmark of ageTwoLandmarks) {
-    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 200) < 1e-9);
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 224) < 1e-9);
   }
   for (const landmark of ageThreeLandmarks) {
-    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 235) < 1e-9);
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 263.2) < 1e-9);
   }
   for (const landmark of ageFourLandmarks) {
-    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 300) < 1e-9);
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 336) < 1e-9);
   }
+});
+
+
+test('production times use a 1.12 time scale and all speed bonuses share a 1.12x ceiling', () => {
+  assert.equal(PRODUCTION_TIME_SCALE, 1.12);
+  assert.equal(getCappedProductionSpeedMultiplier(1), 1);
+  assert.equal(getCappedProductionSpeedMultiplier(1.05, 1.08), 1.12);
+  assert.equal(getCappedProductionSpeedMultiplier(1.25, 1.35), 1.12);
+  assert.equal(getEffectiveProductionDuration(22), 24.64);
+  assert.equal(getEffectiveProductionDuration(22, 1.25, 1.35), 22);
+  assert.equal(getEffectiveUnitTrainingDuration(22), 24.64);
+  assert.equal(getEffectiveUnitTrainingDuration(22, 0.75), 22);
+  assert.equal(getEffectiveUnitTrainingDuration(22, 1, 1.25, 1.35), 22);
+});
+
+test('all civilization worker units have a consistent 22-second base training time', () => {
+  const workers = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS].filter(
+    (unit) => unit.category === 'worker'
+  );
+  assert.ok(workers.length >= 3, 'Each civilization must provide a worker unit');
+  workers.forEach((worker) => assert.equal(worker.stats.trainTime, 22, worker.id));
 });
