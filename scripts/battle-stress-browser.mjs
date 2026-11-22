@@ -222,27 +222,35 @@ async function main() {
       ]) {
         resourceLayouts[label] = await inspectResourceBar(width, height);
       }
-      // Check the economy overview panel on the narrowest viewport.
+      // Check the economy overview panel on the narrowest viewport. React commits
+      // the panel after the click, so wait for its DOM node before measuring geometry.
       await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 720, deviceScaleFactor: 1, mobile: true }, sessionId);
-      const economyPanel = await evaluate(`(() => {
+      const economyToggle = await evaluate(`(() => {
         const toggle = document.querySelector('[data-economy-toggle="true"]');
-        if (!toggle) return { missingToggle: true };
+        if (!toggle) return false;
         toggle.click();
-        const panel = document.querySelector('[data-economy-panel="true"]');
-        if (!panel) return null;
-        const rect = panel.getBoundingClientRect();
-        const resources = [...panel.querySelectorAll('[data-economy-resource]')];
-        return {
-          width: rect.width, right: rect.right, top: rect.top, bottom: rect.bottom,
-          clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
-          resourceCount: resources.length,
-          visibleResources: resources.filter((node) => node.getBoundingClientRect().width > 0).length,
-          hasWorkers: panel.textContent.includes('村民工作配置'),
-          hasAgeReadiness: panel.textContent.includes('升時代準備度'),
-          closeButton: !!panel.querySelector('[data-economy-close="true"]'),
-        };
+        return true;
       })()`);
-      assert.ok(economyPanel && !economyPanel.missingToggle, "Economy overview toggle is missing.");
+      assert.equal(economyToggle, true, "Economy overview toggle is missing.");
+      const economyPanel = await waitFor(
+        async () => evaluate(`(() => {
+          const panel = document.querySelector('[data-economy-panel="true"]');
+          if (!panel) return null;
+          const rect = panel.getBoundingClientRect();
+          const resources = [...panel.querySelectorAll('[data-economy-resource]')];
+          return {
+            width: rect.width, right: rect.right, top: rect.top, bottom: rect.bottom,
+            clientWidth: panel.clientWidth, scrollWidth: panel.scrollWidth,
+            resourceCount: resources.length,
+            visibleResources: resources.filter((node) => node.getBoundingClientRect().width > 0).length,
+            hasWorkers: panel.textContent.includes('村民工作配置'),
+            hasAgeReadiness: panel.textContent.includes('升時代準備度'),
+            closeButton: !!panel.querySelector('[data-economy-close="true"]'),
+          };
+        })()`),
+        5000,
+        count + "-unit economy panel render",
+      );
       assert.ok(economyPanel.width > 0 && economyPanel.right <= 321, "Economy panel exceeds the 320px viewport.");
       assert.ok(economyPanel.bottom <= 721 && economyPanel.top >= 0, "Economy panel is clipped vertically.");
       assert.ok(economyPanel.scrollWidth <= economyPanel.clientWidth + 1, "Economy panel requires horizontal scrolling.");
@@ -252,6 +260,7 @@ async function main() {
       assert.equal(economyPanel.hasAgeReadiness, true, "Age readiness section is missing.");
       assert.equal(economyPanel.closeButton, true, "Economy close button is missing.");
       await evaluate(`(() => document.querySelector('[data-economy-close="true"]')?.click())()`);
+      await waitFor(async () => !(await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`)), 3000, "economy panel close");
       await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, sessionId);
 
       const capture = await waitFor(
