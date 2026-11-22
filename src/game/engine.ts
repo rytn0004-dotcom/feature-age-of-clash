@@ -9149,7 +9149,11 @@ export class RtsEngine {
         }
       }
 
-      const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
+      // Routine economy assignment excludes offshore fish and aggressive boars.
+      // Boars remain available to explicit/coordinated hunting orders.
+      const landNodes = this.resourceNodes.filter(
+        (rn) => rn.subtype !== 'deep_fish' && rn.subtype !== 'boar'
+      );
       const availableResourceTypes = Array.from(
         new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
       );
