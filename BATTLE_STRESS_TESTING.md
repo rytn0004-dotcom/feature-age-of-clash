@@ -34,7 +34,7 @@ CI 的 `browser-stress` job 使用 headless Chromium 和 Vite 開發模式，依
 - F3 監視器成功產生樣本，模擬時鐘有前進，FPS、P95 frame time、最大 hitch、Draw Calls 和 Triangles 都是有效值。
 - 量測期間沒有未捕捉的 JavaScript 例外。
 
-CI 會將 `artifacts/battle-stress-browser-report.json` 上傳為 workflow artifact，保留瀏覽器版本、各單位規模和量測值，方便不同提交之間比較。可使用 `BATTLE_STRESS_SCENARIOS`、`BATTLE_STRESS_SEED`、`BATTLE_STRESS_MAP` 覆寫執行情境；`CHROME_BIN` 可指定 Chrome 執行檔。
+CI 會將 `artifacts/battle-stress-browser-report.json` 上傳為 workflow artifact，保留瀏覽器版本、各單位規模、FPS/P95/hitch、Simulation/Render CPU 平均與最大耗時、AI 決策耗時、A* 搜尋次數與耗時、Draw Calls、Triangles 及 renderer 類型，方便不同提交之間比較。可使用 `BATTLE_STRESS_SCENARIOS`、`BATTLE_STRESS_SEED`、`BATTLE_STRESS_MAP` 覆寫執行情境；`CHROME_BIN` 可指定 Chrome 執行檔。
 
 這個 job 是 headless Chromium / SwiftShader 的自動化回歸，不會將 FPS 設為跨硬體通用的固定門檻；它主要攔截場景無法啟動、單位數錯誤、模擬停止、效能監視器失效或 JavaScript 例外。軟體渲染數值不能當成玩家 GPU 的效能預測，也不能取代實機長時間對戰。正式硬體的效能基準、每規模至少 3 分鐘及 10 分鐘長時間穩定性，仍需另外記錄。
 
