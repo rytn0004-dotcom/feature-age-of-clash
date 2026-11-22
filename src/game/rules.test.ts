@@ -794,6 +794,68 @@ test('ai-planner & economy: evaluateAiPlan prevents rule starvation and computeA
   );
 });
 
+test('AI worker production counts queued villagers and protects the next-age landmark reserve', async () => {
+  const { shouldAiQueueWorker } = await import('./rules');
+  const medievalWorkerCost = { food: 50, wood: 0, gold: 0, stone: 0 };
+  const ageTwoReserve = { food: 400, wood: 0, gold: 200, stone: 0 };
+  const base = {
+    workerCount: 3,
+    queuedWorkerCount: 0,
+    workerCap: 12,
+    resources: { food: 100, wood: 100, gold: 0, stone: 0 },
+    workerCost: medievalWorkerCost,
+    ageUpReserve: ageTwoReserve,
+    minimumWorkersForAgeUp: 5,
+  };
+
+  assert.equal(
+    shouldAiQueueWorker({ ...base, queuedWorkerCount: 1 }),
+    true,
+    'AI may queue the workers needed to reach its next-age workforce threshold'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 5, resources: { food: 449, wood: 100, gold: 200, stone: 0 } }),
+    false,
+    'Once the minimum workforce is reached, training cannot consume the landmark food reserve'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 5, resources: { food: 450, wood: 100, gold: 200, stone: 0 } }),
+    true,
+    'A worker may be queued when its cost leaves the exact landmark reserve intact'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 10, queuedWorkerCount: 2 }),
+    false,
+    'Workers already in production count toward the personality cap'
+  );
+  assert.equal(
+    shouldAiQueueWorker({ ...base, workerCount: 12 }),
+    false,
+    'AI cannot exceed its configured worker cap'
+  );
+
+  const animeWorkerCost = { food: 55, wood: 0, gold: 10, stone: 0 };
+  assert.equal(
+    shouldAiQueueWorker({
+      ...base,
+      workerCount: 5,
+      resources: { food: 455, wood: 100, gold: 210, stone: 0 },
+      workerCost: animeWorkerCost,
+    }),
+    true,
+    'Civilization-specific worker costs are included before checking the landmark reserve'
+  );
+  assert.equal(
+    shouldAiQueueWorker({
+      ...base,
+      workerCount: 5,
+      resources: { food: 454, wood: 100, gold: 210, stone: 0 },
+      workerCost: animeWorkerCost,
+    }),
+    false
+  );
+});
+
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
   const { selectOptimalCombatTarget, selectClusterFocusTarget, shouldSwitchCombatTarget, assignRaidTargets } = await import('./rules');
 
