@@ -10,6 +10,7 @@ import {
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  selectAiWorkerResourceType,
   selectAiWorkerReassignment,
   selectSiegeEscortUnits,
   deductCost,
@@ -2702,6 +2703,34 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
     ),
     null,
     'Do not churn workers for one-worker differences'
+  );
+
+  assert.equal(
+    selectAiWorkerResourceType(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['wood', 'gold', 'stone']
+    ),
+    'stone',
+    'An unavailable food source must not be treated as an eligible worker destination'
+  );
+  assert.equal(
+    selectAiWorkerResourceType(
+      { food: 1, wood: 1, gold: 1, stone: 1 },
+      { food: 1, wood: 1, gold: 1, stone: 1 },
+      ['food', 'wood', 'gold', 'stone']
+    ),
+    null,
+    'Do not assign extra workers when all available targets are already filled'
+  );
+  assert.deepEqual(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 1 },
+      ['wood', 'gold', 'stone']
+    ),
+    { from: 'wood', to: 'stone' },
+    'Reassignment must choose the largest deficit with an available deposit'
   );
 });
 
