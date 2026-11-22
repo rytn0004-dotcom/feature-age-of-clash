@@ -155,6 +155,12 @@ import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import { formatPerformanceTelemetryCsv, type PerformanceSample } from './performanceTelemetry';
 import {
+  advanceMovementStallDuration,
+  MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS,
+  MOVEMENT_STALL_RECOVERY_SECONDS,
+  shouldRecoverStalledPath,
+} from './movementDiagnostics';
+import {
   ControlGroupsMap,
   createEmptyControlGroups,
   pruneControlGroups,
@@ -4141,6 +4147,12 @@ export class RtsEngine {
       textures: memory.textures,
       aliveUnits,
       aiAliveUnits: aiUnits.length,
+      aiStalledUnits: aiUnits.filter((unit) =>
+        (unit.state === 'moving' || unit.state === 'attacking') &&
+        (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS
+      ).length,
+      aiPathRecoveryCount: aiUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0),
+      aiMaxStuckSeconds: aiUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0),
       aiIdleUnits: aiStateCounts.idle,
       aiMovingUnits: aiStateCounts.moving,
       aiAttackingUnits: aiStateCounts.attacking,
@@ -4187,6 +4199,7 @@ export class RtsEngine {
       `Textures         ${memory.textures.toLocaleString()}`,
       `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
       `AI Idle/Move/Atk  ${aiStateCounts.idle}/${aiStateCounts.moving}/${aiStateCounts.attacking}`,
+      `AI Stalled/Recover ${aiUnits.filter((unit) => (unit.state === 'moving' || unit.state === 'attacking') && (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length}/${aiUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0)}`,
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
@@ -4953,22 +4966,40 @@ export class RtsEngine {
   private moveUnitAlongPath(unit: UnitEntity, goalX: number, goalZ: number, dt: number) {
     const isNaval = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const navGrid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
+    const goalShifted =
+      !unit.pathGoal || getDistance(unit.pathGoal.x, unit.pathGoal.z, goalX, goalZ) > 1.8;
 
-    // Detect if unit is stalled against an obstacle and force quick path refresh
+    // A materially new destination starts a fresh progress window; do not carry a stall
+    // timer from an abandoned order into the next movement command.
+    if (goalShifted) {
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+    }
+
+    unit.pathRecoveryCooldown = Math.max(0, (unit.pathRecoveryCooldown || 0) - dt);
     unit.stuckAccumulator = (unit.stuckAccumulator || 0) + dt;
     if (unit.stuckAccumulator >= 0.45) {
+      const elapsed = unit.stuckAccumulator;
       if (unit.lastProgressCheckPos) {
         const moved = getDistance(unit.x, unit.z, unit.lastProgressCheckPos.x, unit.lastProgressCheckPos.z);
-        if (moved < 0.25 && (!unit.pathCooldown || unit.pathCooldown <= 0)) {
-          unit.waypoints = undefined;
-        }
+        unit.stuckDuration = advanceMovementStallDuration(unit.stuckDuration, moved, elapsed);
+      } else {
+        unit.stuckDuration = 0;
       }
       unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
       unit.stuckAccumulator = 0;
     }
 
-    const goalShifted =
-      !unit.pathGoal || getDistance(unit.pathGoal.x, unit.pathGoal.z, goalX, goalZ) > 1.8;
+    if (shouldRecoverStalledPath(unit.stuckDuration, unit.pathCooldown, unit.pathRecoveryCooldown)) {
+      // Force one fresh A* route after prolonged lack of displacement. A cooldown
+      // prevents repeated path searches when a physical crowd remains impassable.
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.pathRecoveryCooldown = MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS;
+      unit.pathRecoveryCount = (unit.pathRecoveryCount || 0) + 1;
+    }
 
     if (!unit.waypoints || unit.waypoints.length === 0 || (goalShifted && (!unit.pathCooldown || unit.pathCooldown <= 0))) {
       unit.waypoints = findPath(unit.x, unit.z, goalX, goalZ, navGrid);
@@ -5051,6 +5082,9 @@ export class RtsEngine {
       return;
     }
     if (dist < 0.45) {
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.pathRecoveryCooldown = 0;
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.velocity = { x: 0, z: 0 };
@@ -5172,6 +5206,10 @@ export class RtsEngine {
     if (effectiveDist > range) {
       this.moveUnitAlongPath(unit, target.x, target.z, dt);
     } else {
+      // A unit already in weapon range is engaging, not movement-stalled.
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.pathRecoveryCooldown = 0;
       // Smoothly face target while fighting
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(target.x - unit.x, target.z - unit.z);
