@@ -44,6 +44,7 @@ jobs:
           BATTLE_STRESS_SCENARIOS: 100,200,400
           BATTLE_STRESS_SEED: 20261122
           BATTLE_STRESS_MAP: highland_basin
+          BATTLE_STRESS_MIN_SAMPLES: 8
       - name: Upload browser stress report
         if: always()
         uses: actions/upload-artifact@v4
