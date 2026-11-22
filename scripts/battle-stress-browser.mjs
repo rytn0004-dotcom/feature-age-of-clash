@@ -240,12 +240,16 @@ async function main() {
       );
       assert.equal(hoveredPanel, true, "Moving over the top HUD did not expand the economy panel.");
 
-      const pinOn = await evaluate(`(() => {
-        const toggle = document.querySelector('[data-economy-toggle="true"]');
-        toggle?.click();
-        return toggle?.getAttribute('aria-pressed');
-      })()`);
-      assert.equal(pinOn, "true", "First click should pin the economy panel.");
+      await evaluate(`(() => document.querySelector('[data-economy-toggle="true"]')?.click())()`);
+      const pinOn = await waitFor(
+        async () => {
+          const state = await evaluate(`document.querySelector('[data-economy-toggle="true"]')?.getAttribute('aria-pressed')`);
+          return state === "true" ? { state } : null;
+        },
+        3000,
+        "economy pin state commit",
+      );
+      assert.equal(pinOn.state, "true", "First click should pin the economy panel.");
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 319, y: 400 }, sessionId);
       await sleep(100);
       assert.equal(
@@ -255,12 +259,16 @@ async function main() {
       );
 
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 160, y: 24 }, sessionId);
-      const pinOff = await evaluate(`(() => {
-        const toggle = document.querySelector('[data-economy-toggle="true"]');
-        toggle?.click();
-        return toggle?.getAttribute('aria-pressed');
-      })()`);
-      assert.equal(pinOff, "false", "Second click should release the economy panel pin.");
+      await evaluate(`(() => document.querySelector('[data-economy-toggle="true"]')?.click())()`);
+      const pinOff = await waitFor(
+        async () => {
+          const state = await evaluate(`document.querySelector('[data-economy-toggle="true"]')?.getAttribute('aria-pressed')`);
+          return state === "false" ? { state } : null;
+        },
+        3000,
+        "economy unpin state commit",
+      );
+      assert.equal(pinOff.state, "false", "Second click should release the economy panel pin.");
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 319, y: 400 }, sessionId);
       await waitFor(
         async () => !(await evaluate(`!!document.querySelector('[data-economy-panel="true"]')`)),
