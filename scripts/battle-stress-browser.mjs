@@ -142,6 +142,24 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
+      // The HUD is now a lazy-loaded React chunk. Engine setup can finish before
+      // React has mounted that chunk, so wait for the actual controls before
+      // measuring responsive layout at any viewport width.
+      const hudReady = await waitFor(
+        async () => evaluate(`(() => {
+          const bar = document.querySelector('[data-top-resource-bar="true"]');
+          const header = bar?.closest('header');
+          return Boolean(
+            bar &&
+            header?.querySelector('[data-top-status-bar="true"]') &&
+            header?.querySelector('[data-top-utility-bar="true"]')
+          );
+        })()`),
+        30000,
+        count + "-unit lazy HUD mount",
+      );
+      assert.equal(hudReady, true, "Lazy HUD did not mount after engine setup.");
+
       const inspectResourceBar = async (width, height) => {
         await send("Emulation.setDeviceMetricsOverride", {
           width, height, deviceScaleFactor: 1, mobile: width < 768,
