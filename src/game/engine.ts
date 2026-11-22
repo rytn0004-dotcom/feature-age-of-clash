@@ -83,6 +83,7 @@ import {
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   computeAiWorkerAllocation,
+  shouldAiQueueWorker,
   selectAiWorkerReassignment,
   calculateWallChainCost,
   WallChainPoint,
@@ -9408,6 +9409,45 @@ export class RtsEngine {
         !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
         (aiRes.food < 2400 || aiRes.gold < 1200);
 
+      // Derive the worker cap and next-age workforce target from the active
+      // personality's own AI rules, rather than maintaining a second set of
+      // hard-coded difficulty values here.
+      const workerTrainRule = activeRules.find(
+        (rule) =>
+          rule.enabled &&
+          rule.action.type === 'train_unit' &&
+          (!rule.action.targetId || rule.action.targetId === 'villager' || rule.action.targetId === aiCiv.workerUnitId) &&
+          rule.conditions.some((condition) => condition.field === 'workerCount' && condition.operator === '<')
+      );
+      const workerProductionCap =
+        workerTrainRule?.conditions.find(
+          (condition) => condition.field === 'workerCount' && condition.operator === '<'
+        )?.value ?? 12;
+      const nextAgeRule = activeRules.find((rule) => {
+        if (!rule.enabled || rule.action.type !== 'advance_age') return false;
+        const ageCondition = rule.conditions.find((condition) => condition.field === 'age');
+        if (!ageCondition) return false;
+        switch (ageCondition.operator) {
+          case '<': return aiAge < ageCondition.value;
+          case '<=': return aiAge <= ageCondition.value;
+          case '>': return aiAge > ageCondition.value;
+          case '>=': return aiAge >= ageCondition.value;
+          case '==': return aiAge === ageCondition.value;
+          case '!=': return aiAge !== ageCondition.value;
+          default: return false;
+        }
+      });
+      const minimumWorkersForAgeUp =
+        nextAgeRule?.conditions.find(
+          (condition) => condition.field === 'workerCount' && condition.operator === '>='
+        )?.value ?? 0;
+      const queuedWorkerCount = aiBuildings.reduce(
+        (total, building) =>
+          total + building.queue.filter((unitId) => unitId === aiCiv.workerUnitId).length,
+        0
+      );
+      const aiWorkerDefinition = this.findUnitDef(aiCiv.workerUnitId, aiId);
+
       if (aiPop.totalReserved < aiMaxPop) {
         const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
         if (hasDeepFish && readyDock && aiNavalBoats.length < 2 && aiRes.wood >= 75) {
@@ -9415,11 +9455,32 @@ export class RtsEngine {
         }
 
         for (const trainAct of plan.trainActions) {
-          const isVillagerTrain = (trainAct.targetId || 'villager') === 'villager';
-          if (!isVillagerTrain && (savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
+          const targetId = trainAct.targetId || 'villager';
+          const isVillagerTrain = targetId === 'villager' || targetId === aiCiv.workerUnitId;
+          if (isVillagerTrain) {
+            if (
+              !aiWorkerDefinition ||
+              !shouldAiQueueWorker({
+                workerCount: aiWorkers.length,
+                queuedWorkerCount,
+                workerCap: workerProductionCap,
+                resources: aiRes,
+                workerCost: aiWorkerDefinition.stats.cost,
+                ageUpReserve: {
+                  food: reserveFood,
+                  wood: 0,
+                  gold: reserveGold,
+                  stone: 0,
+                },
+                minimumWorkersForAgeUp,
+              })
+            ) {
+              continue;
+            }
+          } else if ((savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
             continue;
           }
-          this.resolveAiTrainRequest(aiId, aiCiv, trainAct.targetId || 'villager', aiBuildings);
+          this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
         }
       }
 
