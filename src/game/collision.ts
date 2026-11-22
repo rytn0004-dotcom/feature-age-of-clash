@@ -263,7 +263,9 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
       u1.z -= nz * push;
       u2.x += nx * push;
       u2.z += nz * push;
-      if (moveCollisionEntry(index, first) || moveCollisionEntry(index, next)) {
+      const firstChangedCell = moveCollisionEntry(index, first);
+      const secondChangedCell = moveCollisionEntry(index, next);
+      if (firstChangedCell || secondChangedCell) {
         cachedQueryKey = '';
       }
     }
