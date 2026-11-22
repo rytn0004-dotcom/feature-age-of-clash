@@ -153,7 +153,14 @@ import {
 import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
-import { formatPerformanceTelemetryCsv, type PerformanceSample } from './performanceTelemetry';
+import {
+  formatPerformanceTelemetryCsv,
+  getAverageAiDecisionMs,
+  recordAiDecisionTiming,
+  EMPTY_AI_DECISION_TIMING,
+  type AiDecisionTiming,
+  type PerformanceSample,
+} from './performanceTelemetry';
 import {
   advanceMovementStallDuration,
   MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS,
@@ -461,6 +468,8 @@ export class RtsEngine {
   // AI Timer
   private aiTickAccumulator = 0;
   private aiDecisionCount = 0;
+  private aiDecisionTiming: AiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
+  private aiPathRecoveryTotal = 0;
 
   // Callbacks for UI updates
   public onStateChange?: () => void;
@@ -1221,6 +1230,8 @@ export class RtsEngine {
     this.researchedTechsByFaction = {};
     this.aiTickAccumulator = 1.2;
     this.aiDecisionCount = 0;
+    this.aiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
+    this.aiPathRecoveryTotal = 0;
     this.playerAge = 1;
     this.enemyAge = 1;
     this.playerLandmarks = [];
@@ -4135,8 +4146,10 @@ export class RtsEngine {
     const aiResearchingBuildings = aiBuildings.filter((building) => !!building.activeTechId).length;
     const aiPathingUnits = aiUnits.filter((unit) => unit.state === 'moving' || unit.state === 'attacking');
     const aiStalledUnits = aiPathingUnits.filter((unit) => (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length;
-    const aiPathRecoveryCount = aiPathingUnits.reduce((total, unit) => total + (unit.pathRecoveryCount || 0), 0);
+    // Lifetime AI recovery count survives unit state changes and unit deaths until the next match.
+    const aiPathRecoveryCount = this.aiPathRecoveryTotal;
     const aiMaxStuckSeconds = aiPathingUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0);
+    const aiDecisionAverageMs = getAverageAiDecisionMs(this.aiDecisionTiming);
     const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
     const sample: PerformanceSample = {
       elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
@@ -4166,6 +4179,10 @@ export class RtsEngine {
       aiResearchingBuildings,
       aiDecisionCount: this.aiDecisionCount,
       aiDecisionAccumulatorSeconds: this.aiTickAccumulator,
+      aiDecisionTimingSamples: this.aiDecisionTiming.sampleCount,
+      aiDecisionLastMs: this.aiDecisionTiming.lastMs,
+      aiDecisionAverageMs,
+      aiDecisionMaxMs: this.aiDecisionTiming.maxMs,
       projectileCount: this.projectiles.length,
       activeParticles,
       particleCapacity: this.particlePool.length,
@@ -4206,6 +4223,7 @@ export class RtsEngine {
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
       `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / 1.20s`,
+      `AI Think ms       ${this.aiDecisionTiming.lastMs.toFixed(2)} last / ${aiDecisionAverageMs.toFixed(2)} avg / ${this.aiDecisionTiming.maxMs.toFixed(2)} max`,
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
       `Renderer         ${rendererMode}`,
@@ -4509,7 +4527,15 @@ export class RtsEngine {
     if (this.aiTickAccumulator >= 1.2) {
       this.aiTickAccumulator = 0;
       this.aiDecisionCount += 1;
-      this.evaluateAiLogic();
+      const aiDecisionStartedAt = performance.now();
+      try {
+        this.evaluateAiLogic();
+      } finally {
+        this.aiDecisionTiming = recordAiDecisionTiming(
+          this.aiDecisionTiming,
+          Math.max(0, performance.now() - aiDecisionStartedAt),
+        );
+      }
     }
 
     // 7. Check Victory / Defeat
@@ -5001,6 +5027,9 @@ export class RtsEngine {
       unit.pathCooldown = 0;
       unit.pathRecoveryCooldown = MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS;
       unit.pathRecoveryCount = (unit.pathRecoveryCount || 0) + 1;
+      if (this.participants.some((participant) => participant.id === unit.faction && participant.controller === 'ai')) {
+        this.aiPathRecoveryTotal += 1;
+      }
     }
 
     if (!unit.waypoints || unit.waypoints.length === 0 || (goalShifted && (!unit.pathCooldown || unit.pathCooldown <= 0))) {
