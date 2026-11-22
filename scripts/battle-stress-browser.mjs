@@ -10,7 +10,7 @@ const counts = (process.env.BATTLE_STRESS_SCENARIOS || "100,200,400").split(",")
 const seed = Number(process.env.BATTLE_STRESS_SEED || 20261122);
 const map = process.env.BATTLE_STRESS_MAP || "highland_basin";
 const reportPath = process.env.BATTLE_STRESS_REPORT || "artifacts/battle-stress-browser-report.json";
-const minCaptureSamples = Number(process.env.BATTLE_STRESS_MIN_SAMPLES || 4);
+const minCaptureSamples = Number(process.env.BATTLE_STRESS_MIN_SAMPLES || 8);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const report = {
   startedAt: new Date().toISOString(),
@@ -141,17 +141,17 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
-      await sleep(1500);
-      await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', code: 'F3', bubbles: true, cancelable: true })); true");
-      const telemetry = await waitFor(async () => evaluate("(() => { const e = window.__rtsEngine; const p = [...document.querySelectorAll('[role=\"status\"]')].find(n => n.textContent?.includes('PERFORMANCE MONITOR')); if (!e || !p || p.style.display === 'none') return null; const t = p.textContent || ''; const samples = Number(t.match(/Capture Samples\\s+(\\d+)/)?.[1] || 0); if (samples < " + minCaptureSamples + ") return null; const value = re => Number((t.match(re)?.[1] || '').replaceAll(',', '') || NaN); return { samples, state: e.gameState, simulatedSeconds: e.stats.gameDuration, fps: value(/Frame FPS\\s+([\\d.]+)/), p95Ms: value(/Frame ms p95\\s+([\\d.]+)/), hitchMs: value(/Max hitch ms\\s+([\\d.]+)/), simulationAverageMs: value(/Simulation ms\\s+([\\d.]+)/), simulationMaxMs: value(/Simulation ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), renderAverageMs: value(/Render call ms\\s+([\\d.]+)/), renderMaxMs: value(/Render call ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), aiDecisionLastMs: value(/AI Think ms\\s+([\\d.]+)/), aiDecisionAverageMs: value(/AI Think ms\\s+[\\d.]+ last \\/ ([\\d.]+)/), aiDecisionMaxMs: value(/AI Think ms\\s+[\\d.]+ last \\/ [\\d.]+ avg \\/ ([\\d.]+)/), aStarSearches: value(/A\\* Searches\\s+(\\d+)/), aStarAiSearches: value(/A\\* Searches\\s+\\d+ total \\/ (\\d+)/), aStarEmptyPaths: value(/A\\* Searches\\s+\\d+ total \\/ \\d+ AI \\/ (\\d+)/), aStarAverageMs: value(/A\\* Search ms\\s+([\\d.]+)/), aStarMaxMs: value(/A\\* Search ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), drawCalls: value(/Draw Calls\\s+([\\d,]+)/), triangles: value(/Triangles\\s+([\\d,]+)/), renderer: t.match(/Renderer\\s+([^\\n]+)/)?.[1]?.trim() || 'unknown' }; })()"), 30000, count + "-unit F3 telemetry");
+      const telemetry = await waitFor(async () => evaluate("(() => { const e = window.__rtsEngine; const p = [...document.querySelectorAll('[role=\"status\"]')].find(n => n.textContent?.includes('PERFORMANCE MONITOR')); if (!e || !p || p.style.display === 'none') return null; const t = p.textContent || ''; const samples = Number(t.match(/Capture Samples\\s+(\\d+)/)?.[1] || 0); if (samples < " + minCaptureSamples + ") return null; const value = re => Number((t.match(re)?.[1] || '').replaceAll(',', '') || NaN); return { samples, state: e.gameState, simulatedSeconds: e.stats.gameDuration, fps: value(/Frame FPS\\s+([\\d.]+)/), p95Ms: value(/Frame ms p95\\s+([\\d.]+)/), hitchMs: value(/Max hitch ms\\s+([\\d.]+)/), simulationAverageMs: value(/Simulation ms\\s+([\\d.]+)/), simulationMaxMs: value(/Simulation ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), renderAverageMs: value(/Render call ms\\s+([\\d.]+)/), renderMaxMs: value(/Render call ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), aiDecisionLastMs: value(/AI Think ms\\s+([\\d.]+)/), aiDecisionAverageMs: value(/AI Think ms\\s+[\\d.]+ last \\/ ([\\d.]+)/), aiDecisionMaxMs: value(/AI Think ms\\s+[\\d.]+ last \\/ [\\d.]+ avg \\/ ([\\d.]+)/), aiHeartbeat: value(/AI Heartbeat\\s+(\\d+)/), aStarSearches: value(/A\\* Searches\\s+(\\d+)/), aStarAiSearches: value(/A\\* Searches\\s+\\d+ total \\/ (\\d+)/), aStarEmptyPaths: value(/A\\* Searches\\s+\\d+ total \\/ \\d+ AI \\/ (\\d+)/), aStarAverageMs: value(/A\\* Search ms\\s+([\\d.]+)/), aStarMaxMs: value(/A\\* Search ms\\s+[\\d.]+ avg \\/ ([\\d.]+)/), drawCalls: value(/Draw Calls\\s+([\\d,]+)/), triangles: value(/Triangles\\s+([\\d,]+)/), renderer: t.match(/Renderer\\s+([^\\n]+)/)?.[1]?.trim() || 'unknown' }; })()"), 30000, count + "-unit F3 telemetry");
 
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
-      for (const key of ["fps", "p95Ms", "hitchMs", "simulationAverageMs", "renderAverageMs", "drawCalls", "triangles"]) {
+      for (const key of ["fps", "p95Ms", "hitchMs", "simulationAverageMs", "renderAverageMs", "drawCalls", "triangles", "aiDecisionAverageMs"]) {
         assert.ok(Number.isFinite(telemetry[key]) && telemetry[key] > 0, "Invalid F3 metric: " + key);
       }
       telemetry.drawCalls = Math.floor(telemetry.drawCalls);
       telemetry.triangles = Math.floor(telemetry.triangles);
+      assert.ok(telemetry.aiHeartbeat > 0, "AI decision heartbeat did not advance during the browser battle.");
+      assert.ok(telemetry.aStarSearches > 0, "No A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
       report.scenarios.push({ count, initial, telemetry, exceptionCount: exceptions.length });
