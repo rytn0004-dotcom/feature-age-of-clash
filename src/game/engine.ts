@@ -87,6 +87,7 @@ import {
   shouldAiQueueWorker,
   selectAiWorkerResourceType,
   selectAiWorkerReassignment,
+  shouldRelocateFromResourceNode,
   calculateWallChainCost,
   WallChainPoint,
   layoutWallChain,
@@ -151,6 +152,7 @@ import {
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
 } from './rules';
+import { estimateDeliveredResourcePerMinute } from './economyInsights';
 import {
   getBuildingCollisionRadius,
   getResourceColliderRadius,
@@ -330,6 +332,7 @@ export class RtsEngine {
   public resourcesByFaction: Record<string, Resources> = {};
   private aiEconomyFlowByFaction = new Map<string, AiEconomyFlowState>();
   private aiWorkerRebalanceReadyAt = new Map<string, number>();
+  private aiNodeRelocationReadyAt = new Map<string, number>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public enemyResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public activeMods: GameMod[] = JSON.parse(JSON.stringify(INITIAL_MODS));
@@ -1132,6 +1135,7 @@ export class RtsEngine {
     this.battleStressInfo = null;
     this.aiEconomyFlowByFaction.clear();
     this.aiWorkerRebalanceReadyAt.clear();
+    this.aiNodeRelocationReadyAt.clear();
     this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
@@ -5721,6 +5725,89 @@ export class RtsEngine {
     if (this.selectedBuildingId === building.id) this.onSelectionChange?.();
   }
 
+  /**
+   * Selects a resource node by estimated deposited resources per minute.
+   * The scoring uses the same A* delivery-route estimate as the economy HUD,
+   * plus gather rate, carry capacity, node stock and current node congestion.
+   */
+  private findBestDeliveredResourceNode(
+    worker: UnitEntity,
+    resourceType?: ResourceType,
+    maxDistance = Infinity,
+    options: {
+      allowDeepFish?: boolean;
+      fishOnly?: boolean;
+      allowDangerousHunt?: boolean;
+      assignedCounts?: ReadonlyMap<string, number>;
+      excludedNodeIds?: ReadonlySet<string>;
+    } = {}
+  ): ResourceNode | null {
+    const isBoat = !!worker.unitDef.isNaval || worker.unitDefId === 'fishing_boat';
+    const candidates = this.resourceNodes
+      .filter((node) => {
+        if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) return false;
+        if (!canUnitGatherNode(worker.unitDef, node)) return false;
+        if (node.subtype === 'boar' && !options.allowDangerousHunt) return false;
+        if (!options.allowDeepFish && node.subtype === 'deep_fish') return false;
+        if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') return false;
+        if (options.excludedNodeIds?.has(node.id)) return false;
+        return getDistance(worker.x, worker.z, node.x, node.z) <= maxDistance;
+      })
+      .map((node) => {
+        const approachDistance = getDistance(worker.x, worker.z, node.x, node.z);
+        const assigned = Math.max(0, options.assignedCounts?.get(node.id) || 0);
+        const sourceBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
+        const richBonus = node.nodeTier === 'rich' ? 4 : 0;
+        return {
+          node,
+          approachDistance,
+          assigned,
+          preScore: approachDistance + assigned * 5.5 - sourceBonus - richBonus,
+        };
+      })
+      .sort((a, b) => a.preScore - b.preScore || a.node.id.localeCompare(b.node.id))
+      .slice(0, 12);
+
+    if (candidates.length === 0) return null;
+
+    const researchedTechs = this.getResearchedTechs(worker.faction);
+    const hasStarOath = (this.starOathUntil[worker.faction] || 0) > this.simTime;
+    const gatherSpeed = Math.max(0.01, worker.unitDef.stats.gatherSpeed || 0.5833);
+    const carryCapacity = Math.max(1, worker.unitDef.stats.carryCapacity || 1);
+    const moveSpeed = Math.max(0.1, worker.unitDef.stats.speed || 1);
+    let best: ResourceNode | null = null;
+    let bestScore = -Infinity;
+
+    for (const candidate of candidates) {
+      const node = candidate.node;
+      const routeDistance = this.estimateResourceDeliveryTravelDistance(worker.faction, worker, node);
+      const oneWayDistance = routeDistance !== null && Number.isFinite(routeDistance)
+        ? routeDistance
+        : candidate.approachDistance;
+      const effectiveGatherRate = gatherSpeed * getEffectiveGatherMultiplier(node, researchedTechs, hasStarOath);
+      const deliveredPerMinute = estimateDeliveredResourcePerMinute(
+        effectiveGatherRate,
+        carryCapacity,
+        moveSpeed,
+        oneWayDistance
+      );
+      const stockFactor = 0.55 + 0.45 * Math.min(1, node.amount / (carryCapacity * 2));
+      const congestionFactor = 1 + candidate.assigned * 0.18;
+      const approachFactor = 1 + candidate.approachDistance / moveSpeed / 45;
+      const score = deliveredPerMinute * stockFactor / (congestionFactor * approachFactor);
+
+      if (
+        score > bestScore ||
+        (Math.abs(score - bestScore) < 1e-9 && (!best || node.id.localeCompare(best.id) < 0))
+      ) {
+        best = node;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
   private stepUnitGathering(unit: UnitEntity, dt: number) {
     if (!unit.targetResourceNodeId) {
       unit.state = 'idle';
@@ -5731,17 +5818,11 @@ export class RtsEngine {
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      const carriedType = unit.carryingResource?.type;
+      const fallbackType = node?.resourceType ?? carriedType;
       const nextNode = isBoat
-        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 95, true, true)
-        : node?.resourceType === 'food'
-        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 36, false, false)
-        : findClosestResourceNode(
-            unit.x,
-            unit.z,
-            this.resourceNodes.filter((n) => n.subtype !== 'deep_fish'),
-            node?.resourceType,
-            36
-          );
+        ? this.findBestDeliveredResourceNode(unit, 'food', 95, { allowDeepFish: true, fishOnly: true })
+        : this.findBestDeliveredResourceNode(unit, fallbackType, 36);
       if (nextNode) {
         unit.targetResourceNodeId = nextNode.id;
         unit.waypoints = undefined;
@@ -9133,12 +9214,23 @@ export class RtsEngine {
         this.resourceNodes.map((node) => [node.id, node] as const)
       );
       const nodeWorkerCounts = new Map<string, number>();
+      const nodeGatherRateById = new Map<string, number>();
+      const aiGatherTechs = this.getResearchedTechs(aiId);
+      const aiHasStarOath = (this.starOathUntil[aiId] || 0) > this.simTime;
       for (const w of aiActiveWorkers) {
         if (w.state === 'returning_resource' && w.carryingResource) {
           activeCounts[w.carryingResource.type]++;
         } else if (w.state === 'gathering' && w.targetResourceNodeId) {
           const n = resourceNodeById.get(w.targetResourceNodeId);
-          if (n && n.amount > 0) activeCounts[n.resourceType]++;
+          if (n && n.amount > 0) {
+            activeCounts[n.resourceType]++;
+            const gatherRate = (w.unitDef.stats.gatherSpeed || 2) *
+              getEffectiveGatherMultiplier(n, aiGatherTechs, aiHasStarOath);
+            nodeGatherRateById.set(
+              n.id,
+              (nodeGatherRateById.get(n.id) || 0) + gatherRate
+            );
+          }
         }
 
         if ((w.state === 'gathering' || w.state === 'returning_resource') && w.targetResourceNodeId) {
@@ -9157,12 +9249,17 @@ export class RtsEngine {
       const availableResourceTypes = Array.from(
         new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
       );
-      const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType): boolean => {
+      const assignWorkerToType = (
+        worker: UnitEntity,
+        prefType: ResourceType,
+        excludedNodeIds?: ReadonlySet<string>
+      ): boolean => {
         const preferredRange = prefType === 'food' ? 38 : 36;
+        const options = { assignedCounts: nodeWorkerCounts, excludedNodeIds };
         const node =
-          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, preferredRange) ||
-          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, 54) ||
-          findBalancedResourceNode(worker.x, worker.z, landNodes, prefType, nodeWorkerCounts);
+          this.findBestDeliveredResourceNode(worker, prefType, preferredRange, options) ||
+          this.findBestDeliveredResourceNode(worker, prefType, 54, options) ||
+          this.findBestDeliveredResourceNode(worker, prefType, Infinity, options);
         if (!node) return false;
 
         worker.targetResourceNodeId = node.id;
@@ -9205,6 +9302,67 @@ export class RtsEngine {
           availableResourceTypes
         );
         if (bestType) assignWorkerToType(w, bestType);
+      }
+
+      // Predict node depletion and move one gatherer before the group runs dry.
+      // The cooldown avoids evacuating an entire deposit in one AI decision.
+      const nodeRelocationReadyAt = this.aiNodeRelocationReadyAt.get(aiId) || 0;
+      if (this.stats.gameDuration >= nodeRelocationReadyAt) {
+        const lowStockNodes = [...nodeGatherRateById.entries()]
+          .map(([nodeId, totalRate]) => {
+            const resourceNode = resourceNodeById.get(nodeId);
+            return resourceNode
+              ? {
+                  node: resourceNode,
+                  totalRate,
+                  remainingSeconds: resourceNode.amount / Math.max(0.001, totalRate),
+                }
+              : null;
+          })
+          .filter((entry): entry is NonNullable<typeof entry> =>
+            !!entry && shouldRelocateFromResourceNode(entry.node.amount, entry.totalRate, 12)
+          )
+          .sort((a, b) =>
+            a.remainingSeconds - b.remainingSeconds || a.node.id.localeCompare(b.node.id)
+          );
+
+        for (const depletedSoon of lowStockNodes) {
+          const relocatingWorker = aiEconomicWorkers
+            .filter((worker) =>
+              worker.state === 'gathering' &&
+              worker.targetResourceNodeId === depletedSoon.node.id
+            )
+            .sort((a, b) => a.id.localeCompare(b.id))[0];
+          if (!relocatingWorker) continue;
+
+          const replacementNode = this.findBestDeliveredResourceNode(
+            relocatingWorker,
+            depletedSoon.node.resourceType,
+            Infinity,
+            {
+              assignedCounts: nodeWorkerCounts,
+              excludedNodeIds: new Set([depletedSoon.node.id]),
+            }
+          );
+          if (!replacementNode) continue;
+
+          const previousCount = nodeWorkerCounts.get(depletedSoon.node.id) || 0;
+          nodeWorkerCounts.set(depletedSoon.node.id, Math.max(0, previousCount - 1));
+          nodeWorkerCounts.set(
+            replacementNode.id,
+            (nodeWorkerCounts.get(replacementNode.id) || 0) + 1
+          );
+          relocatingWorker.targetResourceNodeId = replacementNode.id;
+          relocatingWorker.waypoints = undefined;
+          relocatingWorker.pathGoal = undefined;
+          const replacementMeta = this.getResourceDisplayMeta(replacementNode);
+          relocatingWorker.currentActionText = `${replacementMeta.icon} 資源將耗盡，轉往${replacementMeta.action}`;
+          this.aiNodeRelocationReadyAt.set(
+            aiId,
+            this.stats.gameDuration + 4.8
+          );
+          break;
+        }
       }
 
       // Gradually rebalance one gatherer per decision when a resource has a clear surplus
