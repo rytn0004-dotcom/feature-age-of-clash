@@ -1984,7 +1984,7 @@ export class RtsEngine {
   private estimateResourceDeliveryTravelDistance(
     faction: FactionId,
     worker: { unitDef: UnitEntity['unitDef']; x: number; z: number },
-    node: ResourceNode
+    node: Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'x' | 'z'>
   ): number | null {
     const isNaval = !!worker.unitDef.isNaval || worker.unitDef.id === 'fishing_boat';
     const resourceType = node.resourceType;
