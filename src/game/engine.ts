@@ -3059,11 +3059,27 @@ export class RtsEngine {
     const dirZ = length > 0.001 ? dz / length : 0;
     const sideX = -dirZ;
     const sideZ = dirX;
-    // Shift the formation anchor forward so the role lanes are centred around the
-    // requested destination instead of leaving the whole army several units short.
+    // Centre the whole role formation on the clicked destination. The required
+    // forward offset depends on the selected composition: a pure melee group is
+    // shallower than a siege-heavy column.
+    let cavalryFormationIndex = 0;
+    const averageFormationDepth = combatUnits.length > 0
+      ? combatUnits.reduce((total, unit) => {
+          let depth = 9;
+          if (unit.unitDef.category === 'melee') depth = 5.2;
+          else if (unit.unitDef.category === 'ranged') depth = 11.2;
+          else if (unit.unitDef.category === 'siege') depth = 18.5;
+          else if (unit.unitDef.category === 'cavalry') {
+            depth = 8.2 + Math.floor(cavalryFormationIndex / 2) * 1.4;
+            cavalryFormationIndex += 1;
+          }
+          return total + depth;
+        }, 0) / combatUnits.length
+      : 0;
+    const formationSpacingScale = Math.min(1.55, 1 + Math.max(0, combatUnits.length - 8) * 0.006);
     const formationAnchor = {
-      x: goal.x + dirX * 11,
-      z: goal.z + dirZ * 11,
+      x: goal.x + dirX * averageFormationDepth * formationSpacingScale,
+      z: goal.z + dirZ * averageFormationDepth * formationSpacingScale,
     };
     const formationSlots = new Map(
       (combatUnits.length > 1
