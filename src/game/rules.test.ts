@@ -3191,25 +3191,42 @@ test('production timing bonuses are applied only to their intended civilization 
 });
 
 
-test('cooperative construction uses deterministic diminishing returns and a soft cap', () => {
+test('cooperative construction follows the requested contribution curve', () => {
   assert.equal(getConstructionWorkerMultiplier(0), 0);
   assert.equal(getConstructionWorkerMultiplier(1), 1);
-  assert.equal(getConstructionWorkerMultiplier(2), 1.65);
-  assert.equal(getConstructionWorkerMultiplier(3), 2.1);
-  assert.equal(getConstructionWorkerMultiplier(4), 2.4);
-  assert.equal(getConstructionWorkerMultiplier(8), 2.91);
-  assert.equal(getConstructionWorkerMultiplier(20), 2.91);
+  assert.equal(getConstructionWorkerMultiplier(2), 1.75);
+  assert.equal(getConstructionWorkerMultiplier(3), 2.35);
+  assert.equal(getConstructionWorkerMultiplier(4), 2.85);
+  assert.equal(getConstructionWorkerMultiplier(5), 3.35);
+  assert.equal(getConstructionWorkerMultiplier(6), 3.85);
+  assert.equal(getConstructionWorkerMultiplier(8), 4.85);
+  assert.equal(getConstructionWorkerMultiplier(10), 5.85);
   assert.equal(getConstructionWorkerMultiplier(-2), 0);
   assert.equal(getConstructionWorkerMultiplier(Number.NaN), 0);
 });
 
 test('construction ETA shares the live builder and civilization speed formula', () => {
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), 36 / 1.65);
-  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), 15);
-  assert.ok(Math.abs(estimateConstructionTimeRemaining(40, 0.1, 4, 1.05)! - 15 / 1.05) < 1e-9);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), 36 / 1.75);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), 36 / 2.85);
   assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
   assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
   assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1, 0), null);
+});
+
+test('age-up landmark durations match the requested single-builder completion targets', () => {
+  const ageTwoLandmarks = [DEFAULT_BUILDINGS.landmark_aachen, DEFAULT_BUILDINGS.landmark_barracks];
+  const ageThreeLandmarks = [DEFAULT_BUILDINGS.landmark_guildhall, DEFAULT_BUILDINGS.landmark_citadel];
+  const ageFourLandmarks = [DEFAULT_BUILDINGS.landmark_observatory, DEFAULT_BUILDINGS.landmark_arsenal];
+
+  for (const landmark of ageTwoLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 200) < 1e-9);
+  }
+  for (const landmark of ageThreeLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 235) < 1e-9);
+  }
+  for (const landmark of ageFourLandmarks) {
+    assert.ok(Math.abs(estimateConstructionTimeRemaining(landmark.buildTime, 0.1, 1)! - 300) < 1e-9);
+  }
 });
