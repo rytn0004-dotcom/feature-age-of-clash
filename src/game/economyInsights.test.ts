@@ -42,3 +42,23 @@ test('age readiness reports only the remaining food and gold requirements', () =
     { food: 0, gold: 0, ready: true },
   );
 });
+
+test('delivered gathering rate accounts for round-trip storage travel and carry capacity', async () => {
+  const { estimateDeliveredResourcePerMinute } = await import('./economyInsights');
+  const theoreticalPerMinute = 0.75 * 60;
+  const atDropOff = estimateDeliveredResourcePerMinute(0.75, 15, 1.5, 0);
+  const nearbyStorage = estimateDeliveredResourcePerMinute(0.75, 15, 1.5, 12);
+  const distantStorage = estimateDeliveredResourcePerMinute(0.75, 15, 1.5, 36);
+  assert.equal(atDropOff, theoreticalPerMinute);
+  assert.ok(nearbyStorage < atDropOff);
+  assert.ok(distantStorage < nearbyStorage);
+  assert.ok(
+    estimateDeliveredResourcePerMinute(0.75, 30, 1.5, 36) > distantStorage,
+    'Larger carry capacity should amortize travel time over more gathered resources.',
+  );
+  assert.ok(
+    estimateDeliveredResourcePerMinute(0.75, 15, 3, 36) > distantStorage,
+    'Faster workers should spend less simulated time walking.',
+  );
+  assert.equal(estimateDeliveredResourcePerMinute(0, 15, 1.5, 10), 0);
+});
