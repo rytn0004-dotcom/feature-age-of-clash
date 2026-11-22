@@ -2,11 +2,14 @@ import {
   AgeLevel,
   BuildingType,
   CivilizationId,
+  GameMod,
+  LandmarkType,
   ResourceType,
   TechDefinition,
   UnitCategory,
   UnitStats,
 } from '../types/game';
+import { DEFAULT_BUILDINGS } from './mods';
 
 export interface CivilizationConfig {
   id: CivilizationId;
@@ -59,6 +62,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -71,6 +75,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '皇家攻城工坊',
       dock: '帝國海軍碼頭',
       wall: '石砌木欄防禦牆',
+      gate: '帝國吊橋城門',
       tower: '石砌警戒箭塔',
       castle: '聖殿重裝要塞',
     },
@@ -116,6 +121,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -128,6 +134,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '忍具攻城工房',
       dock: '蒼嵐漁港棧橋',
       wall: '竹木矢來防禦垣',
+      gate: '忍界木鐵城門',
       tower: '靈脈結界哨塔',
       castle: '蒼嵐大本營御殿',
     },
@@ -173,6 +180,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       'lumber_camp',
       'mining_camp',
       'wall',
+      'gate',
       'tower',
       'castle',
     ],
@@ -185,6 +193,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       siege_workshop: '遠古根鬚攻城工坊',
       dock: '森靈港口棧道',
       wall: '秘銀棘石防禦牆',
+      gate: '秘銀符文城門',
       tower: '秘銀晶石守望塔',
       castle: '森靈遠古聖堡',
     },
@@ -193,7 +202,7 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       dock: ['fishing_boat', 'transport_boat', 'war_galley'],
       barracks: ['fantasy_footman'],
       archery_range: ['fantasy_mage'],
-      stable: ['fantasy_paladin'],
+      stable: ['fantasy_paladin', 'scout_rider'],
       siege_workshop: ['fantasy_treant', 'catapult', 'bombard_cannon'],
       landmark_barracks: ['fantasy_footman'],
       landmark_citadel: [],
@@ -743,8 +752,8 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
     roleTag: '互斥·爆兵',
     exclusiveGroup: 'doctrine_army_style',
     exclusiveLabel: '軍團作戰路線 (二選一)',
-    description: '【時代 II 互斥路線】簡化徵募與行軍編制，極速暴兵搶佔據點並壓垮對手節奏！',
-    effectLabel: '全兵種訓練時間 -25% · 移速 +8%',
+    description: '【時代 II 互斥路線】簡化步兵、遠程與騎兵的徵募編制，縮短這三類部隊的訓練時間並提升行軍速度。',
+    effectLabel: '步兵／遠程／騎兵訓練時間 -25% · 移速 +8%',
     cost: { food: 90, wood: 0, gold: 70, stone: 0 },
     researchTime: 10,
     requiredAge: 2,
@@ -910,8 +919,30 @@ export function getCivilizationConfig(civId?: CivilizationId): CivilizationConfi
   return CIVILIZATIONS.medieval;
 }
 
-export function getBuildableTypesForCiv(civId?: CivilizationId): BuildingType[] {
-  return [...getCivilizationConfig(civId).buildableBuildings];
+/**
+ * Shared authority for military/economy building availability.
+ * Buildings with no explicit age gate are available from Age I.
+ */
+export function isBuildingBuildableForCiv(
+  buildingType: BuildingType,
+  civId: CivilizationId | undefined,
+  currentAge: number
+): boolean {
+  const civ = getCivilizationConfig(civId);
+  const building = DEFAULT_BUILDINGS[buildingType];
+  if (!building || !Number.isFinite(currentAge)) return false;
+  return civ.buildableBuildings.includes(buildingType) &&
+    currentAge >= (building.requiredAge ?? 1);
+}
+
+/** Returns only buildings this civilization can construct in the current age. */
+export function getBuildableTypesForCiv(
+  civId?: CivilizationId,
+  currentAge = 4
+): BuildingType[] {
+  return getCivilizationConfig(civId).buildableBuildings.filter(
+    (buildingType) => isBuildingBuildableForCiv(buildingType, civId, currentAge)
+  );
 }
 
 export function getTrainableUnitsForBuilding(
@@ -1014,13 +1045,90 @@ export function getAllTechsForCiv(civId?: CivilizationId): TechDefinition[] {
   );
 }
 
-export function getTrainingTimeMultiplier(researchedIds: string[]): number {
+/**
+ * Construction speed comes from the enabled civilization pack. A malformed or
+ * missing mod multiplier safely falls back to the neutral 1x rate.
+ */
+export function getCivilizationBuildSpeedMultiplier(
+  civId: CivilizationId | undefined,
+  activeMods: readonly GameMod[]
+): number {
+  const resolvedCiv = getCivilizationConfig(civId).id;
+  const sourceMod = activeMods.find(
+    (mod) =>
+      mod.enabled &&
+      mod.unitDefinitions.some((unit) => unit.factionPack === resolvedCiv)
+  );
+  const multiplier = sourceMod?.balanceMultipliers.buildSpeed ?? 1;
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+}
+
+/**
+ * Production is intentionally paced slightly slower than the data-field baseline.
+ * All production-speed bonuses (civilization, technology, landmark and forge)
+ * share one global ceiling so their multiplicative stacking cannot create runaway queues.
+ */
+export const PRODUCTION_TIME_SCALE = 1.12;
+export const MAX_PRODUCTION_SPEED_MULTIPLIER = 1.12;
+
+export function getCappedProductionSpeedMultiplier(...multipliers: number[]): number {
+  const combined = multipliers.reduce((total, value) => {
+    const safeValue = Number.isFinite(value) && value > 0 ? value : 1;
+    return total * safeValue;
+  }, 1);
+  return +Math.min(MAX_PRODUCTION_SPEED_MULTIPLIER, Math.max(0.05, combined)).toFixed(3);
+}
+
+/** Duration for one production action, with all speed bonuses sharing the 1.12x ceiling. */
+export function getEffectiveProductionDuration(
+  baseDuration: number,
+  ...speedMultipliers: number[]
+): number {
+  if (!Number.isFinite(baseDuration) || baseDuration <= 0) return 0;
+  return +(baseDuration * PRODUCTION_TIME_SCALE /
+    getCappedProductionSpeedMultiplier(...speedMultipliers)).toFixed(3);
+}
+
+/** Unit training applies research duration modifiers as speed bonuses, then caps the combined result. */
+export function getEffectiveUnitTrainingDuration(
+  trainTime: number,
+  technologyTimeMultiplier = 1,
+  ...speedMultipliers: number[]
+): number {
+  const safeTechTimeMultiplier =
+    Number.isFinite(technologyTimeMultiplier) && technologyTimeMultiplier > 0
+      ? technologyTimeMultiplier
+      : 1;
+  return getEffectiveProductionDuration(
+    Math.max(2, Number.isFinite(trainTime) ? trainTime : 2),
+    1 / safeTechTimeMultiplier,
+    ...speedMultipliers
+  );
+}
+
+/** The White Tower's +35% production bonus applies only to melee infantry. */
+export function getLandmarkTrainingSpeedMultiplier(
+  landmarks: readonly LandmarkType[],
+  category: UnitCategory
+): number {
+  return landmarks.includes('landmark_barracks') && category === 'melee' ? 1.35 : 1;
+}
+
+export function getTrainingTimeMultiplier(
+  researchedIds: string[],
+  category?: UnitCategory
+): number {
   let mult = 1;
   for (const tId of researchedIds) {
     const t = findTechDef(tId);
-    if (t?.effect.trainTimeMultiplier) {
-      mult *= t.effect.trainTimeMultiplier;
-    }
+    if (!t?.effect.trainTimeMultiplier) continue;
+    // A category-scoped training doctrine must not shorten worker, siege or
+    // naval/special production unless those categories are explicitly listed.
+    const appliesToCategory =
+      category === undefined ||
+      !t.targetCategories?.length ||
+      t.targetCategories.includes(category);
+    if (appliesToCategory) mult *= t.effect.trainTimeMultiplier;
   }
   return +Math.max(0.45, mult).toFixed(3);
 }

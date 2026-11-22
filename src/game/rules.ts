@@ -19,7 +19,302 @@ import {
   TechDefinition,
   UnitCategory,
 } from '../types/game';
-import { findTechDef, getResourceGatherTechMultiplier } from './civilizations';
+import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
+import { estimateDeliveredResourcePerMinute } from './economyInsights';
+
+export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
+export const FIELD_RAM_REQUIRED_INFANTRY = 4;
+export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+/** Field-assembled battering rams follow the same global production time scale. */
+export const FIELD_RAM_ASSEMBLY_BASE_DURATION = 18;
+export const FIELD_RAM_ASSEMBLY_DURATION = getEffectiveProductionDuration(FIELD_RAM_ASSEMBLY_BASE_DURATION);
+
+/** Ready-builder estimate for the 4-person project; fewer than 3 cancels assembly. */
+export function estimateFieldRamAssemblyDuration(readyBuilderCount: number): number | null {
+  const readyCount = Math.floor(Number.isFinite(readyBuilderCount) ? readyBuilderCount : 0);
+  if (readyCount < 3) return null;
+  return +(FIELD_RAM_ASSEMBLY_DURATION * 4 / readyCount).toFixed(3);
+}
+
+
+export const WALL_REPAIR_COST: Resources = { food: 0, wood: 12, gold: 0, stone: 5 };
+
+/**
+ * Builder contribution curve requested for cooperative construction:
+ * worker 1 = 1.00; workers 2–5 add 0.75 / 0.60 / 0.50 / 0.50;
+ * every worker after the fifth adds a further 0.50.
+ *
+ * This gives the first builder full value while keeping additional builders
+ * useful without allowing them to multiply construction speed linearly.
+ */
+const INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS = [1, 0.75, 0.6, 0.5, 0.5] as const;
+const ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION = 0.5;
+
+export function getConstructionWorkerMultiplier(workerCount: number): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(workerCount) ? workerCount : 0));
+  if (count === 0) return 0;
+
+  const initialCount = Math.min(count, INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  const initialMultiplier = INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS
+    .slice(0, initialCount)
+    .reduce((total, contribution) => total + contribution, 0);
+  const additionalCount = Math.max(0, count - INITIAL_CONSTRUCTION_WORKER_CONTRIBUTIONS.length);
+  return +(initialMultiplier + additionalCount * ADDITIONAL_CONSTRUCTION_WORKER_CONTRIBUTION).toFixed(3);
+}
+
+/** Returns null when there are no active builders or the inputs are invalid. */
+export function estimateConstructionTimeRemaining(
+  buildTime: number,
+  progress: number,
+  workerCount: number,
+  constructionSpeedMultiplier = 1
+): number | null {
+  if (
+    !Number.isFinite(buildTime) ||
+    buildTime <= 0 ||
+    !Number.isFinite(progress) ||
+    !Number.isFinite(constructionSpeedMultiplier) ||
+    constructionSpeedMultiplier <= 0
+  ) {
+    return null;
+  }
+  const workerMultiplier = getConstructionWorkerMultiplier(workerCount);
+  if (workerMultiplier <= 0) return null;
+  const cappedSpeed = getCappedProductionSpeedMultiplier(constructionSpeedMultiplier);
+  const remainingBaseWork = Math.max(0, 1 - Math.max(0, Math.min(1, progress))) * buildTime;
+  return getEffectiveProductionDuration(remainingBaseWork, cappedSpeed) / workerMultiplier;
+}
+
+/**
+ * AI combat units withdraw to friendly garrisons when critically damaged.
+ * Ranged troops are protected earlier; siege engines and workers use their
+ * own specialist survival/economy routines and are deliberately excluded.
+ */
+export function shouldAiUnitSeekShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  personality: 'easy' | 'standard' | 'hard' | 'defensive' = 'standard'
+): boolean {
+  if (
+    category === 'worker' ||
+    category === 'siege' ||
+    !Number.isFinite(hp) ||
+    !Number.isFinite(maxHp) ||
+    maxHp <= 0
+  ) {
+    return false;
+  }
+
+  const roleThreshold: Partial<Record<UnitCategory, number>> = {
+    melee: 0.28,
+    ranged: 0.38,
+    cavalry: 0.32,
+    special: 0.34,
+  };
+  const personalityScale = personality === 'defensive'
+    ? 1.3
+    : personality === 'hard'
+      ? 0.88
+      : personality === 'easy'
+        ? 0.82
+        : 1;
+
+  return Math.max(0, hp) / maxHp <= (roleThreshold[category] || 0.3) * personalityScale;
+}
+
+/** Workers resume their economy immediately; military units stay sheltered until recovered. */
+export function shouldAiUnitLeaveShelter(
+  hp: number,
+  maxHp: number,
+  category: UnitCategory,
+  recoveryRatio = 0.72
+): boolean {
+  if (category === 'worker') return true;
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  const threshold = Number.isFinite(recoveryRatio)
+    ? Math.max(0, Math.min(1, recoveryRatio))
+    : 0.72;
+  return Math.max(0, hp) / maxHp >= threshold;
+}
+/** A live unit can reserve one shelter slot while it is actively walking to that garrison. */
+export interface GarrisonReservationUnit {
+  id: string;
+  faction: string;
+  hp: number;
+  state: string;
+  targetGarrisonBuildingId?: string;
+  garrisonedInBuildingId?: string;
+}
+
+export function countPendingGarrisonReservations(
+  buildingId: string,
+  faction: string,
+  units: readonly GarrisonReservationUnit[],
+  excludedUnitIds?: ReadonlySet<string>
+): number {
+  let count = 0;
+  for (const unit of units) {
+    if (
+      Number.isFinite(unit.hp) &&
+      unit.hp > 0 &&
+      unit.faction === faction &&
+      unit.state === 'garrisoning' &&
+      unit.targetGarrisonBuildingId === buildingId &&
+      !unit.garrisonedInBuildingId &&
+      !excludedUnitIds?.has(unit.id)
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** Remaining capacity after both occupants and live incoming reservations are accounted for. */
+export function getAvailableGarrisonSlots(
+  maxCapacity: number,
+  occupiedCount: number,
+  incomingCount = 0
+): number {
+  if (!Number.isFinite(maxCapacity) || maxCapacity <= 0) return 0;
+  const capacity = Math.floor(maxCapacity);
+  const occupied = Number.isFinite(occupiedCount)
+    ? Math.max(0, Math.floor(occupiedCount))
+    : capacity;
+  const incoming = Number.isFinite(incomingCount)
+    ? Math.max(0, Math.floor(incomingCount))
+    : capacity;
+  return Math.max(0, capacity - occupied - incoming);
+}
+
+export interface GarrisonShelterCandidate {
+  id: string;
+  x: number;
+  z: number;
+  freeSlots: number;
+}
+
+/** Select the nearest available shelter in linear time, with stable ID tie-breaking. */
+export function selectNearestGarrisonShelter<T extends GarrisonShelterCandidate>(
+  x: number,
+  z: number,
+  candidates: readonly T[]
+): T | null {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+
+  let best: T | null = null;
+  let bestDistanceSq = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    if (
+      candidate.freeSlots <= 0 ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z)
+    ) {
+      continue;
+    }
+    const dx = candidate.x - x;
+    const dz = candidate.z - z;
+    const distanceSq = dx * dx + dz * dz;
+    if (!Number.isFinite(distanceSq)) continue;
+
+    if (
+      distanceSq < bestDistanceSq ||
+      (distanceSq === bestDistanceSq && (!best || candidate.id < best.id))
+    ) {
+      best = candidate;
+      bestDistanceSq = distanceSq;
+    }
+  }
+  return best;
+}
+
+export const WALL_BREACH_HP_RATIO = 0.32;
+export const WALL_TOWER_LINK_RANGE = 5.8;
+
+/** A siege hit opens a repairable breach once a wall segment falls below its structural threshold. */
+export function shouldBreachWallAfterSiegeHit(
+  building: Pick<BuildingEntity, 'buildingDef' | 'hp' | 'maxHp' | 'wallBreached'>
+): boolean {
+  return (
+    !!building.buildingDef.isWall &&
+    !building.wallBreached &&
+    building.hp > 0 &&
+    building.hp <= building.maxHp * WALL_BREACH_HP_RATIO
+  );
+}
+
+/** A completed friendly watchtower reinforces nearby wall sections and gates. */
+export function isWallLinkedToTower(
+  wall: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed' | 'wallBreached' | 'gateOpen'>,
+  buildings: readonly Pick<BuildingEntity, 'buildingType' | 'faction' | 'x' | 'z' | 'hp' | 'isConstructed'>[]
+): boolean {
+  if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed || wall.wallBreached || (wall.buildingType === 'gate' && wall.gateOpen)) return false;
+  return buildings.some(
+    (building) =>
+      building.buildingType === 'tower' &&
+      building.faction === wall.faction &&
+      building.hp > 0 &&
+      building.isConstructed &&
+      getDistance(wall.x, wall.z, building.x, building.z) <= WALL_TOWER_LINK_RANGE
+  );
+}
+
+export const WALL_SEGMENT_SPACING = 2.7;
+
+export interface WallChainPoint {
+  x: number;
+  z: number;
+}
+
+export interface WallSegmentPlacement extends WallChainPoint {
+  rotationY: number;
+  sectionIndex: number;
+}
+
+/**
+ * Converts clicked wall corners into oriented modular wall pieces.
+ * Each section is evenly subdivided so the 2.85-unit wall mesh slightly overlaps its neighbours.
+ */
+export function layoutWallChain(
+  points: readonly WallChainPoint[],
+  maxSpacing = WALL_SEGMENT_SPACING
+): WallSegmentPlacement[] {
+  if (points.length < 2 || !Number.isFinite(maxSpacing) || maxSpacing <= 0) return [];
+
+  const placements: WallSegmentPlacement[] = [];
+  for (let sectionIndex = 0; sectionIndex < points.length - 1; sectionIndex++) {
+    const start = points[sectionIndex];
+    const end = points[sectionIndex + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (!Number.isFinite(length) || length < 0.75) continue;
+
+    const count = Math.max(1, Math.ceil(length / maxSpacing));
+    const rotationY = -Math.atan2(dz, dx);
+    for (let index = 0; index < count; index++) {
+      const t = (index + 0.5) / count;
+      placements.push({
+        x: start.x + dx * t,
+        z: start.z + dz * t,
+        rotationY,
+        sectionIndex,
+      });
+    }
+  }
+  return placements;
+}
+
+/** Wall costs scale by the number of modular segments, not by the number of clicks. */
+export function calculateWallChainCost(segmentCount: number, costPerSegment: Resources): Resources {
+  const count = Math.max(0, Math.floor(Number.isFinite(segmentCount) ? segmentCount : 0));
+  return {
+    food: (costPerSegment.food || 0) * count,
+    wood: (costPerSegment.wood || 0) * count,
+    gold: (costPerSegment.gold || 0) * count,
+    stone: (costPerSegment.stone || 0) * count,
+  };
+}
 
 /**
  * Per-second income from a captured strategic shrine.
@@ -49,6 +344,74 @@ export function canAfford(current: Resources, cost: Resources): boolean {
     current.gold >= (cost.gold || 0) &&
     current.stone >= (cost.stone || 0)
   );
+}
+
+/** Shared age gate used by player, AI, construction and unit production paths. */
+export function isAgeUnlocked(requiredAge: AgeLevel | undefined, currentAge: AgeLevel | number): boolean {
+  return requiredAge === undefined || currentAge >= requiredAge;
+}
+
+/** Centralized field-ram requirements shared by gameplay and the HUD. */
+export function canAssembleFieldRam(
+  currentAge: AgeLevel | number,
+  researchedTechIds: readonly string[],
+  eligibleInfantryCount: number,
+  resources: Resources
+): { ok: boolean; reason?: string } {
+  if (!isAgeUnlocked(2, currentAge)) {
+    return { ok: false, reason: '🔒 野戰工程隊需要時代 II' };
+  }
+  if (!researchedTechIds.includes(FIELD_RAM_TECH_ID)) {
+    return { ok: false, reason: '🔒 請先在兵營研發「野戰工程隊」' };
+  }
+  if (eligibleInfantryCount < FIELD_RAM_REQUIRED_INFANTRY) {
+    return { ok: false, reason: '🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵' };
+  }
+  if (!canAfford(resources, FIELD_RAM_COST)) {
+    return { ok: false, reason: '⚠️ 野戰衝車需要 140 木材與 60 黃金' };
+  }
+  return { ok: true };
+}
+
+export interface AiFieldEngineeringReadiness {
+  age: number;
+  researched: boolean;
+  researchInProgress: boolean;
+  meleeUnitCount: number;
+  hasAvailableBarracks: boolean;
+  prerequisitesMet: boolean;
+  resources: Resources;
+  reserveFood: number;
+  reserveGold: number;
+  techCost: Resources;
+}
+
+/** Maps the generic AI "knight" request to an actual cavalry unit in every civilization. */
+export function resolveAiKnightUnitId(civilizationId: string): string {
+  if (civilizationId === 'anime') return 'scout_rider';
+  if (civilizationId === 'fantasy') return 'fantasy_paladin';
+  return 'knight';
+}
+
+/** Prioritizes the Age II field-engineering unlock over optional research once the AI can afford it safely. */
+export function shouldPrioritizeAiFieldEngineering(input: AiFieldEngineeringReadiness): boolean {
+  if (
+    input.age < 2 ||
+    input.researched ||
+    input.researchInProgress ||
+    input.meleeUnitCount < FIELD_RAM_REQUIRED_INFANTRY ||
+    !input.hasAvailableBarracks ||
+    !input.prerequisitesMet
+  ) {
+    return false;
+  }
+
+  const spendable: Resources = {
+    ...input.resources,
+    food: Math.max(0, input.resources.food - input.reserveFood),
+    gold: Math.max(0, input.resources.gold - input.reserveGold),
+  };
+  return canAfford(spendable, input.techCost);
 }
 
 /**
@@ -113,7 +476,7 @@ export function getUnitVsUnitDamage(
  * Returns effective building armor considering base armor, Age era reinforcement, and defensive techs.
  */
 export function getEffectiveBuildingArmor(
-  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType'>,
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'wallTowerLinked'>,
   defenderAge = 1,
   defenderTechIds: string[] = []
 ): number {
@@ -126,7 +489,8 @@ export function getEffectiveBuildingArmor(
       techBonus += tech.effect.buildingArmorBonus;
     }
   }
-  return baseArmor + ageBonus + techBonus;
+  const towerLinkBonus = building.wallTowerLinked ? 4 : 0;
+  return baseArmor + ageBonus + techBonus + towerLinkBonus;
 }
 
 
@@ -473,6 +837,10 @@ export interface AiEvaluationSnapshot {
   gold: number;
   stone: number;
   armyCount: number;
+  meleeCount?: number;
+  rangedCount?: number;
+  cavalryCount?: number;
+  siegeCount?: number;
   workerCount: number;
   underAttack: number; // 1 or 0
   enemyProximity: number; // distance to closest enemy
@@ -591,6 +959,68 @@ export function evaluateAiPlan(
   };
 }
 
+
+/** Build stock targets from next-age cost and the rolling, observed net burn rate. */
+export function computeAiResourceDemandTargets(
+  age: AgeLevel | number,
+  netRates?: Partial<Record<ResourceType, number>>
+): Resources {
+  const nextAgeCost = age < 2 ? { food: 400, gold: 200 } : age < 3 ? { food: 1200, gold: 600 } : age < 4 ? { food: 2400, gold: 1200 } : null;
+  const targets: Resources = {
+    food: Math.max(700, nextAgeCost?.food || 0),
+    wood: age < 2 ? 220 : age < 3 ? 280 : 340,
+    gold: Math.max(250, nextAgeCost?.gold || 0),
+    stone: age < 2 ? 40 : age < 3 ? 120 : age < 4 ? 200 : 260,
+  };
+  if (!netRates) return targets;
+  for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+    const rate = netRates[type];
+    if (!Number.isFinite(rate) || (rate as number) >= -4) continue;
+    const base = targets[type];
+    // Bound the forecast so a temporary spending spike cannot destabilize allocation.
+    targets[type] = Math.min(base * 2.5, Math.max(base, Math.abs(rate as number) * 2.5));
+  }
+  return targets;
+}
+
+export interface AiAgeUpSavingReadiness {
+  age: number;
+  gameTime: number;
+  workerCount: number;
+  minimumWorkers: number;
+  minimumGameTime: number;
+  landmarkActive: boolean;
+  resources: Resources;
+  ageUpCost: Resources | null;
+}
+
+/** Saves for the next landmark only while its construction has not started. */
+export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
+  if (
+    !Number.isFinite(input.age) || input.age < 1 || input.age >= 4 ||
+    !Number.isFinite(input.gameTime) || !Number.isFinite(input.workerCount) ||
+    !Number.isFinite(input.minimumWorkers) || !Number.isFinite(input.minimumGameTime) ||
+    input.landmarkActive || !input.ageUpCost ||
+    input.workerCount < input.minimumWorkers || input.gameTime < input.minimumGameTime
+  ) return false;
+  return !canAfford(input.resources, input.ageUpCost);
+}
+
+/** Keep the age-up reserve unless an active attack or undersized army needs defense. */
+export function shouldAiDeferOptionalMilitaryProduction(input: {
+  savingForAgeUp: boolean;
+  armyCount: number;
+  underAttack: number;
+  minimumDefenseArmy?: number;
+}): boolean {
+  const minimumArmy = Number.isFinite(input.minimumDefenseArmy)
+    ? Math.max(0, Math.floor(input.minimumDefenseArmy as number))
+    : 3;
+  return input.savingForAgeUp && Number.isFinite(input.armyCount) &&
+    input.armyCount >= minimumArmy && Number.isFinite(input.underAttack) &&
+    input.underAttack <= 0;
+}
+
 /**
  * Computes desired worker allocation across food/wood/gold/stone based on current Age,
  * resource deficits, and active gather_priority script mode.
@@ -599,7 +1029,8 @@ export function computeAiWorkerAllocation(
   resources: Resources,
   workerCount: number,
   gatherFocus = 'balanced_eco',
-  age: AgeLevel | number = 1
+  age: AgeLevel | number = 1,
+  netRates?: Partial<Record<ResourceType, number>>
 ): Record<ResourceType, number> {
   const result: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
   if (workerCount <= 0) return result;
@@ -621,11 +1052,49 @@ export function computeAiWorkerAllocation(
     weights = { food: 0.52, wood: 0.3, gold: 0.13, stone: 0.05 };
   }
 
+  // Reserve a gradual share of labor for the next age instead of waiting for
+  // food/gold to fall below tiny emergency thresholds. The boost fades to zero
+  // as each age-up resource target is reached, preventing post-upgrade hoarding.
+  const nextAgeCost =
+    age < 2
+      ? { food: 400, gold: 200 }
+      : age < 3
+      ? { food: 1200, gold: 600 }
+      : age < 4
+      ? { food: 2400, gold: 1200 }
+      : null;
+  if (nextAgeCost) {
+    const foodReserveGap = Math.max(0, Math.min(1, (nextAgeCost.food - Math.max(0, resources.food)) / nextAgeCost.food));
+    const goldReserveGap = Math.max(0, Math.min(1, (nextAgeCost.gold - Math.max(0, resources.gold)) / nextAgeCost.gold));
+    weights.food += foodReserveGap * 0.28;
+    weights.gold += goldReserveGap * 0.26;
+  }
+
   // Dynamic deficit correction: boost starved essentials without starving everything else
   if (resources.food < 110) weights.food += 0.26;
   if (resources.wood < 110) weights.wood += 0.22;
   if (resources.gold < 70 && workerCount >= 4) weights.gold += 0.18;
   if (age >= 2 && resources.stone < 60 && workerCount >= 7) weights.stone += 0.1;
+
+  // Use rolling inventory flow as a bounded correction, not as the sole source
+  // of truth. Discrete construction / army purchases can create short negative
+  // bursts, so only react while stock is still below a soft safety target.
+  if (netRates) {
+    const stockTargets = computeAiResourceDemandTargets(age, netRates);
+
+    for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+      const netPerMinute = netRates[type];
+      if (!Number.isFinite(netPerMinute)) continue;
+
+      const stock = Math.max(0, resources[type] || 0);
+      const target = stockTargets[type];
+      if (netPerMinute! < -4 && stock < target * 1.5) {
+        weights[type] += Math.min(0.2, (-netPerMinute! - 4) / 60);
+      } else if (netPerMinute! > 8 && stock > target) {
+        weights[type] = Math.max(0.04, weights[type] - Math.min(0.12, (netPerMinute! - 8) / 120));
+      }
+    }
+  }
 
   const totalW = weights.food + weights.wood + weights.gold + weights.stone;
   const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -658,6 +1127,103 @@ export function computeAiWorkerAllocation(
 }
 
 /**
+ * Prevent AI worker queues from overshooting their economic target or consuming
+ * the resources reserved for the next-age landmark.
+ *
+ * Queued villagers count as committed workers. The minimum workforce needed
+ * for the next age may still be reached, but once that threshold is met, the
+ * next worker must be affordable without dipping into the landmark reserve.
+ */
+export function shouldAiQueueWorker(options: {
+  workerCount: number;
+  queuedWorkerCount: number;
+  workerCap: number;
+  resources: Resources;
+  workerCost: Resources;
+  ageUpReserve: Resources;
+  minimumWorkersForAgeUp: number;
+}): boolean {
+  const committedWorkers =
+    Math.max(0, Math.floor(Number.isFinite(options.workerCount) ? options.workerCount : 0)) +
+    Math.max(0, Math.floor(Number.isFinite(options.queuedWorkerCount) ? options.queuedWorkerCount : 0));
+  const workerCap = Math.max(0, Math.floor(Number.isFinite(options.workerCap) ? options.workerCap : 0));
+  if (committedWorkers >= workerCap) return false;
+
+  const resourceTypes: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const canAffordWorker = resourceTypes.every(
+    (type) => (options.resources[type] || 0) >= (options.workerCost[type] || 0)
+  );
+  if (!canAffordWorker) return false;
+
+  const minimumWorkers = Math.max(
+    0,
+    Math.floor(Number.isFinite(options.minimumWorkersForAgeUp) ? options.minimumWorkersForAgeUp : 0)
+  );
+  if (committedWorkers < minimumWorkers) return true;
+
+  return resourceTypes.every(
+    (type) =>
+      (options.resources[type] || 0) - (options.workerCost[type] || 0) >=
+      (options.ageUpReserve[type] || 0)
+  );
+}
+
+/** Selects the largest unmet resource target that currently has a live node. */
+export function selectAiWorkerResourceType(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[]
+): ResourceType | null {
+  const available = new Set(availableTypes);
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 0;
+
+  for (const type of types) {
+    if (!available.has(type)) continue;
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  return recipient;
+}
+
+/** Moves at most one worker from a clear surplus to a clear resource deficit. */
+export function selectAiWorkerReassignment(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone']
+): { from: ResourceType; to: ResourceType } | null {
+  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const available = new Set(availableTypes);
+  let donor: ResourceType | null = null;
+  let donorSurplus = 1;
+  let recipient: ResourceType | null = null;
+  let recipientDeficit = 1;
+
+  for (const type of types) {
+    const surplus = activeCounts[type] - desiredAlloc[type];
+    if (surplus > donorSurplus) {
+      donor = type;
+      donorSurplus = surplus;
+    }
+
+    if (!available.has(type)) continue;
+    const deficit = desiredAlloc[type] - activeCounts[type];
+    if (deficit > recipientDeficit) {
+      recipient = type;
+      recipientDeficit = deficit;
+    }
+  }
+
+  if (!donor || !recipient) return null;
+  return { from: donor, to: recipient };
+}
+
+/**
  * 2D Euclidean distance.
  */
 export function getDistance(x1: number, z1: number, x2: number, z2: number): number {
@@ -670,6 +1236,7 @@ export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
   deep_fish: 1.55,
   shore_fish: 1.32,
   hunt: 1.15,
+  boar: 1.42,
   berry: 1.0,
   farm: 1.0,
   food: 1.0,
@@ -679,6 +1246,7 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   deep_fish: 5,
   shore_fish: 4,
   hunt: 3,
+  boar: 1,
   berry: 2,
   farm: 2,
   food: 1,
@@ -686,6 +1254,88 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
 
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
+
+
+export interface AiResourceCampWorkerProfile {
+  gatherPerSecond: number;
+  carryCapacity: number;
+  moveSpeed: number;
+  currentTravelDistance: number;
+  proposedTravelDistance: number;
+}
+
+/** Estimate the simulated-seconds payback for a new resource drop-off camp. */
+export function estimateAiResourceCampPaybackSeconds(input: {
+  resourceType: ResourceType;
+  totalNodeAmount: number;
+  gatherers: readonly AiResourceCampWorkerProfile[];
+  woodCost: number;
+  minimumGatherers?: number;
+  minimumDistanceSaved?: number;
+  maximumPaybackSeconds?: number;
+}): number | null {
+  const minimumGatherers = Number.isFinite(input.minimumGatherers) ? Math.max(1, Math.floor(input.minimumGatherers as number)) : 3;
+  const minimumDistanceSaved = Number.isFinite(input.minimumDistanceSaved) ? Math.max(0, input.minimumDistanceSaved as number) : 8;
+  const maximumPaybackSeconds = Number.isFinite(input.maximumPaybackSeconds) ? Math.max(0, input.maximumPaybackSeconds as number) : 180;
+  if (
+    (input.resourceType !== 'wood' && input.resourceType !== 'gold' && input.resourceType !== 'stone') ||
+    !Number.isFinite(input.totalNodeAmount) || input.totalNodeAmount <= 0 ||
+    !Number.isFinite(input.woodCost) || input.woodCost <= 0 ||
+    input.gatherers.length < minimumGatherers
+  ) return null;
+
+  let totalGatherRate = 0;
+  let currentDeliveredPerMinute = 0;
+  let proposedDeliveredPerMinute = 0;
+  let weightedDistanceSaved = 0;
+  for (const worker of input.gatherers) {
+    if (
+      !Number.isFinite(worker.gatherPerSecond) || worker.gatherPerSecond <= 0 ||
+      !Number.isFinite(worker.carryCapacity) || worker.carryCapacity <= 0 ||
+      !Number.isFinite(worker.moveSpeed) || worker.moveSpeed <= 0 ||
+      !Number.isFinite(worker.currentTravelDistance) || worker.currentTravelDistance < 0 ||
+      !Number.isFinite(worker.proposedTravelDistance) || worker.proposedTravelDistance < 0
+    ) return null;
+    totalGatherRate += worker.gatherPerSecond;
+    weightedDistanceSaved += worker.currentTravelDistance - worker.proposedTravelDistance;
+    currentDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.currentTravelDistance);
+    proposedDeliveredPerMinute += estimateDeliveredResourcePerMinute(worker.gatherPerSecond, worker.carryCapacity, worker.moveSpeed, worker.proposedTravelDistance);
+  }
+  if (
+    totalGatherRate <= 0 ||
+    input.totalNodeAmount < totalGatherRate * 90 ||
+    weightedDistanceSaved / input.gatherers.length < minimumDistanceSaved
+  ) return null;
+
+  const throughputGain = proposedDeliveredPerMinute - currentDeliveredPerMinute;
+  if (throughputGain <= 0) return null;
+  const resourceValue = input.resourceType === 'gold' ? 1.2 : 1;
+  const paybackSeconds = (input.woodCost * 60) / (throughputGain * resourceValue);
+  return Number.isFinite(paybackSeconds) && paybackSeconds <= maximumPaybackSeconds ? +paybackSeconds.toFixed(2) : null;
+}
+
+/**
+ * Predicts whether a resource node will run dry before gatherers can reasonably
+ * finish relocating. Rates are total active gathering output in resources/sec.
+ */
+export function shouldRelocateFromResourceNode(
+  remainingAmount: number,
+  totalGatherRatePerSecond: number,
+  relocationLeadTimeSeconds = 12
+): boolean {
+  if (
+    !Number.isFinite(remainingAmount) ||
+    remainingAmount < 0 ||
+    !Number.isFinite(totalGatherRatePerSecond) ||
+    totalGatherRatePerSecond <= 0 ||
+    !Number.isFinite(relocationLeadTimeSeconds) ||
+    relocationLeadTimeSeconds <= 0
+  ) {
+    return false;
+  }
+
+  return remainingAmount <= totalGatherRatePerSecond * relocationLeadTimeSeconds;
+}
 
 export function getNodeTierGatherMultiplier(nodeTier?: ResourceNode['nodeTier']): number {
   return nodeTier === 'rich' ? RICH_NODE_GATHER_MULTIPLIER : 1.0;
@@ -747,13 +1397,17 @@ export function findBalancedResourceNode(
   nodes: ResourceNode[],
   type: ResourceType | undefined,
   assignedCounts: ReadonlyMap<string, number> = new Map(),
-  maxDistance = Infinity
+  maxDistance = Infinity,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
+    // Wild boars can injure isolated villagers; automatic economy dispatch
+    // leaves them to deliberate hunting parties unless explicitly authorized.
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     const distance = getDistance(x, z, node.x, node.z);
     if (distance > maxDistance) continue;
 
@@ -792,8 +1446,9 @@ export function canUnitGatherNode(
 }
 
 /**
- * Selects optimal available food node balancing meat/fish gather speed priority (deep_fish > shore_fish > hunt > berry = farm)
- * against travel distance within maxDistance. Land harvesters automatically exclude `deep_fish`.
+ * Selects optimal available food node balancing food yield against travel distance.
+ * Dangerous boars are excluded from autonomous worker reassignment by default; players
+ * can still assign a hunting party directly without dispatching isolated villagers.
  */
 export function findBestFoodResourceNode(
   x: number,
@@ -801,13 +1456,15 @@ export function findBestFoodResourceNode(
   nodes: ResourceNode[],
   maxDistance = 36,
   allowDeepFish = false,
-  fishOnly = false
+  fishOnly = false,
+  allowDangerousHunt = false
 ): ResourceNode | null {
   let best: ResourceNode | null = null;
   let bestScore = -Infinity;
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
+    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
     if (!allowDeepFish && node.subtype === 'deep_fish') continue;
     if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);
@@ -822,6 +1479,127 @@ export function findBestFoodResourceNode(
   return best;
 }
 
+/**
+ * Unit nameplates only expand to show a health bar after real damage.
+ * A small tolerance avoids flicker from floating-point healing at full HP.
+ */
+export function shouldShowUnitHealthBar(hp: number, maxHp: number): boolean {
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0) return false;
+  return hp > 0 && hp < maxHp - 0.5;
+}
+
+export type BattlefieldVisualTier =
+  | 'worker'
+  | 'frontline'
+  | 'ranged'
+  | 'cavalry'
+  | 'siege'
+  | 'special'
+  | 'champion'
+  | 'naval';
+
+export interface BattlefieldVisualProfile {
+  tier: BattlefieldVisualTier;
+  badgeThresholdPx: number;
+  badgeScale: number;
+  roleMarker: 'crest' | 'siege' | null;
+  roleMarkerThresholdPx: number;
+}
+
+/**
+ * Stable visual hierarchy for zoomed-out RTS readability.
+ * Workers use compact labels; signature units, champions and siege engines
+ * retain a clearer battlefield identity without changing combat statistics.
+ */
+export function getBattlefieldVisualProfile(
+  category: UnitCategory,
+  modelType: UnitDefinition['visual']['modelType'],
+  isNaval = false,
+  level = 1,
+  hasSpecialAbility = false
+): BattlefieldVisualProfile {
+  let tier: BattlefieldVisualTier;
+  if (isNaval || modelType === 'boat') {
+    tier = 'naval';
+  } else if (category === 'worker') {
+    tier = 'worker';
+  } else if (category === 'siege') {
+    tier = 'siege';
+  } else if (level >= 3) {
+    tier = 'champion';
+  } else if (
+    category === 'special' ||
+    hasSpecialAbility ||
+    modelType === 'guardian' ||
+    modelType === 'oracle' ||
+    modelType === 'artificer'
+  ) {
+    tier = 'special';
+  } else if (category === 'cavalry') {
+    tier = 'cavalry';
+  } else if (category === 'ranged') {
+    tier = 'ranged';
+  } else {
+    tier = 'frontline';
+  }
+
+  const profiles: Record<BattlefieldVisualTier, Omit<BattlefieldVisualProfile, 'tier'>> = {
+    worker: { badgeThresholdPx: 39, badgeScale: 0.88, roleMarker: null, roleMarkerThresholdPx: 0 },
+    frontline: { badgeThresholdPx: 34, badgeScale: 0.96, roleMarker: null, roleMarkerThresholdPx: 0 },
+    ranged: { badgeThresholdPx: 32, badgeScale: 1, roleMarker: null, roleMarkerThresholdPx: 0 },
+    cavalry: { badgeThresholdPx: 29, badgeScale: 1.03, roleMarker: null, roleMarkerThresholdPx: 0 },
+    siege: { badgeThresholdPx: 25, badgeScale: 1.1, roleMarker: 'siege', roleMarkerThresholdPx: 23 },
+    special: { badgeThresholdPx: 22, badgeScale: 1.16, roleMarker: 'crest', roleMarkerThresholdPx: 19 },
+    champion: { badgeThresholdPx: 18, badgeScale: 1.24, roleMarker: 'crest', roleMarkerThresholdPx: 16 },
+    naval: { badgeThresholdPx: 25, badgeScale: 1.08, roleMarker: null, roleMarkerThresholdPx: 0 },
+  };
+  return { tier, ...profiles[tier] };
+}
+
+export type ParticleBudgetKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
+
+/** Preserve combat feedback while trimming decorative bursts during low quality or large battles. */
+export function computeParticleBurstCount(
+  requestedCount: number,
+  qualityLevel: 0 | 1 | 2,
+  aliveUnitCount: number,
+  kind: ParticleBudgetKind
+): number {
+  const count = Math.max(0, Math.floor(Number.isFinite(requestedCount) ? requestedCount : 0));
+  if (count === 0) return 0;
+
+  const safeUnitCount = Math.max(0, Number.isFinite(aliveUnitCount) ? aliveUnitCount : 0);
+  const critical = kind === 'hit' || kind === 'spark' || kind === 'ember';
+  const qualityScale = critical
+    ? ([0.68, 0.86, 1] as const)[qualityLevel]
+    : ([0.42, 0.72, 1] as const)[qualityLevel];
+  const densityStart = critical ? 100 : 72;
+  const densityRange = critical ? 520 : 300;
+  const densityFloor = critical ? 0.55 : 0.3;
+  const densityScale = Math.max(densityFloor, 1 - Math.max(0, safeUnitCount - densityStart) / densityRange);
+  const materialScale = kind === 'leaf' || kind === 'dust' || kind === 'smoke' ? 0.9 : 1;
+  return Math.max(1, Math.min(count, Math.floor(count * qualityScale * densityScale * materialScale)));
+}
+
+export interface FrameTimeSummary {
+  averageMs: number;
+  p95Ms: number;
+  maxMs: number;
+}
+
+/** Deterministic frame-time summary used by the in-game pressure-test overlay. */
+export function summarizeFrameTimes(samples: readonly number[]): FrameTimeSummary {
+  const valid = samples.filter((sample) => Number.isFinite(sample) && sample > 0).sort((a, b) => a - b);
+  if (valid.length === 0) return { averageMs: 0, p95Ms: 0, maxMs: 0 };
+  const total = valid.reduce((sum, sample) => sum + sample, 0);
+  const p95Index = Math.max(0, Math.ceil(valid.length * 0.95) - 1);
+  return {
+    averageMs: total / valid.length,
+    p95Ms: valid[p95Index],
+    maxMs: valid[valid.length - 1],
+  };
+}
+
 export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   colorHex: number;
   colorCss: string;
@@ -834,6 +1612,24 @@ export const DEFAULT_PARTICIPANT_PALETTE: Array<{
   { colorHex: 0x7c3aed, colorCss: '#8b5cf6', accentHex: 0xa78bfa }, // Royal Violet
   { colorHex: 0x0891b2, colorCss: '#06b6d4', accentHex: 0x22d3ee }, // Teal Cyan
 ];
+
+export interface TeamVisualColor {
+  colorHex: number;
+  colorCss: string;
+}
+
+/** Stable team colours used for unit rings and map outlines, separate from each faction's own livery. */
+export const TEAM_VISUAL_PALETTE: readonly TeamVisualColor[] = [
+  { colorHex: 0x0ea5e9, colorCss: '#0ea5e9' }, // Team 1 — Azure
+  { colorHex: 0xf43f5e, colorCss: '#f43f5e' }, // Team 2 — Rose
+  { colorHex: 0x84cc16, colorCss: '#84cc16' }, // Team 3 — Lime
+  { colorHex: 0xf59e0b, colorCss: '#f59e0b' }, // Team 4 — Amber
+];
+
+export function getTeamVisualColor(team: number): TeamVisualColor {
+  const safeTeam = Math.max(1, Number.isFinite(team) ? Math.floor(team) : 1);
+  return TEAM_VISUAL_PALETTE[(safeTeam - 1) % TEAM_VISUAL_PALETTE.length];
+}
 
 export function createDefaultParticipants(): MatchParticipant[] {
   return [
@@ -1078,11 +1874,12 @@ const MILITARY_BUILDING_TYPES = new Set([
  * Scores how suitable a hostile unit or building is as a 1v1 matchup or focus-fire target
  * for `attacker`. Higher score = better tactical choice.
  */
-export function scoreUnitMatchupTarget(
+function scoreUnitMatchupTargetInternal(
   attacker: UnitEntity,
   target: UnitEntity | BuildingEntity,
   alliedUnits: UnitEntity[] = [],
-  context: CombatTargetContext = {}
+  context: CombatTargetContext = {},
+  nearbyAlliesOnly = false
 ): number {
   const dist = getDistance(attacker.x, attacker.z, target.x, target.z);
   const attackerCat = attacker.unitDef.category;
@@ -1107,7 +1904,7 @@ export function scoreUnitMatchupTarget(
       ally.hp > 0 &&
       ally.faction === attacker.faction &&
       ally.targetEntityId === target.id &&
-      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+      (nearbyAlliesOnly || getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16)
     ) {
       alliesOnSameTarget++;
     }
@@ -1185,6 +1982,16 @@ export function scoreUnitMatchupTarget(
   return score;
 }
 
+export function scoreUnitMatchupTarget(
+  attacker: UnitEntity,
+  target: UnitEntity | BuildingEntity,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {}
+): number {
+  return scoreUnitMatchupTargetInternal(attacker, target, alliedUnits, context, false);
+}
+
+
 /**
  * Selects the single highest-value combat target for an individual unit using 1v1 counter scoring.
  */
@@ -1198,6 +2005,13 @@ export function selectOptimalCombatTarget(
   const maxRange = context.maxSearchRange ?? Infinity;
   const selfRef = { faction: attacker.faction, team: attacker.team };
 
+  const nearbyAllies = alliedUnits.filter(
+    (ally) =>
+      ally.id !== attacker.id &&
+      ally.hp > 0 &&
+      ally.faction === attacker.faction &&
+      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
+  );
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
@@ -1205,8 +2019,8 @@ export function selectOptimalCombatTarget(
     if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
     const d = getDistance(attacker.x, attacker.z, u.x, u.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, u, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || u.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = u;
     }
@@ -1216,8 +2030,8 @@ export function selectOptimalCombatTarget(
     if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
     const d = getDistance(attacker.x, attacker.z, b.x, b.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTarget(attacker, b, alliedUnits, context);
-    if (s > bestScore) {
+    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true);
+    if (s > bestScore || (s === bestScore && (!bestTarget || b.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = b;
     }
@@ -1226,10 +2040,267 @@ export function selectOptimalCombatTarget(
   return bestTarget;
 }
 
+
+/**
+ * Applies target-selection hysteresis so an AI unit does not abandon a valid target
+ * for a marginally better option on every strategic tick.
+ */
+export function shouldSwitchCombatTarget(
+  attacker: UnitEntity,
+  currentTarget: UnitEntity | BuildingEntity | null | undefined,
+  candidateTarget: UnitEntity | BuildingEntity | null | undefined,
+  alliedUnits: UnitEntity[] = [],
+  context: CombatTargetContext = {},
+  minimumScoreGain = 18
+): boolean {
+  if (
+    !candidateTarget ||
+    candidateTarget.hp <= 0 ||
+    (candidateTarget.type === 'unit' && !!(candidateTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, candidateTarget)
+  ) {
+    return false;
+  }
+
+  if (
+    !currentTarget ||
+    currentTarget.hp <= 0 ||
+    (currentTarget.type === 'unit' && !!(currentTarget as UnitEntity).garrisonedInBuildingId) ||
+    !areHostile({ faction: attacker.faction, team: attacker.team }, currentTarget)
+  ) {
+    return true;
+  }
+
+  if (currentTarget.id === candidateTarget.id) return false;
+
+  const scoreGain =
+    scoreUnitMatchupTarget(attacker, candidateTarget, alliedUnits, context) -
+    scoreUnitMatchupTarget(attacker, currentTarget, alliedUnits, context);
+  const requiredGain = Number.isFinite(minimumScoreGain) ? Math.max(0, minimumScoreGain) : 18;
+  return scoreGain >= requiredGain;
+}
+
+
+export type CombatFormationRole = 'frontline' | 'backline' | 'flank' | 'siege' | 'support';
+
+export interface CombatFormationSlot {
+  unitId: string;
+  x: number;
+  z: number;
+  role: CombatFormationRole;
+  lateralIndex: number;
+}
+
+/**
+ * Assigns deterministic role-based approach slots around a shared objective.
+ * Melee screens the front, ranged and siege stay behind, cavalry spreads to both flanks,
+ * and support units occupy the protected middle line. Workers are intentionally excluded.
+ */
+export function layoutCombatFormation(
+  units: readonly Pick<UnitEntity, 'id' | 'x' | 'z' | 'unitDef'>[],
+  objective: { x: number; z: number },
+  maxWorldExtent = 84
+): CombatFormationSlot[] {
+  if (
+    !Number.isFinite(objective.x) ||
+    !Number.isFinite(objective.z) ||
+    !Number.isFinite(maxWorldExtent) ||
+    maxWorldExtent <= 0
+  ) {
+    return [];
+  }
+
+  const seenUnitIds = new Set<string>();
+  const members = units.filter((unit) => {
+    if (
+      !unit.id ||
+      !Number.isFinite(unit.x) ||
+      !Number.isFinite(unit.z) ||
+      unit.unitDef.category === 'worker' ||
+      seenUnitIds.has(unit.id)
+    ) {
+      return false;
+    }
+    seenUnitIds.add(unit.id);
+    return true;
+  });
+
+  if (members.length === 0) return [];
+
+  const centerX = members.reduce((sum, unit) => sum + unit.x, 0) / members.length;
+  const centerZ = members.reduce((sum, unit) => sum + unit.z, 0) / members.length;
+  let dirX = objective.x - centerX;
+  let dirZ = objective.z - centerZ;
+  const dirLength = Math.hypot(dirX, dirZ);
+  if (dirLength < 0.001) {
+    dirX = 1;
+    dirZ = 0;
+  } else {
+    dirX /= dirLength;
+    dirZ /= dirLength;
+  }
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const limit = Math.max(1, maxWorldExtent);
+
+  const clamp = (value: number) => Math.max(-limit, Math.min(limit, value));
+  const slot = (
+    unitId: string,
+    role: CombatFormationRole,
+    depth: number,
+    lateral: number,
+    lateralIndex: number
+  ): CombatFormationSlot => ({
+    unitId,
+    role,
+    lateralIndex,
+    x: clamp(objective.x - dirX * depth + sideX * lateral),
+    z: clamp(objective.z - dirZ * depth + sideZ * lateral),
+  });
+  const sorted = (category: UnitCategory) =>
+    members
+      .filter((unit) => unit.unitDef.category === category)
+      .sort((a, b) => a.id.localeCompare(b.id));
+  const centered = (index: number, count: number, spacing: number) =>
+    (index - (count - 1) / 2) * spacing;
+
+  const result: CombatFormationSlot[] = [];
+
+  const frontline = sorted('melee');
+  frontline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'frontline', 5.2, centered(index, frontline.length, 2.1), index))
+  );
+
+  const backline = sorted('ranged');
+  backline.forEach((unit, index) =>
+    result.push(slot(unit.id, 'backline', 11.2, centered(index, backline.length, 2.4), index))
+  );
+
+  const cavalry = sorted('cavalry');
+  cavalry.forEach((unit, index) => {
+    const rank = Math.floor(index / 2);
+    const flank = index % 2 === 0 ? -1 : 1;
+    result.push(slot(unit.id, 'flank', 8.2 + rank * 1.4, flank * (5.2 + rank * 2.1), index));
+  });
+
+  const support = sorted('special');
+  support.forEach((unit, index) =>
+    result.push(slot(unit.id, 'support', 9.0, centered(index, support.length, 2.7), index))
+  );
+
+  const siege = sorted('siege');
+  siege.forEach((unit, index) =>
+    result.push(slot(unit.id, 'siege', 18.5, centered(index, siege.length, 3.6), index))
+  );
+
+  return result.sort((a, b) => a.unitId.localeCompare(b.unitId));
+}
+
+export interface RaidTargetAssignment {
+  raiderId: string;
+  targetId: string;
+}
+
+/**
+ * Distributes raiders across exposed targets, caps focus-fire per target, and preserves
+ * still-valid existing assignments before allocating unassigned units by proximity.
+ */
+export function assignRaidTargets<
+  R extends { id: string; x: number; z: number; targetEntityId?: string },
+  T extends { id: string; x: number; z: number }
+>(
+  raiders: readonly R[],
+  targets: readonly T[],
+  maxAttackersPerTarget = 2
+): RaidTargetAssignment[] {
+  if (raiders.length === 0 || targets.length === 0 || !Number.isFinite(maxAttackersPerTarget)) return [];
+
+  const capacity = Math.max(1, Math.floor(maxAttackersPerTarget));
+  const orderedRaiders = [...raiders].sort((a, b) => a.id.localeCompare(b.id));
+  const orderedTargets = [...targets]
+    .filter((target) => target.id && Number.isFinite(target.x) && Number.isFinite(target.z))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const targetById = new Map(orderedTargets.map((target) => [target.id, target]));
+  const counts = new Map<string, number>();
+  const assigned = new Map<string, string>();
+
+  // Keep valid existing assignments first to avoid oscillation between nearby workers.
+  for (const raider of orderedRaiders) {
+    const current = raider.targetEntityId ? targetById.get(raider.targetEntityId) : undefined;
+    if (!current || (counts.get(current.id) || 0) >= capacity) continue;
+    assigned.set(raider.id, current.id);
+    counts.set(current.id, (counts.get(current.id) || 0) + 1);
+  }
+
+  // Fill remaining raiders with the nearest target that still has capacity.
+  for (const raider of orderedRaiders) {
+    if (assigned.has(raider.id)) continue;
+    let nearest: T | null = null;
+    let nearestDistance = Infinity;
+    for (const target of orderedTargets) {
+      if ((counts.get(target.id) || 0) >= capacity) continue;
+      const distance = getDistance(raider.x, raider.z, target.x, target.z);
+      if (
+        distance < nearestDistance - 0.0001 ||
+        (Math.abs(distance - nearestDistance) <= 0.0001 && (!nearest || target.id < nearest.id))
+      ) {
+        nearest = target;
+        nearestDistance = distance;
+      }
+    }
+    if (!nearest) continue;
+    assigned.set(raider.id, nearest.id);
+    counts.set(nearest.id, (counts.get(nearest.id) || 0) + 1);
+  }
+
+  return orderedRaiders
+    .filter((raider) => assigned.has(raider.id))
+    .map((raider) => ({ raiderId: raider.id, targetId: assigned.get(raider.id)! }));
+}
+
 /**
  * Picks a coordinated cluster focus-fire target for an entire squad based on squad centroid,
  * enemy concentration, threat priority, and siege fortifications.
  */
+/**
+ * Selects available frontline escorts near a siege group without overriding units with active orders.
+ * Melee and cavalry are preferred as screens, while proximity keeps the escort from being left behind.
+ */
+export function selectSiegeEscortUnits<
+  T extends { id: string; x: number; z: number; state: string; unitDef: { category: UnitCategory } }
+>(
+  siegeUnits: readonly { x: number; z: number }[],
+  candidates: readonly T[],
+  maxEscortCount: number
+): T[] {
+  if (siegeUnits.length === 0 || maxEscortCount <= 0) return [];
+
+  const centerX = siegeUnits.reduce((sum, unit) => sum + unit.x, 0) / siegeUnits.length;
+  const centerZ = siegeUnits.reduce((sum, unit) => sum + unit.z, 0) / siegeUnits.length;
+  const rolePenalty: Partial<Record<UnitCategory, number>> = {
+    melee: 0,
+    cavalry: 2.2,
+    ranged: 7.5,
+  };
+
+  return candidates
+    .filter(
+      (unit) =>
+        unit.state === 'idle' &&
+        unit.unitDef.category !== 'siege' &&
+        unit.unitDef.category !== 'worker'
+    )
+    .map((unit) => ({
+      unit,
+      score:
+        getDistance(centerX, centerZ, unit.x, unit.z) * 0.75 +
+        (rolePenalty[unit.unitDef.category] ?? 9),
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, Math.floor(maxEscortCount))
+    .map((entry) => entry.unit);
+}
+
 export function selectClusterFocusTarget(
   squadUnits: UnitEntity[],
   hostileUnits: UnitEntity[],
@@ -1237,48 +2308,82 @@ export function selectClusterFocusTarget(
   options: { maxEnemyRangeFromCentroid?: number; defendAnchor?: { x: number; z: number; radius?: number } | null } = {}
 ): UnitEntity | BuildingEntity | null {
   if (squadUnits.length === 0) return null;
-  const cx = squadUnits.reduce((s, u) => s + u.x, 0) / squadUnits.length;
-  const cz = squadUnits.reduce((s, u) => s + u.z, 0) / squadUnits.length;
-  const maxRange = options.maxEnemyRangeFromCentroid ?? 26;
-  const rep = squadUnits[0];
-  const selfRef = { faction: rep.faction, team: rep.team };
+
+  const cx = squadUnits.reduce((sum, unit) => sum + unit.x, 0) / squadUnits.length;
+  const cz = squadUnits.reduce((sum, unit) => sum + unit.z, 0) / squadUnits.length;
+  const requestedRange = options.maxEnemyRangeFromCentroid;
+  const maxRange =
+    requestedRange === Infinity
+      ? Infinity
+      : typeof requestedRange === 'number' && Number.isFinite(requestedRange)
+        ? Math.max(0, requestedRange)
+        : 26;
+  const representative = squadUnits.find((unit) => unit.hp > 0) || squadUnits[0];
+  const selfRef = { faction: representative.faction, team: representative.team };
+  const hasSiegeUnit = squadUnits.some(
+    (unit) => unit.hp > 0 && (unit.unitDef.category === 'siege' || unit.unitDefId === 'fantasy_treant')
+  );
 
   let bestTarget: UnitEntity | BuildingEntity | null = null;
   let bestScore = -Infinity;
 
-  for (const u of hostileUnits) {
-    if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
-    const d = getDistance(cx, cz, u.x, u.z);
-    if (d > maxRange) continue;
-
-    let clusterValue = 45;
-    if (u.unitDef.category === 'ranged' || u.unitDef.category === 'siege') clusterValue += 28;
-    else if (u.unitDef.category !== 'worker') clusterValue += 18;
-    // Focus wounded priority enemies & enemies near allied defenses
-    clusterValue += (1 - Math.max(0, u.hp / Math.max(1, u.maxHp))) * 35;
-    if (options.defendAnchor && getDistance(u.x, u.z, options.defendAnchor.x, options.defendAnchor.z) <= (options.defendAnchor.radius ?? 22)) {
-      clusterValue += 40;
+  // Compare units and structures in one scoring pass. Returning as soon as a unit is
+  // found would make defensive buildings invisible whenever even a low-value worker
+  // happened to be inside the acquisition radius.
+  const consider = (target: UnitEntity | BuildingEntity, score: number) => {
+    const tied = Math.abs(score - bestScore) <= 0.0001;
+    if (
+      score > bestScore + 0.0001 ||
+      (tied && (!bestTarget || target.id.localeCompare(bestTarget.id) < 0))
+    ) {
+      bestScore = score;
+      bestTarget = target;
     }
-    clusterValue -= d * 1.4;
+  };
 
-    if (clusterValue > bestScore) {
-      bestScore = clusterValue;
-      bestTarget = u;
+  for (const unit of hostileUnits) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId || !areHostile(selfRef, unit)) continue;
+    const distance = getDistance(cx, cz, unit.x, unit.z);
+    if (distance > maxRange) continue;
+
+    let unitScore = 45;
+    if (unit.unitDef.category === 'ranged' || unit.unitDef.category === 'siege') unitScore += 28;
+    else if (unit.unitDef.category !== 'worker') unitScore += 18;
+
+    // Finish wounded high-value threats and protect the area around a defended anchor.
+    const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
+    unitScore += (1 - hpRatio) * 35;
+    if (
+      options.defendAnchor &&
+      getDistance(unit.x, unit.z, options.defendAnchor.x, options.defendAnchor.z) <=
+        (options.defendAnchor.radius ?? 22)
+    ) {
+      unitScore += 40;
     }
+    unitScore -= distance * 1.4;
+    consider(unit, unitScore);
   }
 
-  if (bestTarget) return bestTarget;
+  for (const building of hostileBuildings) {
+    if (building.hp <= 0 || !areHostile(selfRef, building)) continue;
+    const distance = getDistance(cx, cz, building.x, building.z);
+    // Cluster focus is a local tactical choice. Distant defenses must not pull the
+    // whole army across the map; the strategic stronghold remains the fallback.
+    if (distance > maxRange) continue;
 
-  for (const b of hostileBuildings) {
-    if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
-    const d = getDistance(cx, cz, b.x, b.z);
-    let bScore = DEFENSIVE_BUILDING_TYPES.has(b.buildingType) ? 60 : MILITARY_BUILDING_TYPES.has(b.buildingType) ? 35 : 10;
-    bScore += (1 - Math.max(0, b.hp / Math.max(1, b.maxHp))) * 25;
-    bScore -= d * 0.9;
-    if (bScore > bestScore) {
-      bestScore = bScore;
-      bestTarget = b;
-    }
+    const isDefensive = DEFENSIVE_BUILDING_TYPES.has(building.buildingType);
+    const isMilitary = MILITARY_BUILDING_TYPES.has(building.buildingType);
+    let buildingScore = isDefensive
+      ? hasSiegeUnit
+        ? 88
+        : 66
+      : isMilitary
+        ? 42
+        : 12;
+    const hpRatio = Math.max(0, Math.min(1, building.hp / Math.max(1, building.maxHp)));
+    buildingScore += (1 - hpRatio) * 25;
+    buildingScore -= distance * (hasSiegeUnit ? 1.25 : 1.45);
+    consider(building, buildingScore);
   }
 
   return bestTarget;
@@ -1708,9 +2813,12 @@ export function triggerWildAnimalPanic(
   simTime: number,
   duration = 2.6
 ): void {
-  if (!node.animalAlive) return;
+  if (!node.animalAlive || node.animalPanicSuppressed) return;
+  // One panic per encounter. Repeated harvest hits from a pursuing worker must not
+  // keep extending the run timer or reset its cooldown every attack interval.
+  node.animalPanicSuppressed = true;
   node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + duration);
-  node.animalFleeCooldown = 0;
+  node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + duration + 1.5);
   const dx = node.x - threatX;
   const dz = node.z - threatZ;
   const len = Math.hypot(dx, dz);
@@ -1783,12 +2891,19 @@ export function stepWildAnimalState(
   const prevZ = node.z;
   const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
 
-  if (nearestThreat && nearestThreat.d < DETECT_RANGE) {
-    const canReact = (node.animalFleeCooldown || 0) <= simTime || nearestThreat.d < 6.0;
-    if (canReact) {
-      node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + 1.9);
-      node.animalFleeCooldown = 0;
-    }
+  const REARM_RANGE = 16.5;
+  // Re-arm only after the encounter has disengaged. A worker following the moving
+  // deer keeps panic disarmed instead of causing repeated sprints.
+  if (node.animalPanicSuppressed && (!nearestThreat || nearestThreat.d >= REARM_RANGE)) {
+    node.animalPanicSuppressed = false;
+    node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.1);
+  }
+  if (
+    nearestThreat && nearestThreat.d < DETECT_RANGE &&
+    !node.animalPanicSuppressed &&
+    (node.animalFleeCooldown || 0) <= simTime
+  ) {
+    triggerWildAnimalPanic(node, nearestThreat.x, nearestThreat.z, simTime, 1.9);
   }
 
   const wasFleeing = (node.animalFleeUntil || 0) > simTime;
@@ -1819,7 +2934,7 @@ export function stepWildAnimalState(
     // Clean transition out of fleeing into calm grazing cooldown
     if ((node.animalFleeUntil || 0) > 0 && (node.animalFleeUntil || 0) <= simTime) {
       node.animalFleeUntil = 0;
-      node.animalFleeCooldown = simTime + 1.4;
+      node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.4);
       node.animalWanderMoving = false;
       node.animalWanderTimer = 2.2 + rand() * 2.2;
     }
@@ -1930,6 +3045,75 @@ export function stepWildAnimalState(
     gaitPhase,
     hopY,
   };
+}
+
+
+/** Records the unit that provoked a wild boar. Boars do not attack passers-by. */
+export function triggerWildBoarAggression(node: ResourceNode, attackerId: string, simTime: number): void {
+  if (!node.animalAlive || !attackerId) return;
+  node.animalAggroTargetId = attackerId;
+  node.animalAggroUntil = Math.max(node.animalAggroUntil || 0, simTime + 8);
+}
+
+export interface WildBoarStepOutput {
+  distMoved: number;
+  actualSpeed: number;
+  yaw: number;
+  isCharging: boolean;
+}
+
+/** Pursuit steering for provoked boars; stops at melee distance and respects terrain blockers. */
+export function stepWildBoarState(
+  node: ResourceNode,
+  target: { x: number; z: number } | null,
+  dt: number,
+  isBlocked: (cx: number, cz: number) => boolean
+): WildBoarStepOutput {
+  const prevX = node.x;
+  const prevZ = node.z;
+  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+  const dx = target ? target.x - node.x : 0;
+  const dz = target ? target.z - node.z : 0;
+  const distance = Math.hypot(dx, dz);
+  const attackRange = 2.25;
+  let targetVx = 0;
+  let targetVz = 0;
+  let isCharging = false;
+
+  if (target && distance > attackRange) {
+    const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, Math.atan2(dz, dx), isBlocked);
+    if (chaseAngle !== null) {
+      targetVx = Math.cos(chaseAngle) * 4.15;
+      targetVz = Math.sin(chaseAngle) * 4.15;
+      isCharging = true;
+    }
+  }
+
+  const blend = 1 - Math.exp(-(isCharging ? 11 : 9) * clampedDt);
+  node.animalVx = (node.animalVx || 0) + (targetVx - (node.animalVx || 0)) * blend;
+  node.animalVz = (node.animalVz || 0) + (targetVz - (node.animalVz || 0)) * blend;
+
+  let nx = Math.max(-91, Math.min(91, node.x + node.animalVx * clampedDt));
+  let nz = Math.max(-91, Math.min(91, node.z + node.animalVz * clampedDt));
+  if (isBlocked(nx, nz)) {
+    nx = prevX;
+    nz = prevZ;
+    node.animalVx = 0;
+    node.animalVz = 0;
+    isCharging = false;
+  }
+  node.x = nx;
+  node.z = nz;
+
+  const movedX = nx - prevX;
+  const movedZ = nz - prevZ;
+  const distMoved = Math.hypot(movedX, movedZ);
+  const actualSpeed = distMoved / clampedDt;
+  let yaw = node.animalYaw ?? 0;
+  if (distMoved > 0.002 && actualSpeed > 0.15) yaw = Math.atan2(-movedZ, movedX);
+  else if (target && distance > 0.01) yaw = Math.atan2(-dz, dx);
+  node.animalYaw = yaw;
+  return { distMoved, actualSpeed, yaw, isCharging };
 }
 
 export interface AiTechCandidateInput {
@@ -2118,8 +3302,26 @@ export interface FactionResourceTelemetry {
     idle: number;
   };
   totalWorkers: number;
+  /** Theoretical gather speed + passive shrine income, before transport walking time. */
   incomePerMin: ResourceIncomeRate;
+  /** Estimated resources actually deposited, after gather time and round-trip delivery travel. */
+  deliveredIncomePerMin: ResourceIncomeRate;
 }
+
+export type ResourceDeliveryWorker = Pick<
+  UnitEntity,
+  'unitDef' | 'x' | 'z'
+>;
+
+export type ResourceDeliveryNode = Pick<
+  ResourceNode,
+  'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount' | 'x' | 'z'
+>;
+
+export type EstimateResourceDeliveryTravel = (
+  worker: ResourceDeliveryWorker,
+  node: ResourceDeliveryNode
+) => number | null;
 
 /**
  * Computes real-time worker allocation counts and estimated per-minute income
@@ -2131,17 +3333,15 @@ export function computeFactionResourceTelemetry(
     Pick<
       UnitEntity,
       'faction' | 'hp' | 'state' | 'unitDef' | 'targetResourceNodeId' | 'carryingResource'
-    >
+    > & Partial<Pick<UnitEntity, 'x' | 'z'>>
   >,
-  resourceNodes: Array<Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>>,
+  resourceNodes: Array<ResourceDeliveryNode>,
   contestedPoints: Array<Pick<ContestedPoint, 'ownerFaction' | 'shrineType' | 'siegeSupplyActive'>>,
   researchedTechs: string[],
-  hasStarOath = false
+  hasStarOath = false,
+  estimateDeliveryTravel?: EstimateResourceDeliveryTravel
 ): FactionResourceTelemetry {
-  const nodeById = new Map<
-    string,
-    Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'nodeTier' | 'amount'>
-  >();
+  const nodeById = new Map<string, ResourceDeliveryNode>();
   for (const n of resourceNodes) {
     nodeById.set(n.id, n);
   }
@@ -2155,6 +3355,7 @@ export function computeFactionResourceTelemetry(
     idle: 0,
   };
   const incomeRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
+  const deliveredRaw: ResourceIncomeRate = { food: 0, wood: 0, gold: 0, stone: 0 };
   let totalWorkers = 0;
 
   for (const u of units) {
@@ -2180,7 +3381,29 @@ export function computeFactionResourceTelemetry(
               researchedTechs,
               hasStarOath
             );
-        incomeRaw[resType] += baseGatherPerSec * 60 * mult;
+        const gatherPerSecond = baseGatherPerSec * mult;
+        const theoreticalPerMin = gatherPerSecond * 60;
+        incomeRaw[resType] += theoreticalPerMin;
+
+        if (estimateDeliveryTravel) {
+          if (targetNode && Number.isFinite(u.x) && Number.isFinite(u.z)) {
+            const travelDistance = estimateDeliveryTravel(
+              u as ResourceDeliveryWorker,
+              targetNode
+            );
+            if (travelDistance !== null && Number.isFinite(travelDistance) && travelDistance >= 0) {
+              deliveredRaw[resType] += estimateDeliveredResourcePerMinute(
+                gatherPerSecond,
+                u.unitDef.stats.carryCapacity,
+                u.unitDef.stats.speed,
+                travelDistance
+              );
+            }
+          }
+        } else {
+          // Preserve theoretical telemetry for callers without a world/drop-off model.
+          deliveredRaw[resType] += theoreticalPerMin;
+        }
         continue;
       }
     }
@@ -2196,6 +3419,10 @@ export function computeFactionResourceTelemetry(
     incomeRaw.wood += perSec.wood * 60;
     incomeRaw.gold += perSec.gold * 60;
     incomeRaw.stone += perSec.stone * 60;
+    deliveredRaw.food += perSec.food * 60;
+    deliveredRaw.wood += perSec.wood * 60;
+    deliveredRaw.gold += perSec.gold * 60;
+    deliveredRaw.stone += perSec.stone * 60;
   }
 
   return {
@@ -2206,6 +3433,12 @@ export function computeFactionResourceTelemetry(
       wood: Math.round(incomeRaw.wood),
       gold: Math.round(incomeRaw.gold),
       stone: Math.round(incomeRaw.stone),
+    },
+    deliveredIncomePerMin: {
+      food: Math.round(deliveredRaw.food),
+      wood: Math.round(deliveredRaw.wood),
+      gold: Math.round(deliveredRaw.gold),
+      stone: Math.round(deliveredRaw.stone),
     },
   };
 }

@@ -43,6 +43,13 @@ import {
   getAvailableTechsForBuilding,
   getBuildableTypesForCiv,
   getCivilizationConfig,
+  getCivilizationBuildSpeedMultiplier,
+  getCappedProductionSpeedMultiplier,
+  getEffectiveProductionDuration,
+  getEffectiveUnitTrainingDuration,
+  PRODUCTION_TIME_SCALE,
+  getLandmarkTrainingSpeedMultiplier,
+  isBuildingBuildableForCiv,
   getLevelTitle,
   getResourceGatherTechMultiplier,
   getTrainableUnitsForBuilding,
@@ -66,10 +73,34 @@ import {
   getBuildingAssaultProfile,
   getSiegeChannelMultiplier,
   canAfford,
+  canAssembleFieldRam,
+  shouldPrioritizeAiFieldEngineering,
+  shouldAiUnitSeekShelter,
+  shouldAiUnitLeaveShelter,
+  countPendingGarrisonReservations,
+  getAvailableGarrisonSlots,
+  selectNearestGarrisonShelter,
+  resolveAiKnightUnitId,
+  selectSiegeEscortUnits,
+  FIELD_RAM_COST,
+  FIELD_RAM_ASSEMBLY_DURATION,
+  FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   computeAiWorkerAllocation,
+  shouldAiQueueWorker,
+  selectAiWorkerResourceType,
+  selectAiWorkerReassignment,
+  shouldRelocateFromResourceNode,
+  estimateAiResourceCampPaybackSeconds,
+  shouldAiSaveForNextAge,
+  shouldAiDeferOptionalMilitaryProduction,
+  calculateWallChainCost,
+  WallChainPoint,
+  layoutWallChain,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
+  estimateConstructionTimeRemaining,
+  getConstructionWorkerMultiplier,
   computeGarrisonDefenseProfile,
   computeSimulationSubsteps,
   computeSpatialAudioGain,
@@ -80,7 +111,6 @@ import {
   evaluateAiTechChoice,
   FactionResourceTelemetry,
   FARM_RESEED_WOOD_COST,
-  findBalancedResourceNode,
   findBestFoodResourceNode,
   findClosestEnemy,
   findClosestResourceNode,
@@ -91,6 +121,7 @@ import {
   getEffectiveGatherMultiplier,
   getFactionPopulationStats,
   getFoodGatherMultiplier,
+  getFoodSourcePriority,
   getNodeTierGatherMultiplier,
   advanceStarRelicChannel,
   pickStarRelicSite,
@@ -105,16 +136,29 @@ import {
   getUnitVsUnitDamage,
   getShrineIncome,
   getShrineBlessingHoldTime,
+  getTeamVisualColor,
+  shouldShowUnitHealthBar,
+  computeParticleBurstCount,
+  summarizeFrameTimes,
   evaluateContestedPresence,
   getContestedShrineSummary,
   stepWildAnimalState,
   triggerWildAnimalPanic,
+  stepWildBoarState,
+  triggerWildBoarAggression,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
+  assignRaidTargets,
+  layoutCombatFormation,
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
+  shouldSwitchCombatTarget,
+  isWallLinkedToTower,
+  shouldBreachWallAfterSiegeHit,
+  WALL_REPAIR_COST,
 } from './rules';
+import { estimateDeliveredResourcePerMinute } from './economyInsights';
 import {
   getBuildingCollisionRadius,
   getResourceColliderRadius,
@@ -127,6 +171,26 @@ import {
 } from './collision';
 import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
+import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
+import {
+  formatPerformanceTelemetryCsv,
+  getAverageAiDecisionMs,
+  recordAiDecisionTiming,
+  EMPTY_AI_DECISION_TIMING,
+  getAveragePathSearchMs,
+  recordPathSearchTiming,
+  EMPTY_PATH_SEARCH_TIMING,
+  type AiDecisionTiming,
+  type PathSearchTiming,
+  type PerformanceSample,
+} from './performanceTelemetry';
+import {
+  advanceMovementStallDuration,
+  MOVEMENT_STALL_SAMPLE_INTERVAL_SECONDS,
+  MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS,
+  MOVEMENT_STALL_RECOVERY_SECONDS,
+  shouldRecoverStalledPath,
+} from './movementDiagnostics';
 import {
   ControlGroupsMap,
   createEmptyControlGroups,
@@ -137,6 +201,9 @@ import { sound } from './audio';
 import {
   applyBuildingConstructionVisuals,
   applyBuildingDamageVisuals,
+  updateBuildingAgeVisuals,
+  applyWallBreachVisuals,
+  updateGateDoorAnimation,
   applyTerrainBiomeMaterial,
   createBerryBushMesh,
   createBuildingMesh,
@@ -144,6 +211,7 @@ import {
   createCommandRingMesh,
   createDeepFishMesh,
   createDeerMesh,
+  createWildBoarMesh,
   createEnvironmentFeaturesGroup,
   createGoldMineMesh,
   createRallyFlagMesh,
@@ -167,6 +235,7 @@ import {
   disposeBuildingVisualResources,
   registerFactionVisual,
   DeerAnimParts,
+  WildBoarAnimParts,
   UnitAnimParts,
   updateBadgeSprite,
   updateFarmCropVisual,
@@ -186,15 +255,24 @@ import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNo
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
 
+type ParticleRenderLayer = 'solid' | 'smoke';
+
 interface PooledParticle {
-  mesh: THREE.Mesh;
+  instanceId: number;
+  renderLayer: ParticleRenderLayer;
   kind: ParticleKind;
+  x: number;
+  y: number;
+  z: number;
+  rotationX: number;
+  rotationY: number;
   vx: number;
   vy: number;
   vz: number;
   life: number;
   maxLife: number;
   baseScale: number;
+  scale: number;
   active: boolean;
 }
 
@@ -210,7 +288,16 @@ interface FieldSiegeProject {
   progressRing: THREE.Mesh;
 }
 
-const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
+interface AiEconomyFlowState {
+  sampledAt: number;
+  resources: Resources;
+  netRates: Partial<Record<ResourceType, number>>;
+}
+
+const AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS = 12;
+const AI_WORKER_REBALANCE_INTERVAL_SECONDS = 6;
+const MAX_WALL_CHAIN_SEGMENTS = 120;
+const MAX_PERFORMANCE_SAMPLES = 3600;
 
 export class RtsEngine {
   public container: HTMLElement;
@@ -225,6 +312,15 @@ export class RtsEngine {
   private performanceOverlayVisible = false;
   private performanceFrameCount = 0;
   private performanceWindowStart = 0;
+  private performanceLastFrameTime = 0;
+  private performanceFrameTimes: number[] = [];
+  private performanceSimulationTotalMs = 0;
+  private performanceSimulationMaxMs = 0;
+  private performanceRenderCallTotalMs = 0;
+  private performanceRenderCallMaxMs = 0;
+  private pathSearchTiming: PathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
+  private performanceCaptureStartedAt = 0;
+  private performanceSamples: PerformanceSample[] = [];
   private qualityWindowStart = 0;
   private qualityFrameCount = 0;
   private qualityLevel: 0 | 1 | 2 = 2;
@@ -235,10 +331,15 @@ export class RtsEngine {
   // RTS Multi-Participant & Team State
   public participants: MatchParticipant[] = createDefaultParticipants();
   public isSpectatorMode = false;
+  public battleStressInfo: { unitCount: number; seed: number; mapPreset: MapPresetId } | null = null;
   public humanPlayerId: string = 'player';
   public humanTeam: number = 1;
   public observedFactionId: FactionId = 'player';
   public resourcesByFaction: Record<string, Resources> = {};
+  private aiEconomyFlowByFaction = new Map<string, AiEconomyFlowState>();
+  private aiWorkerRebalanceReadyAt = new Map<string, number>();
+  private aiNodeRelocationReadyAt = new Map<string, number>();
+  private aiCampPlacementReadyAt = new Map<string, number>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public enemyResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public activeMods: GameMod[] = JSON.parse(JSON.stringify(INITIAL_MODS));
@@ -275,6 +376,8 @@ export class RtsEngine {
   private navGridDirty = true;
   private waterNavGrid: NavGrid | null = null;
   private waterNavGridDirty = true;
+  /** Cached route lengths are tied to a specific immutable navigation-grid instance. */
+  private economyDeliveryRouteCache = new WeakMap<NavGrid, Map<string, number>>();
 
   // Reusable Raycaster & HUD Sync Throttle
   private raycaster = new THREE.Raycaster();
@@ -320,7 +423,10 @@ export class RtsEngine {
   private lastTimerSec = -1;
   private particlePool: PooledParticle[] = [];
   private particleCursor = 0;
-  private particleMaterials: Record<ParticleKind, THREE.MeshBasicMaterial> | null = null;
+  private particleSolidBatch: THREE.InstancedMesh | null = null;
+  private particleSmokeBatch: THREE.InstancedMesh | null = null;
+  private particleColors: Record<ParticleKind, THREE.Color> | null = null;
+  private particleDummy = new THREE.Object3D();
   private dyingEffects: Array<{ mesh: THREE.Group; age: number; duration: number; startY: number }> = [];
   private collapsingBuildings: Array<{
     mesh: THREE.Group;
@@ -369,6 +475,9 @@ export class RtsEngine {
   // Placement mode
   public placementBuildingType: BuildingType | null = null;
   private placementGhostMesh: THREE.Group | null = null;
+  public wallPlacementPoints: WallChainPoint[] = [];
+  private wallPlacementCursor: WallChainPoint | null = null;
+  private wallPlacementPreviewGroup: THREE.Group | null = null;
 
   // Camera navigation (zoom + keyboard + screen edge panning)
   public cameraTarget = new THREE.Vector3(0, 0, 0);
@@ -401,6 +510,9 @@ export class RtsEngine {
 
   // AI Timer
   private aiTickAccumulator = 0;
+  private aiDecisionCount = 0;
+  private aiDecisionTiming: AiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
+  private aiPathRecoveryTotal = 0;
 
   // Callbacks for UI updates
   public onStateChange?: () => void;
@@ -622,35 +734,92 @@ export class RtsEngine {
   }
 
   private initParticlePool() {
-    const pGeo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-    this.particleMaterials = {
-      hit: new THREE.MeshBasicMaterial({ color: 0xef4444 }),
-      spark: new THREE.MeshBasicMaterial({ color: 0xfef08a }),
-      wood: new THREE.MeshBasicMaterial({ color: 0x92400e }),
-      gold: new THREE.MeshBasicMaterial({ color: 0xfbbf24 }),
-      stone: new THREE.MeshBasicMaterial({ color: 0x94a3b8 }),
-      leaf: new THREE.MeshBasicMaterial({ color: 0x22c55e }),
-      dust: new THREE.MeshBasicMaterial({ color: 0xe2e8f0 }),
-      smoke: new THREE.MeshBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.72 }),
-      ember: new THREE.MeshBasicMaterial({ color: 0xf97316 }),
-    };
     const count = 112;
+    const geometry = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+    this.particleColors = {
+      hit: new THREE.Color(0xef4444),
+      spark: new THREE.Color(0xfef08a),
+      wood: new THREE.Color(0x92400e),
+      gold: new THREE.Color(0xfbbf24),
+      stone: new THREE.Color(0x94a3b8),
+      leaf: new THREE.Color(0x22c55e),
+      dust: new THREE.Color(0xe2e8f0),
+      smoke: new THREE.Color(0x475569),
+      ember: new THREE.Color(0xf97316),
+    };
+
+    const solidMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      toneMapped: false,
+    });
+    const smokeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.particleSolidBatch = new THREE.InstancedMesh(geometry, solidMaterial, count);
+    this.particleSolidBatch.name = 'instancedCombatParticles';
+    this.particleSolidBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.particleSolidBatch.frustumCulled = false;
+    this.particleSolidBatch.visible = false;
+    this.particleSmokeBatch = new THREE.InstancedMesh(geometry, smokeMaterial, count);
+    this.particleSmokeBatch.name = 'instancedSmokeParticles';
+    this.particleSmokeBatch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.particleSmokeBatch.frustumCulled = false;
+    this.particleSmokeBatch.visible = false;
+
+    const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
     this.particlePool = [];
     for (let i = 0; i < count; i++) {
-      const mesh = new THREE.Mesh(pGeo, this.particleMaterials.spark);
-      mesh.visible = false;
-      this.scene.add(mesh);
+      this.particleSolidBatch.setMatrixAt(i, hiddenMatrix);
+      this.particleSmokeBatch.setMatrixAt(i, hiddenMatrix);
+      this.particleSolidBatch.setColorAt(i, this.particleColors.spark);
+      this.particleSmokeBatch.setColorAt(i, this.particleColors.smoke);
       this.particlePool.push({
-        mesh,
+        instanceId: i,
+        renderLayer: 'solid',
         kind: 'spark',
+        x: 0,
+        y: 0,
+        z: 0,
+        rotationX: 0,
+        rotationY: 0,
         vx: 0,
         vy: 0,
         vz: 0,
         life: 0,
         maxLife: 0.4,
         baseScale: 1,
+        scale: 0,
         active: false,
       });
+    }
+    this.markParticleBatchesDirty(true, true, true);
+    this.scene.add(this.particleSolidBatch, this.particleSmokeBatch);
+  }
+
+  private writeParticleInstance(particle: PooledParticle, visible: boolean): void {
+    const batch = particle.renderLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
+    if (!batch) return;
+    this.particleDummy.position.set(particle.x, particle.y, particle.z);
+    this.particleDummy.rotation.set(particle.rotationX, particle.rotationY, 0);
+    this.particleDummy.scale.setScalar(visible ? particle.scale : 0);
+    this.particleDummy.updateMatrix();
+    batch.setMatrixAt(particle.instanceId, this.particleDummy.matrix);
+  }
+
+  private markParticleBatchesDirty(solid: boolean, smoke: boolean, colors = false): void {
+    if (solid && this.particleSolidBatch) {
+      this.particleSolidBatch.instanceMatrix.needsUpdate = true;
+      if (colors && this.particleSolidBatch.instanceColor) this.particleSolidBatch.instanceColor.needsUpdate = true;
+    }
+    if (smoke && this.particleSmokeBatch) {
+      this.particleSmokeBatch.instanceMatrix.needsUpdate = true;
+      if (colors && this.particleSmokeBatch.instanceColor) this.particleSmokeBatch.instanceColor.needsUpdate = true;
     }
   }
 
@@ -660,24 +829,32 @@ export class RtsEngine {
   }
 
   public spawnParticleBurst(x: number, y: number, z: number, kind: ParticleKind, count = 6) {
-    if (!this.particleMaterials || this.particlePool.length === 0) return;
-    const mat = this.particleMaterials[kind];
+    if (!this.particleColors || this.particlePool.length === 0) return;
     const isBuoyant = kind === 'smoke' || kind === 'ember';
-    for (let i = 0; i < count; i++) {
+    const targetLayer: ParticleRenderLayer = kind === 'smoke' ? 'smoke' : 'solid';
+    const budgetedCount = computeParticleBurstCount(count, this.qualityLevel, this.units.length, kind);
+    let solidChanged = false;
+    let smokeChanged = false;
+    let colorsChanged = false;
+
+    for (let i = 0; i < budgetedCount; i++) {
       const p = this.particlePool[this.particleCursor];
       this.particleCursor = (this.particleCursor + 1) % this.particlePool.length;
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.65;
+      this.writeParticleInstance(p, false);
+      if (p.renderLayer === 'smoke') smokeChanged = true;
+      else solidChanged = true;
+      p.renderLayer = targetLayer;
+
+      const angle = (i / budgetedCount) * Math.PI * 2 + Math.random() * 0.65;
       const speed = isBuoyant ? 0.35 + Math.random() * 0.85 : 1.6 + Math.random() * 2.6;
       const baseScale = kind === 'smoke' ? 2.1 + Math.random() * 1.4 : kind === 'ember' ? 0.75 + Math.random() * 0.5 : 0.8 + Math.random() * 0.6;
-      p.mesh.material = mat;
-      p.mesh.position.set(
-        x + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0),
-        y,
-        z + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0)
-      );
-      p.mesh.scale.setScalar(baseScale);
-      p.mesh.visible = true;
       p.kind = kind;
+      p.x = x + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0);
+      p.y = y;
+      p.z = z + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0);
+      p.rotationX = 0;
+      p.rotationY = 0;
+      p.scale = baseScale;
       p.baseScale = baseScale;
       p.vx = Math.cos(angle) * speed;
       p.vy = kind === 'smoke' ? 1.8 + Math.random() * 1.2 : kind === 'ember' ? 2.6 + Math.random() * 1.8 : 2.4 + Math.random() * 2.5;
@@ -685,17 +862,32 @@ export class RtsEngine {
       p.life = 0;
       p.maxLife = kind === 'smoke' ? 0.85 + Math.random() * 0.45 : kind === 'ember' ? 0.55 + Math.random() * 0.35 : 0.32 + Math.random() * 0.24;
       p.active = true;
+
+      const batch = targetLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
+      if (batch) batch.visible = true;
+      batch?.setColorAt(p.instanceId, this.particleColors[kind]);
+      this.writeParticleInstance(p, true);
+      if (targetLayer === 'smoke') smokeChanged = true;
+      else solidChanged = true;
+      colorsChanged = true;
     }
+    this.markParticleBatchesDirty(solidChanged, smokeChanged, colorsChanged);
   }
 
   private updateParticles(dt: number) {
+    let solidChanged = false;
+    let smokeChanged = false;
+    let solidActive = false;
+    let smokeActive = false;
     for (let i = 0; i < this.particlePool.length; i++) {
       const p = this.particlePool[i];
       if (!p.active) continue;
       p.life += dt;
       if (p.life >= p.maxLife) {
         p.active = false;
-        p.mesh.visible = false;
+        this.writeParticleInstance(p, false);
+        if (p.renderLayer === 'smoke') smokeChanged = true;
+        else solidChanged = true;
         continue;
       }
       const prog = p.life / p.maxLife;
@@ -703,20 +895,31 @@ export class RtsEngine {
         p.vy += 1.2 * dt;
         p.vx *= Math.max(0, 1 - 1.5 * dt);
         p.vz *= Math.max(0, 1 - 1.5 * dt);
-        p.mesh.scale.setScalar(p.baseScale * (0.85 + prog * 1.15) * (1 - prog * 0.65));
+        p.scale = p.baseScale * (0.85 + prog * 1.15) * (1 - prog * 0.65);
       } else if (p.kind === 'ember') {
         p.vy += 0.8 * dt;
-        p.mesh.scale.setScalar(Math.max(0.08, p.baseScale * (1 - prog)));
+        p.scale = Math.max(0.08, p.baseScale * (1 - prog));
       } else {
         p.vy -= 9.5 * dt;
-        p.mesh.scale.setScalar(Math.max(0.05, p.baseScale * (1 - prog)));
+        p.scale = Math.max(0.05, p.baseScale * (1 - prog));
       }
-      p.mesh.position.x += p.vx * dt;
-      p.mesh.position.y = Math.max(0.05, p.mesh.position.y + p.vy * dt);
-      p.mesh.position.z += p.vz * dt;
-      p.mesh.rotation.x += (p.kind === 'smoke' ? 1.6 : 6) * dt;
-      p.mesh.rotation.y += (p.kind === 'smoke' ? 1.4 : 5) * dt;
+      p.x += p.vx * dt;
+      p.y = Math.max(0.05, p.y + p.vy * dt);
+      p.z += p.vz * dt;
+      p.rotationX += (p.kind === 'smoke' ? 1.6 : 6) * dt;
+      p.rotationY += (p.kind === 'smoke' ? 1.4 : 5) * dt;
+      this.writeParticleInstance(p, true);
+      if (p.renderLayer === 'smoke') {
+        smokeChanged = true;
+        smokeActive = true;
+      } else {
+        solidChanged = true;
+        solidActive = true;
+      }
     }
+    if (this.particleSolidBatch) this.particleSolidBatch.visible = solidActive;
+    if (this.particleSmokeBatch) this.particleSmokeBatch.visible = smokeActive;
+    this.markParticleBatchesDirty(solidChanged, smokeChanged);
   }
 
   private createMountainPerimeter() {
@@ -933,8 +1136,15 @@ export class RtsEngine {
   public setupWorld(
     customParticipants?: MatchParticipant[],
     mapPreset?: MapPresetId,
-    resourceRichness?: ResourceRichness
+    resourceRichness?: ResourceRichness,
+    seed?: number
   ) {
+    this.battleStressInfo = null;
+    this.aiEconomyFlowByFaction.clear();
+    this.aiWorkerRebalanceReadyAt.clear();
+    this.aiNodeRelocationReadyAt.clear();
+    this.aiCampPlacementReadyAt.clear();
+    this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
 
@@ -970,8 +1180,11 @@ export class RtsEngine {
     this.commandIndicators = [];
     this.particlePool.forEach((p) => {
       p.active = false;
-      p.mesh.visible = false;
+      this.writeParticleInstance(p, false);
     });
+    this.markParticleBatchesDirty(true, true);
+    if (this.particleSolidBatch) this.particleSolidBatch.visible = false;
+    if (this.particleSmokeBatch) this.particleSmokeBatch.visible = false;
     this.dyingEffects.forEach((d) => this.scene.remove(d.mesh));
     this.dyingEffects = [];
     this.collapsingBuildings.forEach((cb) => {
@@ -1063,6 +1276,9 @@ export class RtsEngine {
     this.landmarksByFaction = {};
     this.researchedTechsByFaction = {};
     this.aiTickAccumulator = 1.2;
+    this.aiDecisionCount = 0;
+    this.aiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
+    this.aiPathRecoveryTotal = 0;
     this.playerAge = 1;
     this.enemyAge = 1;
     this.playerLandmarks = [];
@@ -1089,7 +1305,7 @@ export class RtsEngine {
       registerFactionVisual(p.id, {
         primary: p.colorHex,
         banner: p.accentHex,
-        ring: p.accentHex,
+        ring: getTeamVisualColor(p.team).colorHex,
         isHostile: hostile,
         labelPrefix: this.isSpectatorMode
           ? `${p.name}·`
@@ -1114,7 +1330,9 @@ export class RtsEngine {
     };
 
     const spawns = generateSpawnPositions(this.participants.length, 58);
-    const matchSeed = Math.floor(Math.random() * 900000) + 1000;
+    const matchSeed = Number.isFinite(seed)
+      ? (Math.floor(Math.abs(seed as number)) >>> 0) || 1
+      : Math.floor(Math.random() * 900000) + 1000;
     const layout = generateMapLayout(
       this.mapPreset,
       this.resourceRichness,
@@ -1129,6 +1347,7 @@ export class RtsEngine {
 
     this.environmentGroup = createEnvironmentFeaturesGroup(layout);
     this.scene.add(this.environmentGroup);
+    this.applySceneDetailQuality(this.qualityLevel);
 
     const fallbackWorker = this.findUnitDef('villager')!;
     const fallbackWarrior = this.findUnitDef('swordsman') || fallbackWorker;
@@ -1268,6 +1487,90 @@ export class RtsEngine {
     this.updateCameraPosition();
   }
 
+  /**
+   * Starts a deterministic, all-AI four-faction battle used only by the Vite
+   * development stress-test URL. Normal matches never call this method.
+   */
+  public setupBattleStressTest(
+    unitCount: BattleStressUnitCount,
+    seed: number,
+    mapPreset: MapPresetId = 'highland_basin'
+  ): void {
+    const plan = createBattleStressPlan(unitCount, seed);
+    this.setupWorld(plan.participants, mapPreset, 'abundant', plan.seed);
+
+    const rosterByFaction = new Map<string, UnitDefinition[]>();
+    for (const participant of plan.participants) {
+      this.ageByFaction[participant.id] = 3;
+      this.resourcesByFaction[participant.id] = {
+        food: 5000,
+        wood: 5000,
+        gold: 5000,
+        stone: 2500,
+      };
+      this.refreshFactionUnitStats(participant.id);
+      rosterByFaction.set(
+        participant.id,
+        this.getAvailableUnitDefs(participant.id).filter(
+          (definition) =>
+            definition.category !== 'worker' &&
+            !definition.isNaval &&
+            (definition.requiredAge ?? 1) <= 3
+        )
+      );
+    }
+    this.syncHumanResourcesAlias();
+
+    const fallbackRoles: Record<BattleStressRole, BattleStressRole[]> = {
+      melee: ['melee', 'special', 'ranged', 'cavalry', 'siege'],
+      ranged: ['ranged', 'special', 'melee', 'siege', 'cavalry'],
+      cavalry: ['cavalry', 'melee', 'special', 'ranged', 'siege'],
+      siege: ['siege', 'ranged', 'melee', 'special', 'cavalry'],
+      special: ['special', 'ranged', 'melee', 'cavalry', 'siege'],
+    };
+    const roleUsage = new Map<string, number>();
+
+    for (const spawn of plan.units) {
+      const roster = rosterByFaction.get(spawn.factionId) || [];
+      const preferred = fallbackRoles[spawn.role]
+        .map((role) => roster.filter((definition) => definition.category === role))
+        .find((definitions) => definitions.length > 0);
+      if (!preferred?.length) {
+        throw new Error(`No combat units are available for stress faction ${spawn.factionId}.`);
+      }
+
+      const usageKey = `${spawn.factionId}:${spawn.role}`;
+      const roleIndex = roleUsage.get(usageKey) || 0;
+      roleUsage.set(usageKey, roleIndex + 1);
+      const definition = preferred[roleIndex % preferred.length];
+      const unit = this.addUnit(definition, spawn.factionId, spawn.x, spawn.z, spawn.id);
+      unit.targetX = spawn.targetX;
+      unit.targetZ = spawn.targetZ;
+      unit.targetEntityId = undefined;
+      unit.attackMoveGoal = { x: spawn.targetX, z: spawn.targetZ };
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.state = 'moving';
+      unit.currentActionText = '⚔️ 壓測推進';
+    }
+
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    this.gameSpeed = 1;
+    this.gameState = 'playing';
+    this.battleStressInfo = {
+      unitCount: plan.unitCount,
+      seed: plan.seed,
+      mapPreset: this.mapPreset,
+    };
+    // Capture the initial pathfinding burst from the first stress-test frame.
+    this.togglePerformanceOverlay();
+    this.onResourcesChange?.(this.playerResources);
+    this.onStateChange?.();
+    this.onSelectionChange?.();
+  }
+
   public hasUniqueBuildingAura(faction: FactionId): boolean {
     const uniqueType = getCivilizationConfig(this.getCivilizationForFaction(faction)).uniqueBuildingType;
     return this.buildings.some(
@@ -1333,6 +1636,187 @@ export class RtsEngine {
     return getFactionPopulationStats(faction, this.buildings, this.units);
   }
 
+  /**
+   * Shared live estimate for the selected-building HUD. Uses the same range,
+   * forge aura and production modifiers as the simulation update.
+   */
+  public getBuildingTimingEstimate(buildingId: string): {
+    constructionWorkers: number;
+    constructionWorkerMultiplier: number;
+    constructionRemainingSeconds: number | null;
+    researchRemainingSeconds: number | null;
+    trainingRemainingSeconds: number | null;
+    queueRemainingSeconds: number | null;
+  } {
+    const building = this.buildings.find((entry) => entry.id === buildingId);
+    const empty = {
+      constructionWorkers: 0,
+      constructionWorkerMultiplier: 0,
+      constructionRemainingSeconds: null,
+      researchRemainingSeconds: null,
+      trainingRemainingSeconds: null,
+      queueRemainingSeconds: null,
+    };
+    if (!building || building.hp <= 0) return empty;
+
+    const repairingWall =
+      !!building.wallBreached && !!building.buildingDef.isWall && building.isConstructed;
+    const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
+      getCivilizationBuildSpeedMultiplier(this.getCivilizationForFaction(building.faction), this.activeMods)
+    );
+    const buildingRadius = Math.max(
+      getBuildingCollisionRadius(building),
+      repairingWall ? building.buildingDef.size : 0
+    );
+    const buildReach = Math.max(2.2, buildingRadius + 1.55);
+    const constructionWorkers =
+      !building.isConstructed || repairingWall
+        ? this.units.filter(
+            (worker) =>
+              worker.hp > 0 &&
+              worker.faction === building.faction &&
+              worker.state === 'building' &&
+              worker.targetBuildingId === building.id &&
+              !worker.garrisonedInBuildingId &&
+              getDistance(worker.x, worker.z, building.x, building.z) <= buildReach
+          ).length
+        : 0;
+    const constructionWorkerMultiplier = getConstructionWorkerMultiplier(constructionWorkers);
+
+    let constructionRemainingSeconds: number | null = null;
+    if (repairingWall && constructionWorkerMultiplier > 0) {
+      const repairRate =
+        (building.maxHp / (building.buildingDef.buildTime * 0.65)) *
+        (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
+        constructionWorkerMultiplier;
+      constructionRemainingSeconds =
+        repairRate > 0 ? Math.max(0, building.maxHp - building.hp) / repairRate : null;
+    } else if (!building.isConstructed) {
+      constructionRemainingSeconds = estimateConstructionTimeRemaining(
+        building.buildingDef.buildTime,
+        building.buildProgress,
+        constructionWorkers,
+        constructionSpeedMultiplier
+      );
+    }
+
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    const productionSpeedMultiplier = getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1);
+    let researchRemainingSeconds: number | null = null;
+    if (building.activeTechId) {
+      const tech = findTechDef(building.activeTechId);
+      if (tech) {
+        researchRemainingSeconds =
+          (Math.max(0, 1 - (building.researchProgress || 0)) * tech.researchTime) /
+          productionSpeedMultiplier;
+      }
+    }
+
+    let trainingRemainingSeconds: number | null = null;
+    let queueRemainingSeconds: number | null = null;
+    if (building.queue.length > 0) {
+      const researched = this.getResearchedTechs(building.faction);
+      const landmarks = this.landmarksByFaction[building.faction] || [];
+      let totalSeconds = 0;
+      building.queue.forEach((unitId, index) => {
+        const unitDef = this.findUnitDef(unitId, building.faction);
+        if (!unitDef) return;
+        const techMultiplier = getTrainingTimeMultiplier(researched, unitDef.category);
+        const landmarkMultiplier = getLandmarkTrainingSpeedMultiplier(landmarks, unitDef.category);
+        const duration = getEffectiveUnitTrainingDuration(
+          unitDef.stats.trainTime,
+          techMultiplier,
+          productionSpeedMultiplier,
+          landmarkMultiplier
+        );
+        const remaining = index === 0
+          ? duration * (1 - Math.max(0, Math.min(1, building.queueProgress)))
+          : duration;
+        totalSeconds += remaining;
+        if (index === 0) trainingRemainingSeconds = remaining;
+      });
+      queueRemainingSeconds = totalSeconds;
+    }
+
+    return {
+      constructionWorkers,
+      constructionWorkerMultiplier,
+      constructionRemainingSeconds,
+      researchRemainingSeconds,
+      trainingRemainingSeconds,
+      queueRemainingSeconds,
+    };
+  }
+
+  /** One-builder construction estimate used by build-menu hover tooltips. */
+  public getBuildingConstructionDuration(buildingType: BuildingType, faction: FactionId): number {
+    const definition = DEFAULT_BUILDINGS[buildingType];
+    const civilizationSpeed = getCivilizationBuildSpeedMultiplier(
+      this.getCivilizationForFaction(faction),
+      this.activeMods
+    );
+    return getEffectiveProductionDuration(
+      definition.buildTime * 0.9,
+      getCappedProductionSpeedMultiplier(civilizationSpeed)
+    );
+  }
+
+  /** Exact unit queue duration using the same live bonuses as the production simulation. */
+  public getUnitTrainingDuration(buildingId: string, unitDefId: string): number | null {
+    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    if (!building) return null;
+    const unit = this.findUnitDef(unitDefId, building.faction);
+    if (!unit) return null;
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    const technologyTimeMultiplier = getTrainingTimeMultiplier(
+      this.getResearchedTechs(building.faction),
+      unit.category
+    );
+    const landmarkSpeed = getLandmarkTrainingSpeedMultiplier(
+      this.landmarksByFaction[building.faction] || [],
+      unit.category
+    );
+    return getEffectiveUnitTrainingDuration(
+      unit.stats.trainTime,
+      technologyTimeMultiplier,
+      hasNearbyForge ? 1.25 : 1,
+      landmarkSpeed
+    );
+  }
+
+  /** Current research duration; the Royal Foundry aura is subject to the shared speed ceiling. */
+  public getTechResearchDuration(buildingId: string, techId: string): number | null {
+    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    const tech = findTechDef(techId);
+    if (!building || !tech) return null;
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    return tech.researchTime / getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1);
+  }
+
   public getAvailableUnitDefs(faction: FactionId): UnitDefinition[] {
     const list: UnitDefinition[] = [...SHARED_UNITS.map((u) => this.findUnitDef(u.id, faction)!).filter(Boolean)];
     const civ = this.getCivilizationForFaction(faction);
@@ -1373,8 +1857,8 @@ export class RtsEngine {
     });
   }
 
-  public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number): UnitEntity {
-    const id = `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number, stableId?: string): UnitEntity {
+    const id = stableId || `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const team = this.getParticipant(faction)?.team ?? (faction === 'player' ? 1 : 2);
     const age = this.ageByFaction[faction] || 1;
     const hasAura = this.hasUniqueBuildingAura(faction);
@@ -1422,6 +1906,8 @@ export class RtsEngine {
       age: this.ageByFaction[faction] || 1,
       researchedTechIds: this.getResearchedTechs(faction),
       unitId: unit.unitDefId,
+      level: unit.level || 1,
+      visualSeed: unit.id,
     });
     mesh.position.set(x, 0, z);
     Object.assign(mesh.userData, { type: 'unit', id, faction, team });
@@ -1455,12 +1941,109 @@ export class RtsEngine {
     this.scene.add(this.settlementEnvironmentGroup);
   }
 
+  private refreshWallTowerConnections(): void {
+    const towers = this.buildings.filter(
+      (building) => building.buildingType === 'tower' && building.hp > 0 && building.isConstructed
+    );
+    for (const building of this.buildings) {
+      if (!building.buildingDef.isWall) continue;
+      building.wallTowerLinked = isWallLinkedToTower(building, towers);
+    }
+  }
+
+  public toggleGate(buildingId: string): boolean {
+    const gate = this.buildings.find((building) => building.id === buildingId);
+    if (!gate || gate.buildingType !== 'gate' || gate.hp <= 0 || !gate.isConstructed || gate.wallBreached || !this.isHumanControlled(gate.faction)) return false;
+    gate.gateOpen = !gate.gateOpen;
+    this.refreshWallTowerConnections();
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    sound.playOrder();
+    this.addFloatingText(gate.x, 3.0, gate.z, gate.gateOpen ? '🚪 城門開啟 · 友軍可通行' : '🛡️ 城門關閉 · 防線封鎖', gate.gateOpen ? '#86efac' : '#fbbf24');
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  /** Assign selected infantry/cavalry/ranged guards to patrol their nearest friendly wall chain. */
+  public issueWallPatrolOrder(): number {
+    const selected = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0 && !unit.garrisonedInBuildingId && !unit.unitDef.isNaval && unit.unitDef.category !== 'worker' && unit.unitDef.category !== 'siege' && this.isHumanControlled(unit.faction));
+    const availableWalls = this.buildings.filter((building) => building.faction === this.humanPlayerId && building.buildingDef.isWall && building.hp > 0 && building.isConstructed && !building.wallBreached && !(building.buildingType === 'gate' && building.gateOpen));
+    if (selected.length === 0 || availableWalls.length === 0) {
+      sound.playInvalid();
+      return 0;
+    }
+
+    const townCenter = this.buildings.find((building) => building.faction === this.humanPlayerId && building.buildingType === 'town_center' && building.hp > 0);
+    let assigned = 0;
+    for (const unit of selected) {
+      const nearestWall = [...availableWalls].sort((a, b) => getDistance(unit.x, unit.z, a.x, a.z) - getDistance(unit.x, unit.z, b.x, b.z))[0];
+      const chainId = nearestWall.wallChainId;
+      const chain = availableWalls.filter((wall) => chainId ? wall.wallChainId === chainId : wall.id === nearestWall.id).sort((a, b) => (a.wallChainIndex ?? 0) - (b.wallChainIndex ?? 0));
+      const route: Array<{ x: number; z: number }> = [];
+      for (const wall of chain) {
+        const yaw = wall.rotationY || 0;
+        const dirX = Math.cos(yaw);
+        const dirZ = -Math.sin(yaw);
+        const normalX = -dirZ;
+        const normalZ = dirX;
+        const plus = { x: wall.x + normalX * 2.25, z: wall.z + normalZ * 2.25 };
+        const minus = { x: wall.x - normalX * 2.25, z: wall.z - normalZ * 2.25 };
+        const usePlus = !townCenter || getDistance(plus.x, plus.z, townCenter.x, townCenter.z) <= getDistance(minus.x, minus.z, townCenter.x, townCenter.z);
+        const side = usePlus ? 1 : -1;
+        route.push({ x: wall.x + normalX * 2.25 * side, z: wall.z + normalZ * 2.25 * side });
+      }
+      if (chain.length === 1) {
+        const wall = chain[0];
+        const yaw = wall.rotationY || 0;
+        const dirX = Math.cos(yaw);
+        const dirZ = -Math.sin(yaw);
+        const centerPoint = route[0];
+        route.unshift({ x: centerPoint.x - dirX * 1.15, z: centerPoint.z - dirZ * 1.15 });
+        route.push({ x: centerPoint.x + dirX * 1.15, z: centerPoint.z + dirZ * 1.15 });
+      } else if (chain.length > 1) {
+        const firstYaw = chain[0].rotationY || 0;
+        const lastYaw = chain[chain.length - 1].rotationY || 0;
+        route.unshift({ x: route[0].x - Math.cos(firstYaw) * 1.15, z: route[0].z + Math.sin(firstYaw) * 1.15 });
+        const last = route[route.length - 1];
+        route.push({ x: last.x + Math.cos(lastYaw) * 1.15, z: last.z - Math.sin(lastYaw) * 1.15 });
+      }
+      if (route.length < 2) continue;
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+      route.forEach((point, index) => {
+        const distance = getDistance(unit.x, unit.z, point.x, point.z);
+        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+      });
+      unit.wallPatrolRoute = route;
+      unit.wallPatrolIndex = nearestIndex;
+      unit.commandQueue = undefined;
+      unit.targetEntityId = undefined;
+      unit.targetResourceNodeId = undefined;
+      unit.targetBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.targetX = route[nearestIndex].x;
+      unit.targetZ = route[nearestIndex].z;
+      unit.state = 'moving';
+      unit.currentActionText = '🛡️ 沿城牆巡邏';
+      assigned++;
+    }
+    if (assigned > 0) { sound.playOrder(); this.onSelectionChange?.(); }
+    return assigned;
+  }
+
   public addBuilding(
     type: BuildingType,
     faction: FactionId,
     x: number,
     z: number,
-    instant = false
+    instant = false,
+    rotationY = 0,
+    refreshEnvironment = true
   ): BuildingEntity {
     const baseDef = DEFAULT_BUILDINGS[type];
     const civ = this.getCivilizationForFaction(faction);
@@ -1492,6 +2075,10 @@ export class RtsEngine {
       buildingDef: bDef,
       x,
       z,
+      rotationY,
+      gateOpen: false,
+      wallBreached: false,
+      wallRepairPaid: false,
       hp: instant ? finalMaxHp : Math.round(finalMaxHp * 0.1),
       maxHp: finalMaxHp,
       isConstructed: instant,
@@ -1507,8 +2094,9 @@ export class RtsEngine {
     this.navGridDirty = true;
     this.waterNavGridDirty = true;
 
-    const mesh = createBuildingMesh(type, faction, civ);
+    const mesh = createBuildingMesh(type, faction, civ, this.ageByFaction[faction] || 1);
     mesh.position.set(x, 0, z);
+    mesh.rotation.y = rotationY;
     mesh.userData = { ...mesh.userData, type: 'building', id, faction, team };
     applyBuildingConstructionVisuals(
       mesh,
@@ -1516,7 +2104,10 @@ export class RtsEngine {
     );
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
-    this.refreshSettlementEnvironment();
+    if (refreshEnvironment) {
+      this.refreshSettlementEnvironment();
+      this.refreshWallTowerConnections();
+    }
 
     if (this.isHumanControlled(faction) && instant) {
       this.stats.buildingsConstructed++;
@@ -1552,7 +2143,7 @@ export class RtsEngine {
 
     let mesh: THREE.Group;
     if (type === 'wood') {
-      mesh = createTreeMesh(hasBadge, nodeTier, amount);
+      mesh = createTreeMesh(hasBadge, nodeTier, amount, id);
     } else if (type === 'gold') {
       mesh = createGoldMineMesh(amount, nodeTier);
     } else if (type === 'stone') {
@@ -1561,6 +2152,8 @@ export class RtsEngine {
       mesh = createBerryBushMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'hunt') {
       mesh = createDeerMesh(amount, hasBadge);
+    } else if (resolvedSubtype === 'boar') {
+      mesh = createWildBoarMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'shore_fish') {
       mesh = createShoreFishMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'deep_fish') {
@@ -1604,6 +2197,88 @@ export class RtsEngine {
     return next;
   }
 
+  private estimateResourceDeliveryTravelDistance(
+    faction: FactionId,
+    worker: { unitDef: UnitEntity['unitDef']; x: number; z: number },
+    node: Pick<ResourceNode, 'id' | 'resourceType' | 'subtype' | 'x' | 'z'>
+  ): number | null {
+    const isNaval = !!worker.unitDef.isNaval || worker.unitDef.id === 'fishing_boat';
+    const resourceType = node.resourceType;
+    const dropOffs = this.buildings.filter((building) => {
+      if (building.faction !== faction || !building.isConstructed || building.hp <= 0) return false;
+      if (isNaval) return building.buildingType === 'dock';
+      if (building.buildingType === 'town_center') return true;
+      if (resourceType === 'food') {
+        return ['dock', 'granary', 'farm'].includes(building.buildingType);
+      }
+      if (resourceType === 'wood') return building.buildingType === 'lumber_camp';
+      return (resourceType === 'gold' || resourceType === 'stone') && building.buildingType === 'mining_camp';
+    });
+    if (dropOffs.length === 0) return null;
+
+    // stepUnitReturning chooses the closest valid drop-off from the worker's
+    // current gathering position. The node stance is a stable estimate of it.
+    let nearest = dropOffs[0];
+    let nearestDistance = getDistance(node.x, node.z, nearest.x, nearest.z);
+    for (let index = 1; index < dropOffs.length; index++) {
+      const candidate = dropOffs[index];
+      const distance = getDistance(node.x, node.z, candidate.x, candidate.z);
+      if (distance < nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    }
+
+    const grid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
+    let cache = this.economyDeliveryRouteCache.get(grid);
+    if (!cache) {
+      cache = new Map<string, number>();
+      this.economyDeliveryRouteCache.set(grid, cache);
+    }
+    const cacheKey = `${node.id}:${nearest.id}:${isNaval ? 'water' : 'land'}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
+    const gatherRange =
+      node.subtype === 'deep_fish'
+        ? Math.max(5.5, nodeRadius + 4.4)
+        : node.subtype === 'shore_fish'
+          ? Math.max(3.6, nodeRadius + 2.65)
+          : nodeRadius + 1.35;
+    const depositRange = Math.max(
+      2.6,
+      getBuildingCollisionRadius(nearest) + (nearest.buildingType === 'dock' ? 3.6 : 1.85)
+    );
+    const dx = nearest.x - node.x;
+    const dz = nearest.z - node.z;
+    const centerDistance = Math.hypot(dx, dz);
+    if (centerDistance <= gatherRange + depositRange || centerDistance <= 0.001) {
+      cache.set(cacheKey, 0);
+      return 0;
+    }
+
+    // Path from the actual harvesting interaction ring to the actual drop-off
+    // interaction ring, rather than center-to-center distance. A* therefore
+    // includes terrain, buildings, walls, bridges and naval/land route rules.
+    const dirX = dx / centerDistance;
+    const dirZ = dz / centerDistance;
+    const startX = node.x + dirX * gatherRange;
+    const startZ = node.z + dirZ * gatherRange;
+    const goalX = nearest.x - dirX * depositRange;
+    const goalZ = nearest.z - dirZ * depositRange;
+    const points = findPath(startX, startZ, goalX, goalZ, grid);
+    let routeDistance = 0;
+    let previous = { x: startX, z: startZ };
+    for (const point of points) {
+      routeDistance += getDistance(previous.x, previous.z, point.x, point.z);
+      previous = point;
+    }
+    const result = Number.isFinite(routeDistance) ? Math.max(0, routeDistance) : centerDistance - gatherRange - depositRange;
+    cache.set(cacheKey, result);
+    return result;
+  }
+
   public getFactionResourceTelemetry(faction?: FactionId): FactionResourceTelemetry {
     const f = faction || this.humanPlayerId;
     const hasOath = (this.starOathUntil[f] || 0) > this.simTime;
@@ -1613,7 +2288,8 @@ export class RtsEngine {
       this.resourceNodes,
       this.contestedPoints,
       this.getResearchedTechs(f),
-      hasOath
+      hasOath,
+      (worker, node) => this.estimateResourceDeliveryTravelDistance(f, worker, node)
     );
   }
 
@@ -2003,6 +2679,8 @@ export class RtsEngine {
       u.targetResourceNodeId = undefined;
       u.targetBuildingId = undefined;
       u.attackMoveGoal = null;
+      u.wallPatrolRoute = undefined;
+      u.wallPatrolIndex = undefined;
       u.waypoints = undefined;
       u.pathGoal = undefined;
       u.velocity = { x: 0, z: 0 };
@@ -2119,6 +2797,8 @@ export class RtsEngine {
       unit.targetX = gx;
       unit.targetZ = gz;
       unit.attackMoveGoal = { x: gx, z: gz };
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
@@ -2362,6 +3042,8 @@ export class RtsEngine {
       }
 
       unit.commandQueue = undefined;
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetX = tx;
       unit.targetZ = tz;
       unit.attackMoveGoal = null;
@@ -2402,6 +3084,8 @@ export class RtsEngine {
 
     playerUnits.forEach((unit) => {
       unit.attackMoveGoal = null;
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
       unit.targetEntityId = targetId;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
@@ -2420,7 +3104,9 @@ export class RtsEngine {
       case 'berry':
         return { icon: '🫐', action: '採集漿果', name: '漿果' };
       case 'hunt':
-        return { icon: '🦌', action: '狩獵', name: '獵物' };
+        return { icon: '🦌', action: '狩獵山羌', name: '山羌肉' };
+      case 'boar':
+        return { icon: '🐗', action: '圍獵野豬', name: '野豬肉' };
       case 'shore_fish':
       case 'deep_fish':
         return { icon: '🐟', action: '捕魚', name: '魚群' };
@@ -2519,6 +3205,13 @@ export class RtsEngine {
     }
     if (next.type === 'build') {
       unit.targetBuildingId = next.buildingId;
+      unit.targetResourceNodeId = undefined;
+      unit.targetEntityId = undefined;
+      unit.targetGarrisonBuildingId = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'building';
       unit.currentActionText = '🔨 佇列建造';
       return true;
@@ -2528,26 +3221,42 @@ export class RtsEngine {
 
   public issueBuildOrder(buildingId: string) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
-    if (!bldg || bldg.isConstructed || bldg.hp <= 0) return;
-
+    const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
+    if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
 
     if (workers.length === 0) return;
+
+    if (isWallRepair && !bldg.wallRepairPaid) {
+      const resources = this.getResourcesForFaction(bldg.faction);
+      if (!canAfford(resources, WALL_REPAIR_COST)) {
+        this.addFloatingText(bldg.x, 2.7, bldg.z, `⚠️ 修復城牆需要木材 ${WALL_REPAIR_COST.wood}、石料 ${WALL_REPAIR_COST.stone}`, '#ef4444');
+        sound.playInvalid();
+        return;
+      }
+      this.resourcesByFaction[bldg.faction] = deductCost(resources, WALL_REPAIR_COST);
+      this.syncHumanResourcesAlias();
+      if (this.isHumanControlled(bldg.faction)) this.onResourcesChange?.(this.playerResources);
+      bldg.wallRepairPaid = true;
+    }
     sound.playOrder();
     this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
 
     const bName = bldg.buildingDef.name.split(' ')[0];
     workers.forEach((worker) => {
+      worker.wallPatrolRoute = undefined;
+      worker.wallPatrolIndex = undefined;
       worker.targetBuildingId = buildingId;
       worker.targetResourceNodeId = undefined;
       worker.targetEntityId = undefined;
+      worker.commandQueue = undefined;
       worker.waypoints = undefined;
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
       worker.state = 'building';
-      worker.currentActionText = `🔨 前往建造${bName}`;
+      worker.currentActionText = isWallRepair ? '🧱 前往修復城牆' : `🔨 前往建造${bName}`;
     });
     this.onSelectionChange?.();
   }
@@ -2802,7 +3511,13 @@ export class RtsEngine {
     if (!bldg || bldg.hp <= 0 || !bldg.isConstructed || bldg.faction !== unit.faction) return false;
     const maxCap = getBuildingMaxGarrison(bldg);
     if (maxCap <= 0) return false;
-    return (bldg.garrisonedUnitIds?.length || 0) < maxCap;
+    const incoming = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      new Set([unit.id])
+    );
+    return getAvailableGarrisonSlots(maxCap, bldg.garrisonedUnitIds?.length || 0, incoming) > 0;
   }
 
   public issueGarrisonOrder(buildingId: string): boolean {
@@ -2824,7 +3539,14 @@ export class RtsEngine {
     }
 
     const currentCount = bldg.garrisonedUnitIds?.length || 0;
-    const availableSlots = Math.max(0, maxCap - currentCount);
+    const selectedEligibleIds = new Set(eligible.map((unit) => unit.id));
+    const incoming = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      selectedEligibleIds
+    );
+    const availableSlots = getAvailableGarrisonSlots(maxCap, currentCount, incoming);
     if (availableSlots <= 0) {
       this.addFloatingText(bldg.x, 3.0, bldg.z, `🛡️ 駐防已滿 (${currentCount}/${maxCap})`, '#f59e0b');
       sound.playInvalid();
@@ -2832,7 +3554,12 @@ export class RtsEngine {
     }
 
     const chosen = [...eligible]
-      .sort((a, b) => getDistance(a.x, a.z, bldg.x, bldg.z) - getDistance(b.x, b.z, bldg.x, bldg.z))
+      .sort(
+        (a, b) =>
+          getDistance(a.x, a.z, bldg.x, bldg.z) -
+            getDistance(b.x, b.z, bldg.x, bldg.z) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      )
       .slice(0, availableSlots);
 
     const bName = bldg.buildingDef.name.split(' ')[0];
@@ -2937,6 +3664,34 @@ export class RtsEngine {
     }
     this.onSelectionChange?.();
     return true;
+  }
+
+  /**
+   * AI workers return to work as soon as danger clears, while wounded military
+   * garrison members remain sheltered until they recover to the requested ratio.
+   */
+  private ungarrisonRecoveredAiUnits(buildingId: string, recoveryRatio = 0.72): number {
+    const bldg = this.buildings.find((b) => b.id === buildingId);
+    if (!bldg || !bldg.garrisonedUnitIds?.length) return 0;
+
+    const ids = [...bldg.garrisonedUnitIds];
+    const remaining: string[] = [];
+    let released = 0;
+    ids.forEach((unitId, index) => {
+      const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
+      if (!unit) return;
+
+      if (!shouldAiUnitLeaveShelter(unit.hp, unit.maxHp, unit.unitDef.category, recoveryRatio)) {
+        remaining.push(unitId);
+        return;
+      }
+
+      this.releaseGarrisonedUnitEntity(bldg, unit, index);
+      released++;
+    });
+
+    bldg.garrisonedUnitIds = remaining;
+    return released;
   }
 
   public ungarrisonAll(buildingId: string): number {
@@ -3143,23 +3898,32 @@ export class RtsEngine {
     const bDef = DEFAULT_BUILDINGS[type];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     const civ = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
-    if (!civ.buildableBuildings.includes(type)) {
+    if (!isBuildingBuildableForCiv(type, civ.id, currentAge)) {
       sound.playInvalid();
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築不屬於目前文明的可建造清單', '#ef4444');
+      const requiredAge = bDef.requiredAge ?? 1;
+      const message = currentAge < requiredAge
+        ? `🔒 需先晉升至時代 ${requiredAge} 才能建造`
+        : '🔒 此建築不屬於目前文明的可建造清單';
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, message, '#ef4444');
       return;
     }
-    if (bDef.requiredAge && currentAge < bDef.requiredAge) {
+    if (!canAfford(this.playerResources, bDef.cost)) {
       sound.playInvalid();
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `🔒 需先晉升至時代 ${bDef.requiredAge} 才能建造`, '#ef4444');
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '⚠️ 資源不足，無法開始建造', '#ef4444');
       return;
     }
-    if (!canAfford(this.playerResources, bDef.cost)) return;
 
+    this.cancelPlacement();
     this.placementBuildingType = type;
-    if (this.placementGhostMesh) {
-      this.scene.remove(this.placementGhostMesh);
+    if (type === 'wall') {
+      this.wallPlacementPoints = [];
+      this.wallPlacementCursor = null;
+      this.rebuildWallPlacementPreview();
+      this.onSelectionChange?.();
+      return;
     }
-    this.placementGhostMesh = createBuildingMesh(type, this.humanPlayerId, this.getCivilizationForFaction(this.humanPlayerId));
+
+    this.placementGhostMesh = createBuildingMesh(type, this.humanPlayerId, this.getCivilizationForFaction(this.humanPlayerId), this.playerAge);
     const clonedGhostMats = new Map<THREE.Material, THREE.Material>();
     this.placementGhostMesh.traverse((child) => {
       if (child.name === 'bldgBadge' || child.name === 'scaffoldGroup') {
@@ -3180,15 +3944,310 @@ export class RtsEngine {
       }
     });
     this.scene.add(this.placementGhostMesh);
+    this.onSelectionChange?.();
+  }
+
+  public updateWallPlacementPreview(x: number, z: number) {
+    if (this.placementBuildingType !== 'wall') return;
+    this.wallPlacementCursor = { x, z };
+    this.rebuildWallPlacementPreview();
+  }
+
+  /** First left click starts a wall, Shift+left click adds a corner, plain left click finishes it. */
+  public handleWallPlacementClick(x: number, z: number, addWaypoint = false): 'started' | 'waypoint' | 'committed' | 'invalid' {
+    if (this.placementBuildingType !== 'wall') return 'invalid';
+
+    const point = { x, z };
+    if (this.wallPlacementPoints.length === 0) {
+      this.wallPlacementPoints = [point];
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      this.spawnCommandIndicator(x, z, 'build');
+      this.addFloatingText(x, 2.4, z, '📍 城牆起點已設定，移動滑鼠拉出牆線', '#67e8f9');
+      sound.playOrder();
+      this.onSelectionChange?.();
+      return 'started';
+    }
+
+    const previous = this.wallPlacementPoints[this.wallPlacementPoints.length - 1];
+    if (getDistance(previous.x, previous.z, x, z) < 0.75) {
+      this.addFloatingText(x, 2.4, z, '⚠️ 牆段太短，請拉開至少 0.75 單位', '#ef4444');
+      sound.playInvalid();
+      return 'invalid';
+    }
+
+    if (addWaypoint) {
+      this.wallPlacementPoints = [...this.wallPlacementPoints, point];
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      this.spawnCommandIndicator(x, z, 'build');
+      this.addFloatingText(x, 2.4, z, '↪️ 城牆轉折點已固定，繼續拉出下一段', '#67e8f9');
+      sound.playOrder();
+      this.onSelectionChange?.();
+      return 'waypoint';
+    }
+
+    const completedPoints = [...this.wallPlacementPoints, point];
+    const committed = this.commitWallChain(completedPoints);
+    if (!committed) {
+      this.wallPlacementCursor = point;
+      this.rebuildWallPlacementPreview();
+      return 'invalid';
+    }
+
+    this.cancelPlacement();
+    this.onSelectionChange?.();
+    return 'committed';
+  }
+
+  public getWallPlacementPreviewInfo() {
+    const points = [...this.wallPlacementPoints];
+    if (this.wallPlacementCursor && points.length > 0) {
+      const last = points[points.length - 1];
+      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
+        points.push(this.wallPlacementCursor);
+      }
+    }
+
+    const bDef = DEFAULT_BUILDINGS.wall;
+    const placements = layoutWallChain(points);
+    const cost = calculateWallChainCost(placements.length, bDef.cost);
+    const obs = this.getTerrainNavObstacles();
+    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
+    const invalidCount = placements.reduce((count, segment) => {
+      const valid = isPlacementLocationValid(
+        segment.x,
+        segment.z,
+        bDef.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obs?.rects,
+        obs?.discs,
+        obs?.bridges,
+        'wall'
+      );
+      return count + (valid ? 0 : 1);
+    }, 0) + (invalidPathPoint ? 1 : 0);
+
+    return {
+      pointCount: this.wallPlacementPoints.length,
+      segmentCount: placements.length,
+      distance: points.slice(1).reduce((sum, point, index) => sum + getDistance(points[index].x, points[index].z, point.x, point.z), 0),
+      cost,
+      canAfford: canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
+      invalidCount,
+      isValid: placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS && invalidCount === 0 && canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
+    };
+  }
+
+  private findInvalidWallPathPoint(
+    points: readonly WallChainPoint[],
+    obstacles = this.getTerrainNavObstacles()
+  ): WallChainPoint | null {
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const end = points[index + 1];
+      const dx = end.x - start.x;
+      const dz = end.z - start.z;
+      const length = Math.hypot(dx, dz);
+      const samples = Math.max(1, Math.ceil(length / 0.65));
+      for (let sample = 0; sample <= samples; sample++) {
+        const t = sample / samples;
+        const point = { x: start.x + dx * t, z: start.z + dz * t };
+        if (isPointInTerrainObstacle(point.x, point.z, obstacles?.rects, obstacles?.discs, obstacles?.bridges)) {
+          return point;
+        }
+      }
+    }
+    return null;
+  }
+
+  private commitWallChain(points: readonly WallChainPoint[]): boolean {
+    const placements = layoutWallChain(points);
+    if (placements.length === 0) {
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '⚠️ 請先設定起點，再設定足夠長度的終點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+    if (placements.length > MAX_WALL_CHAIN_SEGMENTS) {
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, `⚠️ 單次最多規劃 ${MAX_WALL_CHAIN_SEGMENTS} 個牆段，請分批建造`, '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    const bDef = DEFAULT_BUILDINGS.wall;
+    const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+    if (bDef.requiredAge && currentAge < bDef.requiredAge) return false;
+
+    const obs = this.getTerrainNavObstacles();
+    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
+    if (invalidPathPoint) {
+      this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    const firstInvalid = placements.find((segment) =>
+      !isPlacementLocationValid(
+        segment.x,
+        segment.z,
+        bDef.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obs?.rects,
+        obs?.discs,
+        obs?.bridges,
+        'wall'
+      )
+    );
+    if (firstInvalid) {
+      this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    const cost = calculateWallChainCost(placements.length, bDef.cost);
+    const humanRes = this.getResourcesForFaction(this.humanPlayerId);
+    if (!canAfford(humanRes, cost)) {
+      this.addFloatingText(this.cameraTarget.x, 2.8, this.cameraTarget.z, `⚠️ 城牆需要木材 ${cost.wood}、石料 ${cost.stone}，目前資源不足`, '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
+
+    this.resourcesByFaction[this.humanPlayerId] = deductCost(humanRes, cost);
+    this.syncHumanResourcesAlias();
+    this.onResourcesChange?.(this.playerResources);
+
+    const chainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const segments = placements.map((placement, index) => {
+      const building = this.addBuilding('wall', this.humanPlayerId, placement.x, placement.z, false, placement.rotationY, false);
+      building.wallChainId = chainId;
+      building.wallChainIndex = index;
+      building.wallChainSize = placements.length;
+      return building;
+    });
+    this.refreshSettlementEnvironment();
+    this.refreshWallTowerConnections();
+
+    const workers = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity =>
+        !!unit &&
+        unit.hp > 0 &&
+        unit.unitDef.category === 'worker' &&
+        !unit.garrisonedInBuildingId &&
+        this.isHumanControlled(unit.faction)
+      );
+
+    const builderCount = Math.min(workers.length, segments.length);
+    if (builderCount > 0) {
+      for (let index = 0; index < builderCount; index++) {
+        const startIndex = Math.floor((index * segments.length) / builderCount);
+        const endIndex = Math.floor(((index + 1) * segments.length) / builderCount);
+        const assignedSegments = segments.slice(startIndex, endIndex);
+        const first = assignedSegments[0];
+        const worker = workers[index];
+        worker.targetBuildingId = first.id;
+        worker.targetResourceNodeId = undefined;
+        worker.targetEntityId = undefined;
+        worker.targetGarrisonBuildingId = undefined;
+        worker.waypoints = undefined;
+        worker.pathGoal = undefined;
+        worker.pathCooldown = 0;
+        worker.commandQueue = assignedSegments.slice(1).map((segment) => ({ type: 'build' as const, buildingId: segment.id }));
+        worker.state = 'building';
+        worker.currentActionText = `🔨 前往建造城牆（${startIndex + 1}/${segments.length}）`;
+      }
+    }
+
+    sound.playConstruct();
+    this.spawnCommandIndicator(points[0].x, points[0].z, 'build');
+    this.spawnCommandIndicator(points[points.length - 1].x, points[points.length - 1].z, 'build');
+    this.addFloatingText(
+      points[points.length - 1].x,
+      3.0,
+      points[points.length - 1].z,
+      `🧱 已規劃 ${segments.length} 段城牆 · 木材 ${cost.wood} · 石料 ${cost.stone}`,
+      '#86efac'
+    );
+    return true;
+  }
+
+  private rebuildWallPlacementPreview() {
+    if (this.wallPlacementPreviewGroup) {
+      this.scene.remove(this.wallPlacementPreviewGroup);
+      this.wallPlacementPreviewGroup.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const material = (object as THREE.Line).material;
+        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+        else if (material?.dispose) material.dispose();
+      });
+      this.wallPlacementPreviewGroup = null;
+    }
+    if (this.placementBuildingType !== 'wall') return;
+
+    const group = new THREE.Group();
+    const info = this.getWallPlacementPreviewInfo();
+    const previewPoints = [...this.wallPlacementPoints];
+    if (this.wallPlacementCursor && previewPoints.length > 0) {
+      const last = previewPoints[previewPoints.length - 1];
+      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
+        previewPoints.push(this.wallPlacementCursor);
+      }
+    }
+
+    if (previewPoints.length >= 2) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(
+        previewPoints.map((point) => new THREE.Vector3(point.x, 0.13, point.z))
+      );
+      const material = new THREE.LineBasicMaterial({
+        color: info.isValid ? 0x22c55e : 0xef4444,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.name = 'wallPlacementLine';
+      group.add(line);
+    }
+
+    previewPoints.forEach((point, index) => {
+      const isCursor = index === previewPoints.length - 1 && this.wallPlacementCursor !== null && previewPoints.length > this.wallPlacementPoints.length;
+      const geometry = new THREE.CircleGeometry(isCursor ? 0.28 : 0.42, 20);
+      const material = new THREE.MeshBasicMaterial({
+        color: isCursor ? (info.isValid ? 0x22c55e : 0xef4444) : index === 0 ? 0xfbbf24 : 0x38bdf8,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const marker = new THREE.Mesh(geometry, material);
+      marker.rotation.x = -Math.PI / 2;
+      marker.position.set(point.x, 0.15, point.z);
+      group.add(marker);
+    });
+
+    this.wallPlacementPreviewGroup = group;
+    this.scene.add(group);
   }
 
   public confirmPlacement(x: number, z: number): boolean {
     if (!this.placementBuildingType) return false;
+    if (this.placementBuildingType === 'wall') {
+      return this.handleWallPlacementClick(x, z, false) === 'committed';
+    }
     const bDef = DEFAULT_BUILDINGS[this.placementBuildingType];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     const humanCiv = getCivilizationConfig(this.getCivilizationForFaction(this.humanPlayerId));
-    if (!humanCiv.buildableBuildings.includes(this.placementBuildingType) || (bDef.requiredAge && currentAge < bDef.requiredAge)) {
-      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '🔒 此建築尚未解鎖或不屬於目前文明', '#ef4444');
+    if (!isBuildingBuildableForCiv(this.placementBuildingType, humanCiv.id, currentAge)) {
+      const requiredAge = bDef.requiredAge ?? 1;
+      const message = currentAge < requiredAge
+        ? `🔒 需先晉升至時代 ${requiredAge} 才能完成建造`
+        : '🔒 此建築尚未解鎖或不屬於目前文明';
+      this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, message, '#ef4444');
       sound.playInvalid();
       this.cancelPlacement();
       return false;
@@ -3253,10 +4312,24 @@ export class RtsEngine {
 
   public cancelPlacement() {
     this.placementBuildingType = null;
+    this.wallPlacementPoints = [];
+    this.wallPlacementCursor = null;
+    if (this.wallPlacementPreviewGroup) {
+      this.scene.remove(this.wallPlacementPreviewGroup);
+      this.wallPlacementPreviewGroup.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const material = (object as THREE.Line).material;
+        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+        else if (material?.dispose) material.dispose();
+      });
+      this.wallPlacementPreviewGroup = null;
+    }
     if (this.placementGhostMesh) {
       this.scene.remove(this.placementGhostMesh);
       this.placementGhostMesh = null;
     }
+    if (!this.isDestroyed) this.onSelectionChange?.();
   }
 
   // ------------------ PERFORMANCE DIAGNOSTICS ------------------
@@ -3299,6 +4372,7 @@ export class RtsEngine {
     this.lowFpsSamples = 0;
     this.highFpsSamples = 0;
     this.qualityCooldownUntil = now + 6000;
+    this.applySceneDetailQuality(nextLevel);
 
     const pixelRatio = nextLevel === 0 ? 1 : nextLevel === 1 ? 1.35 : Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(pixelRatio);
@@ -3313,6 +4387,15 @@ export class RtsEngine {
         object.shadow.map = null;
         object.shadow.camera.updateProjectionMatrix();
       }
+    });
+  }
+
+  private applySceneDetailQuality(level: 0 | 1 | 2): void {
+    this.scene.traverse((object) => {
+      const minimumLevel = object.userData?.qualityMinLevel;
+      if (typeof minimumLevel !== 'number') return;
+      const shouldShow = level >= minimumLevel;
+      if (object.visible !== shouldShow) object.visible = shouldShow;
     });
   }
 
@@ -3348,36 +4431,199 @@ export class RtsEngine {
     if (this.performanceOverlayVisible) {
       this.performanceFrameCount = 0;
       this.performanceWindowStart = performance.now();
+      this.performanceLastFrameTime = this.performanceWindowStart;
+      this.performanceFrameTimes = [];
+      this.performanceSimulationTotalMs = 0;
+      this.performanceSimulationMaxMs = 0;
+      this.performanceRenderCallTotalMs = 0;
+      this.performanceRenderCallMaxMs = 0;
+      this.pathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
+      this.performanceCaptureStartedAt = this.performanceWindowStart;
+      this.performanceSamples = [];
       this.performanceOverlay.textContent = '效能監視器\n正在收集影格資料…';
     }
   }
 
-  private updatePerformanceOverlay(now: number): void {
+  private updatePerformanceOverlay(now: number, simulationUpdateMs: number, renderCallMs: number): void {
     if (!this.performanceOverlayVisible || !this.performanceOverlay) return;
 
+    if (this.performanceLastFrameTime > 0) {
+      const frameTime = now - this.performanceLastFrameTime;
+      if (Number.isFinite(frameTime) && frameTime > 0) this.performanceFrameTimes.push(frameTime);
+    }
+    this.performanceLastFrameTime = now;
     this.performanceFrameCount += 1;
+    if (Number.isFinite(simulationUpdateMs) && simulationUpdateMs > 0) {
+      this.performanceSimulationTotalMs += simulationUpdateMs;
+      this.performanceSimulationMaxMs = Math.max(this.performanceSimulationMaxMs, simulationUpdateMs);
+    }
+    if (Number.isFinite(renderCallMs) && renderCallMs > 0) {
+      this.performanceRenderCallTotalMs += renderCallMs;
+      this.performanceRenderCallMaxMs = Math.max(this.performanceRenderCallMaxMs, renderCallMs);
+    }
     const elapsedMs = now - this.performanceWindowStart;
     if (elapsedMs < 500) return;
 
     const fps = (this.performanceFrameCount * 1000) / Math.max(1, elapsedMs);
+    const frameTimes = summarizeFrameTimes(this.performanceFrameTimes);
+    const simulationUpdateAverageMs = this.performanceSimulationTotalMs / Math.max(1, this.performanceFrameCount);
+    const renderCallAverageMs = this.performanceRenderCallTotalMs / Math.max(1, this.performanceFrameCount);
+    const activeParticles = this.particlePool.reduce((total, particle) => total + (particle.active ? 1 : 0), 0);
+    const aliveUnits = this.units.reduce((total, unit) => total + (unit.hp > 0 ? 1 : 0), 0);
     const renderInfo = this.renderer.info;
     const render = renderInfo.render;
     const memory = renderInfo.memory;
     const rendererMode = this.isSoftwareGl ? 'Software GL' : 'Hardware GL';
+    const aiFactionIds = new Set(this.participants.filter((participant) => participant.controller === 'ai').map((participant) => participant.id));
+    const aiUnits = this.units.filter((unit) => unit.hp > 0 && aiFactionIds.has(unit.faction));
+    const aiStateCounts: Record<UnitEntity['state'], number> = {
+      idle: 0,
+      moving: 0,
+      attacking: 0,
+      gathering: 0,
+      returning_resource: 0,
+      building: 0,
+      assembling: 0,
+      garrisoning: 0,
+    };
+    aiUnits.forEach((unit) => { aiStateCounts[unit.state] += 1; });
+    const aiBuildings = this.buildings.filter((building) => building.hp > 0 && building.isConstructed && aiFactionIds.has(building.faction));
+    const aiQueuedUnits = aiBuildings.reduce((total, building) => total + building.queue.length, 0);
+    const aiResearchingBuildings = aiBuildings.filter((building) => !!building.activeTechId).length;
+    const aiPathingUnits = aiUnits.filter((unit) => unit.state === 'moving' || unit.state === 'attacking');
+    const aiStalledUnits = aiPathingUnits.filter((unit) => (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS).length;
+    // Lifetime AI recovery count survives unit state changes and unit deaths until the next match.
+    const aiPathRecoveryCount = this.aiPathRecoveryTotal;
+    const aiMaxStuckSeconds = aiPathingUnits.reduce((maximum, unit) => Math.max(maximum, unit.stuckDuration || 0), 0);
+    const aiDecisionAverageMs = getAverageAiDecisionMs(this.aiDecisionTiming);
+    const pathSearchAverageMs = getAveragePathSearchMs(this.pathSearchTiming);
+    const qualityLabel = this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高';
+    const sample: PerformanceSample = {
+      elapsedSeconds: Math.max(0, (now - this.performanceCaptureStartedAt) / 1000),
+      wallTime: new Date().toISOString(),
+      fps,
+      frameAverageMs: frameTimes.averageMs,
+      frameP95Ms: frameTimes.p95Ms,
+      maxHitchMs: frameTimes.maxMs,
+      simulationUpdateAverageMs,
+      simulationUpdateMaxMs: this.performanceSimulationMaxMs,
+      renderCallAverageMs,
+      renderCallMaxMs: this.performanceRenderCallMaxMs,
+      pathSearchSamples: this.pathSearchTiming.sampleCount,
+      aiPathSearchSamples: this.pathSearchTiming.aiSampleCount,
+      emptyPathSearches: this.pathSearchTiming.emptyPathCount,
+      aiEmptyPathSearches: this.pathSearchTiming.aiEmptyPathCount,
+      pathSearchAverageMs,
+      pathSearchMaxMs: this.pathSearchTiming.maxMs,
+      drawCalls: render.calls,
+      triangles: render.triangles,
+      geometries: memory.geometries,
+      textures: memory.textures,
+      aliveUnits,
+      aiAliveUnits: aiUnits.length,
+      aiStalledUnits,
+      aiPathRecoveryCount,
+      aiMaxStuckSeconds,
+      aiIdleUnits: aiStateCounts.idle,
+      aiMovingUnits: aiStateCounts.moving,
+      aiAttackingUnits: aiStateCounts.attacking,
+      aiGatheringUnits: aiStateCounts.gathering,
+      aiReturningUnits: aiStateCounts.returning_resource,
+      aiBuildingUnits: aiStateCounts.building,
+      aiAssemblingUnits: aiStateCounts.assembling,
+      aiGarrisoningUnits: aiStateCounts.garrisoning,
+      aiQueuedUnits,
+      aiResearchingBuildings,
+      aiDecisionCount: this.aiDecisionCount,
+      aiDecisionAccumulatorSeconds: this.aiTickAccumulator,
+      aiDecisionTimingSamples: this.aiDecisionTiming.sampleCount,
+      aiDecisionLastMs: this.aiDecisionTiming.lastMs,
+      aiDecisionAverageMs,
+      aiDecisionMaxMs: this.aiDecisionTiming.maxMs,
+      projectileCount: this.projectiles.length,
+      activeParticles,
+      particleCapacity: this.particlePool.length,
+      pixelRatio: this.renderer.getPixelRatio(),
+      rendererMode,
+      qualityLevel: this.qualityLevel,
+      stressUnitCount: this.battleStressInfo?.unitCount ?? null,
+      stressSeed: this.battleStressInfo?.seed ?? null,
+      mapPreset: this.battleStressInfo?.mapPreset ?? 'none',
+      gameDurationSeconds: this.stats.gameDuration,
+      gameSpeed: this.gameSpeed,
+      gameState: this.gameState,
+      participantCount: this.participants.length,
+      aiParticipantCount: this.participants.filter((participant) => participant.controller === 'ai').length,
+      viewportWidth: this.container.clientWidth,
+      viewportHeight: this.container.clientHeight,
+    };
+    if (this.performanceSamples.length >= MAX_PERFORMANCE_SAMPLES) this.performanceSamples.shift();
+    this.performanceSamples.push(sample);
+
     this.performanceOverlay.textContent = [
-      'PERFORMANCE MONITOR  ·  F3 隱藏',
-      `Frame FPS      ${fps.toFixed(1)}`,
-      `Draw Calls     ${render.calls.toLocaleString()}`,
-      `Triangles      ${render.triangles.toLocaleString()}`,
-      `Geometries     ${memory.geometries.toLocaleString()}`,
-      `Textures       ${memory.textures.toLocaleString()}`,
-      `Pixel Ratio    ${this.renderer.getPixelRatio().toFixed(2)}`,
-      `Renderer       ${rendererMode}`,
-      `Quality        ${this.qualityLevel === 0 ? '低' : this.qualityLevel === 1 ? '中' : '高'} (自動)`
+      'PERFORMANCE MONITOR  ·  F3 隱藏 · F4 匯出 CSV',
+      `Capture Samples  ${this.performanceSamples.length} / ${MAX_PERFORMANCE_SAMPLES}`,
+      `Stress Scenario ${this.battleStressInfo ? `${this.battleStressInfo.unitCount} units · ${this.battleStressInfo.mapPreset} · seed ${this.battleStressInfo.seed}` : 'OFF'}`,
+      `Frame FPS        ${fps.toFixed(1)}`,
+      `Frame ms avg     ${frameTimes.averageMs.toFixed(2)}`,
+      `Frame ms p95     ${frameTimes.p95Ms.toFixed(2)}`,
+      `Max hitch ms     ${frameTimes.maxMs.toFixed(2)}`,
+      `Simulation ms    ${simulationUpdateAverageMs.toFixed(2)} avg / ${this.performanceSimulationMaxMs.toFixed(2)} max`,
+      `Render call ms   ${renderCallAverageMs.toFixed(2)} avg / ${this.performanceRenderCallMaxMs.toFixed(2)} max`,
+      `A* Searches      ${this.pathSearchTiming.sampleCount} total / ${this.pathSearchTiming.aiSampleCount} AI / ${this.pathSearchTiming.emptyPathCount} empty`,
+      `A* Search ms     ${pathSearchAverageMs.toFixed(3)} avg / ${this.pathSearchTiming.maxMs.toFixed(3)} max`,
+      `Draw Calls       ${render.calls.toLocaleString()}`,
+      `Triangles        ${render.triangles.toLocaleString()}`,
+      `Geometries       ${memory.geometries.toLocaleString()}`,
+      `Textures         ${memory.textures.toLocaleString()}`,
+      `Units / Shots    ${aliveUnits} / ${this.projectiles.length}`,
+      `AI Idle/Move/Atk  ${aiStateCounts.idle}/${aiStateCounts.moving}/${aiStateCounts.attacking}`,
+      `AI Stalled/Recover ${aiStalledUnits}/${aiPathRecoveryCount}`,
+      `AI Max Stuck      ${aiMaxStuckSeconds.toFixed(1)}s`,
+      `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
+      `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
+      `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
+      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / 1.20s`,
+      `AI Think ms       ${this.aiDecisionTiming.lastMs.toFixed(2)} last / ${aiDecisionAverageMs.toFixed(2)} avg / ${this.aiDecisionTiming.maxMs.toFixed(2)} max`,
+      `Particles        ${activeParticles} / ${this.particlePool.length}`,
+      `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
+      `Renderer         ${rendererMode}`,
+      `Quality          ${qualityLabel} (自動)`
     ].join('\n');
 
     this.performanceFrameCount = 0;
     this.performanceWindowStart = now;
+    this.performanceFrameTimes = [];
+    this.performanceSimulationTotalMs = 0;
+    this.performanceSimulationMaxMs = 0;
+    this.performanceRenderCallTotalMs = 0;
+    this.performanceRenderCallMaxMs = 0;
+  }
+
+  private exportPerformanceTelemetry(): void {
+    if (this.performanceSamples.length === 0) {
+      if (this.performanceOverlay) {
+        this.performanceOverlay.textContent = '尚無效能樣本；先按 F3 開始收集，再按 F4 匯出。';
+      }
+      return;
+    }
+
+    const csv = formatPerformanceTelemetryCsv(this.performanceSamples);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const firstSample = this.performanceSamples[0];
+    const scenario = firstSample.stressUnitCount
+      ? `stress-${firstSample.stressUnitCount}-seed-${firstSample.stressSeed ?? 'unknown'}`
+      : 'match';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `age-of-clash-${scenario}-performance-${timestamp}.csv`;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ------------------ MAIN SIMULATION LOOP ------------------
@@ -3391,12 +4637,16 @@ export class RtsEngine {
       const now = performance.now();
       const rawDt = Math.max(0.001, (now - lastTime) / 1000);
       lastTime = now;
+      let simulationUpdateMs = 0;
       if (this.gameState === 'playing') {
         const { stepDt, steps } = computeSimulationSubsteps(rawDt, this.gameSpeed, this.isSoftwareGl);
+        const measureSimulation = this.performanceOverlayVisible;
+        const simulationStartedAt = measureSimulation ? performance.now() : 0;
         for (let s = 0; s < steps; s++) {
           this.updateSimulation(stepDt);
           this.stats.gameDuration += stepDt;
         }
+        if (measureSimulation) simulationUpdateMs = performance.now() - simulationStartedAt;
       } else if (this.gameState === 'title') {
         // Atmospheric live camera pan over the battlefield
         const t = now * 0.0003;
@@ -3409,9 +4659,16 @@ export class RtsEngine {
       this.nodeMeshes.forEach((mesh) => {
         if (mesh.userData.fishAssetLod) updateFishAssetAnimations(mesh, rawDt);
       });
-      this.renderer.render(this.scene, this.camera);
+      let renderCallMs = 0;
+      if (this.performanceOverlayVisible) {
+        const renderStartedAt = performance.now();
+        this.renderer.render(this.scene, this.camera);
+        renderCallMs = performance.now() - renderStartedAt;
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
       this.updateAdaptiveQuality(now);
-      this.updatePerformanceOverlay(now);
+      this.updatePerformanceOverlay(now, simulationUpdateMs, renderCallMs);
 
       if (this.isSoftwareGl) {
         this.afterDraw(tick);
@@ -3480,15 +4737,21 @@ export class RtsEngine {
 
     let envIdx = 0;
     this.nodeMeshes.forEach((nMesh) => {
+      const wind = nMesh.userData.treeWind as { phase?: number; amplitude?: number; frequency?: number } | undefined;
+      const phase = Number.isFinite(wind?.phase) ? wind!.phase! : envIdx * 0.7;
+      const amplitude = Number.isFinite(wind?.amplitude) ? wind!.amplitude! : 0.035;
+      const frequency = Number.isFinite(wind?.frequency) ? wind!.frequency! : 1.6;
+      const swayZ = Math.sin(this.simTime * frequency + phase) * amplitude;
+      const swayX = Math.cos(this.simTime * frequency * 0.76 + phase * 0.71) * amplitude * 0.58;
       const canopy = nMesh.userData.treeCanopy as THREE.Object3D | undefined;
       if (canopy) {
-        canopy.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
-        canopy.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
+        canopy.rotation.z = swayZ;
+        canopy.rotation.x = swayX;
       }
       const distanceLodTree = nMesh.userData.treeAssetLod as THREE.Object3D | undefined;
       if (distanceLodTree) {
-        distanceLodTree.rotation.z = Math.sin(this.simTime * 1.6 + envIdx * 0.7) * 0.035;
-        distanceLodTree.rotation.x = Math.cos(this.simTime * 1.2 + envIdx * 0.5) * 0.02;
+        distanceLodTree.rotation.z = swayZ;
+        distanceLodTree.rotation.x = swayX;
       }
       envIdx++;
     });
@@ -3639,7 +4902,16 @@ export class RtsEngine {
     this.aiTickAccumulator += dt;
     if (this.aiTickAccumulator >= 1.2) {
       this.aiTickAccumulator = 0;
-      this.evaluateAiLogic();
+      this.aiDecisionCount += 1;
+      const aiDecisionStartedAt = performance.now();
+      try {
+        this.evaluateAiLogic();
+      } finally {
+        this.aiDecisionTiming = recordAiDecisionTiming(
+          this.aiDecisionTiming,
+          Math.max(0, performance.now() - aiDecisionStartedAt),
+        );
+      }
     }
 
     // 7. Check Victory / Defeat
@@ -3797,7 +5069,7 @@ export class RtsEngine {
       const forceHighDetail =
         this.selectedUnitIds.includes(unit.id) ||
         (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
-      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
       updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
 
@@ -3922,9 +5194,19 @@ export class RtsEngine {
       // Behavior by state
       switch (unit.state) {
         case 'moving':
+          if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker') {
+            const patrolThreat = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, { maxSearchRange: 10 });
+            if (patrolThreat) {
+              unit.targetEntityId = patrolThreat.id;
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+              this.stepUnitAttacking(unit, dt);
+              break;
+            }
+          }
           if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: 13,
+              maxSearchRange: Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
             });
             if (enemy) {
               unit.targetEntityId = enemy.id;
@@ -3955,10 +5237,18 @@ export class RtsEngine {
           this.stepUnitGarrisoning(unit, dt);
           break;
         case 'idle':
+          if (unit.wallPatrolRoute?.length && unit.unitDef.category !== 'worker') {
+            const patrolIndex = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+            unit.targetX = unit.wallPatrolRoute[patrolIndex].x;
+            unit.targetZ = unit.wallPatrolRoute[patrolIndex].z;
+            unit.state = 'moving';
+            unit.currentActionText = '🛡️ 恢復城牆巡邏';
+            break;
+          }
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
           if (unit.unitDef.category !== 'worker') {
             const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: 14,
+              maxSearchRange: Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
             });
             if (enemy) {
               unit.targetEntityId = enemy.id;
@@ -3982,23 +5272,29 @@ export class RtsEngine {
       if (mesh) {
         const badge = (mesh.userData.unitBadge as THREE.Sprite) || (mesh.getObjectByName('unitBadge') as THREE.Sprite);
         if (badge) {
-          badge.visible = this.showOverheadBadges;
+          mesh.userData.overheadBadgesEnabled = this.showOverheadBadges;
           const now = performance.now();
           const isUnderAttack = !!(unit.lastDamagedTime && now - unit.lastDamagedTime < 2500);
           const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
           const lvl = xpEligible ? unit.level || 1 : 1;
-          const lastHp = (unit as any)._lastHp;
+          const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
+          const hpBucket = Math.ceil(hpRatio * 40);
+          const isDamaged = shouldShowUnitHealthBar(unit.hp, unit.maxHp);
+          const lastHpBucket = (unit as any)._lastHpBucket;
+          const lastDamageState = (unit as any)._lastDamageState;
           const lastAction = (unit as any)._lastAction;
           const lastAttack = (unit as any)._lastAttack;
           const lastLvl = (unit as any)._lastLvl;
 
           if (
-            lastHp !== unit.hp ||
+            lastHpBucket !== hpBucket ||
+            lastDamageState !== isDamaged ||
             lastAction !== unit.currentActionText ||
             lastAttack !== isUnderAttack ||
             lastLvl !== lvl
           ) {
-            (unit as any)._lastHp = unit.hp;
+            (unit as any)._lastHpBucket = hpBucket;
+            (unit as any)._lastDamageState = isDamaged;
             (unit as any)._lastAction = unit.currentActionText;
             (unit as any)._lastAttack = isUnderAttack;
             (unit as any)._lastLvl = lvl;
@@ -4039,7 +5335,6 @@ export class RtsEngine {
               : '友軍·';
             const lvlSuffix = xpEligible && lvl >= 2 ? ` ★Lv.${lvl}` : '';
             const displayName = `${prefix}${unit.unitDef.name.split(' ')[0]}${lvlSuffix}`;
-            const ratio = Math.max(0, unit.hp / unit.maxHp);
             const actionText = isUnderAttack
               ? '⚠️ 遭受攻擊!'
               : unit.currentActionText || (unit.state === 'idle' ? '💤 待命中' : '');
@@ -4047,12 +5342,13 @@ export class RtsEngine {
               badge,
               displayName,
               icon,
-              `${Math.max(0, unit.hp)}/${unit.maxHp}`,
-              ratio,
+              isDamaged ? `${Math.ceil(Math.max(0, unit.hp))}/${unit.maxHp}` : '',
+              hpRatio,
               hostile,
               false,
               actionText,
-              isUnderAttack
+              isUnderAttack,
+              isDamaged
             );
           }
         }
@@ -4074,25 +5370,60 @@ export class RtsEngine {
   private moveUnitAlongPath(unit: UnitEntity, goalX: number, goalZ: number, dt: number) {
     const isNaval = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const navGrid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
+    const goalShifted =
+      !unit.pathGoal || getDistance(unit.pathGoal.x, unit.pathGoal.z, goalX, goalZ) > 1.8;
 
-    // Detect if unit is stalled against an obstacle and force quick path refresh
+    // A materially new destination starts a fresh progress window; do not carry a stall
+    // timer from an abandoned order into the next movement command.
+    if (goalShifted) {
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+    }
+
+    unit.pathRecoveryCooldown = Math.max(0, (unit.pathRecoveryCooldown || 0) - dt);
     unit.stuckAccumulator = (unit.stuckAccumulator || 0) + dt;
-    if (unit.stuckAccumulator >= 0.45) {
+    if (unit.stuckAccumulator >= MOVEMENT_STALL_SAMPLE_INTERVAL_SECONDS) {
+      const elapsed = unit.stuckAccumulator;
       if (unit.lastProgressCheckPos) {
         const moved = getDistance(unit.x, unit.z, unit.lastProgressCheckPos.x, unit.lastProgressCheckPos.z);
-        if (moved < 0.25 && (!unit.pathCooldown || unit.pathCooldown <= 0)) {
-          unit.waypoints = undefined;
-        }
+        unit.stuckDuration = advanceMovementStallDuration(unit.stuckDuration, moved, elapsed);
+      } else {
+        unit.stuckDuration = 0;
       }
       unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
       unit.stuckAccumulator = 0;
     }
 
-    const goalShifted =
-      !unit.pathGoal || getDistance(unit.pathGoal.x, unit.pathGoal.z, goalX, goalZ) > 1.8;
+    if (shouldRecoverStalledPath(unit.stuckDuration, unit.pathCooldown, unit.pathRecoveryCooldown)) {
+      // Force one fresh A* route after prolonged lack of displacement. A cooldown
+      // prevents repeated path searches when a physical crowd remains impassable.
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.pathRecoveryCooldown = MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS;
+      unit.pathRecoveryCount = (unit.pathRecoveryCount || 0) + 1;
+      if (this.participants.some((participant) => participant.id === unit.faction && participant.controller === 'ai')) {
+        this.aiPathRecoveryTotal += 1;
+      }
+    }
 
     if (!unit.waypoints || unit.waypoints.length === 0 || (goalShifted && (!unit.pathCooldown || unit.pathCooldown <= 0))) {
-      unit.waypoints = findPath(unit.x, unit.z, goalX, goalZ, navGrid);
+      const measurePathSearch = this.performanceOverlayVisible;
+      const isAiPathSearch = measurePathSearch && this.participants.some(
+        (participant) => participant.id === unit.faction && participant.controller === 'ai'
+      );
+      const pathSearchStartedAt = measurePathSearch ? performance.now() : 0;
+      const nextWaypoints = findPath(unit.x, unit.z, goalX, goalZ, navGrid);
+      if (measurePathSearch) {
+        this.pathSearchTiming = recordPathSearchTiming(
+          this.pathSearchTiming,
+          Math.max(0, performance.now() - pathSearchStartedAt),
+          isAiPathSearch,
+          nextWaypoints.length > 0,
+        );
+      }
+      unit.waypoints = nextWaypoints;
       unit.pathGoal = { x: goalX, z: goalZ };
       unit.pathCooldown = 0.4;
     }
@@ -4145,6 +5476,11 @@ export class RtsEngine {
       }
     }
 
+    if (unit.wallPatrolRoute?.length && (unit.targetX === undefined || unit.targetZ === undefined)) {
+      const index = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+      unit.targetX = unit.wallPatrolRoute[index].x;
+      unit.targetZ = unit.wallPatrolRoute[index].z;
+    }
     if (unit.targetX === undefined || unit.targetZ === undefined) {
       unit.state = 'idle';
       unit.attackMoveGoal = null;
@@ -4153,7 +5489,23 @@ export class RtsEngine {
     }
 
     const dist = getDistance(unit.x, unit.z, unit.targetX, unit.targetZ);
+    if (dist < 0.45 && unit.wallPatrolRoute && unit.wallPatrolRoute.length >= 2) {
+      unit.wallPatrolIndex = ((unit.wallPatrolIndex || 0) + 1) % unit.wallPatrolRoute.length;
+      const next = unit.wallPatrolRoute[unit.wallPatrolIndex];
+      unit.targetX = next.x;
+      unit.targetZ = next.z;
+      unit.state = 'moving';
+      unit.velocity = { x: 0, z: 0 };
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.currentActionText = '🛡️ 沿城牆巡邏';
+      return;
+    }
     if (dist < 0.45) {
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.pathRecoveryCooldown = 0;
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.velocity = { x: 0, z: 0 };
@@ -4231,11 +5583,17 @@ export class RtsEngine {
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
       const followUp = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-        maxSearchRange: unit.attackMoveGoal ? 15 : 12,
+        maxSearchRange: Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
       });
       if (followUp && (!this.isHumanControlled(unit.faction) || !!unit.attackMoveGoal)) {
         unit.targetEntityId = followUp.id;
         unit.state = 'attacking';
+      } else if (unit.wallPatrolRoute?.length) {
+        const patrolIndex = Math.max(0, Math.min(unit.wallPatrolRoute.length - 1, unit.wallPatrolIndex || 0));
+        unit.targetX = unit.wallPatrolRoute[patrolIndex].x;
+        unit.targetZ = unit.wallPatrolRoute[patrolIndex].z;
+        unit.state = 'moving';
+        unit.currentActionText = '🛡️ 恢復城牆巡邏';
       } else if (unit.attackMoveGoal) {
         unit.targetX = unit.attackMoveGoal.x;
         unit.targetZ = unit.attackMoveGoal.z;
@@ -4269,6 +5627,10 @@ export class RtsEngine {
     if (effectiveDist > range) {
       this.moveUnitAlongPath(unit, target.x, target.z, dt);
     } else {
+      // A unit already in weapon range is engaging, not movement-stalled.
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.pathRecoveryCooldown = 0;
       // Smoothly face target while fighting
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(target.x - unit.x, target.z - unit.z);
@@ -4352,6 +5714,7 @@ export class RtsEngine {
           }
 
           target.hp -= dmg;
+          if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, unit.unitDef.category === 'siege');
           (target as any).lastDamagedTime = performance.now();
           (target as any).hitFlashTimer = 0.085;
           if (target.type === 'unit') {
@@ -4372,6 +5735,104 @@ export class RtsEngine {
     }
   }
 
+  private applyWallBreachIfNeeded(building: BuildingEntity, siegeHit: boolean): void {
+    if (!siegeHit || !shouldBreachWallAfterSiegeHit(building)) return;
+    building.wallBreached = true;
+    if (building.buildingType === 'gate') building.gateOpen = true;
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    const mesh = this.buildingMeshes.get(building.id);
+    if (mesh) {
+      if (building.buildingType === 'gate') updateGateDoorAnimation(mesh, true, 1.0);
+      else applyWallBreachVisuals(mesh, true);
+    }
+    this.refreshWallTowerConnections();
+    this.addFloatingText(building.x, 3.1, building.z, '💥 城牆遭攻城器擊破 · 防線出現缺口！', '#fb923c');
+    if (this.selectedBuildingId === building.id) this.onSelectionChange?.();
+  }
+
+  /**
+   * Selects a resource node by estimated deposited resources per minute.
+   * The scoring uses the same A* delivery-route estimate as the economy HUD,
+   * plus gather rate, carry capacity, node stock and current node congestion.
+   */
+  private findBestDeliveredResourceNode(
+    worker: UnitEntity,
+    resourceType?: ResourceType,
+    maxDistance = Infinity,
+    options: {
+      allowDeepFish?: boolean;
+      fishOnly?: boolean;
+      allowDangerousHunt?: boolean;
+      assignedCounts?: ReadonlyMap<string, number>;
+      excludedNodeIds?: ReadonlySet<string>;
+    } = {}
+  ): ResourceNode | null {
+    const candidates = this.resourceNodes
+      .filter((node) => {
+        if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) return false;
+        if (!canUnitGatherNode(worker.unitDef, node)) return false;
+        if (node.subtype === 'boar' && !options.allowDangerousHunt) return false;
+        if (!options.allowDeepFish && node.subtype === 'deep_fish') return false;
+        if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') return false;
+        if (options.excludedNodeIds?.has(node.id)) return false;
+        return getDistance(worker.x, worker.z, node.x, node.z) <= maxDistance;
+      })
+      .map((node) => {
+        const approachDistance = getDistance(worker.x, worker.z, node.x, node.z);
+        const assigned = Math.max(0, options.assignedCounts?.get(node.id) || 0);
+        const sourceBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
+        const richBonus = node.nodeTier === 'rich' ? 4 : 0;
+        return {
+          node,
+          approachDistance,
+          assigned,
+          preScore: approachDistance + assigned * 5.5 - sourceBonus - richBonus,
+        };
+      })
+      .sort((a, b) => a.preScore - b.preScore || a.node.id.localeCompare(b.node.id))
+      .slice(0, 12);
+
+    if (candidates.length === 0) return null;
+
+    const researchedTechs = this.getResearchedTechs(worker.faction);
+    const hasStarOath = (this.starOathUntil[worker.faction] || 0) > this.simTime;
+    const gatherSpeed = Math.max(0.01, worker.unitDef.stats.gatherSpeed || 0.5833);
+    const carryCapacity = Math.max(1, worker.unitDef.stats.carryCapacity || 1);
+    const moveSpeed = Math.max(0.1, worker.unitDef.stats.speed || 1);
+    let best: ResourceNode | null = null;
+    let bestScore = -Infinity;
+
+    for (const candidate of candidates) {
+      const node = candidate.node;
+      const routeDistance = this.estimateResourceDeliveryTravelDistance(worker.faction, worker, node);
+      const oneWayDistance = routeDistance !== null && Number.isFinite(routeDistance)
+        ? routeDistance
+        : candidate.approachDistance;
+      const effectiveGatherRate = gatherSpeed * getEffectiveGatherMultiplier(node, researchedTechs, hasStarOath);
+      const deliveredPerMinute = estimateDeliveredResourcePerMinute(
+        effectiveGatherRate,
+        carryCapacity,
+        moveSpeed,
+        oneWayDistance
+      );
+      const stockFactor = 0.55 + 0.45 * Math.min(1, node.amount / (carryCapacity * 2));
+      const congestionFactor = 1 + candidate.assigned * 0.18;
+      const approachFactor = 1 + candidate.approachDistance / moveSpeed / 45;
+      const score = deliveredPerMinute * stockFactor / (congestionFactor * approachFactor);
+
+      if (
+        score > bestScore ||
+        (Math.abs(score - bestScore) < 1e-9 && (!best || node.id.localeCompare(best.id) < 0))
+      ) {
+        best = node;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
   private stepUnitGathering(unit: UnitEntity, dt: number) {
     if (!unit.targetResourceNodeId) {
       unit.state = 'idle';
@@ -4382,17 +5843,11 @@ export class RtsEngine {
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      const carriedType = unit.carryingResource?.type;
+      const fallbackType = node?.resourceType ?? carriedType;
       const nextNode = isBoat
-        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 95, true, true)
-        : node?.resourceType === 'food'
-        ? findBestFoodResourceNode(unit.x, unit.z, this.resourceNodes, 36, false, false)
-        : findClosestResourceNode(
-            unit.x,
-            unit.z,
-            this.resourceNodes.filter((n) => n.subtype !== 'deep_fish'),
-            node?.resourceType,
-            36
-          );
+        ? this.findBestDeliveredResourceNode(unit, 'food', 95, { allowDeepFish: true, fishOnly: true })
+        : this.findBestDeliveredResourceNode(unit, fallbackType, 36);
       if (nextNode) {
         unit.targetResourceNodeId = nextNode.id;
         unit.waypoints = undefined;
@@ -4422,14 +5877,17 @@ export class RtsEngine {
       deep_fish: '深海魚',
       shore_fish: '沿岸魚',
       hunt: '山羌肉',
+      boar: '野豬肉',
       berry: '漿果',
       farm: '農田',
       food: '糧食',
     };
     const rLabel = labelMap[node.subtype || node.resourceType] || '資源';
-    const huntingLive = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const huntingLive = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
     unit.currentActionText = huntingLive
-      ? `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
+      ? node.subtype === 'boar'
+        ? `🐗 圍獵野豬 (${Math.ceil(node.animalHp ?? 200)} HP)`
+        : `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
       : `⛏️ 採集${rLabel} (${curAmt}/${cap})`;
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
@@ -4462,23 +5920,29 @@ export class RtsEngine {
       const gatherRate = baseGatherRate * subtypeMult * tierMult * oathGather * resTechMult;
       const prevAmount = node.amount;
 
-      // Living 山羌: villagers kill in 2 discrete hits (16+16 on 32 HP).
-      // Non-workers (if ever hunting here) deal real attack damage toward the same 32 HP pool.
-      if (node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0)) {
+      // Living wildlife must be killed before its meat reserve can be gathered.
+      if (
+        (node.subtype === 'hunt' || node.subtype === 'boar') &&
+        node.animalAlive !== false &&
+        (node.animalHp === undefined || node.animalHp > 0)
+      ) {
+        const isBoar = node.subtype === 'boar';
+        const maxHp = isBoar ? 200 : 32;
         if (node.animalHp === undefined) {
-          node.animalMaxHp = 32;
-          node.animalHp = 32;
+          node.animalMaxHp = maxHp;
+          node.animalHp = maxHp;
           node.animalAlive = true;
         }
         const isVillager = unit.unitDef.category === 'worker';
         let hitCd = (unit as any)._huntHitCd || 0;
         hitCd -= dt;
         if (hitCd <= 0) {
-          const dmg = isVillager ? 16 : Math.max(1, unit.unitDef.stats.attack);
+          const dmg = isVillager ? (isBoar ? 18 : 16) : Math.max(1, unit.unitDef.stats.attack);
           node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
           hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
           this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
-          triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
+          if (isBoar) triggerWildBoarAggression(node, unit.id, this.simTime);
+          else triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
         }
         (unit as any)._huntHitCd = hitCd;
         if (node.animalHp <= 0) {
@@ -4487,7 +5951,9 @@ export class RtsEngine {
           node.animalVz = 0;
           node.animalFleeUntil = 0;
           node.animalMoveBlend = 0;
-          this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
+          node.animalAggroTargetId = undefined;
+          node.animalAggroUntil = 0;
+          this.addFloatingText(node.x, 1.8, node.z, isBoar ? '野豬倒地' : '山羌倒地', '#fca5a5');
           const nm = this.nodeMeshes.get(node.id);
           if (nm) {
             nm.position.y = 0;
@@ -4542,6 +6008,8 @@ export class RtsEngine {
                   ? '🫐'
                   : node.subtype === 'hunt'
                   ? '🦌'
+                  : node.subtype === 'boar'
+                  ? '🐗'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '🌲'
@@ -4562,6 +6030,10 @@ export class RtsEngine {
                   ? node.animalAlive === false
                     ? '山羌屍體'
                     : '野生山羌'
+                  : node.subtype === 'boar'
+                  ? node.animalAlive === false
+                    ? '野豬屍體'
+                    : '野生野豬'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '遠古神木'
@@ -4575,12 +6047,13 @@ export class RtsEngine {
                     ? '精良石脈'
                     : '石礦'
                   : '農田';
-              const isLiveHunt = node.subtype === 'hunt' && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const isLiveHunt = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const animalMaxHp = node.animalMaxHp || (node.subtype === 'boar' ? 200 : 32);
               const badgeAmt = isLiveHunt
-                ? `${Math.ceil(node.animalHp || 0)}/${node.animalMaxHp || 32} HP`
+                ? `${Math.ceil(node.animalHp || 0)}/${animalMaxHp} HP`
                 : `${curNodeAmt}/${node.maxAmount}`;
               const badgeRatio = isLiveHunt
-                ? (node.animalHp || 0) / (node.animalMaxHp || 32)
+                ? (node.animalHp || 0) / animalMaxHp
                 : node.amount / node.maxAmount;
               updateBadgeSprite(
                 badge,
@@ -4959,13 +6432,6 @@ export class RtsEngine {
       return false;
     };
     const age = this.ageByFaction[faction] || 1;
-    if (age < 2) return fail('🔒 野戰工程隊需要時代 II');
-    if (!this.getResearchedTechs(faction).includes('shared_field_engineering')) {
-      return fail('🔒 請先在兵營研發「野戰工程隊」');
-    }
-    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
-      return fail('🪵 這支軍團已有一輛衝車正在組裝');
-    }
     const builders = selected
       .filter(
         (unit) =>
@@ -4976,11 +6442,13 @@ export class RtsEngine {
           (unit.state === 'idle' || unit.state === 'moving')
       )
       .slice(0, 4);
-    if (builders.length < 4) return fail('🪵 野外組裝衝車至少需要 4 名可調度的近戰步兵');
-    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
-
     const resources = this.getResourcesForFaction(faction);
-    if (!canAfford(resources, FIELD_RAM_COST)) return fail('⚠️ 野戰衝車需要 140 木材與 60 黃金');
+    const assemblyCheck = canAssembleFieldRam(age, this.getResearchedTechs(faction), builders.length, resources);
+    if (!assemblyCheck.ok) return fail(assemblyCheck.reason || '⚠️ 目前無法組裝野戰衝車');
+    if (this.fieldSiegeProjects.some((project) => project.faction === faction)) {
+      return fail('🪵 這支軍團已有一輛衝車正在組裝');
+    }
+    if (!this.findUnitDef('battering_ram', faction)) return fail('⚠️ 此文明目前沒有可用的基礎衝車設計');
     const x = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.x, 0) / builders.length));
     const z = Math.max(-78, Math.min(78, builders.reduce((sum, unit) => sum + unit.z, 0) / builders.length));
     const visual = this.createFieldRamAssemblyVisual(x, z);
@@ -4990,7 +6458,7 @@ export class RtsEngine {
       x,
       z,
       progress: 0,
-      duration: 18,
+      duration: FIELD_RAM_ASSEMBLY_DURATION,
       builderUnitIds: builders.map((unit) => unit.id),
       mesh: visual.mesh,
       progressRing: visual.progressRing,
@@ -5038,19 +6506,19 @@ export class RtsEngine {
     }
 
     const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
-    if (!bldg || bldg.hp <= 0 || bldg.isConstructed) {
+    const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
+    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall)) {
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
       return;
     }
 
-    const pct = Math.round(bldg.buildProgress * 100);
-    unit.currentActionText = `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`;
+    const pct = Math.round((bldg.hp / Math.max(1, bldg.maxHp)) * 100);
+    unit.currentActionText = repairingWall ? `🧱 修復城牆 (${pct}%)` : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
 
-    // Position each builder flush against the scaffolding perimeter instead of piling far from walls
-    const bldgRad = getBuildingCollisionRadius(bldg);
+    // A breached wall is passable, so use its footprint to define the carpenter's work ring.
+    const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
     const workRingRad = bldgRad + 0.95;
     let idHash = 0;
     for (let i = 0; i < unit.id.length; i++) idHash = (idHash * 31 + unit.id.charCodeAt(i)) | 0;
@@ -5066,9 +6534,34 @@ export class RtsEngine {
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
-      const buildSpeed = 1 / bldg.buildingDef.buildTime;
-      bldg.buildProgress += buildSpeed * dt;
-      bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
+      const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
+        getCivilizationBuildSpeedMultiplier(this.getCivilizationForFaction(bldg.faction), this.activeMods)
+      );
+      const activeBuilderCount = this.units.filter(
+        (worker) =>
+          worker.hp > 0 &&
+          worker.faction === bldg.faction &&
+          worker.state === 'building' &&
+          worker.targetBuildingId === bldg.id &&
+          !worker.garrisonedInBuildingId &&
+          getDistance(worker.x, worker.z, bldg.x, bldg.z) <= buildReach
+      ).length;
+      const builderCount = Math.max(1, activeBuilderCount);
+      const perBuilderWorkShare =
+        getConstructionWorkerMultiplier(builderCount) / builderCount;
+      if (repairingWall) {
+        const repairSpeed =
+          (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
+          (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
+          perBuilderWorkShare;
+        bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
+      } else {
+        const buildSpeed =
+          (constructionSpeedMultiplier * perBuilderWorkShare) /
+          (bldg.buildingDef.buildTime * PRODUCTION_TIME_SCALE);
+        bldg.buildProgress += buildSpeed * dt;
+        bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
+      }
 
       // Advance unified carpenter hammer cycle and trigger impact FX cleanly at downstroke contact
       const prevPhase = (unit as any)._hammerPhase || 0;
@@ -5086,7 +6579,29 @@ export class RtsEngine {
         sound.playHammerBuild(this.getSpatialAudioScale(bldg.x, bldg.z));
       }
 
-      if (bldg.buildProgress >= 1) {
+      if (repairingWall && bldg.hp >= bldg.maxHp) {
+        bldg.hp = bldg.maxHp;
+        bldg.wallBreached = false;
+        bldg.wallRepairPaid = false;
+        bldg.gateOpen = false;
+        bldg.buildProgress = 1;
+        this.navGridDirty = true;
+        this.waterNavGridDirty = true;
+        const repairMesh = this.buildingMeshes.get(bldg.id);
+        if (repairMesh) {
+          if (bldg.buildingType === 'gate') updateGateDoorAnimation(repairMesh, false, 1.0);
+          else applyWallBreachVisuals(repairMesh, false);
+        }
+        this.refreshWallTowerConnections();
+        this.spawnParticleBurst(bldg.x, 1.2, bldg.z, 'stone', 8);
+        this.spawnParticleBurst(bldg.x, 1.4, bldg.z, 'gold', 6);
+        this.addFloatingText(bldg.x, 2.7, bldg.z, '🧱 城牆缺口已修復 · 防線恢復', '#86efac');
+        unit.targetBuildingId = undefined;
+        if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 修復完成'; }
+        return;
+      }
+
+      if (!repairingWall && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
@@ -5106,6 +6621,7 @@ export class RtsEngine {
         this.spawnShockwaveRing(bldg.x, bldg.z, 0xfbbf24, bldg.buildingDef.size + 1.4);
         this.navGridDirty = true;
         this.waterNavGridDirty = true;
+        this.refreshWallTowerConnections();
         if (this.isHumanControlled(bldg.faction)) this.stats.buildingsConstructed++;
         if (this.selectedBuildingId === bldg.id) this.onSelectionChange?.();
         unit.targetBuildingId = undefined;
@@ -5118,6 +6634,9 @@ export class RtsEngine {
         if (bldg.buildingDef.landmarkAgeAdvance) {
           this.advanceAge(bldg.faction, bldg.buildingType as LandmarkType);
         }
+
+        // Finish the next queued construction before returning to automatic gathering.
+        if (this.tryDequeueCommand(unit)) return;
 
         if (bldg.buildingType === 'farm') {
           const farmNode = this.getOrCreateFarmFoodNode(bldg)!;
@@ -5188,6 +6707,8 @@ export class RtsEngine {
     if (!bldg || bldg.hp <= 0 || !bldg.isConstructed || bldg.faction !== unit.faction) {
       unit.targetGarrisonBuildingId = undefined;
       unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'idle';
       unit.currentActionText = '💤 待命中 (閒置)';
       return;
@@ -5195,9 +6716,17 @@ export class RtsEngine {
 
     const maxCap = getBuildingMaxGarrison(bldg);
     const curCount = bldg.garrisonedUnitIds?.length || 0;
-    if (curCount >= maxCap) {
+    const pendingOther = countPendingGarrisonReservations(
+      bldg.id,
+      bldg.faction,
+      this.units,
+      new Set([unit.id])
+    );
+    if (getAvailableGarrisonSlots(maxCap, curCount, pendingOther) <= 0) {
       unit.targetGarrisonBuildingId = undefined;
       unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.state = 'idle';
       unit.currentActionText = '🛡️ 駐防已滿待命';
       return;
@@ -5319,24 +6848,18 @@ export class RtsEngine {
    * Locomotion bounce & limb swing are driven strictly by post-clamp horizontal displacement so
    * blocked or cooling-down deer never hop in place.
    */
+  /**
+   * Wildlife state machines:
+   * - 山羌 flee once per encounter and re-arm only after the threat disengages.
+   * - 野豬 remain calm until hit, then charge and retaliate against their attacker.
+   */
   private updateWildAnimals(dt: number) {
-    const DETECT = 12.5;
+    const DETECT = 18;
     let deerIdx = 0;
-
-    const isDeerBlocked = (cx: number, cz: number): boolean => {
+    const isAnimalBlocked = (cx: number, cz: number): boolean => {
       if (Math.abs(cx) > 91 || Math.abs(cz) > 91) return true;
       if (this.mapLayout) {
-        if (
-          isPointInTerrainObstacle(
-            cx,
-            cz,
-            this.mapLayout.waterRects,
-            this.mapLayout.waterDiscs,
-            this.mapLayout.bridges
-          )
-        ) {
-          return true;
-        }
+        if (isPointInTerrainObstacle(cx, cz, this.mapLayout.waterRects, this.mapLayout.waterDiscs, this.mapLayout.bridges)) return true;
         for (const c of this.mapLayout.cliffDiscs) {
           if (Math.hypot(cx - c.x, cz - c.z) <= c.radius + 0.75) return true;
         }
@@ -5349,48 +6872,141 @@ export class RtsEngine {
       return false;
     };
 
+    const killAnimal = (node: ResourceNode, mesh: THREE.Group | undefined, label: string) => {
+      node.animalAlive = false;
+      node.animalHp = 0;
+      node.animalVx = 0;
+      node.animalVz = 0;
+      node.animalFleeUntil = 0;
+      node.animalMoveBlend = 0;
+      node.animalAggroTargetId = undefined;
+      node.animalAggroUntil = 0;
+      if (mesh) {
+        mesh.position.y = 0;
+        mesh.rotation.x = 0.55;
+      }
+      this.addFloatingText(node.x, 1.8, node.z, label, '#fca5a5');
+    };
+
     for (const node of this.resourceNodes) {
-      if (node.subtype !== 'hunt' || node.amount <= 0) continue;
-      deerIdx++;
+      const isBoar = node.subtype === 'boar';
+      if ((!isBoar && node.subtype !== 'hunt') || node.amount <= 0) continue;
+      const mesh = this.nodeMeshes.get(node.id);
+      const maxHp = isBoar ? 200 : 32;
       if (node.animalAlive === undefined) {
-        node.animalMaxHp = 32;
-        node.animalHp = 32;
+        node.animalMaxHp = maxHp;
+        node.animalHp = maxHp;
         node.animalAlive = true;
         node.animalVx = 0;
         node.animalVz = 0;
-        node.animalYaw = (deerIdx * 1.9) % (Math.PI * 2);
+        node.animalYaw = (this.resourceNodes.indexOf(node) * 1.9) % (Math.PI * 2);
       }
 
-      const mesh = this.nodeMeshes.get(node.id);
       if (!node.animalAlive) {
         if (mesh) {
-          updateDeerAssetAnimation(mesh, 'death', dt);
-          mesh.position.set(node.x, 0, node.z);
-          mesh.rotation.x = 0.55;
-          const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
-          if (parts) {
-            parts.bodyPivot.position.y = 0.7;
-            parts.bodyPivot.rotation.z = 0;
-            parts.flLeg.rotation.z = -0.3;
-            parts.frLeg.rotation.z = -0.15;
-            parts.blLeg.rotation.z = 0.25;
-            parts.brLeg.rotation.z = 0.15;
+          if (isBoar) {
+            mesh.position.set(node.x, 0, node.z);
+            mesh.rotation.x = 0.55;
+            const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
+            if (parts) {
+              parts.bodyPivot.position.y = 0.58;
+              parts.headPivot.rotation.z = -0.32;
+            }
+          } else {
+            updateDeerAssetAnimation(mesh, 'death', dt);
+            mesh.position.set(node.x, 0, node.z);
+            mesh.rotation.x = 0.55;
+            const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
+            if (parts) {
+              parts.bodyPivot.position.y = 0.7;
+              parts.bodyPivot.rotation.z = 0;
+              parts.flLeg.rotation.z = -0.3;
+              parts.frLeg.rotation.z = -0.15;
+              parts.blLeg.rotation.z = 0.25;
+              parts.brLeg.rotation.z = 0.15;
+            }
           }
         }
         continue;
       }
 
-      let nearest: { x: number; z: number; d: number } | null = null;
-      for (const u of this.units) {
-        if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
-        if (u.unitDef.isNaval) continue;
-        const d = getDistance(node.x, node.z, u.x, u.z);
-        if (d < DETECT && (!nearest || d < nearest.d)) {
-          nearest = { x: u.x, z: u.z, d };
+      if (isBoar) {
+        // Military units can wound the boar with active attacks / attack-move.
+        for (const attacker of this.units) {
+          if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
+            (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
+          const d = getDistance(node.x, node.z, attacker.x, attacker.z);
+          if (d > Math.max(2.6, (attacker.unitDef.stats.range || 1.5) + 0.65)) continue;
+          let hitCd = (attacker as any)._huntHitCd || 0;
+          hitCd -= dt;
+          if (hitCd <= 0) {
+            const dmg = Math.max(1, attacker.unitDef.stats.attack);
+            node.animalHp = Math.max(0, (node.animalHp || maxHp) - dmg);
+            hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
+            triggerWildBoarAggression(node, attacker.id, this.simTime);
+            this.addFloatingText(node.x, 1.7, node.z, `-${dmg}`, '#fca5a5');
+          }
+          (attacker as any)._huntHitCd = hitCd;
+          if ((node.animalHp || 0) <= 0) {
+            killAnimal(node, mesh, '野豬倒地');
+            break;
+          }
         }
+        if (!node.animalAlive) continue;
+
+        const target = (node.animalAggroUntil || 0) > this.simTime
+          ? this.units.find((u) => u.id === node.animalAggroTargetId && u.hp > 0 && !u.garrisonedInBuildingId)
+          : undefined;
+        if (!target) {
+          node.animalAggroTargetId = undefined;
+          node.animalAggroUntil = 0;
+        }
+        const step = stepWildBoarState(node, target ? { x: target.x, z: target.z } : null, dt, isAnimalBlocked);
+
+        if (mesh) {
+          mesh.position.set(node.x, 0, node.z);
+          mesh.rotation.y = step.yaw;
+          mesh.rotation.x = 0;
+          const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
+          if (parts) {
+            const moving = step.actualSpeed > 0.28;
+            const phase = this.simTime * (moving ? 12.5 : 1.7);
+            const stride = moving ? Math.sin(phase) * 0.58 : 0;
+            parts.flLeg.rotation.z = stride;
+            parts.brLeg.rotation.z = stride * 0.92;
+            parts.frLeg.rotation.z = -stride;
+            parts.blLeg.rotation.z = -stride * 0.92;
+            const bob = moving ? Math.abs(Math.sin(phase * 2)) * 0.025 : Math.sin(phase) * 0.012;
+            parts.bodyPivot.position.y += (0.72 + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
+            const headTilt = step.isCharging ? -0.13 : Math.sin(this.simTime * 1.4) * 0.025;
+            parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
+            parts.tailPivot.rotation.y = Math.sin(this.simTime * 4.4) * 0.26;
+          }
+        }
+
+        if (target && getDistance(node.x, node.z, target.x, target.z) <= 2.4 &&
+          (node.animalAttackCooldown || 0) <= this.simTime) {
+          const rawDamage = target.unitDef.category === 'worker' ? 22 : 15;
+          const damage = calculateDamage(rawDamage, target.unitDef.stats.defense);
+          target.hp = Math.max(0, target.hp - damage);
+          target.lastDamagedTime = performance.now();
+          target.hitFlashTimer = 0.13;
+          target.recoilTimer = 0.2;
+          node.animalAttackCooldown = this.simTime + 1.25;
+          this.spawnParticleBurst(target.x, 1.05, target.z, 'hit', 5);
+          this.addFloatingText(target.x, 2.0, target.z, `-${damage} 野豬衝撞`, '#fb923c');
+        }
+        continue;
       }
 
-      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isDeerBlocked);
+      deerIdx++;
+      let nearest: { x: number; z: number; d: number } | null = null;
+      for (const unit of this.units) {
+        if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.isNaval) continue;
+        const d = getDistance(node.x, node.z, unit.x, unit.z);
+        if (d < DETECT && (!nearest || d < nearest.d)) nearest = { x: unit.x, z: unit.z, d };
+      }
+      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isAnimalBlocked);
 
       if (mesh) {
         const animationState = step.moveBlend > 0.02
@@ -5400,16 +7016,13 @@ export class RtsEngine {
         mesh.position.set(node.x, step.hopY, node.z);
         mesh.rotation.y = step.yaw;
         mesh.rotation.x = 0;
-
         const parts = mesh.userData.deerAnimParts as DeerAnimParts | undefined;
         if (parts) {
           const blend = step.moveBlend;
           const isFast = step.actualSpeed >= 2.2;
           const phase = step.gaitPhase;
-
           if (blend > 0.02) {
             if (isFast) {
-              // Bounding gallop: front pair and rear pair sweep together with natural phase offset
               const frontSwing = Math.sin(phase) * 0.78 * blend;
               const rearSwing = Math.sin(phase + 0.85) * 0.74 * blend;
               parts.flLeg.rotation.z = frontSwing;
@@ -5420,7 +7033,6 @@ export class RtsEngine {
               parts.tailPivot.rotation.z = (0.48 + Math.sin(phase * 2) * 0.14) * blend;
               parts.headPivot.rotation.z = 0.08 + Math.sin(phase) * 0.08 * blend;
             } else {
-              // Calm diagonal walk/trot
               const swing = Math.sin(phase) * 0.45 * blend;
               parts.flLeg.rotation.z = swing;
               parts.brLeg.rotation.z = swing;
@@ -5431,7 +7043,6 @@ export class RtsEngine {
               parts.headPivot.rotation.z = 0.02;
             }
           } else {
-            // Smoothly return legs & body to grounded grazing stance
             const settle = 1 - Math.exp(-10 * dt);
             parts.flLeg.rotation.z += (0 - parts.flLeg.rotation.z) * settle;
             parts.frLeg.rotation.z += (0 - parts.frLeg.rotation.z) * settle;
@@ -5439,7 +7050,6 @@ export class RtsEngine {
             parts.brLeg.rotation.z += (0 - parts.brLeg.rotation.z) * settle;
             parts.bodyPivot.rotation.z += (0 - parts.bodyPivot.rotation.z) * settle;
             parts.tailPivot.rotation.z += (0 - parts.tailPivot.rotation.z) * settle;
-
             if (step.isGrazing) {
               const graze = Math.max(0, Math.sin(this.simTime * 1.15 + deerIdx * 1.7));
               const targetHead = -graze * 0.44;
@@ -5451,35 +7061,21 @@ export class RtsEngine {
         }
       }
 
-      // Non-villager combat damage vs living 山羌 (still needs full 32 HP of real damage)
-      if (node.animalAlive) {
-        for (const u of this.units) {
-          if (u.hp <= 0 || u.unitDef.category === 'worker' || u.unitDef.isNaval) continue;
-          if (u.state !== 'attacking' && !u.attackMoveGoal) continue;
-          const d = getDistance(node.x, node.z, u.x, u.z);
-          if (d > Math.max(2.4, (u.unitDef.stats.range || 1.5) + 0.5)) continue;
-          let cd = (u as any)._huntHitCd || 0;
-          cd -= dt;
-          if (cd <= 0) {
-            const dmg = Math.max(1, u.unitDef.stats.attack);
-            node.animalHp = Math.max(0, (node.animalHp || 32) - dmg);
-            cd = Math.max(0.5, 1 / Math.max(0.35, u.unitDef.stats.attackRate || 1));
-            triggerWildAnimalPanic(node, u.x, u.z, this.simTime, 2.5);
-            if (node.animalHp <= 0) {
-              node.animalAlive = false;
-              node.animalVx = 0;
-              node.animalVz = 0;
-              node.animalFleeUntil = 0;
-              node.animalMoveBlend = 0;
-              this.addFloatingText(node.x, 1.8, node.z, '山羌倒地', '#fca5a5');
-              if (mesh) {
-                mesh.position.y = 0;
-                mesh.rotation.x = 0.55;
-              }
-            }
-          }
-          (u as any)._huntHitCd = cd;
+      for (const attacker of this.units) {
+        if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
+          (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
+        const d = getDistance(node.x, node.z, attacker.x, attacker.z);
+        if (d > Math.max(2.4, (attacker.unitDef.stats.range || 1.5) + 0.5)) continue;
+        let hitCd = (attacker as any)._huntHitCd || 0;
+        hitCd -= dt;
+        if (hitCd <= 0) {
+          const dmg = Math.max(1, attacker.unitDef.stats.attack);
+          node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
+          hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
+          triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
+          if (node.animalHp <= 0) killAnimal(node, mesh, '山羌倒地');
         }
+        (attacker as any)._huntHitCd = hitCd;
       }
     }
   }
@@ -6071,6 +7667,7 @@ export class RtsEngine {
       const bMesh = this.buildingMeshes.get(bldg.id);
       const visState = computeBuildingVisualState(bldg.isConstructed, bldg.buildProgress, bldg.hp, bldg.maxHp);
       if (bMesh) {
+        if (bldg.buildingType === 'gate') updateGateDoorAnimation(bMesh, !!bldg.gateOpen || !!bldg.wallBreached, dt);
         applyBuildingConstructionVisuals(
           bMesh,
           visState,
@@ -6284,7 +7881,7 @@ export class RtsEngine {
             f.buildingType === 'armory_forge' &&
             getDistance(bldg.x, bldg.z, f.x, f.z) <= 16
         );
-      const speedBonusMult = hasNearbyForge ? 1.25 : 1.0;
+      const speedBonusMult = getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1.0);
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
@@ -6310,9 +7907,21 @@ export class RtsEngine {
         const currentUnitId = bldg.queue[0];
         const uDef = this.findUnitDef(currentUnitId, bldg.faction);
         if (uDef) {
-          const trainTimeMult = getTrainingTimeMultiplier(this.getResearchedTechs(bldg.faction));
-          const speed = speedBonusMult / Math.max(2, uDef.stats.trainTime * trainTimeMult);
-          bldg.queueProgress += speed * dt;
+          const trainTimeMult = getTrainingTimeMultiplier(
+            this.getResearchedTechs(bldg.faction),
+            uDef.category
+          );
+          const landmarkTrainingSpeed = getLandmarkTrainingSpeedMultiplier(
+            this.landmarksByFaction[bldg.faction] || [],
+            uDef.category
+          );
+          const trainingDuration = getEffectiveUnitTrainingDuration(
+            uDef.stats.trainTime,
+            trainTimeMult,
+            speedBonusMult,
+            landmarkTrainingSpeed
+          );
+          bldg.queueProgress += dt / trainingDuration;
 
           const pop = this.getPopulationStats(bldg.faction);
           if (bldg.queueProgress >= 1 && pop.used < pop.max) {
@@ -6431,6 +8040,7 @@ export class RtsEngine {
     this.buildings = remainingBuildings;
     if (settlementEnvironmentDirty) {
       this.refreshSettlementEnvironment();
+      this.refreshWallTowerConnections();
     }
     if (selectedDestroyed) {
       this.onSelectionChange?.();
@@ -6544,6 +8154,7 @@ export class RtsEngine {
         }
 
         target.hp -= dmg;
+        if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, attacker?.unitDef.category === 'siege' || proj.damage >= 20);
         (target as any).lastDamagedTime = performance.now();
         (target as any).hitFlashTimer = 0.08;
         if (target.type === 'unit') {
@@ -6678,7 +8289,14 @@ export class RtsEngine {
     const mType = unit.unitDef.visual.modelType;
     const isSiegeUnit = unit.unitDef.id === 'catapult' || mType === 'ram' || mType === 'cannon' || unit.unitDef.category === 'siege';
     const unitScale = unit.unitDef.visual.scale || 1;
-    const baseBodyY = mType === 'knight' ? 0 : mType === 'mage' ? 0.24 : isSiegeUnit ? 0 : 0.36;
+    const baseBodyY =
+      mType === 'knight'
+        ? 0
+        : mType === 'mage' || mType === 'oracle'
+          ? 0.24
+          : isSiegeUnit
+            ? 0
+            : 0.36;
     const hasVelocityIntent = unit.velocity.x !== 0 || unit.velocity.z !== 0;
 
     // Persistent smoothed joint & kinematic state per mesh -> zero foot-skating and fluid pose blending
@@ -6770,9 +8388,13 @@ export class RtsEngine {
     }
     const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
     if (parts.veteranHalo) {
-      const isVet = xpEligible && (unit.level || 1) >= 2;
+      const veteranLevel = unit.level || 1;
+      const isVet = xpEligible && veteranLevel >= 2;
       parts.veteranHalo.visible = isVet;
-      if (isVet) parts.veteranHalo.rotation.z = t * 1.9;
+      if (isVet) {
+        parts.veteranHalo.rotation.z = t * 1.9;
+        parts.veteranHalo.scale.setScalar(1 + Math.min(0.24, Math.max(0, veteranLevel - 2) * 0.08));
+      }
     }
     if (parts.buffRing) {
       const hasBuff = !!(unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime);
@@ -7043,6 +8665,22 @@ export class RtsEngine {
     parts.bodyPivot.position.y = anim.bodyY;
     parts.bodyPivot.scale.y = anim.scaleY;
     if (parts.horseHead) parts.horseHead.rotation.x = anim.horseHeadX;
+
+    // Secondary motion follows gait and wind-like idle drift without changing simulation state.
+    const secondaryMotionParts = mesh.userData.secondaryMotionParts as Array<{
+      object: THREE.Object3D;
+      axis: 'x' | 'y' | 'z';
+      amplitude: number;
+      frequency: number;
+      phase: number;
+      baseRotation: THREE.Euler;
+    }> | undefined;
+    secondaryMotionParts?.forEach((part) => {
+      const rhythm = t * part.frequency + part.phase + anim.gaitPhase * 0.22;
+      const movementGain = 0.22 + anim.moveBlend * 0.95;
+      const flutter = Math.sin(rhythm) * part.amplitude * movementGain;
+      part.object.rotation[part.axis] = part.baseRotation[part.axis] + flutter;
+    });
   }
 
   // ------------------ AI TACTICS EVALUATOR ------------------
@@ -7104,7 +8742,7 @@ export class RtsEngine {
     const aiRes = this.getResourcesForFaction(aiId);
     const aiAge = this.ageByFaction[aiId] || 1;
     const aiCiv = getCivilizationConfig(this.getCivilizationForFaction(aiId));
-    if (!bDef || !aiCiv.buildableBuildings.includes(bType) || (bDef.requiredAge && aiAge < bDef.requiredAge) || !canAfford(aiRes, bDef.cost)) return false;
+    if (!bDef || !isBuildingBuildableForCiv(bType, aiCiv.id, aiAge) || !canAfford(aiRes, bDef.cost)) return false;
 
     const builder =
       aiWorkers.find((w) => w.hp > 0 && w.state === 'idle') ||
@@ -7130,7 +8768,7 @@ export class RtsEngine {
     aiCiv: ReturnType<typeof getCivilizationConfig>,
     rawTargetId: string,
     aiBuildings: BuildingEntity[]
-  ) {
+  ): boolean {
     let unitDefId = rawTargetId;
     if (rawTargetId === 'villager') {
       unitDefId = aiCiv.workerUnitId;
@@ -7139,12 +8777,7 @@ export class RtsEngine {
     } else if (rawTargetId === 'longbowman') {
       unitDefId = aiCiv.starterRangedUnitId;
     } else if (rawTargetId === 'knight') {
-      unitDefId =
-        aiCiv.id === 'anime'
-          ? 'anime_saiyan_brawler'
-          : aiCiv.id === 'fantasy'
-          ? 'fantasy_paladin'
-          : 'knight';
+      unitDefId = resolveAiKnightUnitId(aiCiv.id);
     } else if (rawTargetId === 'battering_ram') {
       unitDefId = 'battering_ram';
     } else if (rawTargetId === 'bombard_cannon') {
@@ -7155,7 +8788,7 @@ export class RtsEngine {
 
     const aiAge = this.ageByFaction[aiId] || 1;
     const uDef = this.findUnitDef(unitDefId, aiId);
-    if (!uDef || (uDef.requiredAge && aiAge < uDef.requiredAge)) return;
+    if (!uDef || (uDef.requiredAge && aiAge < uDef.requiredAge)) return false;
 
     const candidates = aiBuildings
       .filter(
@@ -7168,8 +8801,9 @@ export class RtsEngine {
       .sort((a, b) => a.queue.length - b.queue.length);
 
     if (candidates.length > 0) {
-      this.trainUnit(candidates[0].id, unitDefId);
+      return this.trainUnit(candidates[0].id, unitDefId);
     }
+    return false;
   }
 
   private evaluateAiLogic() {
@@ -7261,14 +8895,24 @@ export class RtsEngine {
         underAttack = 1;
       }
 
-      // AI Tactical Garrison Defense: shelter exposed villagers during base raids & release once threat clears!
-      if (underAttack === 1 && aiTC) {
+      // Use any surviving garrison-capable building; a destroyed Town Center must not disable retreats.
+      if (underAttack === 1) {
         const aiShelters = aiBuildings
-          .filter((b) => b.isConstructed && getBuildingMaxGarrison(b) > 0)
-          .map((b) => ({
-            bldg: b,
-            freeSlots: Math.max(0, getBuildingMaxGarrison(b) - (b.garrisonedUnitIds?.length || 0)),
-          }))
+          .filter((b) => b.hp > 0 && b.isConstructed && getBuildingMaxGarrison(b) > 0)
+          .map((b) => {
+            const incoming = countPendingGarrisonReservations(b.id, b.faction, aiUnits);
+            return {
+              id: b.id,
+              x: b.x,
+              z: b.z,
+              bldg: b,
+              freeSlots: getAvailableGarrisonSlots(
+                getBuildingMaxGarrison(b),
+                b.garrisonedUnitIds?.length || 0,
+                incoming
+              ),
+            };
+          })
           .filter((s) => s.freeSlots > 0);
         if (aiShelters.length > 0) {
           const exposed = aiActiveWorkers.filter(
@@ -7278,19 +8922,59 @@ export class RtsEngine {
               getDistance(anchorX, anchorZ, w.x, w.z) <= 22
           ).slice(0, 5);
           for (const ew of exposed) {
-            const open = aiShelters.find((s) => s.freeSlots > 0);
+            const open = selectNearestGarrisonShelter(ew.x, ew.z, aiShelters);
             if (!open) break;
             open.freeSlots--;
             ew.targetGarrisonBuildingId = open.bldg.id;
             ew.targetResourceNodeId = undefined;
+            ew.targetEntityId = undefined;
+            ew.targetBuildingId = undefined;
             ew.waypoints = undefined;
+            ew.pathGoal = undefined;
+            ew.attackMoveGoal = null;
             ew.state = 'garrisoning';
+            ew.currentActionText = '🔔 緊急避難';
           }
         }
-      } else if (nearestEnemyDist > 26 && !recentBaseDmg) {
+
+        // Preserve expensive frontline troops: critically wounded non-siege units retreat
+        // to the nearest available friendly shelter instead of fighting to the last HP.
+        const vulnerableArmy = aiArmy
+          .filter(
+            (unit) =>
+              unit.state !== 'garrisoning' &&
+              !unit.garrisonedInBuildingId &&
+              shouldAiUnitSeekShelter(unit.hp, unit.maxHp, unit.unitDef.category, personality) &&
+              getDistance(anchorX, anchorZ, unit.x, unit.z) <= 28
+          )
+          .sort(
+            (a, b) =>
+              a.hp / Math.max(1, a.maxHp) - b.hp / Math.max(1, b.maxHp) ||
+              getDistance(a.x, a.z, anchorX, anchorZ) - getDistance(b.x, b.z, anchorX, anchorZ)
+          );
+
+        for (const wounded of vulnerableArmy) {
+          const open = selectNearestGarrisonShelter(wounded.x, wounded.z, aiShelters);
+          if (!open) break;
+          open.freeSlots--;
+
+          wounded.targetGarrisonBuildingId = open.bldg.id;
+          wounded.targetEntityId = undefined;
+          wounded.targetBuildingId = undefined;
+          wounded.targetResourceNodeId = undefined;
+          wounded.attackMoveGoal = null;
+          wounded.wallPatrolRoute = undefined;
+          wounded.wallPatrolIndex = undefined;
+          wounded.waypoints = undefined;
+          wounded.pathGoal = undefined;
+          wounded.pathCooldown = 0;
+          wounded.state = 'garrisoning';
+          wounded.currentActionText = '🛡️ 戰損撤退 · 尋找掩體';
+        }
+      } else if (nearestEnemyDist > 26 && !recentBaseDmg && !recentUnitDmg) {
         for (const b of aiBuildings) {
           if (b.garrisonedUnitIds && b.garrisonedUnitIds.length > 0) {
-            this.ungarrisonAll(b.id);
+            this.ungarrisonRecoveredAiUnits(b.id, 0.72);
           }
         }
       }
@@ -7484,12 +9168,34 @@ export class RtsEngine {
         }
       }
 
+      // Role counters include units already in production queues. Without queued reservations,
+      // the AI can request the same missing role every decision tick and overfill one unit type.
+      const queuedRoleCounts = { melee: 0, ranged: 0, cavalry: 0, siege: 0 };
+      for (const building of aiBuildings) {
+        for (const queuedUnitId of building.queue) {
+          const queuedDef = this.findUnitDef(queuedUnitId, aiId);
+          if (queuedDef && queuedDef.category in queuedRoleCounts) {
+            queuedRoleCounts[queuedDef.category as keyof typeof queuedRoleCounts]++;
+          }
+        }
+      }
+      const roleCounts = {
+        melee: aiUnits.filter((unit) => unit.unitDef.category === 'melee').length + queuedRoleCounts.melee,
+        ranged: aiUnits.filter((unit) => unit.unitDef.category === 'ranged').length + queuedRoleCounts.ranged,
+        cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
+        siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
+      };
+
       const snapshot = {
         food: aiRes.food,
         wood: aiRes.wood,
         gold: aiRes.gold,
         stone: aiRes.stone,
         armyCount: aiArmy.length,
+        meleeCount: roleCounts.melee,
+        rangedCount: roleCounts.ranged,
+        cavalryCount: roleCounts.cavalry,
+        siegeCount: roleCounts.siege,
         workerCount: aiWorkers.length,
         underAttack,
         enemyProximity: nearestEnemyDist,
@@ -7502,24 +9208,64 @@ export class RtsEngine {
       const plan = evaluateAiPlan(activeRules, snapshot);
       const gatherFocus = plan.gatherAction?.targetId || (aiWorkers.length >= 8 ? 'military_eco' : 'balanced_eco');
 
-      // 2. Dynamic Worker Allocation & Rebalancing (never pulls active builders or garrisoned workers)
+      // 2. Dynamic Worker Allocation & Rebalancing.
+      // Builders are excluded from the gatherer target; they are never reassigned from construction.
+      const aiEconomicWorkers = aiActiveWorkers.filter((worker) => worker.state !== 'building');
+
+      // Sample net inventory flow over a stable window so the allocation reacts
+      // to actual gains/spending, not just a single volatile stock snapshot.
+      const economySampleTime = this.stats.gameDuration;
+      let economyFlow = this.aiEconomyFlowByFaction.get(aiId);
+      if (!economyFlow || economySampleTime < economyFlow.sampledAt) {
+        economyFlow = {
+          sampledAt: economySampleTime,
+          resources: { ...aiRes },
+          netRates: {},
+        };
+        this.aiEconomyFlowByFaction.set(aiId, economyFlow);
+      } else if (economySampleTime - economyFlow.sampledAt >= AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS) {
+        const elapsedSeconds = economySampleTime - economyFlow.sampledAt;
+        const netRates: Partial<Record<ResourceType, number>> = {};
+        for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+          netRates[type] = ((aiRes[type] - economyFlow.resources[type]) / elapsedSeconds) * 60;
+        }
+        economyFlow = {
+          sampledAt: economySampleTime,
+          resources: { ...aiRes },
+          netRates,
+        };
+        this.aiEconomyFlowByFaction.set(aiId, economyFlow);
+      }
+
       const desiredAlloc = computeAiWorkerAllocation(
         aiRes,
-        aiActiveWorkers.length,
+        aiEconomicWorkers.length,
         gatherFocus,
-        aiAge
+        aiAge,
+        economyFlow.netRates
       );
       const activeCounts: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
       const resourceNodeById = new Map<string, ResourceNode>(
         this.resourceNodes.map((node) => [node.id, node] as const)
       );
       const nodeWorkerCounts = new Map<string, number>();
+      const nodeGatherRateById = new Map<string, number>();
+      const aiGatherTechs = this.getResearchedTechs(aiId);
+      const aiHasStarOath = (this.starOathUntil[aiId] || 0) > this.simTime;
       for (const w of aiActiveWorkers) {
         if (w.state === 'returning_resource' && w.carryingResource) {
           activeCounts[w.carryingResource.type]++;
         } else if (w.state === 'gathering' && w.targetResourceNodeId) {
           const n = resourceNodeById.get(w.targetResourceNodeId);
-          if (n && n.amount > 0) activeCounts[n.resourceType]++;
+          if (n && n.amount > 0) {
+            activeCounts[n.resourceType]++;
+            const gatherRate = (w.unitDef.stats.gatherSpeed || 2) *
+              getEffectiveGatherMultiplier(n, aiGatherTechs, aiHasStarOath);
+            nodeGatherRateById.set(
+              n.id,
+              (nodeGatherRateById.get(n.id) || 0) + gatherRate
+            );
+          }
         }
 
         if ((w.state === 'gathering' || w.state === 'returning_resource') && w.targetResourceNodeId) {
@@ -7530,24 +9276,36 @@ export class RtsEngine {
         }
       }
 
-      const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
-      const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
+      // Routine economy assignment excludes offshore fish and aggressive boars.
+      // Boars remain available to explicit/coordinated hunting orders.
+      const landNodes = this.resourceNodes.filter(
+        (rn) => rn.subtype !== 'deep_fish' && rn.subtype !== 'boar'
+      );
+      const availableResourceTypes = Array.from(
+        new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
+      );
+      const assignWorkerToType = (
+        worker: UnitEntity,
+        prefType: ResourceType,
+        excludedNodeIds?: ReadonlySet<string>
+      ): boolean => {
         const preferredRange = prefType === 'food' ? 38 : 36;
+        const options = { assignedCounts: nodeWorkerCounts, excludedNodeIds };
         const node =
-          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, preferredRange) ||
-          findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, 54) ||
-          findBalancedResourceNode(worker.x, worker.z, landNodes, undefined, nodeWorkerCounts);
-        if (node) {
-          worker.targetResourceNodeId = node.id;
-          worker.waypoints = undefined;
-          worker.state = 'gathering';
-          activeCounts[node.resourceType]++;
-          nodeWorkerCounts.set(node.id, (nodeWorkerCounts.get(node.id) || 0) + 1);
-        }
+          this.findBestDeliveredResourceNode(worker, prefType, preferredRange, options) ||
+          this.findBestDeliveredResourceNode(worker, prefType, 54, options) ||
+          this.findBestDeliveredResourceNode(worker, prefType, Infinity, options);
+        if (!node) return false;
+
+        worker.targetResourceNodeId = node.id;
+        worker.waypoints = undefined;
+        worker.state = 'gathering';
+        activeCounts[node.resourceType]++;
+        nodeWorkerCounts.set(node.id, (nodeWorkerCounts.get(node.id) || 0) + 1);
+        return true;
       };
 
-      const resourcePriorityOrder: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
-      for (const w of aiActiveWorkers) {
+      for (const w of aiEconomicWorkers) {
         if (w.state !== 'idle') continue;
         // Contest forward gold: if we are poor on gold, claim nodes closer to map center / contested
         if (aiRes.gold < 120 && activeCounts.gold < desiredAlloc.gold) {
@@ -7573,36 +9331,104 @@ export class RtsEngine {
             continue;
           }
         }
-        let bestType: ResourceType = 'food';
-        let biggestNeed = -Infinity;
-        for (const rt of resourcePriorityOrder) {
-          const need = desiredAlloc[rt] - activeCounts[rt];
-          if (need > biggestNeed) {
-            biggestNeed = need;
-            bestType = rt;
-          }
-        }
-        assignWorkerToType(w, bestType);
+        const bestType = selectAiWorkerResourceType(
+          activeCounts,
+          desiredAlloc,
+          availableResourceTypes
+        );
+        if (bestType) assignWorkerToType(w, bestType);
       }
 
-      // Gently rebalance 1 surplus gatherer per tick if AI is starving for food/wood
-      if (aiRes.food < 75 && activeCounts.food < desiredAlloc.food) {
-        const surplusType = (['stone', 'gold', 'wood'] as ResourceType[]).find(
-          (t) => activeCounts[t] > desiredAlloc[t] + 1
-        );
-        if (surplusType) {
-          const reassignable = aiActiveWorkers.find((w) => {
-            if (w.state !== 'gathering' || !w.targetResourceNodeId) return false;
-            const n = this.resourceNodes.find((rn) => rn.id === w.targetResourceNodeId);
-            return n?.resourceType === surplusType;
-          });
-          if (reassignable) {
-            activeCounts[surplusType]--;
-            if (reassignable.targetResourceNodeId) {
-              const previousCount = nodeWorkerCounts.get(reassignable.targetResourceNodeId) || 0;
-              nodeWorkerCounts.set(reassignable.targetResourceNodeId, Math.max(0, previousCount - 1));
+      // Predict node depletion and move one gatherer before the group runs dry.
+      // The cooldown avoids evacuating an entire deposit in one AI decision.
+      const nodeRelocationReadyAt = this.aiNodeRelocationReadyAt.get(aiId) || 0;
+      if (this.stats.gameDuration >= nodeRelocationReadyAt) {
+        const lowStockNodes = [...nodeGatherRateById.entries()]
+          .map(([nodeId, totalRate]) => {
+            const resourceNode = resourceNodeById.get(nodeId);
+            return resourceNode
+              ? {
+                  node: resourceNode,
+                  totalRate,
+                  remainingSeconds: resourceNode.amount / Math.max(0.001, totalRate),
+                }
+              : null;
+          })
+          .filter((entry): entry is NonNullable<typeof entry> =>
+            !!entry && shouldRelocateFromResourceNode(entry.node.amount, entry.totalRate, 12)
+          )
+          .sort((a, b) =>
+            a.remainingSeconds - b.remainingSeconds || a.node.id.localeCompare(b.node.id)
+          );
+
+        for (const depletedSoon of lowStockNodes) {
+          const relocatingWorker = aiEconomicWorkers
+            .filter((worker) =>
+              worker.state === 'gathering' &&
+              worker.targetResourceNodeId === depletedSoon.node.id
+            )
+            .sort((a, b) => a.id.localeCompare(b.id))[0];
+          if (!relocatingWorker) continue;
+
+          const replacementNode = this.findBestDeliveredResourceNode(
+            relocatingWorker,
+            depletedSoon.node.resourceType,
+            Infinity,
+            {
+              assignedCounts: nodeWorkerCounts,
+              excludedNodeIds: new Set([depletedSoon.node.id]),
             }
-            assignWorkerToType(reassignable, 'food');
+          );
+          if (!replacementNode) continue;
+
+          const previousCount = nodeWorkerCounts.get(depletedSoon.node.id) || 0;
+          nodeWorkerCounts.set(depletedSoon.node.id, Math.max(0, previousCount - 1));
+          nodeWorkerCounts.set(
+            replacementNode.id,
+            (nodeWorkerCounts.get(replacementNode.id) || 0) + 1
+          );
+          relocatingWorker.targetResourceNodeId = replacementNode.id;
+          relocatingWorker.waypoints = undefined;
+          relocatingWorker.pathGoal = undefined;
+          const replacementMeta = this.getResourceDisplayMeta(replacementNode);
+          relocatingWorker.currentActionText = `${replacementMeta.icon} 資源將耗盡，轉往${replacementMeta.action}`;
+          this.aiNodeRelocationReadyAt.set(
+            aiId,
+            this.stats.gameDuration + 4.8
+          );
+          break;
+        }
+      }
+
+      // Gradually rebalance one gatherer per decision when a resource has a clear surplus
+      // and another has a clear deficit. Carrying workers and builders keep their current task.
+      const workerReassignment = selectAiWorkerReassignment(
+        activeCounts,
+        desiredAlloc,
+        availableResourceTypes
+      );
+      const rebalanceReadyAt = this.aiWorkerRebalanceReadyAt.get(aiId) || 0;
+      if (workerReassignment && this.stats.gameDuration >= rebalanceReadyAt) {
+        const reassignable = aiEconomicWorkers.find((worker) => {
+          if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
+          const node = resourceNodeById.get(worker.targetResourceNodeId);
+          return node?.resourceType === workerReassignment.from;
+        });
+        if (reassignable && reassignable.targetResourceNodeId) {
+          const previousNodeId = reassignable.targetResourceNodeId;
+          activeCounts[workerReassignment.from]--;
+          const previousCount = nodeWorkerCounts.get(previousNodeId) || 0;
+          nodeWorkerCounts.set(previousNodeId, Math.max(0, previousCount - 1));
+
+          if (assignWorkerToType(reassignable, workerReassignment.to)) {
+            this.aiWorkerRebalanceReadyAt.set(
+              aiId,
+              this.stats.gameDuration + AI_WORKER_REBALANCE_INTERVAL_SECONDS
+            );
+          } else {
+            // A failed reassignment must leave the old gatherer / node counts intact.
+            activeCounts[workerReassignment.from]++;
+            nodeWorkerCounts.set(previousNodeId, previousCount);
           }
         }
       }
@@ -7720,15 +9546,124 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'landmark_arsenal', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.4);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
-          } else if (aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45) {
-            const woodNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'wood', 36);
-            if (woodNode && getDistance(anchorX, anchorZ, woodNode.x, woodNode.z) > 15) {
-              this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z);
+          } else if (
+            aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45 &&
+            landNodes.some((node) => node.resourceType === 'wood' && node.amount > 0 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) <= 36)
+          ) {
+            const woodNode = landNodes
+              .filter((node) => node.resourceType === 'wood' && node.amount > 0)
+              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
+              .filter((entry) => entry.distance > 15 && entry.distance <= 36)
+              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
+            if (woodNode && this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z)) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
-          } else if (aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55) {
-            const mineNode = findClosestResourceNode(anchorX, anchorZ, this.resourceNodes, 'gold', 38);
-            if (mineNode && getDistance(anchorX, anchorZ, mineNode.x, mineNode.z) > 15) {
-              this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z);
+          } else if (
+            aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55 &&
+            landNodes.some((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') &&
+              node.amount > 0 && getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
+              getDistance(anchorX, anchorZ, node.x, node.z) <= 38)
+          ) {
+            const mineNode = landNodes
+              .filter((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') && node.amount > 0)
+              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
+              .filter((entry) => entry.distance > 15 && entry.distance <= 38)
+              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
+            if (mineNode && this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z)) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
+            }
+          } else if (
+            aiRes.wood >= 140 &&
+            aiWorkers.length >= 6 &&
+            this.stats.gameDuration >= (this.aiCampPlacementReadyAt.get(aiId) || 0)
+          ) {
+            // Add camps only when a sustained gatherer cluster can repay its route savings.
+            const assignedGatherers = aiEconomicWorkers.flatMap((worker) => {
+              if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return [];
+              const node = resourceNodeById.get(worker.targetResourceNodeId);
+              if (!node || node.amount <= 0 || !['wood', 'gold', 'stone'].includes(node.resourceType)) return [];
+              return [{ worker, node }];
+            });
+            const processedClusters = new Set<string>();
+            let bestCamp: {
+              buildingType: 'lumber_camp' | 'mining_camp';
+              centerX: number;
+              centerZ: number;
+              angle: number;
+              score: number;
+            } | null = null;
+
+            const candidateSeeds = [...new Map(assignedGatherers.map((entry) => [entry.node.id, entry])).values()]
+              .sort((a, b) =>
+                (nodeWorkerCounts.get(b.node.id) || 0) - (nodeWorkerCounts.get(a.node.id) || 0) ||
+                b.node.amount - a.node.amount ||
+                a.node.id.localeCompare(b.node.id)
+              )
+              .slice(0, 8);
+            for (const seed of candidateSeeds) {
+              const cluster = assignedGatherers.filter((entry) =>
+                entry.node.resourceType === seed.node.resourceType &&
+                getDistance(seed.node.x, seed.node.z, entry.node.x, entry.node.z) <= 13
+              );
+              if (cluster.length < 3) continue;
+              const nodeIds = [...new Set(cluster.map((entry) => entry.node.id))].sort();
+              const clusterKey = nodeIds.join('|');
+              if (processedClusters.has(clusterKey)) continue;
+              processedClusters.add(clusterKey);
+
+              const totalNodeAmount = nodeIds.reduce(
+                (total, nodeId) => total + Math.max(0, resourceNodeById.get(nodeId)?.amount || 0),
+                0
+              );
+              const centerX = cluster.reduce((total, entry) => total + entry.node.x, 0) / cluster.length;
+              const centerZ = cluster.reduce((total, entry) => total + entry.node.z, 0) / cluster.length;
+              const buildingType = seed.node.resourceType === 'wood' ? 'lumber_camp' : 'mining_camp';
+              const hasNearbyCamp = aiBuildings.some((building) =>
+                building.buildingType === buildingType &&
+                getDistance(centerX, centerZ, building.x, building.z) <= 14
+              );
+              if (hasNearbyCamp) continue;
+
+              const angle = Math.atan2(anchorZ - centerZ, anchorX - centerX);
+              const spot = this.findSafeAiBuildSpot(centerX, centerZ, buildingType, angle, 5, 11);
+              if (!spot) continue;
+
+              const profiles = cluster.flatMap(({ worker, node }) => {
+                const currentTravelDistance = this.estimateResourceDeliveryTravelDistance(aiId, worker, node);
+                if (currentTravelDistance === null) return [];
+                return [{
+                  gatherPerSecond: (worker.unitDef.stats.gatherSpeed || 2) *
+                    getEffectiveGatherMultiplier(node, aiGatherTechs, aiHasStarOath),
+                  carryCapacity: worker.unitDef.stats.carryCapacity,
+                  moveSpeed: worker.unitDef.stats.speed,
+                  currentTravelDistance,
+                  proposedTravelDistance: Math.max(2, getDistance(node.x, node.z, spot.x, spot.z) - 4.5),
+                }];
+              });
+              const payback = estimateAiResourceCampPaybackSeconds({
+                resourceType: seed.node.resourceType,
+                totalNodeAmount,
+                gatherers: profiles,
+                woodCost: DEFAULT_BUILDINGS[buildingType].cost.wood,
+                minimumGatherers: 3,
+                minimumDistanceSaved: 8,
+                maximumPaybackSeconds: 180,
+              });
+              if (payback === null) continue;
+              const score = profiles.reduce(
+                (total, profile) => total + profile.currentTravelDistance - profile.proposedTravelDistance,
+                0
+              ) - payback * 0.2;
+              if (!bestCamp || score > bestCamp.score) bestCamp = { buildingType, centerX, centerZ, angle, score };
+            }
+
+            if (bestCamp && this.tryAiConstructBuilding(
+              aiId, bestCamp.buildingType, aiActiveWorkers,
+              bestCamp.centerX, bestCamp.centerZ, bestCamp.angle, 5, 11
+            )) {
+              this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
           }
         }
@@ -7738,7 +9673,14 @@ export class RtsEngine {
       const researched = this.getResearchedTechs(aiId);
       const nextAgeLandmark: LandmarkType | null =
         aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
-      const nextAgeCost = nextAgeLandmark ? DEFAULT_BUILDINGS[nextAgeLandmark].cost : null;
+      const nextAgeLandmarkActive = !!nextAgeLandmark && (
+        !!this.landmarksByFaction[aiId]?.includes(nextAgeLandmark) ||
+        aiBuildings.some((building) => building.buildingType === nextAgeLandmark)
+      );
+      // A started landmark has already committed its cost; do not reserve it twice.
+      const nextAgeCost = nextAgeLandmark && !nextAgeLandmarkActive
+        ? DEFAULT_BUILDINGS[nextAgeLandmark].cost
+        : null;
       const reserveFood = nextAgeCost?.food || 0;
       const reserveGold = nextAgeCost?.gold || 0;
       const enemyComposition = {
@@ -7761,6 +9703,26 @@ export class RtsEngine {
           enemyComposition.fortificationCount++;
         }
       }
+      // Mandatory Age II field engineering gets first access to an idle barracks.
+      // Otherwise optional tech scoring could repeatedly occupy the only barracks queue.
+      const fieldEngineeringTech = findTechDef(FIELD_RAM_TECH_ID);
+      const fieldResearchHall = aiBarracksList.find((b) => b.isConstructed && !b.activeTechId);
+      const fieldEngineeringReady = !!fieldEngineeringTech && shouldPrioritizeAiFieldEngineering({
+        age: aiAge,
+        researched: researched.includes(FIELD_RAM_TECH_ID),
+        researchInProgress: aiBuildings.some((b) => b.activeTechId === FIELD_RAM_TECH_ID),
+        meleeUnitCount: aiArmy.filter((u) => u.unitDef.category === 'melee').length,
+        hasAvailableBarracks: !!fieldResearchHall,
+        prerequisitesMet: !!fieldEngineeringTech && canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok,
+        resources: aiRes,
+        reserveFood,
+        reserveGold,
+        techCost: fieldEngineeringTech?.cost || { food: 0, wood: 0, gold: 0, stone: 0 },
+      });
+      if (fieldEngineeringReady && fieldEngineeringTech && fieldResearchHall) {
+        this.startResearch(fieldResearchHall.id, fieldEngineeringTech.id);
+      }
+
       const techCandidates: Array<{ buildingId: string; tech: TechDefinition }> = [];
       for (const b of aiBuildings) {
         if (!b.isConstructed || b.activeTechId) continue;
@@ -7782,26 +9744,6 @@ export class RtsEngine {
         this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
       }
 
-      const fieldEngineeringTech = findTechDef('shared_field_engineering');
-      const fieldSpendable = {
-        ...aiRes,
-        food: Math.max(0, aiRes.food - reserveFood),
-        gold: Math.max(0, aiRes.gold - reserveGold),
-      };
-      const fieldResearchHall = aiBarracksList.find((b) => b.isConstructed && !b.activeTechId);
-      if (
-        aiAge >= 2 &&
-        fieldEngineeringTech &&
-        !researched.includes('shared_field_engineering') &&
-        !aiBuildings.some((b) => b.activeTechId === fieldEngineeringTech.id) &&
-        aiArmy.filter((u) => u.unitDef.category === 'melee').length >= 4 &&
-        fieldResearchHall &&
-        canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok &&
-        canAfford(fieldSpendable, fieldEngineeringTech.cost)
-      ) {
-        this.startResearch(fieldResearchHall.id, fieldEngineeringTech.id);
-      }
-
       const aiHasRam = aiUnits.some((u) => u.hp > 0 && u.unitDefId === 'battering_ram');
       const aiRamBuilders = aiArmy
         .filter((u) => u.unitDef.category === 'melee' && (u.state === 'idle' || u.state === 'moving'))
@@ -7809,31 +9751,67 @@ export class RtsEngine {
       if (
         aiAge >= 2 &&
         !aiHasRam &&
-        this.getResearchedTechs(aiId).includes('shared_field_engineering') &&
+        this.getResearchedTechs(aiId).includes(FIELD_RAM_TECH_ID) &&
         aiRamBuilders.length >= 4
       ) {
         this.beginFieldRamAssembly(aiId, aiRamBuilders, false);
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
-      const savingForAge2 =
-        aiAge === 1 &&
-        aiWorkers.length >= 5 &&
-        this.stats.gameDuration >= 35 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_barracks') &&
-        (aiRes.food < 400 || aiRes.gold < 200);
-      const savingForAge3 =
-        aiAge === 2 &&
-        aiWorkers.length >= 6 &&
-        this.stats.gameDuration >= 90 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_citadel') &&
-        (aiRes.food < 1200 || aiRes.gold < 600);
-      const savingForAge4 =
-        aiAge === 3 &&
-        aiWorkers.length >= 8 &&
-        this.stats.gameDuration >= 180 &&
-        !this.landmarksByFaction[aiId]?.includes('landmark_arsenal') &&
-        (aiRes.food < 2400 || aiRes.gold < 1200);
+      const savingForAgeUp = shouldAiSaveForNextAge({
+        age: aiAge,
+        gameTime: this.stats.gameDuration,
+        workerCount: aiWorkers.length,
+        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
+        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
+        landmarkActive: nextAgeLandmarkActive,
+        resources: aiRes,
+        ageUpCost: nextAgeCost,
+      });
+      const deferOptionalMilitaryProduction = shouldAiDeferOptionalMilitaryProduction({
+        savingForAgeUp,
+        armyCount: aiArmy.length,
+        underAttack,
+      });
+
+      // Derive the worker cap and next-age workforce target from the active
+      // personality's own AI rules, rather than maintaining a second set of
+      // hard-coded difficulty values here.
+      const workerTrainRule = activeRules.find(
+        (rule) =>
+          rule.enabled &&
+          rule.action.type === 'train_unit' &&
+          (!rule.action.targetId || rule.action.targetId === 'villager' || rule.action.targetId === aiCiv.workerUnitId) &&
+          rule.conditions.some((condition) => condition.field === 'workerCount' && condition.operator === '<')
+      );
+      const workerProductionCap =
+        workerTrainRule?.conditions.find(
+          (condition) => condition.field === 'workerCount' && condition.operator === '<'
+        )?.value ?? 12;
+      const nextAgeRule = activeRules.find((rule) => {
+        if (!rule.enabled || rule.action.type !== 'advance_age') return false;
+        const ageCondition = rule.conditions.find((condition) => condition.field === 'age');
+        if (!ageCondition) return false;
+        switch (ageCondition.operator) {
+          case '<': return aiAge < ageCondition.value;
+          case '<=': return aiAge <= ageCondition.value;
+          case '>': return aiAge > ageCondition.value;
+          case '>=': return aiAge >= ageCondition.value;
+          case '==': return aiAge === ageCondition.value;
+          case '!=': return aiAge !== ageCondition.value;
+          default: return false;
+        }
+      });
+      const minimumWorkersForAgeUp =
+        nextAgeRule?.conditions.find(
+          (condition) => condition.field === 'workerCount' && condition.operator === '>='
+        )?.value ?? 0;
+      let queuedWorkerCount = aiBuildings.reduce(
+        (total, building) =>
+          total + building.queue.filter((unitId) => unitId === aiCiv.workerUnitId).length,
+        0
+      );
+      const aiWorkerDefinition = this.findUnitDef(aiCiv.workerUnitId, aiId);
 
       if (aiPop.totalReserved < aiMaxPop) {
         const readyDock = aiDocks.find((d) => d.isConstructed && d.queue.length < 2);
@@ -7842,11 +9820,33 @@ export class RtsEngine {
         }
 
         for (const trainAct of plan.trainActions) {
-          const isVillagerTrain = (trainAct.targetId || 'villager') === 'villager';
-          if (!isVillagerTrain && (savingForAge2 || savingForAge3 || savingForAge4) && aiArmy.length >= 3 && underAttack === 0) {
+          const targetId = trainAct.targetId || 'villager';
+          const isVillagerTrain = targetId === 'villager' || targetId === aiCiv.workerUnitId;
+          if (isVillagerTrain) {
+            if (
+              !aiWorkerDefinition ||
+              !shouldAiQueueWorker({
+                workerCount: aiWorkers.length,
+                queuedWorkerCount,
+                workerCap: workerProductionCap,
+                resources: aiRes,
+                workerCost: aiWorkerDefinition.stats.cost,
+                ageUpReserve: {
+                  food: reserveFood,
+                  wood: 0,
+                  gold: reserveGold,
+                  stone: 0,
+                },
+                minimumWorkersForAgeUp,
+              })
+            ) {
+              continue;
+            }
+          } else if (deferOptionalMilitaryProduction) {
             continue;
           }
-          this.resolveAiTrainRequest(aiId, aiCiv, trainAct.targetId || 'villager', aiBuildings);
+          const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
+          if (isVillagerTrain && queued) queuedWorkerCount++;
         }
       }
 
@@ -7876,10 +9876,12 @@ export class RtsEngine {
               s.currentActionText = '攻城推進';
             }
           }
-          // Escort: send a few non-siege with them
-          const escort = aiArmy
-            .filter((u) => u.unitDef.category !== 'siege')
-            .slice(0, Math.min(4, Math.max(2, siegeUnits.length * 2)));
+          // Escort with nearby idle frontline units; do not steal units from active orders.
+          const escort = selectSiegeEscortUnits(
+            siegeUnits,
+            aiArmy,
+            Math.min(4, Math.max(2, siegeUnits.length * 2))
+          );
           for (const e of escort) {
             if (e.state === 'idle') {
               e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
@@ -7894,6 +9896,10 @@ export class RtsEngine {
       const combatCmd = plan.combatAction;
       if (!combatCmd || aiArmy.length === 0) continue;
 
+      // Reuse id indexes throughout this AI decision pass instead of rescanning full entity arrays per unit.
+      const combatUnitById = new Map(this.units.map((candidate) => [candidate.id, candidate] as const));
+      const combatBuildingById = new Map(this.buildings.map((candidate) => [candidate.id, candidate] as const));
+
       if (combatCmd.type === 'defend_base' || combatCmd.type === 'retreat_to_base') {
         const defendAnchor = { x: anchorX, z: anchorZ, radius: 26 };
         const baseClusterTarget = selectClusterFocusTarget(aiArmy, this.units, this.buildings, {
@@ -7902,25 +9908,51 @@ export class RtsEngine {
         });
         const activeThreat = baseThreat && nearestEnemyDist <= 28 ? baseThreat : null;
 
-        aiArmy.forEach((unit) => {
+        aiArmy.forEach((unit, idx) => {
+          const targetContext = {
+            defendAnchor,
+            clusterFocusTargetId: baseClusterTarget?.id,
+            maxSearchRange: 30,
+          };
           const bestTarget =
-            selectOptimalCombatTarget(unit, this.units, [], this.units, {
-              defendAnchor,
-              clusterFocusTargetId: baseClusterTarget?.id,
-              maxSearchRange: 30,
-            }) || activeThreat;
+            selectOptimalCombatTarget(unit, this.units, [], this.units, targetContext) || activeThreat;
 
           if (bestTarget) {
-            unit.targetEntityId = bestTarget.id;
-            unit.attackMoveGoal = { x: anchorX, z: anchorZ };
-            unit.waypoints = undefined;
-            unit.state = 'attacking';
+            const currentTarget =
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
+              null;
+            const needsRetarget = shouldSwitchCombatTarget(
+              unit,
+              currentTarget,
+              bestTarget,
+              this.units,
+              targetContext,
+              18
+            );
+            const needsAnchorSync =
+              !unit.attackMoveGoal ||
+              getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, anchorX, anchorZ) > 1;
+            if (unit.state !== 'attacking' || needsRetarget || needsAnchorSync) {
+              unit.targetEntityId = bestTarget.id;
+              unit.attackMoveGoal = { x: anchorX, z: anchorZ };
+              unit.waypoints = undefined;
+              unit.state = 'attacking';
+            }
           } else {
-            // Form defensive perimeter in front of TC facing the threat
-            const guardAngle = toCenterAngle + (Math.random() - 0.5) * 1.4;
+            // Stable, deterministic defensive arc slots prevent every AI tick from issuing a new random path.
+            const centeredIndex = idx - (aiArmy.length - 1) / 2;
+            const guardAngle = toCenterAngle + centeredIndex * 0.13;
             const gx = Math.max(-84, Math.min(84, anchorX + Math.cos(guardAngle) * 8));
             const gz = Math.max(-84, Math.min(84, anchorZ + Math.sin(guardAngle) * 8));
-            if (getDistance(unit.x, unit.z, anchorX, anchorZ) > 13 || unit.state === 'idle') {
+            const guardGoalChanged =
+              unit.targetX === undefined ||
+              unit.targetZ === undefined ||
+              getDistance(unit.targetX, unit.targetZ, gx, gz) > 1.5;
+            if (
+              (getDistance(unit.x, unit.z, anchorX, anchorZ) > 13 || unit.state === 'idle') &&
+              (unit.state !== 'moving' || guardGoalChanged)
+            ) {
               unit.targetX = gx;
               unit.targetZ = gz;
               unit.targetEntityId = undefined;
@@ -7988,6 +10020,19 @@ export class RtsEngine {
               !u.garrisonedInBuildingId &&
               this.isHostile({ faction: aiId, team: aiTeam }, u)
           );
+          const exposedWorkerById = new Map(exposedWorkers.map((worker) => [worker.id, worker] as const));
+          const raiderUnits = strikeUnits.filter(
+            (unit, idx) =>
+              unit.unitDef.category === 'cavalry' ||
+              idx % 3 === 0 ||
+              unit.unitDef.stats.speed >= 3.6
+          );
+          const raidTargetByUnit = new Map<string, string>(
+            assignRaidTargets(raiderUnits, exposedWorkers, 2).map((assignment) => [
+              assignment.raiderId,
+              assignment.targetId,
+            ] as const)
+          );
 
           const ecoBuilding =
             this.buildings
@@ -8015,21 +10060,62 @@ export class RtsEngine {
 
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
+          const formationSlots = new Map(
+            layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry] as const)
+          );
 
           strikeUnits.forEach((unit, idx) => {
-            // Siege: always commit to TC / buildings
-            if (unit.unitDef.category === 'siege') {
-              const bTarget =
-                enemyTc ||
-                selectOptimalCombatTarget(unit, [], this.buildings, this.units, {
-                  maxSearchRange: 40,
-                }) ||
-                stronghold;
-              unit.targetEntityId = bTarget.id;
-              unit.attackMoveGoal = { x: bTarget.x, z: bTarget.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
-              unit.currentActionText = '攻城主力';
+            const slot = formationSlots.get(unit.id);
+            const currentFormationTarget =
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
+              null;
+            const targetIsNear =
+              !!currentFormationTarget &&
+              currentFormationTarget.hp > 0 &&
+              getDistance(unit.x, unit.z, currentFormationTarget.x, currentFormationTarget.z) <=
+                Math.max(13, Math.min(24, unit.unitDef.stats.range + 2));
+            const distanceToSlot = slot
+              ? getDistance(unit.x, unit.z, slot.x, slot.z)
+              : 0;
+
+            // Keep an active target when it is within the unit's engagement envelope; otherwise stage into the role lane.
+            if (slot && distanceToSlot > 1.8 && !targetIsNear) {
+              const slotChanged =
+                unit.targetX === undefined ||
+                unit.targetZ === undefined ||
+                getDistance(unit.targetX, unit.targetZ, slot.x, slot.z) > 1.5;
+              const formationGoalChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, slot.x, slot.z) > 1.5;
+              const shouldStage =
+                unit.state !== 'moving' ||
+                slotChanged ||
+                formationGoalChanged ||
+                !unit.currentActionText?.startsWith('陣型推進');
+              if (shouldStage) {
+                unit.targetEntityId = undefined;
+                unit.targetX = slot.x;
+                unit.targetZ = slot.z;
+                // Keep the attack-move fallback on the formation slot, not the objective center,
+                // so a unit that wins an interception returns to its assigned lane.
+                unit.attackMoveGoal = { x: slot.x, z: slot.z };
+                unit.waypoints = undefined;
+                unit.pathGoal = undefined;
+                unit.pathCooldown = 0;
+                unit.state = 'moving';
+                const roleText =
+                  slot.role === 'frontline'
+                    ? '前排集結'
+                    : slot.role === 'backline'
+                      ? '遠程就位'
+                      : slot.role === 'flank'
+                        ? '騎兵包抄'
+                        : slot.role === 'siege'
+                          ? '攻城後列'
+                          : '支援就位';
+                unit.currentActionText = `陣型推進 · ${roleText}`;
+              }
               return;
             }
 
@@ -8039,40 +10125,66 @@ export class RtsEngine {
               idx % 3 === 0 ||
               unit.unitDef.stats.speed >= 3.6;
 
-            if (isRaider && exposedWorkers.length > 0) {
-              const prey = exposedWorkers.reduce((best, w) =>
-                getDistance(unit.x, unit.z, w.x, w.z) < getDistance(unit.x, unit.z, best.x, best.z)
-                  ? w
-                  : best
-              );
-              unit.targetEntityId = prey.id;
-              unit.attackMoveGoal = { x: prey.x, z: prey.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
+            const assignedPreyId = raidTargetByUnit.get(unit.id);
+            const prey = assignedPreyId ? exposedWorkerById.get(assignedPreyId) : undefined;
+            if (isRaider && prey) {
+              const goalChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, prey.x, prey.z) > 3;
+              if (unit.state !== 'attacking' || unit.targetEntityId !== prey.id || goalChanged) {
+                unit.targetEntityId = prey.id;
+                unit.attackMoveGoal = { x: prey.x, z: prey.z };
+                unit.waypoints = undefined;
+                unit.state = 'attacking';
+              }
               unit.currentActionText = '獵殺村民';
               return;
             }
 
-            if (isRaider && ecoBuilding && Math.random() < 0.35) {
-              unit.targetEntityId = ecoBuilding.id;
-              unit.attackMoveGoal = { x: ecoBuilding.x, z: ecoBuilding.z };
-              unit.waypoints = undefined;
-              unit.state = 'attacking';
+            // A stable subset of raiders pressures economy buildings; avoid a fresh random roll every AI tick.
+            if (isRaider && ecoBuilding && idx % 3 === 1) {
+              const goalChanged =
+                !unit.attackMoveGoal ||
+                getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, ecoBuilding.x, ecoBuilding.z) > 3;
+              if (unit.state !== 'attacking' || unit.targetEntityId !== ecoBuilding.id || goalChanged) {
+                unit.targetEntityId = ecoBuilding.id;
+                unit.attackMoveGoal = { x: ecoBuilding.x, z: ecoBuilding.z };
+                unit.waypoints = undefined;
+                unit.state = 'attacking';
+              }
               unit.currentActionText = '破壞經濟';
               return;
             }
 
             // Main body: push toward stronghold, retarget opportunistically
-            const optimalLocal = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
+            const targetContext = {
               clusterFocusTargetId: clusterTarget?.id,
               maxSearchRange: 28,
-            });
+            };
+            const optimalLocal = selectOptimalCombatTarget(
+              unit,
+              this.units,
+              this.buildings,
+              this.units,
+              targetContext
+            );
             const chosen = optimalLocal || clusterTarget || stronghold;
-            if (
-              unit.state !== 'attacking' ||
-              !unit.targetEntityId ||
-              (chosen && chosen.id !== unit.targetEntityId && Math.random() < 0.5)
-            ) {
+            const currentTarget =
+              (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
+              (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
+              null;
+            const targetChanged = shouldSwitchCombatTarget(
+              unit,
+              currentTarget,
+              chosen,
+              this.units,
+              targetContext,
+              18
+            );
+            const goalChanged =
+              !unit.attackMoveGoal ||
+              getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
+            if (unit.state !== 'attacking' || targetChanged || goalChanged) {
               unit.targetEntityId = chosen.id;
               unit.attackMoveGoal = { x: goalX, z: goalZ };
               unit.waypoints = undefined;
@@ -8122,6 +10234,12 @@ export class RtsEngine {
       if (!isTyping && e.code === 'F3') {
         e.preventDefault();
         this.togglePerformanceOverlay();
+        return;
+      }
+
+      if (!isTyping && !e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'F4') {
+        e.preventDefault();
+        this.exportPerformanceTelemetry();
         return;
       }
 
@@ -8187,7 +10305,8 @@ export class RtsEngine {
                 return;
               }
               const humanCiv = this.getCivilizationForFaction(this.humanPlayerId);
-              const buildableTypes = getBuildableTypesForCiv(humanCiv);
+              const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
+              const buildableTypes = getBuildableTypesForCiv(humanCiv, currentAge);
               const bType = findBuildingTypeByHotkey(keyLabel, buildableTypes);
               if (bType) {
                 this.startPlacement(bType);
@@ -8355,6 +10474,8 @@ export class RtsEngine {
         age,
         researchedTechIds: techs,
         unitId: unit.unitDefId,
+        level: unit.level || 1,
+      visualSeed: unit.id,
       });
       next.position.copy(pos);
       next.rotation.y = rotY;
@@ -8374,6 +10495,11 @@ export class RtsEngine {
     const currentAge = this.ageByFaction[faction] || 1;
     const targetAge = landmarkDef?.landmarkAgeAdvance || ((currentAge + 1) as AgeLevel);
     this.ageByFaction[faction] = targetAge;
+    for (const building of this.buildings) {
+      if (building.faction !== faction || building.hp <= 0) continue;
+      const buildingMesh = this.buildingMeshes.get(building.id);
+      if (buildingMesh) updateBuildingAgeVisuals(buildingMesh, targetAge);
+    }
     this.refreshFactionUnitMeshes(faction);
     if (!this.landmarksByFaction[faction]) this.landmarksByFaction[faction] = [];
     if (!this.landmarksByFaction[faction].includes(landmarkType)) {
@@ -8555,6 +10681,7 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];
     cancelAnimationFrame(this.frameId);
@@ -8563,6 +10690,18 @@ export class RtsEngine {
     this.cleanupWindowListeners = [];
     this.performanceOverlay?.remove();
     this.performanceOverlay = null;
+    const particleGeometry = this.particleSolidBatch?.geometry || this.particleSmokeBatch?.geometry;
+    if (this.particleSolidBatch) {
+      this.scene.remove(this.particleSolidBatch);
+      (this.particleSolidBatch.material as THREE.Material).dispose();
+      this.particleSolidBatch = null;
+    }
+    if (this.particleSmokeBatch) {
+      this.scene.remove(this.particleSmokeBatch);
+      (this.particleSmokeBatch.material as THREE.Material).dispose();
+      this.particleSmokeBatch = null;
+    }
+    particleGeometry?.dispose();
     this.renderer.dispose();
   }
 }

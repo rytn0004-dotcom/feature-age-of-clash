@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
-import type { BuildingVisualState } from './rules';
+import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
+import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -192,6 +193,16 @@ function makeTubeGeo(
   const geo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
   geo.computeVertexNormals();
   return safeComputeTangents(geo);
+}
+
+function markSecondaryMotion(
+  object: THREE.Object3D,
+  axis: 'x' | 'y' | 'z',
+  amplitude: number,
+  frequency: number,
+  phase = 0
+): void {
+  object.userData.secondaryMotion = { axis, amplitude, frequency, phase };
 }
 
 /**
@@ -2517,6 +2528,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Ground stone sill (tier1)
   const sill = new THREE.Mesh(sharedWallSillGeo, stoneMat);
+  sill.name = 'wallSill';
   sill.position.y = 0.21;
   sill.castShadow = true;
   sill.receiveShadow = true;
@@ -2524,6 +2536,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Main fortified wall curtain (tier2)
   const curtain = new THREE.Mesh(sharedWallCurtainGeo, civ === 'anime' ? trimMat : stoneMat);
+  curtain.name = 'wallCurtain';
   curtain.position.y = 1.18;
   curtain.castShadow = true;
   curtain.receiveShadow = true;
@@ -2541,6 +2554,7 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
 
   // Top palisade / battlements & walkway (tier3)
   const walkway = new THREE.Mesh(sharedWallWalkwayGeo, woodMat);
+  walkway.name = 'wallWalkway';
   walkway.position.y = 2.02;
   group.add(walkway);
 
@@ -2566,6 +2580,120 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
   );
 
   return group;
+}
+
+export function applyWallBreachVisuals(group: THREE.Group, breached: boolean): void {
+  const hiddenWhenBreached = [
+    'wallCurtain',
+    'wallWalkway',
+    'instancedWallMerlons',
+    'instancedWallPalisadeStakes',
+  ];
+  hiddenWhenBreached.forEach((name) => {
+    const part = group.getObjectByName(name);
+    if (part) part.visible = !breached;
+  });
+}
+
+/** Lightweight double-leaf gate built from the same masonry and timber visual language as walls. */
+export function createGateMesh(faction: FactionId, civId?: CivilizationId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const civ = civId || colors.civilization || 'medieval';
+  addContactShadow(group, 1.95);
+
+  const stoneMaps = getStoneMasonryMaps();
+  const woodMaps = getTimberWoodMaps();
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0xdbeafe : 0x64748b,
+    map: stoneMaps.map,
+    normalMap: stoneMaps.normalMap,
+    roughness: 0.86,
+  });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: civ === 'anime' ? 0x7c2d12 : civ === 'fantasy' ? 0x166534 : 0x78350f,
+    map: woodMaps.map,
+    normalMap: woodMaps.normalMap,
+    roughness: 0.78,
+  });
+  const ironMat = new THREE.MeshStandardMaterial({
+    color: civ === 'fantasy' ? 0x93c5fd : 0x475569,
+    metalness: 0.72,
+    roughness: 0.38,
+  });
+  const addBox = (
+    name: string,
+    geometry: THREE.BoxGeometry,
+    material: THREE.Material,
+    x: number,
+    y: number,
+    z: number,
+    parent: THREE.Group = group
+  ) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = name;
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+
+  // Heavy stone piers frame a genuine passage opening.
+  const postGeo = new THREE.BoxGeometry(0.52, 2.9, 0.82);
+  [-1.28, 1.28].forEach((x, index) => {
+    addBox(`gateStonePost${index}`, postGeo, stoneMat, x, 1.45, 0);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.24, 1.0), stoneMat);
+    cap.name = `gatePostCap${index}`;
+    cap.position.set(x, 2.94, 0);
+    cap.castShadow = true;
+    group.add(cap);
+  });
+  addBox('gateLintel', new THREE.BoxGeometry(2.95, 0.34, 0.95), stoneMat, 0, 2.72, 0);
+
+  const createLeaf = (name: string, hingeX: number, sign: number) => {
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.set(hingeX, 0, 0);
+    addBox(`${name}Panel`, new THREE.BoxGeometry(1.02, 1.95, 0.18), timberMat, sign * 0.51, 1.25, 0, pivot);
+    addBox(`${name}TopRail`, new THREE.BoxGeometry(1.06, 0.16, 0.24), ironMat, sign * 0.51, 2.22, 0, pivot);
+    addBox(`${name}BottomRail`, new THREE.BoxGeometry(1.06, 0.16, 0.24), ironMat, sign * 0.51, 0.28, 0, pivot);
+    for (let index = 0; index < 5; index++) {
+      addBox(
+        `${name}Bar${index}`,
+        new THREE.BoxGeometry(0.075, 1.84, 0.24),
+        ironMat,
+        sign * (0.12 + index * 0.195),
+        1.25,
+        0.03,
+        pivot
+      );
+    }
+    addBox(`${name}BraceA`, new THREE.BoxGeometry(1.22, 0.12, 0.2), ironMat, sign * 0.51, 0.78, 0.02, pivot).rotation.z = sign * 0.62;
+    addBox(`${name}BraceB`, new THREE.BoxGeometry(1.22, 0.12, 0.2), ironMat, sign * 0.51, 1.72, 0.02, pivot).rotation.z = -sign * 0.62;
+    group.add(pivot);
+  };
+  createLeaf('gateLeftLeaf', -1.02, 1);
+  createLeaf('gateRightLeaf', 1.02, -1);
+
+  const crest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.34, 0.22), ironMat);
+  crest.name = 'gateCrest';
+  crest.position.set(0, 3.05, 0.45);
+  crest.castShadow = true;
+  group.add(crest);
+  return group;
+}
+
+/** Smoothly swings both gate leaves clear of the opening when the gate is unlocked. */
+export function updateGateDoorAnimation(group: THREE.Group, open: boolean, dt: number): void {
+  const left = group.getObjectByName('gateLeftLeaf');
+  const right = group.getObjectByName('gateRightLeaf');
+  if (!left || !right) return;
+  const speed = 6.5;
+  const leftTarget = open ? Math.PI * 0.48 : 0;
+  const rightTarget = open ? -Math.PI * 0.48 : 0;
+  left.rotation.y = THREE.MathUtils.damp(left.rotation.y, leftTarget, speed, dt);
+  right.rotation.y = THREE.MathUtils.damp(right.rotation.y, rightTarget, speed, dt);
 }
 
 const sharedCastleTowerGeo = makeLatheGeo([
@@ -3822,6 +3950,107 @@ const SCORCH_TARGET_COLOR = new THREE.Color(0x2a1f1d);
 const EMBER_GLOW_COLOR = new THREE.Color(0xb45309);
 const HIT_FLASH_COLOR = new THREE.Color(0xfdba74);
 
+
+const sharedBuildingDamageChipGeo = new THREE.DodecahedronGeometry(0.14, 0);
+const sharedBuildingDamageChipMat = new THREE.MeshStandardMaterial({
+  color: 0x4b4037,
+  roughness: 0.98,
+  metalness: 0.02,
+});
+const sharedBuildingDamageCrackMat = new THREE.MeshStandardMaterial({
+  color: 0x211a18,
+  roughness: 1,
+  metalness: 0,
+  side: THREE.DoubleSide,
+});
+
+function createBuildingDamageDetailLayer(group: THREE.Group): THREE.Group | null {
+  const meta = group.userData.buildingArchitecture as {
+    width: number; depth: number; height: number; centerX: number; centerY: number; centerZ: number;
+  } | undefined;
+  if (!meta) return null;
+
+  const width = Math.max(1.2, meta.width);
+  const depth = Math.max(1.2, meta.depth);
+  const height = Math.max(1, meta.height);
+  const frontZ = meta.centerZ + depth * 0.5 + 0.035;
+  const topY = meta.centerY + height * 0.34;
+  const lowY = Math.max(0.22, meta.centerY - height * 0.28);
+  const layer = new THREE.Group();
+  layer.name = 'buildingDamageDetailLayer';
+  layer.visible = false;
+  layer.userData.distanceLodMinPixels = 2.8;
+
+  const crackPaths = [
+    [
+      new THREE.Vector3(meta.centerX - width * 0.16, topY, frontZ),
+      new THREE.Vector3(meta.centerX - width * 0.11, topY - height * 0.16, frontZ + 0.008),
+      new THREE.Vector3(meta.centerX - width * 0.18, meta.centerY + height * 0.02, frontZ + 0.014),
+      new THREE.Vector3(meta.centerX - width * 0.1, lowY, frontZ + 0.018),
+    ],
+    [
+      new THREE.Vector3(meta.centerX + width * 0.2, meta.centerY + height * 0.21, frontZ),
+      new THREE.Vector3(meta.centerX + width * 0.12, meta.centerY + height * 0.08, frontZ + 0.01),
+      new THREE.Vector3(meta.centerX + width * 0.22, meta.centerY - height * 0.04, frontZ + 0.016),
+      new THREE.Vector3(meta.centerX + width * 0.16, lowY + 0.12, frontZ + 0.02),
+    ],
+  ];
+  crackPaths.forEach((points, index) => {
+    const curve = new THREE.CatmullRomCurve3(points);
+    const crack = new THREE.Mesh(new THREE.TubeGeometry(curve, 18, Math.max(0.009, Math.min(0.018, width * 0.004)), 5, false), sharedBuildingDamageCrackMat);
+    crack.name = index === 0 ? 'buildingDamageCrackPrimary' : 'buildingDamageCrackSecondary';
+    crack.visible = false;
+    crack.castShadow = false;
+    crack.raycast = () => {};
+    layer.add(crack);
+  });
+
+  const debris = new THREE.InstancedMesh(sharedBuildingDamageChipGeo, sharedBuildingDamageChipMat, 4);
+  debris.name = 'buildingDamageDebris';
+  debris.visible = false;
+  debris.castShadow = false;
+  debris.receiveShadow = false;
+  const dummy = new THREE.Object3D();
+  const offsets = [-0.23, -0.07, 0.11, 0.27];
+  offsets.forEach((offset, index) => {
+    dummy.position.set(
+      meta.centerX + offset * width,
+      0.08 + (index % 2) * 0.035,
+      meta.centerZ + depth * 0.5 + 0.16 + (index % 2) * 0.05
+    );
+    dummy.rotation.set(index * 0.37, index * 0.81, index * 0.29);
+    const chipScale = 0.58 + (index % 3) * 0.23;
+    dummy.scale.set(chipScale, chipScale * (0.7 + (index % 2) * 0.3), chipScale);
+    dummy.updateMatrix();
+    debris.setMatrixAt(index, dummy.matrix);
+  });
+  debris.instanceMatrix.needsUpdate = true;
+  debris.computeBoundingSphere();
+  layer.add(debris);
+
+  group.add(layer);
+  group.userData.buildingDamageDetailLayer = layer;
+  group.userData.buildingLodParts = undefined;
+  group.userData.distanceShadowLodCache = undefined;
+  prepareBuildingVisualLod(group);
+  return layer;
+}
+
+function updateBuildingDamageDetailLayer(group: THREE.Group, damageSeverity: number): void {
+  let layer = group.userData.buildingDamageDetailLayer as THREE.Group | undefined;
+  if (!layer && damageSeverity >= 0.18) layer = createBuildingDamageDetailLayer(group) || undefined;
+  if (!layer) return;
+  layer.visible = damageSeverity >= 0.18;
+  const primary = layer.getObjectByName('buildingDamageCrackPrimary');
+  const secondary = layer.getObjectByName('buildingDamageCrackSecondary');
+  const debris = layer.getObjectByName('buildingDamageDebris');
+  if (primary) primary.visible = damageSeverity >= 0.18;
+  if (secondary) secondary.visible = damageSeverity >= 0.43;
+  if (debris) debris.visible = damageSeverity >= 0.66;
+}
+
+
+
 /**
  * Lazily clones materials for an individual damaged/hit-flashing building (leaving shared scene materials untouched),
  * applies progressive charcoal scorch tint, ember glow at critical HP, and subtle structural sag from the base.
@@ -3837,6 +4066,7 @@ export function applyBuildingDamageVisuals(
   const needsEffects = damageSeverity > 0.01 || hitFlashActive || sagTiltRad > 0.001;
 
   if (!entries && !needsEffects) return;
+  updateBuildingDamageDetailLayer(mesh, damageSeverity);
 
   if (!entries) {
     entries = [];
@@ -3909,6 +4139,17 @@ export function disposeBuildingVisualResources(mesh: THREE.Group): void {
       e.mat.dispose();
     }
     mesh.userData.damageMatEntries = undefined;
+  }
+  const damageLayer = mesh.userData.buildingDamageDetailLayer as THREE.Group | undefined;
+  if (damageLayer) {
+    damageLayer.traverse((child) => {
+      const item = child as THREE.Mesh;
+      if (item.isMesh && item.name.startsWith('buildingDamageCrack')) item.geometry.dispose();
+    });
+    mesh.remove(damageLayer);
+    mesh.userData.buildingDamageDetailLayer = undefined;
+    mesh.userData.buildingLodParts = undefined;
+    mesh.userData.distanceShadowLodCache = undefined;
   }
 }
 
@@ -4361,7 +4602,8 @@ export function createContestedShrineMesh(label = '爭奪點', shrineType: Shrin
 export function createBuildingMesh(
   type: BuildingType,
   faction: FactionId,
-  civId?: CivilizationId
+  civId?: CivilizationId,
+  age: number = 1
 ): THREE.Group {
   const resolvedCiv = civId || getFactionPalette(faction).civilization || 'medieval';
   let group: THREE.Group;
@@ -4402,6 +4644,9 @@ export function createBuildingMesh(
     case 'wall':
       group = createWallMesh(faction, resolvedCiv);
       break;
+    case 'gate':
+      group = createGateMesh(faction, resolvedCiv);
+      break;
     case 'tower':
       group = createTowerMesh(faction);
       break;
@@ -4428,6 +4673,84 @@ export function createBuildingMesh(
   }
 
   finalizeBuildingWindowBatches(group);
+
+  // Anchor original roof crowns and structural facade modules to the original building bounds.
+  // Badges and flags are excluded so decorative attachments cannot distort the footprint.
+  const needsHeritage =
+    type === 'town_center' ||
+    type === 'tower' ||
+    type === 'castle' ||
+    type === 'armory_forge' ||
+    type === 'spirit_shrine' ||
+    type === 'mana_well' ||
+    type.startsWith('landmark');
+  const palette = {
+    primary: getFactionPalette(faction).primary,
+    secondary: getFactionPalette(faction).secondary,
+    banner: getFactionPalette(faction).banner,
+  };
+  group.updateMatrixWorld(true);
+  const architectureBounds = new THREE.Box3();
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry || object.name === 'bldgBadge' || object.name === 'animatedFlag') return;
+    architectureBounds.expandByObject(mesh);
+  });
+  if (!architectureBounds.isEmpty()) {
+    const dimensions = architectureBounds.getSize(new THREE.Vector3());
+    const center = architectureBounds.getCenter(new THREE.Vector3());
+    group.userData.buildingArchitecture = {
+      type,
+      civilization: resolvedCiv,
+      palette,
+      width: dimensions.x,
+      depth: dimensions.z,
+      height: dimensions.y,
+      centerX: center.x,
+      centerY: center.y,
+      centerZ: center.z,
+      topY: architectureBounds.max.y,
+    };
+
+    const eraKit = createBuildingAgeEvolutionKit(
+      type,
+      resolvedCiv,
+      palette,
+      dimensions.x,
+      dimensions.z,
+      dimensions.y,
+      age
+    );
+    if (eraKit.children.length > 0) {
+      eraKit.position.set(center.x, architectureBounds.max.y - 0.16, center.z);
+      group.add(eraKit);
+    }
+
+    if (needsHeritage) {
+      const heritageKit = createBuildingHeritageKit(
+        type,
+        resolvedCiv,
+        palette,
+        Math.min(dimensions.x, dimensions.z)
+      );
+      heritageKit.position.set(center.x, architectureBounds.max.y - 0.16, center.z);
+      group.add(heritageKit);
+    }
+
+    const facadeKit = createBuildingFacadeKit(
+      type,
+      resolvedCiv,
+      palette,
+      dimensions.x,
+      dimensions.z,
+      dimensions.y
+    );
+    if (facadeKit.children.length > 0) {
+      facadeKit.position.set(center.x, architectureBounds.min.y, center.z);
+      group.add(facadeKit);
+    }
+  }
+
   attachBuildingConstructionRig(group, type);
   addBuildingGroundDetails(group, type);
   prepareBuildingVisualLod(group);
@@ -4446,6 +4769,46 @@ export function createBuildingMesh(
   group.userData.bldgBadge = bldgBadge;
   return group;
 }
+
+
+/** Update the age-specific ornament layer without rebuilding structural or animated meshes. */
+export function updateBuildingAgeVisuals(group: THREE.Group, age: number): void {
+  const meta = group.userData.buildingArchitecture as {
+    type: BuildingType;
+    civilization: CivilizationId;
+    palette: { primary: number; secondary: number; banner: number };
+    width: number;
+    depth: number;
+    height: number;
+    centerX: number;
+    centerZ: number;
+    topY: number;
+  } | undefined;
+  if (!meta) return;
+
+  const oldKit = group.getObjectByName('buildingAgeEvolutionKit');
+  if (oldKit) group.remove(oldKit);
+  const nextKit = createBuildingAgeEvolutionKit(
+    meta.type,
+    meta.civilization,
+    meta.palette,
+    meta.width,
+    meta.depth,
+    meta.height,
+    age
+  );
+  if (nextKit.children.length > 0) {
+    nextKit.position.set(meta.centerX, meta.topY - 0.16, meta.centerZ);
+    group.add(nextKit);
+  }
+  group.userData.buildingAgeTier = THREE.MathUtils.clamp(Math.floor(age), 1, 4);
+  // Refresh both caches because the new era detail adds shadow participants and optional LOD parts.
+  group.userData.buildingLodParts = undefined;
+  group.userData.distanceShadowLodCache = undefined;
+  prepareBuildingVisualLod(group);
+}
+
+
 
 // Subtle ground apron and entrance stepping stones shared by every building of a type.
 // Each building receives one compact mesh; geometry and material are cached to avoid
@@ -5051,16 +5414,17 @@ export function createBadgeCanvas(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = 260;
-  canvas.height = 80;
+  canvas.height = showHealthBar ? 80 : actionText ? 58 : 36;
   const ctx = canvas.getContext('2d')!;
+  const canvasHeight = canvas.height;
 
-  ctx.clearRect(0, 0, 260, 80);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Background capsule
   if (isUnderAttack) {
     ctx.fillStyle = 'rgba(127, 29, 29, 0.95)';
     ctx.strokeStyle = '#f87171';
@@ -5079,23 +5443,23 @@ export function createBadgeCanvas(
     ctx.lineWidth = 2.5;
   }
 
-  // Rounded rectangle
   const r = 12;
+  const right = canvas.width - 4;
+  const bottom = canvasHeight - 4;
   ctx.beginPath();
   ctx.moveTo(r, 4);
-  ctx.lineTo(260 - r, 4);
-  ctx.quadraticCurveTo(260 - 4, 4, 260 - 4, 4 + r);
-  ctx.lineTo(260 - 4, 76 - r);
-  ctx.quadraticCurveTo(260 - 4, 76, 260 - r, 76);
-  ctx.lineTo(r, 76);
-  ctx.quadraticCurveTo(4, 76, 4, 76 - r);
+  ctx.lineTo(canvas.width - r, 4);
+  ctx.quadraticCurveTo(right, 4, right, 4 + r);
+  ctx.lineTo(right, bottom - r);
+  ctx.quadraticCurveTo(right, bottom, canvas.width - r, bottom);
+  ctx.lineTo(r, bottom);
+  ctx.quadraticCurveTo(4, bottom, 4, bottom - r);
   ctx.lineTo(4, 4 + r);
   ctx.quadraticCurveTo(4, 4, r, 4);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // Top line: Name and HP value
   ctx.font = 'bold 18px "Microsoft JhengHei", sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.fillText(`${icon} ${title}`, 14, 26);
@@ -5106,11 +5470,9 @@ export function createBadgeCanvas(
   ctx.fillText(valueText, 246, 26);
   ctx.textAlign = 'left';
 
-  // Middle line: Live Action Status
   if (actionText) {
     let statusBg = 'rgba(51, 65, 85, 0.8)';
     let statusColor = '#e2e8f0';
-
     if (isUnderAttack) {
       statusBg = 'rgba(239, 68, 68, 0.85)';
       statusColor = '#ffffff';
@@ -5130,32 +5492,33 @@ export function createBadgeCanvas(
       statusBg = 'rgba(14, 165, 233, 0.7)';
       statusColor = '#e0f2fe';
     }
-
     ctx.fillStyle = statusBg;
     ctx.beginPath();
     ctx.roundRect(14, 32, 232, 20, 6);
     ctx.fill();
-
     ctx.font = 'bold 13px "Microsoft JhengHei", sans-serif';
     ctx.fillStyle = statusColor;
     ctx.fillText(actionText, 20, 46);
   }
 
-  // Bottom line: HP bar / Resource capacity bar
-  const barY = actionText ? 58 : 46;
-  const barH = actionText ? 10 : 12;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-  ctx.fillRect(14, barY, 232, barH);
-
-  const fillWidth = Math.max(0, Math.min(232, 232 * ratio));
-  ctx.fillStyle = isUnderAttack
-    ? '#ef4444'
-    : isResource
-    ? '#f59e0b'
-    : isEnemy
-    ? '#ef4444'
-    : '#22c55e';
-  ctx.fillRect(14, barY, fillWidth, barH);
+  if (showHealthBar) {
+    const barY = actionText ? 58 : 46;
+    const barH = actionText ? 10 : 12;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(14, barY, 232, barH);
+    const fillWidth = Math.max(0, Math.min(232, 232 * ratio));
+    const fillColor = isUnderAttack || isEnemy
+      ? '#ef4444'
+      : isResource
+      ? '#f59e0b'
+      : ratio < 0.3
+      ? '#ef4444'
+      : ratio < 0.6
+      ? '#f59e0b'
+      : '#22c55e';
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(14, barY, fillWidth, barH);
+  }
 
   return canvas;
 }
@@ -5168,9 +5531,10 @@ export function createBadgeSprite(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ): THREE.Sprite {
-  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack);
+  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack, showHealthBar);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
 
@@ -5180,7 +5544,7 @@ export function createBadgeSprite(
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(3.4, 1.05, 1);
+  sprite.scale.set(3.4, 1.05 * (canvas.height / 80), 1);
   sprite.name = 'badgeSprite';
   return sprite;
 }
@@ -5194,15 +5558,17 @@ export function updateBadgeSprite(
   isEnemy: boolean,
   isResource = false,
   actionText?: string,
-  isUnderAttack = false
+  isUnderAttack = false,
+  showHealthBar = true
 ) {
-  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack);
+  const canvas = createBadgeCanvas(title, icon, valueText, ratio, isEnemy, isResource, actionText, isUnderAttack, showHealthBar);
   if (sprite.material.map) {
     sprite.material.map.dispose();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   sprite.material.map = texture;
+  sprite.scale.y = 1.05 * (canvas.height / 80);
   sprite.material.needsUpdate = true;
 }
 
@@ -5386,6 +5752,15 @@ const sharedBirchLeafMat = new THREE.MeshStandardMaterial({
   roughnessMap: resFoliageMaps.roughnessMap || null,
   roughness: 0.84,
 });
+const sharedMapleLeafMat = new THREE.MeshStandardMaterial({
+  color: 0xb45336,
+  map: resFoliageMaps.map,
+  normalMap: resFoliageMaps.normalMap,
+  normalScale: new THREE.Vector2(1.14, 1.14),
+  roughnessMap: resFoliageMaps.roughnessMap || null,
+  roughness: 0.88,
+});
+
 const sharedTreeMossMoundGeo = new THREE.CylinderGeometry(0.42, 0.72, 0.16, 8);
 const sharedRichTreeSapGeo = new THREE.OctahedronGeometry(0.22, 0);
 const sharedRichTreeSapMat = new THREE.MeshStandardMaterial({
@@ -5419,11 +5794,30 @@ const sharedRichTreeLeafMat = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.25,
 });
 
+function createTreeSeededRandom(seed: string): () => number {
+  let state = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    state ^= seed.charCodeAt(i);
+    state = Math.imul(state, 16777619);
+  }
+  if (state === 0) state = 0x6d2b79f5;
+  return () => {
+    state |= 0;
+    state = (state + 0x6d2b79f5) | 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export function createTreeMesh(
   hasBadge = false,
   nodeTier: 'standard' | 'rich' = 'standard',
-  amount = 320
+  amount = 320,
+  seedId = `${nodeTier}:${amount}`
 ): THREE.Group {
+  const random = createTreeSeededRandom(seedId);
   const group = new THREE.Group();
   const isRich = nodeTier === 'rich';
   addContactShadow(group, isRich ? 1.95 : 1.62);
@@ -5431,13 +5825,15 @@ export function createTreeMesh(
   detailedVisual.name = 'treeDetailedVisual';
   group.add(detailedVisual);
 
-  const roll = Math.random();
-  const species: 'rich' | 'oak' | 'birch' | 'pine' = isRich
+  const roll = random();
+  const species: 'rich' | 'oak' | 'birch' | 'maple' | 'pine' = isRich
     ? 'rich'
-    : roll < 0.36
+    : roll < 0.29
     ? 'oak'
-    : roll < 0.56
+    : roll < 0.48
     ? 'birch'
+    : roll < 0.66
+    ? 'maple'
     : 'pine';
 
   const trunkMat = species === 'birch' ? sharedBirchTrunkMat : sharedTreeTrunkMat;
@@ -5446,7 +5842,9 @@ export function createTreeMesh(
       ? sharedRichTreeLeafMat
       : species === 'birch'
       ? sharedBirchLeafMat
-      : sharedTreeLeafMats[Math.floor(Math.random() * sharedTreeLeafMats.length)];
+      : species === 'maple'
+      ? sharedMapleLeafMat
+      : sharedTreeLeafMats[Math.floor(random() * sharedTreeLeafMats.length)];
 
   const trunk = new THREE.Mesh(sharedTreeTrunkGeo, trunkMat);
   trunk.castShadow = true;
@@ -5487,8 +5885,12 @@ export function createTreeMesh(
     parent.add(mesh);
   };
 
+  group.userData.treeSpecies = species;
+  group.userData.treeSeed = seedId;
+  group.userData.treeWind = { phase: random() * Math.PI * 2, amplitude: 0.026 + random() * 0.018, frequency: 1.25 + random() * 0.45 };
+
   const rootCount = isRich ? 4 : 3;
-  const rootPhase = Math.random() * Math.PI * 2;
+  const rootPhase = random() * Math.PI * 2;
   const rootTransforms: TreeInstanceTransform[] = [];
   for (let r = 0; r < rootCount; r++) {
     const angle = (r * Math.PI * 2) / rootCount + 0.3 + Math.sin(r * 2.1 + rootPhase) * 0.11;
@@ -5515,13 +5917,13 @@ export function createTreeMesh(
   // Raised above unit eye-level so low conifer boughs never swallow nearby soldiers
   canopyPivot.position.y = isRich ? 2.18 : 1.94;
   // Slight per-tree lean and yaw break the repeated silhouettes while keeping the canopy above unit eye level.
-  canopyPivot.rotation.set((Math.random() - 0.5) * 0.045, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.045);
+  canopyPivot.rotation.set((random() - 0.5) * 0.045, random() * Math.PI * 2, (random() - 0.5) * 0.045);
   if (isRich) canopyPivot.scale.setScalar(1.22);
   detailedVisual.add(canopyPivot);
   group.userData.treeCanopy = canopyPivot;
   group.userData.baseCanopyScale = isRich ? 1.22 : 1.0;
 
-  if (species === 'oak' || species === 'birch' || species === 'rich') {
+  if (species === 'oak' || species === 'birch' || species === 'maple' || species === 'rich') {
     // Broadleaf Canopy: 3 exposed lower forked limbs + 7 organically clustered displaced leaf boughs
     const branchTransforms: TreeInstanceTransform[] = [-0.4, 1.8, 3.9].map((ang, idx) => ({
       position: [0, 0.24 + idx * 0.18, 0],
@@ -5542,8 +5944,8 @@ export function createTreeMesh(
       [0.02, 2.15, -0.04, 0.74],
     ];
     const leafTransforms: TreeInstanceTransform[] = crownOffsets.map(([ox, oy, oz, sc], idx) => ({
-      position: [ox, oy, oz],
-      scale: [sc * 1.14, sc * 0.84, sc * 1.08],
+      position: [ox * (species === 'maple' ? 1.12 : 1), oy, oz * (species === 'maple' ? 1.12 : 1)],
+      scale: [sc * (species === 'maple' ? 1.22 : 1.14), sc * 0.84, sc * (species === 'maple' ? 1.18 : 1.08)],
       rotation: [idx * 0.45, idx * 1.15, idx * 0.22],
     }));
     addTreeInstanceBatch(
@@ -6707,6 +7109,139 @@ export function createDeerMesh(amount = 400, hasBadge = false): THREE.Group {
   return group;
 }
 
+
+export interface WildBoarAnimParts {
+  bodyPivot: THREE.Group;
+  headPivot: THREE.Group;
+  tailPivot: THREE.Group;
+  flLeg: THREE.Group;
+  frLeg: THREE.Group;
+  blLeg: THREE.Group;
+  brLeg: THREE.Group;
+}
+
+const sharedWildBoarBodyGeo = new THREE.SphereGeometry(0.55, 12, 9);
+const sharedWildBoarHeadGeo = new THREE.SphereGeometry(0.34, 10, 8);
+const sharedWildBoarSnoutGeo = new THREE.CylinderGeometry(0.13, 0.19, 0.27, 9);
+sharedWildBoarSnoutGeo.rotateZ(-Math.PI / 2);
+const sharedWildBoarEarGeo = new THREE.ConeGeometry(0.085, 0.23, 5);
+const sharedWildBoarTuskGeo = new THREE.ConeGeometry(0.055, 0.22, 6);
+const sharedWildBoarLegGeo = new THREE.CylinderGeometry(0.105, 0.085, 0.38, 7);
+const sharedWildBoarHoofGeo = new THREE.CylinderGeometry(0.095, 0.11, 0.095, 6);
+const sharedWildBoarBristleGeo = new THREE.ConeGeometry(0.055, 0.17, 5);
+const sharedWildBoarTailGeo = new THREE.CylinderGeometry(0.025, 0.035, 0.24, 5);
+const sharedWildBoarFurMat = new THREE.MeshStandardMaterial({
+  color: 0x68402b,
+  map: resFurMaps.map,
+  normalMap: resFurMaps.normalMap,
+  normalScale: new THREE.Vector2(0.55, 0.55),
+  roughness: 0.88,
+});
+const sharedWildBoarMuzzleMat = new THREE.MeshStandardMaterial({ color: 0x9a6046, roughness: 0.9 });
+const sharedWildBoarBristleMat = new THREE.MeshStandardMaterial({ color: 0x38251f, roughness: 0.96 });
+const sharedWildBoarTuskMat = new THREE.MeshStandardMaterial({ color: 0xf3e5c2, roughness: 0.48 });
+const sharedWildBoarHoofMat = new THREE.MeshStandardMaterial({ color: 0x292524, roughness: 0.62 });
+const sharedWildBoarEyeMat = new THREE.MeshStandardMaterial({ color: 0x17120f, roughness: 0.3 });
+const sharedWildBoarEyeGeo = new THREE.SphereGeometry(0.035, 6, 5);
+
+export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'wildBoarResource';
+  addContactShadow(group, 1.28);
+
+  const bodyPivot = new THREE.Group();
+  bodyPivot.position.set(0, 0.72, 0);
+  group.add(bodyPivot);
+
+  const body = new THREE.Mesh(sharedWildBoarBodyGeo, sharedWildBoarFurMat);
+  body.scale.set(1.38, 0.9, 0.9);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  bodyPivot.add(body);
+
+  const shoulder = new THREE.Mesh(sharedWildBoarBodyGeo, sharedWildBoarFurMat);
+  shoulder.position.set(0.36, 0.09, 0);
+  shoulder.scale.set(0.72, 0.88, 0.86);
+  shoulder.castShadow = true;
+  bodyPivot.add(shoulder);
+
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0.57, 0.04, 0);
+  bodyPivot.add(headPivot);
+  const head = new THREE.Mesh(sharedWildBoarHeadGeo, sharedWildBoarFurMat);
+  head.position.set(0.13, 0.02, 0);
+  head.scale.set(1.25, 1.05, 1.04);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  const snout = new THREE.Mesh(sharedWildBoarSnoutGeo, sharedWildBoarMuzzleMat);
+  snout.position.set(0.48, -0.04, 0);
+  snout.castShadow = true;
+  headPivot.add(snout);
+
+  [-1, 1].forEach((side) => {
+    const tusk = new THREE.Mesh(sharedWildBoarTuskGeo, sharedWildBoarTuskMat);
+    tusk.position.set(0.32, -0.14, side * 0.19);
+    tusk.rotation.z = -0.52;
+    tusk.rotation.x = side * 0.22;
+    headPivot.add(tusk);
+
+    const ear = new THREE.Mesh(sharedWildBoarEarGeo, sharedWildBoarFurMat);
+    ear.position.set(-0.02, 0.27, side * 0.2);
+    ear.rotation.z = -0.18;
+    ear.rotation.x = side * 0.42;
+    headPivot.add(ear);
+
+    const eye = new THREE.Mesh(sharedWildBoarEyeGeo, sharedWildBoarEyeMat);
+    eye.position.set(0.2, 0.12, side * 0.285);
+    headPivot.add(eye);
+  });
+
+  for (let i = 0; i < 6; i++) {
+    const bristle = new THREE.Mesh(sharedWildBoarBristleGeo, sharedWildBoarBristleMat);
+    bristle.position.set(-0.38 + i * 0.17, 0.48, 0);
+    bristle.rotation.z = -0.12;
+    bristle.scale.set(0.9, 1 + (i % 2) * 0.22, 0.85);
+    bodyPivot.add(bristle);
+  }
+
+  const makeLeg = (lx: number, lz: number): THREE.Group => {
+    const leg = new THREE.Group();
+    leg.position.set(lx, 0.44, lz);
+    const upper = new THREE.Mesh(sharedWildBoarLegGeo, sharedWildBoarFurMat);
+    upper.position.y = -0.17;
+    upper.castShadow = true;
+    const hoof = new THREE.Mesh(sharedWildBoarHoofGeo, sharedWildBoarHoofMat);
+    hoof.position.y = -0.37;
+    leg.add(upper, hoof);
+    group.add(leg);
+    return leg;
+  };
+  const blLeg = makeLeg(-0.4, -0.27);
+  const brLeg = makeLeg(-0.4, 0.27);
+  const flLeg = makeLeg(0.42, -0.29);
+  const frLeg = makeLeg(0.42, 0.29);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.69, 0.03, 0);
+  bodyPivot.add(tailPivot);
+  const tail = new THREE.Mesh(sharedWildBoarTailGeo, sharedWildBoarFurMat);
+  tail.position.y = -0.09;
+  tail.rotation.z = -0.68;
+  tailPivot.add(tail);
+
+  const animParts: WildBoarAnimParts = { bodyPivot, headPivot, tailPivot, flLeg, frLeg, blLeg, brLeg };
+  group.userData.wildBoarAnimParts = animParts;
+
+  if (hasBadge) {
+    const badge = createBadgeSprite('野生野豬', '🐗', `${amount}`, 1, false, true, '高風險圍獵・採集倍率 ×1.42');
+    badge.position.set(0, 2.45, 0);
+    group.add(badge);
+    group.userData.badgeSprite = badge;
+  }
+  return group;
+}
+
 const sharedFishBodyGeo = makeLatheGeo([
   [0.01, -0.22],
   [0.065, -0.1],
@@ -7464,7 +7999,7 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
   // 7. Instanced Meadow Wildflowers scattered naturally across clear turf
   const flowerPts: Array<{ x: number; z: number; scale: number; hex: number }> = [];
   const flowerPalette = [0xfacc15, 0xfef9c3, 0xfb7185, 0xc084fc, 0xfde047];
-  for (let i = 0; i < 980 && flowerPts.length < 320; i++) {
+  for (let i = 0; i < 1400 && flowerPts.length < 440; i++) {
     const rawX = (Math.sin(i * 41.13 + 7.2) * 31987.412) % 1;
     const rawZ = (Math.sin(i * 67.89 + 3.1) * 51234.789) % 1;
     const fx = (rawX < 0 ? rawX + 1 : rawX) * 166 - 83;
@@ -7478,9 +8013,29 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
     });
   }
   if (flowerPts.length > 0) {
-    const flowerGeo = new THREE.OctahedronGeometry(0.15, 0);
+    // Five overlapping low-poly petals and a center are merged before instancing.
+    // The richer silhouette therefore remains a single draw call for the whole meadow.
+    const flowerParts: THREE.BufferGeometry[] = [];
+    const flowerUp = new THREE.Vector3(0, 1, 0);
+    for (let petalIndex = 0; petalIndex < 5; petalIndex++) {
+      const angle = (petalIndex / 5) * Math.PI * 2;
+      const petal = new THREE.SphereGeometry(0.105, 7, 4);
+      const position = new THREE.Vector3(Math.cos(angle) * 0.105, 0.018, Math.sin(angle) * 0.105);
+      const rotation = new THREE.Quaternion().setFromAxisAngle(flowerUp, -angle);
+      const scale = new THREE.Vector3(0.82, 0.38, 1.35);
+      petal.applyMatrix4(new THREE.Matrix4().compose(position, rotation, scale));
+      flowerParts.push(petal);
+    }
+    const flowerCenter = new THREE.SphereGeometry(0.064, 7, 5);
+    flowerCenter.translate(0, 0.045, 0);
+    flowerParts.push(flowerCenter);
+    const flowerGeo = mergeGeometries(flowerParts, false);
+    flowerParts.forEach((part) => part.dispose());
+    if (!flowerGeo) throw new Error('Failed to assemble the instanced meadow flower geometry');
     const flowerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62 });
     const instancedFlowers = new THREE.InstancedMesh(flowerGeo, flowerMat, flowerPts.length);
+    instancedFlowers.name = 'instancedMeadowWildflowers';
+    instancedFlowers.userData.qualityMinLevel = 1;
     const fDummy = new THREE.Object3D();
     const fTint = new THREE.Color();
     flowerPts.forEach((pt, idx) => {
@@ -7537,9 +8092,13 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
       side: THREE.DoubleSide,
     });
     const instancedReeds = new THREE.InstancedMesh(reedGeo, reedMat, reedPts.length);
+    instancedReeds.name = 'instancedShorelineReeds';
+    instancedReeds.userData.qualityMinLevel = 1;
     const cattailGeo = new THREE.CylinderGeometry(0.036, 0.036, 0.22, 6);
     const cattailMat = new THREE.MeshStandardMaterial({ color: 0x713f12, roughness: 0.92 });
     const instancedCattails = new THREE.InstancedMesh(cattailGeo, cattailMat, reedPts.length);
+    instancedCattails.name = 'instancedShorelineCattails';
+    instancedCattails.userData.qualityMinLevel = 1;
     const rdDummy = new THREE.Object3D();
     reedPts.forEach((pt, idx) => {
       rdDummy.position.set(pt.x, 0.0, pt.z);
@@ -7610,9 +8169,29 @@ const unitShinGeo = makeLatheGeo([
 ], 14);
 const unitBootGeo = new RoundedBoxGeometry(0.125, 0.085, 0.22, 2, 0.022);
 const unitPoleynGeo = new THREE.SphereGeometry(0.068, 12, 8);
-const unitArmSegmentGeo = new THREE.CapsuleGeometry(0.054, 0.18, 7, 14);
+// Tapered upper-arm / forearm profile: broad at the shoulder, narrowing into the wrist.
+const unitArmSegmentGeo = makeLatheGeo([
+  [0.024, -0.145],
+  [0.038, -0.132],
+  [0.05, -0.085],
+  [0.063, -0.015],
+  [0.068, 0.045],
+  [0.058, 0.105],
+  [0.04, 0.14],
+  [0.018, 0.15],
+], 14);
 const unitHandGeo = new THREE.SphereGeometry(0.066, 12, 8);
-const unitHeadGeo = new THREE.SphereGeometry(0.185, 24, 18);
+// Sculpted tapered jaw and fuller brow silhouette; shared by all organic humanoid rigs.
+const unitHeadGeo = makeLatheGeo([
+  [0.018, -0.19],
+  [0.082, -0.176],
+  [0.132, -0.112],
+  [0.164, -0.018],
+  [0.17, 0.075],
+  [0.145, 0.15],
+  [0.095, 0.198],
+  [0.012, 0.212],
+], 24);
 
 const unitTunicGeo = makeLatheGeo([
   [0.245, 0.0],
@@ -7957,8 +8536,12 @@ export function updateDistanceShadowLod(
 
 export interface UnitVisualContext {
   age?: number;
+  level?: number;
   researchedTechIds?: string[];
+  /** Unit definition id used for gameplay-specific model selection. */
   unitId?: string;
+  /** Entity id used only for deterministic cosmetic variation between individuals. */
+  visualSeed?: string;
 }
 
 interface UnitDistanceLodPart {
@@ -7967,7 +8550,17 @@ interface UnitDistanceLodPart {
   radius: number;
 }
 
+interface UnitIdentityLodPart {
+  object: THREE.Object3D;
+  baseVisible: boolean;
+  localCenter: THREE.Vector3;
+  localRadius: number;
+  wasVisible: boolean;
+}
+
 const unitLodWorldCenter = new THREE.Vector3();
+const unitIdentityLodWorldCenter = new THREE.Vector3();
+const unitIdentityLodWorldScale = new THREE.Vector3();
 const UNIT_LOD_MIN_RADIUS = 0.012;
 const UNIT_LOD_MAX_RADIUS = 0.105;
 const UNIT_LOD_MIN_PIXEL_RADIUS = 1.45;
@@ -7979,9 +8572,28 @@ const UNIT_LOD_MIN_PIXEL_RADIUS = 1.45;
  */
 export function prepareUnitVisualLod(group: THREE.Group): void {
   const parts: UnitDistanceLodPart[] = [];
+  const identityParts: UnitIdentityLodPart[] = [];
   group.updateMatrixWorld(true);
 
   group.traverse((object) => {
+    if (object.name === 'sculptedCharacterFace') {
+      const bounds = new THREE.Box3().setFromObject(object);
+      if (!bounds.isEmpty()) {
+        const sphere = new THREE.Sphere();
+        bounds.getBoundingSphere(sphere);
+        const localCenter = group.worldToLocal(sphere.center.clone());
+        const groupScale = group.getWorldScale(new THREE.Vector3());
+        const worldScale = Math.max(0.0001, Math.abs(groupScale.x), Math.abs(groupScale.y), Math.abs(groupScale.z));
+        identityParts.push({
+          object,
+          baseVisible: object.visible,
+          localCenter,
+          localRadius: Math.max(0.01, sphere.radius / worldScale),
+          wasVisible: object.visible,
+        });
+      }
+    }
+
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry || mesh.name === 'contactShadow') return;
 
@@ -7994,6 +8606,7 @@ export function prepareUnitVisualLod(group: THREE.Group): void {
   });
 
   group.userData.distanceLodParts = parts;
+  group.userData.identityLodParts = identityParts;
 }
 
 /**
@@ -8004,16 +8617,20 @@ export function updateUnitVisualLod(
   group: THREE.Group,
   camera: THREE.PerspectiveCamera,
   viewportHeight: number,
-  forceHighDetail = false
+  forceHighDetail = false,
+  unitLevel = 1
 ): void {
   const parts = group.userData.distanceLodParts as UnitDistanceLodPart[] | undefined;
-  if (!parts?.length) return;
+  const identityParts = group.userData.identityLodParts as UnitIdentityLodPart[] | undefined;
+  const badge = group.userData.unitBadge as THREE.Sprite | undefined;
+  const roleMarker = group.userData.battlefieldRoleMarker as THREE.Mesh | undefined;
+  if (!parts?.length && !identityParts?.length && !badge && !roleMarker) return;
 
   group.updateMatrixWorld(true);
   const safeHeight = Math.max(1, viewportHeight);
   const focalPixels = safeHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5));
 
-  for (const part of parts) {
+  for (const part of parts || []) {
     if (!part.baseVisible) continue;
     let shouldShow = true;
 
@@ -8029,9 +8646,95 @@ export function updateUnitVisualLod(
 
     if (part.mesh.visible !== shouldShow) part.mesh.visible = shouldShow;
   }
+
+  for (const part of identityParts || []) {
+    if (!part.baseVisible) continue;
+    unitIdentityLodWorldCenter.copy(part.localCenter).applyMatrix4(group.matrixWorld);
+    group.getWorldScale(unitIdentityLodWorldScale);
+    const worldScale = Math.max(
+      0.0001,
+      Math.abs(unitIdentityLodWorldScale.x),
+      Math.abs(unitIdentityLodWorldScale.y),
+      Math.abs(unitIdentityLodWorldScale.z)
+    );
+    const distance = Math.max(0.001, camera.position.distanceTo(unitIdentityLodWorldCenter));
+    const projectedRadius = (part.localRadius * worldScale * focalPixels) / distance;
+    const threshold = part.wasVisible ? 5.5 : 8.5;
+    const shouldShow = forceHighDetail || projectedRadius >= threshold;
+    if (part.object.visible !== shouldShow) part.object.visible = shouldShow;
+    part.wasVisible = shouldShow;
+  }
+
+  if (badge || roleMarker) {
+    group.getWorldPosition(unitLodWorldCenter);
+    group.getWorldScale(unitIdentityLodWorldScale);
+    const worldScale = Math.max(
+      0.0001,
+      Math.abs(unitIdentityLodWorldScale.x),
+      Math.abs(unitIdentityLodWorldScale.y),
+      Math.abs(unitIdentityLodWorldScale.z)
+    );
+    const distance = Math.max(0.001, camera.position.distanceTo(unitLodWorldCenter));
+    const projectedHeight = (2.55 * worldScale * focalPixels) / distance;
+    if (badge) {
+      const requested = group.userData.overheadBadgesEnabled !== false;
+      const baseThreshold = Number(group.userData.badgeLodThresholdPx) || 30;
+      group.userData.battlefieldVisualLevel = unitLevel;
+      const championThreshold = unitLevel >= 3 ? Math.min(baseThreshold, 18) : baseThreshold;
+      const shouldShow = requested && (forceHighDetail || projectedHeight >= championThreshold);
+      if (badge.visible !== shouldShow) badge.visible = shouldShow;
+    }
+    if (roleMarker) {
+      const markerThreshold = Number(group.userData.roleMarkerLodThresholdPx) || 22;
+      const shouldShow = forceHighDetail || projectedHeight >= markerThreshold;
+      if (roleMarker.visible !== shouldShow) roleMarker.visible = shouldShow;
+    }
+  }
 }
 
 /** Map researched tech ids to silhouette upgrades (procedural accessories). */
+
+const sharedUnitFactionRingGeometry = new THREE.RingGeometry(0.55, 0.7, 20);
+sharedUnitFactionRingGeometry.rotateX(-Math.PI / 2);
+const sharedUnitRoleRingGeometry: Record<'crest' | 'siege', THREE.RingGeometry> = {
+  crest: new THREE.RingGeometry(0.74, 0.88, 8),
+  siege: new THREE.RingGeometry(0.74, 0.88, 4),
+};
+sharedUnitRoleRingGeometry.crest.rotateX(-Math.PI / 2);
+sharedUnitRoleRingGeometry.siege.rotateX(-Math.PI / 2);
+const sharedUnitRoleRingMaterials: Record<'crest' | 'siege', THREE.MeshBasicMaterial> = {
+  crest: new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false,
+  }),
+  siege: new THREE.MeshBasicMaterial({
+    color: 0xf97316,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false,
+  }),
+};
+const unitFactionRingMaterialCache = new Map<number, THREE.MeshBasicMaterial>();
+
+function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
+  let material = unitFactionRingMaterialCache.get(color);
+  if (!material) {
+    material = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
+    unitFactionRingMaterialCache.set(color, material);
+  }
+  return material;
+}
+
 export function getUnitVisualFlags(ctx?: UnitVisualContext) {
   const age = ctx?.age || 1;
   const techs = ctx?.researchedTechIds || [];
@@ -8055,22 +8758,37 @@ export function createUnitMesh(
   const colors = getFactionPalette(faction);
   const s = unitDef.visual.scale || 1;
   const unitId = visualCtx?.unitId || unitDef.id;
+  const artSeed = visualCtx?.visualSeed || unitId;
   const flags = getUnitVisualFlags(visualCtx);
+  const visualProfile = getBattlefieldVisualProfile(
+    unitDef.category,
+    unitDef.visual.modelType,
+    !!unitDef.isNaval,
+    visualCtx?.level || 1,
+    !!unitDef.specialAbility
+  );
+  group.userData.battlefieldVisualTier = visualProfile.tier;
+  group.userData.battlefieldVisualLevel = visualCtx?.level || 1;
+  group.userData.badgeLodThresholdPx = visualProfile.badgeThresholdPx;
+  group.userData.roleMarkerLodThresholdPx = visualProfile.roleMarkerThresholdPx;
 
   addContactShadow(group, 0.72 * s);
 
-  const factionRingGeo = new THREE.RingGeometry(0.55 * s, 0.7 * s, 20);
-  factionRingGeo.rotateX(-Math.PI / 2);
-  const factionRingMat = new THREE.MeshBasicMaterial({
-    color: colors.ring,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-  });
-  const factionRing = new THREE.Mesh(factionRingGeo, factionRingMat);
+  const factionRing = new THREE.Mesh(sharedUnitFactionRingGeometry, getUnitFactionRingMaterial(colors.ring));
+  factionRing.scale.setScalar(s);
   factionRing.position.y = 0.025;
   group.add(factionRing);
+
+  if (visualProfile.roleMarker) {
+    const roleMarker = new THREE.Mesh(
+      sharedUnitRoleRingGeometry[visualProfile.roleMarker],
+      sharedUnitRoleRingMaterials[visualProfile.roleMarker]
+    );
+    roleMarker.name = 'battlefieldRoleMarker';
+    roleMarker.position.y = 0.034;
+    group.add(roleMarker);
+    group.userData.battlefieldRoleMarker = roleMarker;
+  }
 
   const buffRingGeo = new THREE.RingGeometry(0.74 * s, 0.9 * s, 20);
   buffRingGeo.rotateX(-Math.PI / 2);
@@ -8107,6 +8825,9 @@ export function createUnitMesh(
     ninja: '🥷',
     saiyan: '⚡',
     mage: '🔮',
+    guardian: '🛡️',
+    oracle: '✨',
+    artificer: '⚙️',
     ram: '🐏',
     cannon: '💣',
     golem: unitDef.category === 'siege' ? '🪨' : '🪵',
@@ -8129,15 +8850,20 @@ export function createUnitMesh(
   const badge = createBadgeSprite(
     displayName,
     icon,
-    `${unitDef.stats.maxHp}`,
+    '',
     1.0,
     colors.isHostile,
+    false,
+    undefined,
+    false,
     false
   );
   badge.position.set(0, 2.55 * s, 0);
+  badge.scale.multiplyScalar(visualProfile.badgeScale);
   badge.name = 'unitBadge';
   group.add(badge);
   group.userData.unitBadge = badge;
+  group.userData.overheadBadgesEnabled = true;
 
   // High-contrast PBR unit materials with >= 0.25 roughness separation
   const armorMat = new THREE.MeshStandardMaterial({
@@ -8432,6 +9158,7 @@ export function createUnitMesh(
       const haoriCape = new THREE.Mesh(unitCapeGeo, robeDarkMat);
       haoriCape.position.set(0, 0.26, -0.22);
       haoriCape.rotation.x = 0.2;
+      markSecondaryMotion(haoriCape, 'x', 0.12, 4.8, 0.5);
       bodyPivot.add(torso, obiSash, haoriCape);
 
       // Samurai Layered Shoulder Sode Guards
@@ -8507,6 +9234,7 @@ export function createUnitMesh(
       const cape = new THREE.Mesh(unitCapeGeo, armorMat);
       cape.position.set(0, 0.28, -0.24);
       cape.rotation.x = 0.22;
+      markSecondaryMotion(cape, 'x', 0.14, 4.1, 0.2);
       bodyPivot.add(paulL, paulR, cape);
 
       // Visored Sallet Helmet + Recessed Slit + Nasal Bar + Crest
@@ -8585,6 +9313,7 @@ export function createUnitMesh(
     const cloak = new THREE.Mesh(unitCapeGeo, hoodMat);
     cloak.position.set(0, 0.28, -0.22);
     cloak.rotation.x = 0.24;
+    markSecondaryMotion(cloak, 'x', 0.16, 4.6, 0.8);
     bodyPivot.add(head, hood, cloak);
 
     // Leather Quiver with 4 feathered arrows
@@ -8746,6 +9475,7 @@ export function createUnitMesh(
       const cloak = new THREE.Mesh(unitCapeGeo, armorMat);
       cloak.position.set(0, 1.46, -0.22);
       cloak.rotation.x = 0.28;
+      markSecondaryMotion(cloak, 'x', 0.18, 4.3, 0.4);
       const head = new THREE.Mesh(unitHeadGeo, fleshMat);
       head.position.set(0, 1.88, -0.02);
       const hood = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.36, 9), armorMat);
@@ -8792,6 +9522,7 @@ export function createUnitMesh(
       const holyCape = new THREE.Mesh(unitCapeGeo, armorMat);
       holyCape.position.set(0, 1.44, -0.26);
       holyCape.rotation.x = 0.25;
+      markSecondaryMotion(holyCape, 'x', 0.15, 4.4, 0.7);
       bodyPivot.add(rider, holyCape);
 
       const rPaulL = new THREE.Mesh(unitPauldronGeo, goldTrimMat);
@@ -8840,6 +9571,7 @@ export function createUnitMesh(
       const knightCape = new THREE.Mesh(unitCapeGeo, armorMat);
       knightCape.position.set(0, 1.44, -0.26);
       knightCape.rotation.x = 0.25;
+      markSecondaryMotion(knightCape, 'x', 0.13, 4.0, 0.3);
       bodyPivot.add(rider, knightCape);
 
       const rPaulL = new THREE.Mesh(unitPauldronGeo, steelMat);
@@ -8906,6 +9638,7 @@ export function createUnitMesh(
       ], 0.052, 10, 6),
       scarfMat
     );
+    markSecondaryMotion(scarfTail, 'z', 0.18, 6.2, 0.35);
     const katanaSaya = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.88, 8), leatherMat);
     katanaSaya.position.set(0.02, 0.42, -0.2);
     katanaSaya.rotation.z = 0.68;
@@ -9526,6 +10259,204 @@ export function createUnitMesh(
       netPole.position.set(-0.22, 0.12, 0.18);
       rightArmPivot.add(netPole);
     }
+  } else if (mType === 'guardian') {
+    // Original Vanguard Guardian: broad plate silhouette, layered faulds, full sallet and tower shield.
+    const guardianPlateMat = new THREE.MeshStandardMaterial({
+      color: flags.imperial ? 0xf1f5f9 : colors.primary,
+      map: unitArmorMaps.map,
+      normalMap: unitArmorMaps.normalMap,
+      normalScale: new THREE.Vector2(1.15, 1.15),
+      roughnessMap: unitArmorMaps.roughnessMap || null,
+      roughness: 0.34,
+      metalness: 0.9,
+    });
+    animParts.hitMaterials.push(guardianPlateMat);
+    addBipedLegs(chainmailMat, steelMat, true);
+
+    const undercoat = new THREE.Mesh(unitTunicGeo, darkMat);
+    undercoat.scale.set(1.06, 1.08, 1.04);
+    const cuirass = new THREE.Mesh(unitBreastplateGeo, guardianPlateMat);
+    cuirass.scale.set(1.14, 1.1, 1.12);
+    cuirass.castShadow = true;
+    const layeredFauld = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.28, 12), chainmailMat);
+    layeredFauld.position.y = 0.06;
+    const tabard = new THREE.Mesh(unitCapeGeo, armorMat);
+    tabard.position.set(0, 0.24, -0.25);
+    tabard.scale.set(1.18, 1.1, 1);
+    bodyPivot.add(undercoat, cuirass, layeredFauld, tabard);
+
+    [-1, 1].forEach((dir) => {
+      const pauldron = new THREE.Mesh(unitPauldronGeo, guardianPlateMat);
+      pauldron.scale.set(1.25, 1.08, 1.2);
+      pauldron.position.set(dir * 0.29, 0.56, 0.015);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.018, 5, 12), goldTrimMat);
+      rim.position.set(dir * 0.29, 0.58, 0.045);
+      bodyPivot.add(pauldron, rim);
+    });
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 0.78;
+    const helm = new THREE.Mesh(unitHelmGeo, guardianPlateMat);
+    helm.position.y = 0.8;
+    helm.scale.set(1.16, 1.03, 1.14);
+    const cheekGuards = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.18, 12, 1, true), steelMat);
+    cheekGuards.position.y = 0.72;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.05, 0.09), darkMat);
+    visor.position.set(0, 0.82, 0.17);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.055, 0.11), goldTrimMat);
+    brow.position.set(0, 0.87, 0.17);
+    const crest = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.42, 6), goldTrimMat);
+    crest.position.set(0, 1.13, -0.02);
+    crest.rotation.x = -0.3;
+    bodyPivot.add(head, helm, cheekGuards, visor, brow, crest);
+
+    leftArmPivot.position.set(-0.32, 0.5, 0.04);
+    bodyPivot.add(leftArmPivot);
+    const shield = new THREE.Mesh(unitHeaterShieldGeo, guardianPlateMat);
+    shield.scale.set(1.28, 1.48, 1.15);
+    shield.rotation.y = -Math.PI / 2.25;
+    shield.position.set(-0.1, -0.08, 0.13);
+    const shieldBoss = new THREE.Mesh(new THREE.OctahedronGeometry(0.095, 1), goldTrimMat);
+    shieldBoss.position.set(-0.15, -0.08, 0.19);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, chainmailMat), shield, shieldBoss);
+
+    rightArmPivot.position.set(0.33, 0.5, 0.05);
+    bodyPivot.add(rightArmPivot);
+    const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.052, 1.32, 10), hullOakMat);
+    haft.rotation.x = Math.PI / 3.5;
+    haft.position.set(0.03, -0.02, 0.38);
+    const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.32, 0.46), guardianPlateMat);
+    hammerHead.rotation.x = Math.PI / 3.5;
+    hammerHead.position.set(0.03, 0.48, 0.78);
+    const hammerCap = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.24, 6), goldTrimMat);
+    hammerCap.rotation.x = Math.PI / 3.5;
+    hammerCap.position.set(0.03, 0.49, 1.13);
+    rightArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, chainmailMat), haft, hammerHead, hammerCap);
+  } else if (mType === 'oracle') {
+    // Original Astral Oracle: layered silhouette robe, halo architecture and a suspended focus crystal.
+    addBipedLegs(darkMat, leatherMat, false);
+    bodyPivot.position.y = 0.24;
+    const oracleRobeMat = new THREE.MeshStandardMaterial({
+      color: unitDef.visual.color,
+      map: unitClothMaps.map,
+      normalMap: unitClothMaps.normalMap,
+      roughnessMap: unitClothMaps.roughnessMap || null,
+      roughness: 0.7,
+    });
+    animParts.hitMaterials.push(oracleRobeMat);
+    const robe = new THREE.Mesh(unitMageRobeGeo, oracleRobeMat);
+    robe.position.y = 0.02;
+    robe.scale.set(1.06, 1.08, 1.04);
+    robe.castShadow = true;
+    const overRobe = new THREE.Mesh(unitCapeGeo, armorMat);
+    overRobe.position.set(0, 0.25, -0.2);
+    overRobe.scale.set(1.18, 1.22, 1.08);
+    bodyPivot.add(robe, overRobe);
+    animParts.robeSkirt = robe;
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 1.09;
+    const circlet = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.035, 8, 20), goldTrimMat);
+    circlet.position.set(0, 1.23, -0.015);
+    circlet.rotation.x = Math.PI / 2;
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.028, 8, 28), goldTrimMat);
+    halo.position.set(0, 1.55, -0.12);
+    halo.rotation.set(0.35, 0, 0);
+    const crystalCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 1), new THREE.MeshBasicMaterial({ color: 0x67e8f9 }));
+    crystalCore.position.set(0, 0.9, 0.3);
+    bodyPivot.add(head, circlet, halo, crystalCore);
+    animParts.auraMesh = crystalCore;
+
+    [-1, 1].forEach((dir) => {
+      const floatingShard = new THREE.Mesh(new THREE.OctahedronGeometry(0.105, 1), goldTrimMat);
+      floatingShard.position.set(dir * 0.34, 1.06, -0.06);
+      floatingShard.rotation.z = dir * 0.35;
+      bodyPivot.add(floatingShard);
+    });
+
+    leftArmPivot.position.set(-0.31, 0.76, 0.06);
+    bodyPivot.add(leftArmPivot);
+    const openGrimoire = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.17, 0.08), goldTrimMat);
+    openGrimoire.position.set(0, -0.2, 0.17);
+    const pageGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.13), new THREE.MeshBasicMaterial({ color: 0xfef3c7, side: THREE.DoubleSide }));
+    pageGlow.position.set(0, -0.19, 0.22);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, oracleRobeMat), openGrimoire, pageGlow);
+
+    rightArmPivot.position.set(0.32, 0.76, 0.08);
+    bodyPivot.add(rightArmPivot);
+    const staff = new THREE.Mesh(unitStaffGeo, hullOakMat);
+    staff.position.set(0.02, 0.05, 0.12);
+    const staffRing = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.025, 6, 16), goldTrimMat);
+    staffRing.position.set(0.06, 0.79, 0.16);
+    const staffCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 1), new THREE.MeshBasicMaterial({ color: 0xa5f3fc }));
+    staffCrystal.position.set(0.06, 0.86, 0.16);
+    rightArmPivot.add(staff, staffRing, staffCrystal);
+  } else if (mType === 'artificer') {
+    // Original Arcane Artificer: reinforced leather coat, brass optics, field tool pack and articulated gauntlet.
+    addBipedLegs(darkMat, leatherMat, false);
+    const coatMat = new THREE.MeshStandardMaterial({
+      color: unitDef.visual.color,
+      map: unitClothMaps.map,
+      normalMap: unitClothMaps.normalMap,
+      roughnessMap: unitClothMaps.roughnessMap || null,
+      roughness: 0.82,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xc58a36, roughness: 0.3, metalness: 0.82 });
+    animParts.hitMaterials.push(coatMat, brassMat);
+
+    const coat = new THREE.Mesh(unitTunicGeo, coatMat);
+    coat.scale.set(1.02, 1.06, 1.02);
+    coat.castShadow = true;
+    const apron = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.055), leatherMat);
+    apron.position.set(0, 0.28, 0.22);
+    apron.rotation.x = -0.08;
+    const utilityBelt = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.1, 12), brassMat);
+    utilityBelt.position.y = 0.2;
+    bodyPivot.add(coat, apron, utilityBelt);
+
+    const backpack = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.42, 10), hullOakMat);
+    backpack.position.set(0, 0.38, -0.29);
+    backpack.rotation.x = 0.12;
+    const pressureGauge = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.045, 12), brassMat);
+    pressureGauge.rotation.x = Math.PI / 2;
+    pressureGauge.position.set(0.12, 0.52, -0.07);
+    const gaugeFace = new THREE.Mesh(new THREE.CircleGeometry(0.058, 12), new THREE.MeshBasicMaterial({ color: 0x67e8f9 }));
+    gaugeFace.position.set(0.12, 0.52, -0.043);
+    const valve = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 5, 12), brassMat);
+    valve.position.set(-0.17, 0.54, -0.27);
+    valve.rotation.x = Math.PI / 2;
+    bodyPivot.add(backpack, pressureGauge, gaugeFace, valve);
+
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 0.76;
+    const goggles = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.024, 6, 16), brassMat);
+    goggles.position.set(0, 0.8, 0.16);
+    const gogglesLens = new THREE.Mesh(new THREE.CircleGeometry(0.085, 12), new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.72 }));
+    gogglesLens.position.set(0, 0.8, 0.17);
+    const foreheadBand = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.055, 0.045), leatherMat);
+    foreheadBand.position.set(0, 0.91, 0.015);
+    bodyPivot.add(head, goggles, gogglesLens, foreheadBand);
+
+    rightArmPivot.position.set(0.29, 0.5, 0.05);
+    bodyPivot.add(rightArmPivot);
+    const gauntlet = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.24, 8), brassMat);
+    gauntlet.position.set(0, -0.19, 0.08);
+    const wrenchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.032, 0.5, 8), hullOakMat);
+    wrenchHandle.rotation.x = Math.PI / 3;
+    wrenchHandle.position.set(0, -0.18, 0.3);
+    const wrenchJaw = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.025, 5, 10, Math.PI * 1.35), steelMat);
+    wrenchJaw.position.set(0, 0.05, 0.55);
+    wrenchJaw.rotation.set(Math.PI / 2, 0, 0.3);
+    rightArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, leatherMat), gauntlet, wrenchHandle, wrenchJaw);
+
+    leftArmPivot.position.set(-0.29, 0.5, 0.05);
+    bodyPivot.add(leftArmPivot);
+    const leftTool = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.52, 8), steelMat);
+    leftTool.rotation.x = Math.PI / 2;
+    leftTool.position.set(0, -0.18, 0.2);
+    const toolGrip = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 5, 10), brassMat);
+    toolGrip.position.set(0, -0.18, 0.2);
+    leftArmPivot.add(new THREE.Mesh(unitArmSegmentGeo, coatMat), leftTool, toolGrip);
   } else {
     // Ancient Living Treant / Guardian Colossus (Root Legs, Heartwood Rune Core, Stag Antler Crown & Leafy Shoulders)
     const barkMat = new THREE.MeshStandardMaterial({
@@ -9617,6 +10548,109 @@ export function createUnitMesh(
     });
   }
 
+  // --- Anatomical grip pass: add a hand that follows each existing animated forearm pivot. ---
+  const handCapableModel =
+    mType === 'villager' ||
+    mType === 'swordsman' ||
+    mType === 'archer' ||
+    mType === 'knight' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage' ||
+    mType === 'guardian' ||
+    mType === 'oracle' ||
+    mType === 'artificer';
+  if (handCapableModel) {
+    const handCiv = colors.civilization || 'medieval';
+    const addGripHand = (
+      pivot: THREE.Group,
+      side: 'left' | 'right',
+      position: [number, number, number]
+    ) => {
+      // Some rigs intentionally leave one arm unused; do not create a floating hand.
+      if (!pivot.parent) return;
+      const hand = createCharacterHandDetails(
+        0xf7cbb8,
+        colors.secondary,
+        handCiv,
+        `${artSeed}:${side}`,
+        side === 'left'
+      );
+      hand.position.set(position[0], position[1], position[2]);
+      hand.userData.unitId = unitId;
+      hand.userData.handSide = side;
+      pivot.add(hand);
+    };
+
+    const rightHandPosition: [number, number, number] =
+      mType === 'villager' || mType === 'artificer'
+        ? [0.02, -0.14, 0.29]
+        : mType === 'swordsman'
+          ? [0.02, -0.18, 0.14]
+          : [0, -0.25, 0.11];
+    const leftHandPosition: [number, number, number] =
+      mType === 'archer'
+        ? [0.06, -0.02, 0.28]
+        : mType === 'swordsman'
+          ? [-0.1, -0.06, 0.14]
+          : [0, -0.25, 0.1];
+
+    addGripHand(rightArmPivot, 'right', rightHandPosition);
+    addGripHand(leftArmPivot, 'left', leftHandPosition);
+  }
+
+  // --- Original faction art direction layer (shared procedural rig, new authored silhouette) ---
+  const organicHumanoid =
+    mType === 'villager' ||
+    mType === 'swordsman' ||
+    mType === 'archer' ||
+    mType === 'knight' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage' ||
+    mType === 'guardian' ||
+    mType === 'oracle' ||
+    mType === 'artificer';
+
+  if (organicHumanoid) {
+    const bodyProfile = getUnitBodyProportionProfile(unitId, unitDef.category, mType);
+    bodyPivot.scale.set(bodyProfile.scaleX, bodyProfile.scaleY, bodyProfile.scaleZ);
+    group.userData.bodyProportionProfile = bodyProfile;
+
+    const signatureKit = createUnitSignatureKit({
+      unitId: artSeed,
+      civilization: colors.civilization || 'medieval',
+      category: unitDef.category,
+      modelType: mType,
+      age: flags.age,
+      palette: {
+        primary: colors.primary,
+        secondary: colors.secondary,
+        banner: colors.banner,
+      },
+    });
+    bodyPivot.add(signatureKit);
+  }
+
+  // Exposed faces are now sculpted with eyes, brows and a dimensional nose instead of a blank sphere.
+  if (
+    mType === 'villager' ||
+    mType === 'archer' ||
+    mType === 'ninja' ||
+    mType === 'saiyan' ||
+    mType === 'mage' ||
+    mType === 'oracle' ||
+    mType === 'artificer'
+  ) {
+    const faceDetails = createCharacterFaceDetails(colors.banner, {
+      civilization: colors.civilization || 'medieval',
+      modelType: mType,
+      unitId: artSeed,
+    });
+    faceDetails.position.y = mType === 'mage' || mType === 'oracle' ? 1.09 : 0.76;
+    bodyPivot.add(faceDetails);
+  }
+
   // --- Age / tech silhouette upgrades (shared accents) ---
   if (flags.eliteTrim || flags.plateArmor || flags.forgedWeapons || flags.imperial) {
     const accent = new THREE.MeshStandardMaterial({
@@ -9662,6 +10696,32 @@ export function createUnitMesh(
     }
   }
 
+  const secondaryMotionParts: Array<{
+    object: THREE.Object3D;
+    axis: 'x' | 'y' | 'z';
+    amplitude: number;
+    frequency: number;
+    phase: number;
+    baseRotation: THREE.Euler;
+  }> = [];
+  group.traverse((object) => {
+    const motion = object.userData.secondaryMotion as {
+      axis?: 'x' | 'y' | 'z';
+      amplitude?: number;
+      frequency?: number;
+      phase?: number;
+    } | undefined;
+    if (!motion || !motion.axis) return;
+    secondaryMotionParts.push({
+      object,
+      axis: motion.axis,
+      amplitude: Number.isFinite(motion.amplitude) ? motion.amplitude! : 0.1,
+      frequency: Number.isFinite(motion.frequency) ? motion.frequency! : 4,
+      phase: Number.isFinite(motion.phase) ? motion.phase! : 0,
+      baseRotation: object.rotation.clone(),
+    });
+  });
+  group.userData.secondaryMotionParts = secondaryMotionParts;
   group.userData.animParts = animParts;
   group.userData.visualFlags = flags;
   group.userData.visualUnitId = unitId;

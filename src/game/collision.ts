@@ -48,8 +48,10 @@ export function getUnitColliderRadius(category: UnitCategory, scale = 1): number
  * Farms are walkable terrain (radius 0). Solid non-wall structures inset their solid core by
  * BUILDING_AUTO_CHANNEL_SETBACK so flush-placed buildings automatically leave a passable corridor.
  */
-export function getBuildingCollisionRadius(b: Pick<BuildingEntity, 'buildingType' | 'buildingDef'>): number {
-  if (b.buildingType === 'farm') return 0;
+export function getBuildingCollisionRadius(
+  b: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'gateOpen' | 'wallBreached'>
+): number {
+  if (b.buildingType === 'farm' || b.wallBreached || (b.buildingType === 'gate' && b.gateOpen)) return 0;
   if (b.buildingDef.isWall) return b.buildingDef.size;
   switch (b.buildingType) {
     case 'town_center':
@@ -105,126 +107,187 @@ export function getResourceColliderRadius(
     if (subtype === 'shore_fish') return 0.95;
     if (subtype === 'berry') return 1.02;
     if (subtype === 'hunt') return 0.58;
+    if (subtype === 'boar') return 0.92;
     return 0.35; // Farm crops
   }
   return 1.05;
 }
 
-/**
- * Resolves soft unit-to-unit collisions to prevent overlapping blobs.
- */
+const COLLISION_CELL_SIZE = 8;
+
+interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
+interface CollisionIndex<T> {
+  buckets: Map<string, CollisionEntry<T>[]>;
+  entries: Map<number, CollisionEntry<T>>;
+  maxRadius: number;
+}
+
+function collisionKey(x: number, z: number): string {
+  return `${Math.floor(x / COLLISION_CELL_SIZE)}:${Math.floor(z / COLLISION_CELL_SIZE)}`;
+}
+
+function createCollisionIndex<T extends { x: number; z: number }>(
+  items: readonly T[],
+  radiusOf: (item: T) => number,
+  include: (item: T) => boolean = () => true
+): CollisionIndex<T> {
+  const result: CollisionIndex<T> = { buckets: new Map(), entries: new Map(), maxRadius: 0 };
+  items.forEach((item, index) => {
+    if (!include(item) || !Number.isFinite(item.x) || !Number.isFinite(item.z)) return;
+    const radius = radiusOf(item);
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    const key = collisionKey(item.x, item.z);
+    const entry = { item, index, radius, key };
+    const bucket = result.buckets.get(key);
+    if (bucket) bucket.push(entry);
+    else result.buckets.set(key, [entry]);
+    result.entries.set(index, entry);
+    result.maxRadius = Math.max(result.maxRadius, radius);
+  });
+  return result;
+}
+
+function moveCollisionEntry<T extends { x: number; z: number }>(
+  index: CollisionIndex<T>,
+  entry: CollisionEntry<T>
+): void {
+  const nextKey = collisionKey(entry.item.x, entry.item.z);
+  if (nextKey === entry.key) return;
+  const oldBucket = index.buckets.get(entry.key);
+  if (oldBucket) {
+    const at = oldBucket.indexOf(entry);
+    if (at >= 0) oldBucket.splice(at, 1);
+    if (oldBucket.length === 0) index.buckets.delete(entry.key);
+  }
+  entry.key = nextKey;
+  const nextBucket = index.buckets.get(nextKey);
+  if (nextBucket) nextBucket.push(entry);
+  else index.buckets.set(nextKey, [entry]);
+}
+
+function nearbyCollisionEntries<T extends { x: number; z: number }>(
+  index: CollisionIndex<T>,
+  x: number,
+  z: number,
+  reach: number
+): CollisionEntry<T>[] {
+  const minX = Math.floor((x - reach) / COLLISION_CELL_SIZE);
+  const maxX = Math.floor((x + reach) / COLLISION_CELL_SIZE);
+  const minZ = Math.floor((z - reach) / COLLISION_CELL_SIZE);
+  const maxZ = Math.floor((z + reach) / COLLISION_CELL_SIZE);
+  const found: CollisionEntry<T>[] = [];
+  for (let cx = minX; cx <= maxX; cx++) {
+    for (let cz = minZ; cz <= maxZ; cz++) {
+      const bucket = index.buckets.get(`${cx}:${cz}`);
+      if (bucket) found.push(...bucket);
+    }
+  }
+  found.sort((a, b) => a.index - b.index);
+  return found;
+}
+
+/** Resolves soft unit collisions using a spatial broad phase and exact circle tests. */
 export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.52): void {
-  const len = units.length;
-  for (let i = 0; i < len; i++) {
+  const index = createCollisionIndex(
+    units,
+    (unit) => getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
+    (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId
+  );
+
+  for (let i = 0; i < units.length; i++) {
+    const first = index.entries.get(i);
     const u1 = units[i];
-    if (u1.hp <= 0 || u1.garrisonedInBuildingId) continue;
-    const r1 = getUnitColliderRadius(u1.unitDef.category, u1.unitDef.visual.scale);
-
-    for (let j = i + 1; j < len; j++) {
-      const u2 = units[j];
+    if (!first) continue;
+    const processed = new Set<number>();
+    while (true) {
+      const next = nearbyCollisionEntries(index, u1.x, u1.z, first.radius + index.maxRadius)
+        .find((entry) => entry.index > i && !processed.has(entry.index));
+      if (!next) break;
+      processed.add(next.index);
+      const u2 = next.item;
       if (u2.hp <= 0 || u2.garrisonedInBuildingId) continue;
-      const r2 = getUnitColliderRadius(u2.unitDef.category, u2.unitDef.visual.scale);
-
       const dx = u2.x - u1.x;
       const dz = u2.z - u1.z;
       const dist = Math.hypot(dx, dz);
-      const minDist = r1 + r2;
-
-      if (dist < minDist) {
-        const overlap = minDist - dist;
-        let nx = dx;
-        let nz = dz;
-        if (dist > 0.0001) {
-          nx /= dist;
-          nz /= dist;
-        } else {
-          nx = (i % 2 === 0 ? 1 : -1) * 0.7071;
-          nz = 0.7071;
-        }
-
-        const push = overlap * 0.5 * pushStrength;
-        u1.x -= nx * push;
-        u1.z -= nz * push;
-        u2.x += nx * push;
-        u2.z += nz * push;
+      const minDist = first.radius + next.radius;
+      if (dist >= minDist) continue;
+      let nx = dx;
+      let nz = dz;
+      if (dist > 0.0001) {
+        nx /= dist;
+        nz /= dist;
+      } else {
+        nx = (i % 2 === 0 ? 1 : -1) * 0.7071;
+        nz = 0.7071;
       }
+      const push = (minDist - dist) * 0.5 * pushStrength;
+      u1.x -= nx * push;
+      u1.z -= nz * push;
+      u2.x += nx * push;
+      u2.z += nz * push;
+      moveCollisionEntry(index, first);
+      moveCollisionEntry(index, next);
     }
   }
 }
 
-/**
- * Resolves hard unit-to-building collisions so units never walk inside solid walls/structures,
- * while freely crossing farm fields and gliding cleanly along walls.
- */
+/** Resolves unit/building collisions; only nearby solid buildings reach the exact test. */
 export function resolveUnitBuildingCollisions(units: UnitEntity[], buildings: BuildingEntity[]): void {
-  for (const u of units) {
-    if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
-    const uRadius = getUnitColliderRadius(u.unitDef.category, u.unitDef.visual.scale);
-
-    for (const b of buildings) {
-      if (b.hp <= 0) continue;
-      const bRadius = getBuildingCollisionRadius(b);
-      if (bRadius <= 0) continue; // Walkable farm field
-
-      const minDist = bRadius + uRadius;
-      const dx = u.x - b.x;
-      const dz = u.z - b.z;
+  const index = createCollisionIndex(buildings, getBuildingCollisionRadius, (building) => building.hp > 0);
+  if (index.entries.size === 0) return;
+  for (const unit of units) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
+    const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
+    const processed = new Set<number>();
+    while (true) {
+      const next = nearbyCollisionEntries(index, unit.x, unit.z, unitRadius + index.maxRadius)
+        .find((entry) => !processed.has(entry.index));
+      if (!next) break;
+      processed.add(next.index);
+      const building = next.item;
+      if (building.hp <= 0) continue;
+      const minDist = next.radius + unitRadius;
+      const dx = unit.x - building.x;
+      const dz = unit.z - building.z;
       const dist = Math.hypot(dx, dz);
-
-      if (dist < minDist) {
-        let nx = dx;
-        let nz = dz;
-        if (dist > 0.0001) {
-          nx /= dist;
-          nz /= dist;
-        } else {
-          nx = 1;
-          nz = 0;
-        }
-
-        u.x = b.x + nx * (minDist + 0.02);
-        u.z = b.z + nz * (minDist + 0.02);
-      }
+      if (dist >= minDist) continue;
+      const nx = dist > 0.0001 ? dx / dist : 1;
+      const nz = dist > 0.0001 ? dz / dist : 0;
+      unit.x = building.x + nx * (minDist + 0.02);
+      unit.z = building.z + nz * (minDist + 0.02);
     }
   }
 }
 
-/**
- * Resolves hard unit-to-resource-node collisions so units cannot step inside boulders/tree trunks.
- * Farm food crops are walkable; active harvesters stop cleanly at the outer edge within gather reach.
- */
+/** Resolves unit/resource collisions while preserving farm walkability and gather reach. */
 export function resolveUnitResourceCollisions(units: UnitEntity[], nodes: ResourceNode[]): void {
-  for (const u of units) {
-    if (u.hp <= 0 || u.garrisonedInBuildingId) continue;
-    const uRadius = getUnitColliderRadius(u.unitDef.category, u.unitDef.visual.scale);
-
-    for (const n of nodes) {
-      if (n.amount <= 0) continue;
-      // Farm crops (subtype 'farm' or legacy food without berry/hunt) are walkable
-      if (n.resourceType === 'food' && (!n.subtype || n.subtype === 'farm')) continue;
-
-      const nRadius = getResourceColliderRadius(n.resourceType, n.subtype);
-      const isTargetHarvester = u.state === 'gathering' && u.targetResourceNodeId === n.id;
-      const minDist = isTargetHarvester ? nRadius + uRadius * 0.45 : nRadius + uRadius;
-
-      const dx = u.x - n.x;
-      const dz = u.z - n.z;
+  const index = createCollisionIndex(
+    nodes,
+    (node) => getResourceColliderRadius(node.resourceType, node.subtype),
+    (node) => node.amount > 0 && !(node.resourceType === 'food' && (!node.subtype || node.subtype === 'farm'))
+  );
+  if (index.entries.size === 0) return;
+  for (const unit of units) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
+    const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
+    const processed = new Set<number>();
+    while (true) {
+      const next = nearbyCollisionEntries(index, unit.x, unit.z, unitRadius + index.maxRadius)
+        .find((entry) => !processed.has(entry.index));
+      if (!next) break;
+      processed.add(next.index);
+      const node = next.item;
+      if (node.amount <= 0) continue;
+      const targetHarvester = unit.state === 'gathering' && unit.targetResourceNodeId === node.id;
+      const minDist = next.radius + (targetHarvester ? unitRadius * 0.45 : unitRadius);
+      const dx = unit.x - node.x;
+      const dz = unit.z - node.z;
       const dist = Math.hypot(dx, dz);
-
-      if (dist < minDist) {
-        let nx = dx;
-        let nz = dz;
-        if (dist > 0.0001) {
-          nx /= dist;
-          nz /= dist;
-        } else {
-          nx = 0;
-          nz = 1;
-        }
-
-        u.x = n.x + nx * (minDist + 0.02);
-        u.z = n.z + nz * (minDist + 0.02);
-      }
+      if (dist >= minDist) continue;
+      const nx = dist > 0.0001 ? dx / dist : 0;
+      const nz = dist > 0.0001 ? dz / dist : 1;
+      unit.x = node.x + nx * (minDist + 0.02);
+      unit.z = node.z + nz * (minDist + 0.02);
     }
   }
 }

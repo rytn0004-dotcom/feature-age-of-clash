@@ -1,7 +1,7 @@
 import React from 'react';
 import { Play, Volume2, VolumeX, Sliders, Plus, Trash2, User, Bot, Shield, Map as MapIcon, Gem, Sparkles } from 'lucide-react';
 import { CivilizationId, MapPresetId, MatchParticipant, ResourceRichness } from '../types/game';
-import { DEFAULT_PARTICIPANT_PALETTE } from '../game/rules';
+import { DEFAULT_PARTICIPANT_PALETTE, getTeamVisualColor } from '../game/rules';
 import { MAP_PRESETS } from '../game/mapGenerator';
 import { CIVILIZATION_LIST, getCivilizationConfig } from '../game/civilizations';
 import { DEFAULT_BUILDINGS } from '../game/mods';
@@ -17,7 +17,87 @@ interface TitleScreenProps {
   onOpenMods: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
+  isEngineReady: boolean;
 }
+
+
+const MapPreview: React.FC<{ mapId: MapPresetId; groundTint: string }> = ({ mapId, groundTint }) => (
+  <div className="relative h-[76px] overflow-hidden rounded-lg border border-white/10 bg-slate-950/70">
+    <svg viewBox="0 0 320 112" className="h-full w-full" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <defs>
+        <linearGradient id={`terrain-${mapId}`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={groundTint} />
+          <stop offset="100%" stopColor="#172b20" />
+        </linearGradient>
+        <pattern id={`grid-${mapId}`} width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#d1fae5" strokeOpacity=".08" strokeWidth="1" />
+        </pattern>
+      </defs>
+      <rect width="320" height="112" fill={`url(#terrain-${mapId})`} />
+      <rect width="320" height="112" fill={`url(#grid-${mapId})`} />
+      {mapId === 'river_valley' && (
+        <>
+          <path d="M-18 100 C48 62 82 67 132 42 S246 4 338 8" fill="none" stroke="#0c4a6e" strokeWidth="31" />
+          <path d="M-18 100 C48 62 82 67 132 42 S246 4 338 8" fill="none" stroke="#0284c7" strokeWidth="22" />
+          <path d="M-18 96 C48 58 82 63 132 38 S246 0 338 4" fill="none" stroke="#7dd3fc" strokeOpacity=".48" strokeWidth="2" />
+          <g transform="translate(156 37) rotate(-24)">
+            <rect x="-20" y="-7" width="40" height="14" rx="2" fill="#b9a17a" stroke="#f5e6c8" strokeWidth="2" />
+            <path d="M-16 -8 V8 M-7 -8 V8 M2 -8 V8 M11 -8 V8" stroke="#6b5540" strokeWidth="2" />
+          </g>
+          <path d="M18 18 Q54 4 85 18 M220 88 Q254 66 298 84" fill="none" stroke="#a3e635" strokeOpacity=".42" strokeWidth="5" />
+        </>
+      )}
+      {mapId === 'highland_basin' && (
+        <>
+          <g fill="#64734a" stroke="#a3b47b" strokeOpacity=".62" strokeWidth="2">
+            <path d="M18 14 L44 4 66 18 58 44 29 48 10 33Z" />
+            <path d="M232 10 L267 4 293 24 280 49 247 43 221 28Z" />
+            <path d="M116 73 L144 55 168 70 161 103 124 105 105 91Z" />
+            <path d="M37 78 L60 62 82 77 78 101 48 106 28 94Z" />
+          </g>
+          <g fill="none" stroke="#d9e4ad" strokeOpacity=".28" strokeWidth="1.5">
+            <path d="M4 52 Q68 18 126 47 T316 48" />
+            <path d="M0 64 Q70 30 130 59 T320 59" />
+            <path d="M0 78 Q70 44 130 73 T320 73" />
+            <path d="M0 92 Q70 58 130 87 T320 87" />
+          </g>
+          <path d="M76 108 Q100 78 131 62 T208 18" fill="none" stroke="#d6c39a" strokeWidth="6" strokeDasharray="7 5" />
+          <path d="M76 108 Q100 78 131 62 T208 18" fill="none" stroke="#f5e6c8" strokeOpacity=".7" strokeWidth="1.5" />
+        </>
+      )}
+      {mapId === 'twin_lakes' && (
+        <>
+          <g fill="#075985" stroke="#38bdf8" strokeOpacity=".8" strokeWidth="3">
+            <ellipse cx="78" cy="54" rx="47" ry="39" />
+            <ellipse cx="242" cy="54" rx="47" ry="39" />
+          </g>
+          <g fill="none" stroke="#bae6fd" strokeOpacity=".35" strokeWidth="1.4">
+            <ellipse cx="78" cy="54" rx="37" ry="29" />
+            <ellipse cx="242" cy="54" rx="37" ry="29" />
+          </g>
+          <path d="M120 48 Q160 36 200 48 L200 65 Q160 54 120 65Z" fill="#c5a777" stroke="#f5e6c8" strokeWidth="2" />
+          <path d="M120 55 H200" stroke="#6b5540" strokeWidth="2" strokeDasharray="5 4" />
+          <path d="M0 12 Q82 2 126 27 M194 88 Q246 108 320 92" fill="none" stroke="#a3e635" strokeOpacity=".5" strokeWidth="5" />
+        </>
+      )}
+      <g fill="#166534" stroke="#86efac" strokeOpacity=".65" strokeWidth="1">
+        <circle cx="26" cy="24" r="4" /><circle cx="42" cy="30" r="3" />
+        <circle cx="288" cy="22" r="4" /><circle cx="274" cy="34" r="3" />
+        <circle cx="36" cy="88" r="4" /><circle cx="286" cy="88" r="4" />
+      </g>
+      <g fill="#fbbf24" stroke="#78350f" strokeWidth="1">
+        <circle cx="92" cy="22" r="3" /><circle cx="224" cy="88" r="3" />
+      </g>
+      <g fill="#cbd5e1" stroke="#334155" strokeWidth="1">
+        <rect x="154" y="10" width="6" height="6" rx="1" /><rect x="160" y="96" width="6" height="6" rx="1" />
+      </g>
+    </svg>
+    <div className="absolute inset-x-2 bottom-1 flex items-center justify-between text-[8px] font-black tracking-[.16em] text-white/75 drop-shadow">
+      <span>TACTICAL MAP</span>
+      <span>◈ RESOURCE NODES</span>
+    </div>
+  </div>
+);
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   participants,
@@ -30,11 +110,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onOpenMods,
   isMuted,
   onToggleMute,
+  isEngineReady,
 }) => {
   const distinctTeams = new Set(participants.map((p) => p.team));
   const hasOpposingTeams = distinctTeams.size >= 2;
   const hasHumanPlayer = participants.some((p) => p.controller === 'player');
-  const canStart = hasOpposingTeams;
+  const canStart = hasOpposingTeams && isEngineReady;
 
   const [previewCivId, setPreviewCivId] = React.useState<CivilizationId>('medieval');
   const humanParticipant = participants.find((p) => p.controller === 'player') || null;
@@ -287,7 +368,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         : 'bg-slate-900/80 border-slate-800 hover:border-slate-600'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <MapPreview mapId={preset.id} groundTint={preset.groundTint} />
+                    <div className="mt-2 flex items-center justify-between">
                       <span className="text-xs font-extrabold text-white flex items-center gap-1">
                         <span>{badgeIcon}</span>
                         <span>{preset.name}</span>
@@ -314,6 +396,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 ⚠️ 請至少分配兩個不同隊伍，才能開始對戰。
               </div>
             )}
+            {hasOpposingTeams && !isEngineReady && (
+              <div data-engine-loading="true" className="px-3 py-1.5 bg-sky-950/75 border border-sky-500/40 text-sky-200 text-xs font-semibold rounded-lg">
+                ◌ 正在載入 3D 戰場與模型資源，完成後即可開始對戰。
+              </div>
+            )}
             {!hasHumanPlayer && hasOpposingTeams && (
               <div
                 data-all-ai-banner="true"
@@ -330,7 +417,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 className="group flex items-center gap-2.5 px-7 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-45 disabled:cursor-not-allowed text-slate-950 font-bold text-base rounded-xl shadow-xl shadow-amber-900/30 cursor-pointer transition-all"
               >
                 <Play className="w-5 h-5 fill-current" />
-                <span>{hasHumanPlayer ? '開始對戰 (Enter / Space)' : '開始全 AI 觀戰 (Enter / Space)'}</span>
+                <span>{!isEngineReady ? '載入戰場中…' : hasHumanPlayer ? '開始對戰 (Enter / Space)' : '開始全 AI 觀戰 (Enter / Space)'}</span>
               </button>
 
               <button
@@ -392,7 +479,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="w-3.5 h-3.5 rounded-sm shrink-0 border border-white/40 shadow"
-                      style={{ backgroundColor: p.colorCss }}
+                      style={{
+                        backgroundColor: p.colorCss,
+                        borderColor: getTeamVisualColor(p.team).colorCss,
+                        boxShadow: `0 0 0 1px ${getTeamVisualColor(p.team).colorCss}`,
+                      }}
                     />
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-white truncate">

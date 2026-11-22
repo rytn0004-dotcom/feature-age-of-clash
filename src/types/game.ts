@@ -80,7 +80,21 @@ export interface UnitDefinition {
   stats: UnitStats;
   visual: {
     color: string;
-    modelType: 'villager' | 'swordsman' | 'archer' | 'knight' | 'ninja' | 'saiyan' | 'mage' | 'golem' | 'ram' | 'cannon' | 'boat';
+    modelType:
+      | 'villager'
+      | 'swordsman'
+      | 'archer'
+      | 'knight'
+      | 'ninja'
+      | 'saiyan'
+      | 'mage'
+      | 'guardian'
+      | 'oracle'
+      | 'artificer'
+      | 'golem'
+      | 'ram'
+      | 'cannon'
+      | 'boat';
     scale?: number;
     projectileType?: 'arrow' | 'fireball' | 'ki_blast' | 'slash';
     weaponColor?: string;
@@ -119,6 +133,7 @@ export type BuildingType =
   | 'lumber_camp'
   | 'mining_camp'
   | 'wall'
+  | 'gate'
   | 'tower'
   | 'castle'
   | 'armory_forge'
@@ -196,6 +211,10 @@ export interface AiCondition {
     | 'gold'
     | 'stone'
     | 'armyCount'
+    | 'meleeCount'
+    | 'rangedCount'
+    | 'cavalryCount'
+    | 'siegeCount'
     | 'workerCount'
     | 'underAttack'
     | 'enemyProximity'
@@ -281,6 +300,9 @@ export interface UnitEntity extends EntityCommon {
   buffSpeedUntil?: number;
   buffDefenseBonus?: number;
   attackMoveGoal?: { x: number; z: number } | null;
+  /** Repeating route used by guards assigned to patrol a friendly wall chain. */
+  wallPatrolRoute?: Array<{ x: number; z: number }>;
+  wallPatrolIndex?: number;
   hitFlashTimer?: number;
   recoilTimer?: number;
   lastDamagedTime?: number;
@@ -290,6 +312,12 @@ export interface UnitEntity extends EntityCommon {
   pathCooldown?: number;
   lastProgressCheckPos?: { x: number; z: number };
   stuckAccumulator?: number;
+  /** Continuous time below the movement-progress threshold while a path goal remains active. */
+  stuckDuration?: number;
+  /** Cooldown between forced A* refreshes after a sustained movement stall. */
+  pathRecoveryCooldown?: number;
+  /** Lifetime count of forced path refreshes triggered by movement-stall detection. */
+  pathRecoveryCount?: number;
   /** Continuous assault on the same building (sapping / sustained torching) */
   siegeTargetId?: string;
   siegeChannelTime?: number;
@@ -309,6 +337,19 @@ export interface BuildingEntity extends EntityCommon {
   buildingType: BuildingType;
   buildingDef: BuildingDefinition;
   civilization?: CivilizationId;
+  /** Wall chain metadata keeps all segments from one drawing operation grouped. */
+  wallChainId?: string;
+  wallChainIndex?: number;
+  wallChainSize?: number;
+  /** World-space yaw for directional wall modules. */
+  rotationY?: number;
+  /** Gate state: open gates have no movement collision until closed again. */
+  gateOpen?: boolean;
+  /** Siege-breached wall segments remain repairable but allow units through. */
+  wallBreached?: boolean;
+  wallRepairPaid?: boolean;
+  /** Linked nearby watchtower grants this segment additional armor. */
+  wallTowerLinked?: boolean;
   isConstructed: boolean;
   buildProgress: number; // 0 to 1
   queue: string[]; // queue of unitDefIds
@@ -333,7 +374,7 @@ export interface BuildingEntity extends EntityCommon {
 export interface ResourceNode {
   id: string;
   resourceType: ResourceType;
-  subtype?: 'farm' | 'berry' | 'hunt' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
+  subtype?: 'farm' | 'berry' | 'hunt' | 'boar' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
   /** Quality tier of the resource deposit: 'rich' mid-map veins yield +35% faster gathering and larger reserves */
   nodeTier?: 'standard' | 'rich';
   x: number;
@@ -351,6 +392,13 @@ export interface ResourceNode {
   animalFleeUntil?: number;
   /** Cooldown after sustained panic or clean escape before another jittery sprint */
   animalFleeCooldown?: number;
+  /** Remains disarmed until nearby threats leave the re-arm radius; prevents endless flee refreshes. */
+  animalPanicSuppressed?: boolean;
+  /** Aggressor identity and leash time for dangerous wildlife such as wild boars. */
+  animalAggroTargetId?: string;
+  animalAggroUntil?: number;
+  /** Simulation timestamp when the boar may attack again. */
+  animalAttackCooldown?: number;
   /** Calm wander state machine timer & current target heading */
   animalWanderTimer?: number;
   animalWanderAngle?: number;
