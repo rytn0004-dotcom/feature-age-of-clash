@@ -716,6 +716,7 @@ export const HUD: React.FC<HUDProps> = ({
             title={`糧食產能：+${observedTelemetry.incomePerMin.food}/分 · 採糧工人 ${observedTelemetry.workersByResource.food} 名`}
           >
             <span className="text-xs">🌾</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">糧</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">糧食</span>
             <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-amber-400 tabular-nums">
               {Math.floor(observedRes.food)}
@@ -733,6 +734,7 @@ export const HUD: React.FC<HUDProps> = ({
             title={`木材產能：+${observedTelemetry.incomePerMin.wood}/分 · 伐木工人 ${observedTelemetry.workersByResource.wood} 名`}
           >
             <span className="text-xs">🪵</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">木</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">木材</span>
             <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-emerald-400 tabular-nums">
               {Math.floor(observedRes.wood)}
@@ -750,6 +752,7 @@ export const HUD: React.FC<HUDProps> = ({
             title={`黃金產能：+${observedTelemetry.incomePerMin.gold}/分 · 採金工人 ${observedTelemetry.workersByResource.gold} 名`}
           >
             <span className="text-xs">🪙</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">金</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">黃金</span>
             <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-yellow-300 tabular-nums">
               {Math.floor(observedRes.gold)}
@@ -767,6 +770,7 @@ export const HUD: React.FC<HUDProps> = ({
             title={`石料產能：+${observedTelemetry.incomePerMin.stone}/分 · 採石工人 ${observedTelemetry.workersByResource.stone} 名`}
           >
             <span className="text-xs">🪨</span>
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">石</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">石料</span>
             <span className="min-w-0 text-[11px] sm:text-xs font-extrabold text-slate-300 tabular-nums">
               {Math.floor(observedRes.stone)}
@@ -794,6 +798,7 @@ export const HUD: React.FC<HUDProps> = ({
             }
           >
             <Users className={`w-3.5 h-3.5 ${observedPop >= observedMaxPop ? 'text-rose-400' : 'text-blue-400'}`} />
+            <span className="hidden min-[360px]:inline lg:hidden text-[10px] font-bold text-slate-300">人</span>
             <span className="hidden lg:inline text-[11px] font-bold text-slate-300">人口</span>
             <span
               className={`text-xs font-extrabold tabular-nums ${
@@ -889,7 +894,8 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
 
         {/* Top-Right Utility Cluster */}
-        <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto shrink-0 whitespace-nowrap sm:justify-end">
+        <div data-top-utility-bar="true"
+          className="min-w-0 w-full flex flex-wrap items-center justify-start gap-1.5 pointer-events-auto whitespace-nowrap sm:w-auto sm:justify-end">
           {/* Game Speed Split Control + Arrow Dropdown */}
           <div ref={speedMenuRef} className="relative flex items-center shrink-0">
             <div className="flex items-center bg-slate-900/90 border border-slate-700 rounded-lg overflow-hidden shadow">
