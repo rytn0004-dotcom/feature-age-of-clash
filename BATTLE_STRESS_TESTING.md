@@ -26,12 +26,12 @@
 
 ## 瀏覽器自動化回歸
 
-CI 的 `browser-stress` job 使用 headless Chromium 和 Vite 開發模式，依序啟動 100、200、400 單位的固定 seed 情境。腳本位於 `scripts/battle-stress-browser.mjs`，可用 `bun run test:browser` 執行。
+CI 的 `browser-stress` job 使用 headless Chromium 和 Vite 開發模式，依序啟動 100、200、400 單位的固定 seed 情境。壓測情境建立時會自動開啟 F3 監視器，從第一波單位尋路開始收集資料；每個規模至少累積 8 個 F3 樣本。腳本位於 `scripts/battle-stress-browser.mjs`，可用 `bun run test:browser` 執行。
 
 自動檢查會讀取執行中 `window.__rtsEngine` 的真實狀態，確認：
 - 遊戲成功進入 playing、單位實際數量符合 100/200/400、四個參與勢力全為 AI。
 - seed 與地圖設定和測試參數一致。
-- F3 監視器成功產生樣本，模擬時鐘有前進，FPS、P95 frame time、最大 hitch、Draw Calls 和 Triangles 都是有效值。
+- F3 監視器成功產生至少 8 個樣本，模擬時鐘有前進，AI 心跳與 AI 的 A* 路徑搜尋均有活動，FPS、P95 frame time、最大 hitch、Simulation/Render CPU 耗時、Draw Calls 和 Triangles 都是有效值。
 - 量測期間沒有未捕捉的 JavaScript 例外。
 
 CI 會將 `artifacts/battle-stress-browser-report.json` 上傳為 workflow artifact，保留瀏覽器版本、各單位規模、FPS/P95/hitch、Simulation/Render CPU 平均與最大耗時、AI 決策耗時、A* 搜尋次數與耗時、Draw Calls、Triangles 及 renderer 類型，方便不同提交之間比較。可使用 `BATTLE_STRESS_SCENARIOS`、`BATTLE_STRESS_SEED`、`BATTLE_STRESS_MAP` 覆寫執行情境；`CHROME_BIN` 可指定 Chrome 執行檔。
@@ -57,4 +57,4 @@ CI 會將 `artifacts/battle-stress-browser-report.json` 上傳為 workflow artif
 
 ## 本次回歸測試
 
-`npm test` 會執行規則、壓測計畫、效能 CSV 與移動停滯測試，涵蓋規模限制、固定 seed 可重現性、文明/AI 人格/兵種角色覆蓋、座標有效性、非法 seed 防護、移動停滯門檻/冷卻/恢復條件、長時間隨機序列不變量、AI 決策耗時與 A* 搜尋統計、山羌逃跑再武裝遲滯、野豬追擊受阻與死亡保護，以及 AI 診斷欄位、CSV 欄位順序、跳脫與試算表公式注入防護。
+`bun run test` 會執行規則、壓測計畫、效能 CSV 與移動停滯測試，涵蓋規模限制、固定 seed 可重現性、文明/AI 人格/兵種角色覆蓋、座標有效性、非法 seed 防護、移動停滯門檻/冷卻/恢復條件、長時間隨機序列不變量、AI 決策耗時與 A* 搜尋統計、山羌逃跑再武裝遲滯、野豬追擊受阻與死亡保護，以及 AI 診斷欄位、CSV 欄位順序、跳脫與試算表公式注入防護。
