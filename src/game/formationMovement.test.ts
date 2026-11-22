@@ -10,6 +10,7 @@ import {
   getFormationTacticalSlot,
   measureFormationRegroup,
   shouldRefreshFormationTacticalSlot,
+  shouldAiCavalryDisengage,
 } from './formationMovement';
 
 const origin = { x: 0, z: 0 };
@@ -261,4 +262,65 @@ test('combat tactics: workers and non-member units never receive tactical combat
     }),
     null,
   );
+});
+
+
+test('combat tactics: mixed infantry and ranged squads compact the frontline into a shield wall', () => {
+  const mixedMembers = [
+    { id: 'inf-01', category: 'melee' as const },
+    { id: 'inf-02', category: 'melee' as const },
+    { id: 'archer-01', category: 'ranged' as const },
+  ];
+  const first = getFormationTacticalSlot({
+    unitId: 'inf-01',
+    members: mixedMembers,
+    category: 'melee',
+    groupOrigin: { x: 0, z: 0 },
+    memberPosition: { x: 0, z: 0 },
+    target: { x: 20, z: 0, radius: 0.45 },
+    attackRange: 1.8,
+    unitRadius: 0.4,
+  });
+  const second = getFormationTacticalSlot({
+    unitId: 'inf-02',
+    members: mixedMembers,
+    category: 'melee',
+    groupOrigin: { x: 0, z: 0 },
+    memberPosition: { x: 0, z: 0 },
+    target: { x: 20, z: 0, radius: 0.45 },
+    attackRange: 1.8,
+    unitRadius: 0.4,
+  });
+  assert.ok(first && second);
+  assert.equal(first.shieldWall, true);
+  assert.equal(second.shieldWall, true);
+  assert.ok(Math.abs(first.lateralOffset - second.lateralOffset) <= 1.051);
+
+  const unsupported = getFormationTacticalSlot({
+    unitId: 'inf-01',
+    members: mixedMembers.slice(0, 2),
+    category: 'melee',
+    groupOrigin: { x: 0, z: 0 },
+    memberPosition: { x: 0, z: 0 },
+    target: { x: 20, z: 0, radius: 0.45 },
+    attackRange: 1.8,
+    unitRadius: 0.4,
+  });
+  assert.equal(unsupported?.shieldWall, false, 'the compact shield wall is only formed to screen ranged allies');
+});
+
+test('AI cavalry: disengages only when wounded and locally outnumbered', () => {
+  const base = {
+    hp: 45,
+    maxHp: 100,
+    nearbyEnemyCount: 3,
+    nearbyAllyCount: 1,
+  };
+  assert.equal(shouldAiCavalryDisengage(base), true);
+  assert.equal(shouldAiCavalryDisengage({ ...base, nearbyEnemyCount: 1 }), false);
+  assert.equal(shouldAiCavalryDisengage({ ...base, nearbyEnemyCount: 2, nearbyAllyCount: 2 }), false);
+  assert.equal(shouldAiCavalryDisengage({ ...base, hp: 90 }), false);
+  assert.equal(shouldAiCavalryDisengage({ ...base, personality: 'defensive' }), true);
+  assert.equal(shouldAiCavalryDisengage({ ...base, personality: 'hard' }), false);
+  assert.equal(shouldAiCavalryDisengage({ ...base, maxHp: 0 }), false);
 });
