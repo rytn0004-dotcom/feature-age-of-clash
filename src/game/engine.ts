@@ -44,6 +44,10 @@ import {
   getBuildableTypesForCiv,
   getCivilizationConfig,
   getCivilizationBuildSpeedMultiplier,
+  getCappedProductionSpeedMultiplier,
+  getEffectiveProductionDuration,
+  getEffectiveUnitTrainingDuration,
+  PRODUCTION_TIME_SCALE,
   getLandmarkTrainingSpeedMultiplier,
   isBuildingBuildableForCiv,
   getLevelTitle,
@@ -1630,9 +1634,8 @@ export class RtsEngine {
 
     const repairingWall =
       !!building.wallBreached && !!building.buildingDef.isWall && building.isConstructed;
-    const constructionSpeedMultiplier = getCivilizationBuildSpeedMultiplier(
-      this.getCivilizationForFaction(building.faction),
-      this.activeMods
+    const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
+      getCivilizationBuildSpeedMultiplier(this.getCivilizationForFaction(building.faction), this.activeMods)
     );
     const buildingRadius = Math.max(
       getBuildingCollisionRadius(building),
@@ -1657,7 +1660,7 @@ export class RtsEngine {
     if (repairingWall && constructionWorkerMultiplier > 0) {
       const repairRate =
         (building.maxHp / (building.buildingDef.buildTime * 0.65)) *
-        constructionSpeedMultiplier *
+        (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
         constructionWorkerMultiplier;
       constructionRemainingSeconds =
         repairRate > 0 ? Math.max(0, building.maxHp - building.hp) / repairRate : null;
@@ -1679,7 +1682,7 @@ export class RtsEngine {
           forge.buildingType === 'armory_forge' &&
           getDistance(building.x, building.z, forge.x, forge.z) <= 16
       );
-    const productionSpeedMultiplier = hasNearbyForge ? 1.25 : 1;
+    const productionSpeedMultiplier = getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1);
     let researchRemainingSeconds: number | null = null;
     if (building.activeTechId) {
       const tech = findTechDef(building.activeTechId);
@@ -1701,9 +1704,12 @@ export class RtsEngine {
         if (!unitDef) return;
         const techMultiplier = getTrainingTimeMultiplier(researched, unitDef.category);
         const landmarkMultiplier = getLandmarkTrainingSpeedMultiplier(landmarks, unitDef.category);
-        const duration =
-          Math.max(2, unitDef.stats.trainTime * techMultiplier) /
-          (productionSpeedMultiplier * landmarkMultiplier);
+        const duration = getEffectiveUnitTrainingDuration(
+          unitDef.stats.trainTime,
+          techMultiplier,
+          productionSpeedMultiplier,
+          landmarkMultiplier
+        );
         const remaining = index === 0
           ? duration * (1 - Math.max(0, Math.min(1, building.queueProgress)))
           : duration;
@@ -1721,6 +1727,67 @@ export class RtsEngine {
       trainingRemainingSeconds,
       queueRemainingSeconds,
     };
+  }
+
+  /** One-builder construction estimate used by build-menu hover tooltips. */
+  public getBuildingConstructionDuration(buildingType: BuildingType, faction: FactionId): number {
+    const definition = DEFAULT_BUILDINGS[buildingType];
+    const civilizationSpeed = getCivilizationBuildSpeedMultiplier(
+      this.getCivilizationForFaction(faction),
+      this.activeMods
+    );
+    return getEffectiveProductionDuration(
+      definition.buildTime * 0.9,
+      getCappedProductionSpeedMultiplier(civilizationSpeed)
+    );
+  }
+
+  /** Exact unit queue duration using the same live bonuses as the production simulation. */
+  public getUnitTrainingDuration(buildingId: string, unitDefId: string): number | null {
+    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    if (!building) return null;
+    const unit = this.findUnitDef(unitDefId, building.faction);
+    if (!unit) return null;
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    const technologyTimeMultiplier = getTrainingTimeMultiplier(
+      this.getResearchedTechs(building.faction),
+      unit.category
+    );
+    const landmarkSpeed = getLandmarkTrainingSpeedMultiplier(
+      this.landmarksByFaction[building.faction] || [],
+      unit.category
+    );
+    return getEffectiveUnitTrainingDuration(
+      unit.stats.trainTime,
+      technologyTimeMultiplier,
+      hasNearbyForge ? 1.25 : 1,
+      landmarkSpeed
+    );
+  }
+
+  /** Current research duration; the Royal Foundry aura is subject to the shared speed ceiling. */
+  public getTechResearchDuration(buildingId: string, techId: string): number | null {
+    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    const tech = findTechDef(techId);
+    if (!building || !tech) return null;
+    const hasNearbyForge =
+      building.buildingType !== 'armory_forge' &&
+      this.buildings.some(
+        (forge) =>
+          forge.faction === building.faction &&
+          forge.isConstructed &&
+          forge.buildingType === 'armory_forge' &&
+          getDistance(building.x, building.z, forge.x, forge.z) <= 16
+      );
+    return tech.researchTime / getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1);
   }
 
   public getAvailableUnitDefs(faction: FactionId): UnitDefinition[] {
@@ -6346,9 +6413,8 @@ export class RtsEngine {
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
-      const constructionSpeedMultiplier = getCivilizationBuildSpeedMultiplier(
-        this.getCivilizationForFaction(bldg.faction),
-        this.activeMods
+      const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
+        getCivilizationBuildSpeedMultiplier(this.getCivilizationForFaction(bldg.faction), this.activeMods)
       );
       const activeBuilderCount = this.units.filter(
         (worker) =>
@@ -6365,12 +6431,13 @@ export class RtsEngine {
       if (repairingWall) {
         const repairSpeed =
           (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
-          constructionSpeedMultiplier *
+          (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
           perBuilderWorkShare;
         bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
       } else {
         const buildSpeed =
-          (constructionSpeedMultiplier * perBuilderWorkShare) / bldg.buildingDef.buildTime;
+          (constructionSpeedMultiplier * perBuilderWorkShare) /
+          (bldg.buildingDef.buildTime * PRODUCTION_TIME_SCALE);
         bldg.buildProgress += buildSpeed * dt;
         bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
       }
@@ -7683,7 +7750,7 @@ export class RtsEngine {
             f.buildingType === 'armory_forge' &&
             getDistance(bldg.x, bldg.z, f.x, f.z) <= 16
         );
-      const speedBonusMult = hasNearbyForge ? 1.25 : 1.0;
+      const speedBonusMult = getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1.0);
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
@@ -7717,10 +7784,13 @@ export class RtsEngine {
             this.landmarksByFaction[bldg.faction] || [],
             uDef.category
           );
-          const speed =
-            (speedBonusMult * landmarkTrainingSpeed) /
-            Math.max(2, uDef.stats.trainTime * trainTimeMult);
-          bldg.queueProgress += speed * dt;
+          const trainingDuration = getEffectiveUnitTrainingDuration(
+            uDef.stats.trainTime,
+            trainTimeMult,
+            speedBonusMult,
+            landmarkTrainingSpeed
+          );
+          bldg.queueProgress += dt / trainingDuration;
 
           const pop = this.getPopulationStats(bldg.faction);
           if (bldg.queueProgress >= 1 && pop.used < pop.max) {
