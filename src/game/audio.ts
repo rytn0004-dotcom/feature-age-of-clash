@@ -318,17 +318,63 @@ class SoundManager {
     });
   }
 
-  // Event-only policy: suppress repetitive per-swing / per-chop / per-mine / per-hammer noise
-  public playSwordHit(_gainScale = 1) {
-    return;
+  // Combat sounds are distance-scaled and globally rate-limited so large battles
+  // remain readable without turning every unit swing into constant audio noise.
+  public playSwordHit(gainScale = 1) {
+    const gain = Math.max(0, Math.min(1, Number.isFinite(gainScale) ? gainScale : 0));
+    if (gain < 0.06 || !this.ensureContext() || !this.canTrigger('combatSword', 95)) return;
+    this.scheduleFilteredNoise({
+      volume: 0.065 * gain,
+      duration: 0.11,
+      startFreq: 1700,
+      endFreq: 300,
+      filterType: 'lowpass',
+    });
+    this.scheduleTone({
+      type: 'triangle',
+      startFreq: 142,
+      endFreq: 68,
+      volume: 0.055 * gain,
+      duration: 0.14,
+      filterFreq: 460,
+      jitterPct: 0.1,
+    });
   }
 
-  public playArrowShot(_gainScale = 1) {
-    return;
+  public playArrowShot(gainScale = 1) {
+    const gain = Math.max(0, Math.min(1, Number.isFinite(gainScale) ? gainScale : 0));
+    if (gain < 0.06 || !this.ensureContext() || !this.canTrigger('combatArrow', 125)) return;
+    this.scheduleFilteredNoise({
+      volume: 0.042 * gain,
+      duration: 0.075,
+      startFreq: 3400,
+      endFreq: 900,
+      filterType: 'bandpass',
+    });
+    this.scheduleTone({
+      type: 'triangle',
+      startFreq: 620,
+      endFreq: 320,
+      volume: 0.025 * gain,
+      duration: 0.075,
+      filterFreq: 2400,
+      jitterPct: 0.08,
+    });
   }
 
-  public playMagicShot(_gainScale = 1) {
-    return;
+  public playMagicShot(gainScale = 1) {
+    const gain = Math.max(0, Math.min(1, Number.isFinite(gainScale) ? gainScale : 0));
+    if (gain < 0.06 || !this.ensureContext() || !this.canTrigger('magicShot', 260)) return;
+    [523.25, 783.99, 1046.5].forEach((frequency, index) => {
+      this.scheduleTone({
+        type: 'sine',
+        startFreq: frequency,
+        volume: 0.038 * gain,
+        duration: 0.17,
+        delay: index * 0.052,
+        jitterPct: 0.025,
+      });
+    });
   }
 
   public playChopWood(_gainScale = 1) {
@@ -343,8 +389,25 @@ class SoundManager {
     return;
   }
 
-  public playUnitKo(_gainScale = 1) {
-    return;
+  public playUnitKo(gainScale = 1) {
+    const gain = Math.max(0, Math.min(1, Number.isFinite(gainScale) ? gainScale : 0));
+    if (gain < 0.06 || !this.ensureContext() || !this.canTrigger('unitKo', 160)) return;
+    this.scheduleFilteredNoise({
+      volume: 0.095 * gain,
+      duration: 0.24,
+      startFreq: 620,
+      endFreq: 90,
+      filterType: 'lowpass',
+    });
+    this.scheduleTone({
+      type: 'triangle',
+      startFreq: 98,
+      endFreq: 38,
+      volume: 0.065 * gain,
+      duration: 0.28,
+      filterFreq: 240,
+      jitterPct: 0.06,
+    });
   }
 
   public playBuildingCollapse(gainScale = 1) {
