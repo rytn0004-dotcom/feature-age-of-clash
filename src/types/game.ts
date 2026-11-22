@@ -305,6 +305,11 @@ export interface UnitEntity extends EntityCommon {
   /** Shared order vector; all living members of a squad use the same origin and destination. */
   formationOrderOrigin?: { x: number; z: number };
   formationOrderGoal?: { x: number; z: number };
+  /** Cached target and role-based point used to avoid retarget jitter during combat. */
+  formationTacticalTargetId?: string;
+  formationTacticalAnchor?: { x: number; z: number };
+  formationTacticalGoal?: { x: number; z: number };
+  formationTacticalRole?: 'frontline' | 'backline' | 'flank' | 'siege';
   /** Repeating route used by guards assigned to patrol a friendly wall chain. */
   wallPatrolRoute?: Array<{ x: number; z: number }>;
   wallPatrolIndex?: number;
