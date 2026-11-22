@@ -2474,6 +2474,19 @@ test('field engineering: ram assembly uses one shared Age II, research, infantry
 });
 
 
+test('field-assembled battering rams use the shared 1.12 production time scale', async () => {
+  const {
+    FIELD_RAM_ASSEMBLY_BASE_DURATION,
+    FIELD_RAM_ASSEMBLY_DURATION,
+    estimateFieldRamAssemblyDuration,
+  } = await import('./rules');
+  assert.equal(FIELD_RAM_ASSEMBLY_BASE_DURATION, 18);
+  assert.equal(FIELD_RAM_ASSEMBLY_DURATION, 20.16);
+  assert.equal(estimateFieldRamAssemblyDuration(4), 20.16);
+  assert.equal(estimateFieldRamAssemblyDuration(3), 26.88);
+  assert.equal(estimateFieldRamAssemblyDuration(2), null);
+});
+
 test('AI siege: all personalities field-assemble battering rams instead of training them from buildings', async () => {
   const { DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } = await import('./mods');
   const allPersonalityRules = [
