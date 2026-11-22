@@ -279,6 +279,14 @@ interface FieldSiegeProject {
   progressRing: THREE.Mesh;
 }
 
+interface AiEconomyFlowState {
+  sampledAt: number;
+  resources: Resources;
+  netRates: Partial<Record<ResourceType, number>>;
+}
+
+const AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS = 12;
+const AI_WORKER_REBALANCE_INTERVAL_SECONDS = 6;
 const MAX_WALL_CHAIN_SEGMENTS = 120;
 const MAX_PERFORMANCE_SAMPLES = 3600;
 
@@ -319,6 +327,8 @@ export class RtsEngine {
   public humanTeam: number = 1;
   public observedFactionId: FactionId = 'player';
   public resourcesByFaction: Record<string, Resources> = {};
+  private aiEconomyFlowByFaction = new Map<string, AiEconomyFlowState>();
+  private aiWorkerRebalanceReadyAt = new Map<string, number>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public enemyResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public activeMods: GameMod[] = JSON.parse(JSON.stringify(INITIAL_MODS));
@@ -1119,6 +1129,8 @@ export class RtsEngine {
     seed?: number
   ) {
     this.battleStressInfo = null;
+    this.aiEconomyFlowByFaction.clear();
+    this.aiWorkerRebalanceReadyAt.clear();
     this.cancelPlacement();
     if (mapPreset) this.mapPreset = mapPreset;
     if (resourceRichness) this.resourceRichness = resourceRichness;
@@ -9082,11 +9094,38 @@ export class RtsEngine {
       // 2. Dynamic Worker Allocation & Rebalancing.
       // Builders are excluded from the gatherer target; they are never reassigned from construction.
       const aiEconomicWorkers = aiActiveWorkers.filter((worker) => worker.state !== 'building');
+
+      // Sample net inventory flow over a stable window so the allocation reacts
+      // to actual gains/spending, not just a single volatile stock snapshot.
+      const economySampleTime = this.stats.gameDuration;
+      let economyFlow = this.aiEconomyFlowByFaction.get(aiId);
+      if (!economyFlow || economySampleTime < economyFlow.sampledAt) {
+        economyFlow = {
+          sampledAt: economySampleTime,
+          resources: { ...aiRes },
+          netRates: {},
+        };
+        this.aiEconomyFlowByFaction.set(aiId, economyFlow);
+      } else if (economySampleTime - economyFlow.sampledAt >= AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS) {
+        const elapsedSeconds = economySampleTime - economyFlow.sampledAt;
+        const netRates: Partial<Record<ResourceType, number>> = {};
+        for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+          netRates[type] = ((aiRes[type] - economyFlow.resources[type]) / elapsedSeconds) * 60;
+        }
+        economyFlow = {
+          sampledAt: economySampleTime,
+          resources: { ...aiRes },
+          netRates,
+        };
+        this.aiEconomyFlowByFaction.set(aiId, economyFlow);
+      }
+
       const desiredAlloc = computeAiWorkerAllocation(
         aiRes,
         aiEconomicWorkers.length,
         gatherFocus,
-        aiAge
+        aiAge,
+        economyFlow.netRates
       );
       const activeCounts: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
       const resourceNodeById = new Map<string, ResourceNode>(
@@ -9110,19 +9149,20 @@ export class RtsEngine {
       }
 
       const landNodes = this.resourceNodes.filter((rn) => rn.subtype !== 'deep_fish');
-      const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType) => {
+      const assignWorkerToType = (worker: UnitEntity, prefType: ResourceType): boolean => {
         const preferredRange = prefType === 'food' ? 38 : 36;
         const node =
           findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, preferredRange) ||
           findBalancedResourceNode(anchorX, anchorZ, landNodes, prefType, nodeWorkerCounts, 54) ||
           findBalancedResourceNode(worker.x, worker.z, landNodes, undefined, nodeWorkerCounts);
-        if (node) {
-          worker.targetResourceNodeId = node.id;
-          worker.waypoints = undefined;
-          worker.state = 'gathering';
-          activeCounts[node.resourceType]++;
-          nodeWorkerCounts.set(node.id, (nodeWorkerCounts.get(node.id) || 0) + 1);
-        }
+        if (!node) return false;
+
+        worker.targetResourceNodeId = node.id;
+        worker.waypoints = undefined;
+        worker.state = 'gathering';
+        activeCounts[node.resourceType]++;
+        nodeWorkerCounts.set(node.id, (nodeWorkerCounts.get(node.id) || 0) + 1);
+        return true;
       };
 
       const resourcePriorityOrder: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -9167,19 +9207,29 @@ export class RtsEngine {
       // Gradually rebalance one gatherer per decision when a resource has a clear surplus
       // and another has a clear deficit. Carrying workers and builders keep their current task.
       const workerReassignment = selectAiWorkerReassignment(activeCounts, desiredAlloc);
-      if (workerReassignment) {
+      const rebalanceReadyAt = this.aiWorkerRebalanceReadyAt.get(aiId) || 0;
+      if (workerReassignment && this.stats.gameDuration >= rebalanceReadyAt) {
         const reassignable = aiEconomicWorkers.find((worker) => {
           if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
           const node = resourceNodeById.get(worker.targetResourceNodeId);
           return node?.resourceType === workerReassignment.from;
         });
-        if (reassignable) {
+        if (reassignable && reassignable.targetResourceNodeId) {
+          const previousNodeId = reassignable.targetResourceNodeId;
           activeCounts[workerReassignment.from]--;
-          if (reassignable.targetResourceNodeId) {
-            const previousCount = nodeWorkerCounts.get(reassignable.targetResourceNodeId) || 0;
-            nodeWorkerCounts.set(reassignable.targetResourceNodeId, Math.max(0, previousCount - 1));
+          const previousCount = nodeWorkerCounts.get(previousNodeId) || 0;
+          nodeWorkerCounts.set(previousNodeId, Math.max(0, previousCount - 1));
+
+          if (assignWorkerToType(reassignable, workerReassignment.to)) {
+            this.aiWorkerRebalanceReadyAt.set(
+              aiId,
+              this.stats.gameDuration + AI_WORKER_REBALANCE_INTERVAL_SECONDS
+            );
+          } else {
+            // A failed reassignment must leave the old gatherer / node counts intact.
+            activeCounts[workerReassignment.from]++;
+            nodeWorkerCounts.set(previousNodeId, previousCount);
           }
-          assignWorkerToType(reassignable, workerReassignment.to);
         }
       }
 
