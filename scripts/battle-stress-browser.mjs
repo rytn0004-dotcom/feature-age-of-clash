@@ -152,6 +152,7 @@ async function main() {
       telemetry.triangles = Math.floor(telemetry.triangles);
       assert.ok(telemetry.aiHeartbeat > 0, "AI decision heartbeat did not advance during the browser battle.");
       assert.ok(telemetry.aStarSearches > 0, "No A* path searches were captured in the stress scenario.");
+      assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
       report.scenarios.push({ count, initial, telemetry, exceptionCount: exceptions.length });
