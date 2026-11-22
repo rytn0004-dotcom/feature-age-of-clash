@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   canAfford,
   canAssembleFieldRam,
+  estimateConstructionTimeRemaining,
+  getConstructionWorkerMultiplier,
   FIELD_RAM_COST,
   FIELD_RAM_TECH_ID,
   isAgeUnlocked,
@@ -3186,4 +3188,28 @@ test('production timing bonuses are applied only to their intended civilization 
   assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'worker'), 1);
   assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz'], 'siege'), 1);
   assert.equal(getTrainingTimeMultiplier(['shared_doctrine_blitz']), 0.75);
+});
+
+
+test('cooperative construction uses deterministic diminishing returns and a soft cap', () => {
+  assert.equal(getConstructionWorkerMultiplier(0), 0);
+  assert.equal(getConstructionWorkerMultiplier(1), 1);
+  assert.equal(getConstructionWorkerMultiplier(2), 1.65);
+  assert.equal(getConstructionWorkerMultiplier(3), 2.1);
+  assert.equal(getConstructionWorkerMultiplier(4), 2.4);
+  assert.equal(getConstructionWorkerMultiplier(8), 2.91);
+  assert.equal(getConstructionWorkerMultiplier(20), 2.91);
+  assert.equal(getConstructionWorkerMultiplier(-2), 0);
+  assert.equal(getConstructionWorkerMultiplier(Number.NaN), 0);
+});
+
+test('construction ETA shares the live builder and civilization speed formula', () => {
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1), 36);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 2), 36 / 1.65);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4), 15);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 4, 1.05), 15 / 1.05);
+  assert.equal(estimateConstructionTimeRemaining(40, 1, 4), 0);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 0), null);
+  assert.equal(estimateConstructionTimeRemaining(0, 0.1, 1), null);
+  assert.equal(estimateConstructionTimeRemaining(40, 0.1, 1, 0), null);
 });
