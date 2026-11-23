@@ -42,6 +42,7 @@ test('building scaffold lifecycle: repeated completion cleanup is safe', () => {
 test('building scaffold lifecycle: completed building root removes its named scaffold group', () => {
   const building = new Group();
   const scaffold = new Group();
+  scaffold.name = 'scaffoldGroup';
   const geometry = new BoxGeometry(1, 1, 1);
   let disposed = false;
   const dispose = geometry.dispose.bind(geometry);
