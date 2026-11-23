@@ -10143,8 +10143,8 @@ export class RtsEngine {
             w.state = 'gathering';
             activeCounts.gold++;
             nodeWorkerCounts.set(
-              forwardGold.n.id,
-              (nodeWorkerCounts.get(forwardGold.n.id) || 0) + 1
+              forwardGold.node.id,
+              (nodeWorkerCounts.get(forwardGold.node.id) || 0) + 1
             );
             continue;
           }
