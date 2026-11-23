@@ -22,6 +22,15 @@ export type UnitPortraitKey =
   | 'fantasy_mage'
   | 'fantasy_treant'
   | 'fantasy_goblin_sapper'
+  | 'mongol_herder'
+  | 'mongol_foot_guard'
+  | 'mongol_lancer'
+  | 'mongol_mangudai'
+  | 'mongol_keshik'
+  | 'mongol_shaman'
+  | 'fallback_horse_archer'
+  | 'fallback_keshik'
+  | 'fallback_shaman'
   | 'fallback_villager'
   | 'fallback_swordsman'
   | 'fallback_archer'
@@ -193,6 +202,12 @@ const BUILTIN_PORTRAIT_SPECS: Record<string, UnitPortraitSpec> = {
     bgFrom: '#365314',
     bgTo: '#18181b',
   },
+  mongol_herder: { key: 'mongol_herder', label: '草原牧民', accentHex: '#d97706', bgFrom: '#78350f', bgTo: '#1c1917' },
+  mongol_foot_guard: { key: 'mongol_foot_guard', label: '蒙古刀盾步兵', accentHex: '#d97706', bgFrom: '#78350f', bgTo: '#1c1917' },
+  mongol_lancer: { key: 'mongol_lancer', label: '草原長槍騎兵', accentHex: '#0f766e', bgFrom: '#134e4a', bgTo: '#0f172a' },
+  mongol_mangudai: { key: 'mongol_mangudai', label: '蒙古突騎', accentHex: '#f59e0b', bgFrom: '#78350f', bgTo: '#1c1917' },
+  mongol_keshik: { key: 'mongol_keshik', label: '怯薛皇衛', accentHex: '#fbbf24', bgFrom: '#78350f', bgTo: '#0f172a' },
+  mongol_shaman: { key: 'mongol_shaman', label: '長生天薩滿', accentHex: '#38bdf8', bgFrom: '#0c4a6e', bgTo: '#0f172a' },
 };
 
 const MODEL_FALLBACK_SPECS: Record<
@@ -290,6 +305,9 @@ const MODEL_FALLBACK_SPECS: Record<
     bgFrom: '#431407',
     bgTo: '#0f172a',
   },
+  horse_archer: { key: 'fallback_horse_archer', label: '草原騎射兵', accentHex: '#f59e0b', bgFrom: '#78350f', bgTo: '#0f172a' },
+  keshik: { key: 'fallback_keshik', label: '重裝怯薛騎兵', accentHex: '#fbbf24', bgFrom: '#78350f', bgTo: '#0f172a' },
+  shaman: { key: 'fallback_shaman', label: '薩滿祭司', accentHex: '#38bdf8', bgFrom: '#0c4a6e', bgTo: '#0f172a' },
   boat: {
     key: 'fallback_boat',
     label: '海上船艦',
