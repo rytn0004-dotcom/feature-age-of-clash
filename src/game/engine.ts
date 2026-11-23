@@ -9543,6 +9543,7 @@ export class RtsEngine {
 
   private evaluateAiLogic() {
     const unitsByFaction = groupEntitiesByFaction(this.units);
+    const buildingsByFaction = groupEntitiesByFaction(this.buildings);
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
@@ -9571,7 +9572,7 @@ export class RtsEngine {
       );
       const aiActiveWorkers = aiWorkers.filter((u) => !u.garrisonedInBuildingId);
       const aiArmy = aiUnits.filter((u) => u.unitDef.category !== 'worker' && !u.garrisonedInBuildingId);
-      const aiBuildings = this.buildings.filter((b) => b.faction === aiId && b.hp > 0);
+      const aiBuildings = (buildingsByFaction.get(aiId) || []).filter((building) => building.hp > 0);
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
       const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
@@ -9894,12 +9895,11 @@ export class RtsEngine {
               else if (node?.subtype === 'hunt' || node?.subtype === 'berry') score += 25;
               else score += 15;
             }
-            const nearTheirTc = this.buildings.some(
-              (b) =>
-                b.buildingType === 'town_center' &&
-                b.hp > 0 &&
-                b.faction === ew.faction &&
-                getDistance(b.x, b.z, ew.x, ew.z) < 14
+            const nearTheirTc = (buildingsByFaction.get(ew.faction) || []).some(
+              (building) =>
+                building.buildingType === 'town_center' &&
+                building.hp > 0 &&
+                getDistance(building.x, building.z, ew.x, ew.z) < 14
             );
             if (nearTheirTc) score -= 25;
             else score += 20;
@@ -9910,12 +9910,11 @@ export class RtsEngine {
           for (const b of aiHostileBuildings) {
             if (b.hp <= 0 || !b.isConstructed) continue;
             if (b.buildingType !== 'farm' && b.buildingType !== 'dock' && b.buildingType !== 'mining_camp') continue;
-            const guarded = this.units.some(
-              (u) =>
-                u.hp > 0 &&
-                u.unitDef.category !== 'worker' &&
-                u.faction === b.faction &&
-                getDistance(u.x, u.z, b.x, b.z) < 12
+            const guarded = (unitsByFaction.get(b.faction) || []).some(
+              (unit) =>
+                unit.hp > 0 &&
+                unit.unitDef.category !== 'worker' &&
+                getDistance(unit.x, unit.z, b.x, b.z) < 12
             );
             let score = b.buildingType === 'dock' ? 50 : b.buildingType === 'mining_camp' ? 45 : 30;
             if (guarded) score -= 30;
