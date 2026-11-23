@@ -68,6 +68,7 @@ export function getBuildingCollisionRadius(
     case 'armory_forge':
     case 'spirit_shrine':
     case 'mana_well':
+    case 'ovoo_relay':
       return 3.05;
     case 'barracks':
     case 'archery_range':
