@@ -204,6 +204,7 @@ import {
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
   getFormationTacticalSlot,
+  groupStalledFormationUnits,
   measureFormationRegroup,
   shouldRefreshFormationTacticalSlot,
   shouldAiCavalryDisengage,
@@ -5495,6 +5496,7 @@ export class RtsEngine {
     this.formationRegroupByGroup.clear();
     this.formationTacticalMembersByGroup.clear();
     const membersByGroup = new Map<string, FormationMovementMember[]>();
+    const stalledUnitsByGroup = groupStalledFormationUnits(this.units);
 
     for (const unit of this.units) {
       const groupId = unit.formationGroupId;
@@ -5532,19 +5534,7 @@ export class RtsEngine {
 
     for (const [groupId, members] of membersByGroup) {
       const measuredState = measureFormationRegroup(members);
-      const stalledUnits = this.units
-        .filter(
-          (unit) =>
-            unit.formationGroupId === groupId &&
-            unit.hp > 0 &&
-            (unit.stuckDuration || 0) >= 1.8 &&
-            (unit.stuckDuration || 0) < 4.5,
-        )
-        .sort(
-          (a, b) =>
-            (b.stuckDuration || 0) - (a.stuckDuration || 0) ||
-            a.id.localeCompare(b.id),
-        );
+      const stalledUnits = stalledUnitsByGroup.get(groupId) || [];
       let cached = this.formationPassageCacheByGroup.get(groupId);
 
       if (stalledUnits.length > 0 || cached) {
