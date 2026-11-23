@@ -227,9 +227,40 @@ export const UnitPortrait: React.FC<UnitPortraitProps> = ({
           </g>
         );
 
-      case 'mongol_lancer':
       case 'mongol_mangudai':
+        return (
+          <g stroke="#0f172a" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round">
+            <path d="M13 58 L19 37 L44 37 L50 58 Z" fill="#92400e" />
+            <path d="M21 36 Q18 17 32 16 Q46 17 43 36 Z" fill="#a16207" />
+            <circle cx="32" cy="28" r="7" fill="#f3c69f" />
+            <path d="M18 24 Q32 15 46 24" fill="none" stroke="#451a03" strokeWidth="4" />
+            <path d="M22 42 L42 42" stroke="#fbbf24" strokeWidth="2.5" />
+            <path d="M10 16 Q4 32 12 48 Q19 32 10 16 Z" fill="none" stroke="#b45309" strokeWidth="2.4" />
+            <line x1="48" y1="55" x2="55" y2="12" stroke="#92400e" strokeWidth="2.8" />
+            <path d="M55 12 L61 17 L55 22 Z" fill="#e2e8f0" />
+            <path d="M45 16 L56 19" stroke="#fbbf24" strokeWidth="1.5" />
+          </g>
+        );
+
       case 'mongol_keshik':
+        return (
+          <g stroke="#0f172a" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round">
+            <path d="M12 58 L18 37 L46 37 L51 58 Z" fill="#7f1d1d" />
+            <path d="M19 37 L20 22 Q32 8 44 22 L45 36 Z" fill="#92400e" />
+            <path d="M22 41 L42 41 M22 46 L42 46" stroke="#fbbf24" strokeWidth="3" />
+            <path d="M20 22 Q32 13 44 22" stroke="#fbbf24" strokeWidth="2.2" fill="none" />
+            <rect x="26" y="23" width="12" height="5" rx="1" fill="#0f172a" />
+            <circle cx="32" cy="31" r="5" fill="#f3c69f" />
+            <path d="M32 18 L32 7" stroke="#dc2626" strokeWidth="3" />
+            <path d="M32 9 Q43 3 47 10 Q39 10 32 15 Z" fill="#dc2626" />
+            <path d="M12 37 L23 37 L21 54 L16 58 L11 53 Z" fill="#d6d3d1" />
+            <circle cx="17" cy="46" r="4" fill="#fbbf24" />
+            <line x1="49" y1="56" x2="57" y2="7" stroke="#92400e" strokeWidth="3.1" />
+            <polygon points="57,5 60,15 54,15" fill="#fbbf24" />
+          </g>
+        );
+
+      case 'mongol_lancer':
       case 'fallback_horse_archer':
       case 'fallback_keshik':
       case 'knight':
