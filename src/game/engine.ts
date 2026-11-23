@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
+import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -467,6 +468,8 @@ export class RtsEngine {
   private unitRoleSiegeInstanceCursor = 0;
   private unitBuffRingInstanceCursor = 0;
   private buildingMeshes = new Map<string, THREE.Group>();
+  /** Building meshes with animated flags/crystals only; static buildings are omitted from the per-tick animation pass. */
+  private animatedBuildingMeshes = new Set<THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
   /** Static membership index for tree-only ambient animation; excludes animals and resource nodes. */
   private windAnimatedNodeMeshes = new Set<THREE.Group>();
@@ -1328,6 +1331,7 @@ export class RtsEngine {
     }
     this.unitMeshes.clear();
     this.buildingMeshes.clear();
+    this.animatedBuildingMeshes.clear();
     this.nodeMeshes.clear();
     this.windAnimatedNodeMeshes.clear();
     this.resourceVisualLodQueue.clear();
@@ -2405,6 +2409,7 @@ export class RtsEngine {
     );
     this.scene.add(mesh);
     this.buildingMeshes.set(id, mesh);
+    if (hasAmbientBuildingAnimation(mesh.userData)) this.animatedBuildingMeshes.add(mesh);
     if (refreshEnvironment) {
       this.refreshSettlementEnvironment();
       this.refreshWallTowerConnections();
@@ -5118,7 +5123,7 @@ export class RtsEngine {
     waterNorm.offset.y = (this.simTime * 0.044) % 1;
 
     let flagIdx = 0;
-    this.buildingMeshes.forEach((bMesh) => {
+    this.animatedBuildingMeshes.forEach((bMesh) => {
       const animFlags = bMesh.userData.animFlags as THREE.Object3D[] | undefined;
       if (animFlags) {
         for (let i = 0; i < animFlags.length; i++) {
@@ -8465,6 +8470,7 @@ export class RtsEngine {
         const mesh = this.buildingMeshes.get(bldg.id);
         if (mesh) {
           this.buildingMeshes.delete(bldg.id);
+          this.animatedBuildingMeshes.delete(mesh);
           const badge = mesh.userData.bldgBadge as THREE.Object3D | undefined;
           if (badge) badge.visible = false;
           const scaf = mesh.getObjectByName('scaffoldGroup');
