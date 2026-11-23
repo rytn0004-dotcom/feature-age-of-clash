@@ -22,6 +22,7 @@ import {
   CivilizationId,
   FactionId,
   FloatingText,
+  GroundZoneEffect,
   GameMod,
   GameStats,
   LandmarkType,
@@ -415,6 +416,7 @@ export class RtsEngine {
   /** Faction id -> simTime when the star-oath buff expires */
   private starOathUntil: Record<string, number> = {};
   public projectiles: Projectile[] = [];
+  public groundZones: Array<GroundZoneEffect & { mesh: THREE.Group }> = [];
   public floatingTexts: FloatingText[] = [];
   private contestedMeshes = new Map<string, THREE.Group>();
   private contestedIncomeAcc = new Map<string, number>();
@@ -1323,6 +1325,17 @@ export class RtsEngine {
       (s.mesh.material as THREE.Material).dispose();
     });
     this.shockwaveRings = [];
+    this.groundZones.forEach((zone) => {
+      this.scene.remove(zone.mesh);
+      zone.mesh.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry?.dispose();
+        if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
+        else mesh.material?.dispose();
+      });
+    });
+    this.groundZones = [];
     if (this.environmentGroup) {
       this.scene.remove(this.environmentGroup);
       this.environmentGroup = null;
@@ -2401,6 +2414,8 @@ export class RtsEngine {
       researchProgress: 0,
       attackCooldown: 0,
       garrisonedUnitIds: [],
+      ovooMode: type === 'ovoo_relay' ? 'yam_relay' : undefined,
+      ovooHornCooldown: type === 'ovoo_relay' ? 0 : undefined,
     };
     this.buildings.push(building);
     this.navGridDirty = true;
@@ -2874,6 +2889,176 @@ export class RtsEngine {
     this.onStateChange?.();
   }
 
+  public toggleOvooMode(buildingId: string): boolean {
+    const building = this.buildings.find((entry) =>
+      entry.id === buildingId && entry.hp > 0 && entry.buildingType === 'ovoo_relay'
+    );
+    if (!building) return false;
+    const nextMode = building.ovooMode === 'sacred_extraction' ? 'yam_relay' : 'sacred_extraction';
+    building.ovooMode = nextMode;
+    this.spawnShockwaveRing(building.x, building.z, nextMode === 'yam_relay' ? 0xf59e0b : 0x38bdf8, 6.5);
+    this.spawnParticleBurst(building.x, 2, building.z, 'spark', 12);
+    this.addFloatingText(
+      building.x, 3.8, building.z,
+      nextMode === 'yam_relay' ? '🐎 驛馬軍令：加速訓練與治療騎兵' : '🗿 敖包聚靈：無損採礦與靈箭防衛',
+      nextMode === 'yam_relay' ? '#fbbf24' : '#38bdf8'
+    );
+    const mesh = this.buildingMeshes.get(building.id);
+    if (mesh) {
+      const modeColor = nextMode === 'yam_relay' ? 0xf59e0b : 0x38bdf8;
+      const animCrystals = mesh.userData.animCrystals as Array<{ obj: THREE.Object3D }> | undefined;
+      animCrystals?.forEach((entry) => {
+        const material = (entry.obj as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+        material?.color?.setHex(modeColor);
+      });
+      const aura = mesh.userData.activeAuraRing as THREE.Mesh | undefined;
+      if (aura && !Array.isArray(aura.material)) (aura.material as THREE.MeshBasicMaterial).color.setHex(modeColor);
+    }
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  public triggerOvooWarHorn(buildingId: string): boolean {
+    const building = this.buildings.find((entry) =>
+      entry.id === buildingId && entry.hp > 0 && entry.isConstructed && entry.buildingType === 'ovoo_relay'
+    );
+    if (!building || (building.ovooHornCooldown || 0) > 0) return false;
+    building.ovooHornCooldown = 45;
+    this.spawnShockwaveRing(building.x, building.z, 0xf59e0b, 16);
+    this.spawnParticleBurst(building.x, 2.4, building.z, 'ember', 24);
+    this.spawnParticleBurst(building.x, 2.8, building.z, 'spark', 16);
+    let buffed = 0;
+    for (const ally of this.units) {
+      if (ally.hp <= 0 || ally.garrisonedInBuildingId || this.isHostile(building, ally)) continue;
+      if (getDistance(building.x, building.z, ally.x, ally.z) > 16) continue;
+      ally.buffSpeedUntil = Math.max(ally.buffSpeedUntil || 0, this.simTime + 8);
+      ally.buffAttackRateUntil = Math.max(ally.buffAttackRateUntil || 0, this.simTime + 8);
+      buffed++;
+    }
+    this.addFloatingText(building.x, 4.4, building.z, `🔥 長生天狼煙（${buffed} 軍受鼓舞）`, '#fde047');
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  private creditMongolRaidTribute(
+    attacker: UnitEntity | undefined,
+    victimType: 'unit' | 'building',
+    isKillOrRaze: boolean,
+  ): void {
+    if (!attacker || this.getCivilizationForFaction(attacker.faction) !== 'mongol') return;
+    const multiplier = this.getResearchedTechs(attacker.faction).includes('mon_sulde_banner') ? 1.5 : 1;
+    let gold = 0;
+    let food = 0;
+    if (victimType === 'unit') {
+      if (!isKillOrRaze) return;
+      gold = Math.round(12 * multiplier);
+      food = Math.round(8 * multiplier);
+    } else if (isKillOrRaze) {
+      gold = Math.round(35 * multiplier);
+      food = Math.round(25 * multiplier);
+    } else {
+      const lastTime = (attacker as any)._lastRaidTributeTime || -99;
+      if (this.simTime - lastTime < 3) return;
+      (attacker as any)._lastRaidTributeTime = this.simTime;
+      gold = Math.round(4 * multiplier);
+      food = Math.round(3 * multiplier);
+    }
+    const resources = this.getResourcesForFaction(attacker.faction);
+    resources.gold += gold;
+    resources.food += food;
+    this.syncHumanResourcesAlias();
+    if (this.isHumanControlled(attacker.faction)) {
+      this.onResourcesChange?.(this.playerResources);
+      if (isKillOrRaze || gold >= 6) this.addFloatingText(attacker.x, 2.7, attacker.z, `+${gold}🪙 +${food}🌾 劫掠`, '#fde047');
+    }
+  }
+
+  private spawnGroundZone(
+    faction: FactionId,
+    team: number | undefined,
+    x: number,
+    z: number,
+    radius: number,
+    duration: number,
+    damagePerTick: number,
+    casterId?: string,
+  ): void {
+    const mesh = new THREE.Group();
+    mesh.position.set(x, 0.08, z);
+    const outer = new THREE.Mesh(
+      new THREE.RingGeometry(radius - 0.35, radius, 40),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.72, depthWrite: false })
+    );
+    outer.rotation.x = -Math.PI / 2;
+    const inner = new THREE.Mesh(
+      new THREE.CircleGeometry(radius * 0.96, 36),
+      new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.16, depthWrite: false })
+    );
+    inner.rotation.x = -Math.PI / 2;
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.45, 0.85, 5.2, 16, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x7dd3fc, side: THREE.DoubleSide, transparent: true, opacity: 0.28, depthWrite: false })
+    );
+    pillar.position.y = 2.6;
+    mesh.add(outer, inner, pillar);
+    this.scene.add(mesh);
+    this.groundZones.push({
+      id: `gz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      kind: 'sky_storm', faction, team, casterId, x, z, radius,
+      remaining: duration, duration, tickAccum: 0.85, damagePerTick,
+      slowFactor: 0.65, mesh,
+    });
+  }
+
+  private updateGroundZones(dt: number): void {
+    for (let i = this.groundZones.length - 1; i >= 0; i--) {
+      const zone = this.groundZones[i];
+      zone.remaining -= dt;
+      zone.tickAccum += dt;
+      zone.mesh.rotation.y += dt * 1.65;
+      const pulse = 0.96 + Math.sin(this.simTime * 8 + i) * 0.05;
+      zone.mesh.scale.set(pulse, 1, pulse);
+      if (zone.tickAccum >= 1) {
+        zone.tickAccum -= 1;
+        this.spawnParticleBurst(
+          zone.x + (Math.random() - 0.5) * zone.radius * 0.9, 2.2,
+          zone.z + (Math.random() - 0.5) * zone.radius * 0.9, 'spark', 8
+        );
+        for (const enemy of this.units) {
+          if (enemy.hp <= 0 || enemy.garrisonedInBuildingId ||
+            !areHostile({ faction: zone.faction, team: zone.team }, enemy) ||
+            getDistance(zone.x, zone.z, enemy.x, enemy.z) > zone.radius) continue;
+          const damage = Math.max(6, Math.round(zone.damagePerTick - enemy.unitDef.stats.defense * 0.2));
+          enemy.hp -= damage;
+          enemy.lastDamagedTime = performance.now();
+          enemy.hitFlashTimer = 0.1;
+          enemy.slowUntil = this.simTime + 1.35;
+          enemy.slowFactor = zone.slowFactor;
+          this.addFloatingText(enemy.x, 2.2, enemy.z, `⚡-${damage}`, '#38bdf8');
+          if (enemy.hp <= 0 && zone.casterId) {
+            const caster = this.units.find((unit) => unit.id === zone.casterId);
+            if (caster) {
+              caster.kills++;
+              this.awardUnitXp(caster, 35);
+              this.creditMongolRaidTribute(caster, 'unit', true);
+            }
+          }
+        }
+      }
+      if (zone.remaining <= 0) {
+        this.scene.remove(zone.mesh);
+        zone.mesh.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          mesh.geometry.dispose();
+          if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
+          else mesh.material.dispose();
+        });
+        this.groundZones.splice(i, 1);
+      }
+    }
+  }
+
   public activateUnitAbility(unit: UnitEntity): boolean {
     if (!unit || unit.hp <= 0 || !unit.unitDef.specialAbility || unit.abilityCooldown > 0) return false;
     const ab = unit.unitDef.specialAbility;
@@ -2937,6 +3122,102 @@ export class RtsEngine {
       } else {
         this.addFloatingText(unit.x, 2.8, unit.z, `⚡ ${ab.name}`, '#fbbf24');
       }
+    } else if (ab.type === 'kiting_volley') {
+      sound.playArrowShot(gScale);
+      this.spawnShockwaveRing(unit.x, unit.z, 0xfbbf24, 3.8);
+      this.spawnParticleBurst(unit.x, 1.3, unit.z, 'spark', 10);
+      (unit as any)._attackSwing = 0.36;
+      const targets = this.units
+        .filter((enemy) => enemy.hp > 0 && !enemy.garrisonedInBuildingId &&
+          this.isHostile(unit, enemy) &&
+          getDistance(unit.x, unit.z, enemy.x, enemy.z) <= unit.unitDef.stats.range + 4)
+        .sort((a, b) => getDistance(unit.x, unit.z, a.x, a.z) - getDistance(unit.x, unit.z, b.x, b.z))
+        .slice(0, 3);
+      for (const enemy of targets) {
+        enemy.armorShredUntil = this.simTime + 6;
+        enemy.armorShredAmount = 3;
+        this.spawnProjectile(
+          unit.x, 1.45, unit.z, enemy.id, 'arrow',
+          Math.round(unit.unitDef.stats.attack * 0.85 + ab.potency), '#fbbf24', unit.id
+        );
+      }
+      this.addFloatingText(unit.x, 2.9, unit.z, targets.length ? `🏹 連環破甲箭（${targets.length}）` : '🏹 蓄勢待發', '#fbbf24');
+    } else if (ab.type === 'trample_charge') {
+      sound.playOrder();
+      let nearest: UnitEntity | null = null;
+      let nearestDistance = 12;
+      for (const enemy of this.units) {
+        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile(unit, enemy)) continue;
+        const distance = getDistance(unit.x, unit.z, enemy.x, enemy.z);
+        if (distance < nearestDistance) { nearest = enemy; nearestDistance = distance; }
+      }
+      const yaw = (unit as any)._desiredYaw || 0;
+      let dirX = Math.sin(yaw), dirZ = Math.cos(yaw);
+      if (nearest && nearestDistance > 0.25) {
+        dirX = (nearest.x - unit.x) / nearestDistance;
+        dirZ = (nearest.z - unit.z) / nearestDistance;
+      }
+      const destX = unit.x + dirX * 3.8;
+      const destZ = unit.z + dirZ * 3.8;
+      if (this.isLandPointClear(destX, destZ, 0.7)) {
+        unit.x = destX;
+        unit.z = destZ;
+      }
+      (unit as any)._attackSwing = 0.42;
+      this.spawnShockwaveRing(unit.x, unit.z, 0xf59e0b, 5);
+      this.spawnParticleBurst(unit.x, 0.8, unit.z, 'dust', 16);
+      this.spawnParticleBurst(unit.x, 1.1, unit.z, 'spark', 10);
+      let hitCount = 0;
+      for (const enemy of this.units) {
+        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile(unit, enemy) ||
+          getDistance(unit.x, unit.z, enemy.x, enemy.z) > 4.6) continue;
+        const damage = getUnitVsUnitDamage(
+          ab.potency + Math.round(unit.unitDef.stats.attack * 0.8), enemy, false,
+          this.simTime, unit.unitDef.stats.bonusVsCategory
+        );
+        enemy.hp -= damage;
+        enemy.lastDamagedTime = performance.now();
+        enemy.hitFlashTimer = 0.12;
+        enemy.recoilTimer = 0.18;
+        enemy.slowUntil = this.simTime + 3;
+        enemy.slowFactor = 0.65;
+        const dist = Math.max(0.1, getDistance(unit.x, unit.z, enemy.x, enemy.z));
+        const pushX = enemy.x + ((enemy.x - unit.x) / dist) * 1.1;
+        const pushZ = enemy.z + ((enemy.z - unit.z) / dist) * 1.1;
+        if (this.isLandPointClear(pushX, pushZ, 0.6)) { enemy.x = pushX; enemy.z = pushZ; }
+        this.addFloatingText(enemy.x, 2.3, enemy.z, `-${damage} 踐踏`, '#f59e0b');
+        hitCount++;
+        if (enemy.hp <= 0) {
+          unit.kills++;
+          this.awardUnitXp(unit, 35);
+          this.creditMongolRaidTribute(unit, 'unit', true);
+        }
+      }
+      if (hitCount > 0) {
+        const heal = Math.min(36, hitCount * 8);
+        unit.hp = Math.min(unit.maxHp, unit.hp + heal);
+        this.addFloatingText(unit.x, 3, unit.z, `🐎 怯薛衝鋒 +${heal}HP`, '#fbbf24');
+      } else {
+        this.addFloatingText(unit.x, 2.9, unit.z, '🐎 戰馬突擊', '#fbbf24');
+      }
+    } else if (ab.type === 'sky_storm') {
+      sound.playMagicShot(gScale);
+      let x = unit.x, z = unit.z;
+      let nearest: UnitEntity | null = null;
+      let distance = unit.unitDef.stats.range + 4;
+      for (const enemy of this.units) {
+        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile(unit, enemy)) continue;
+        const d = getDistance(unit.x, unit.z, enemy.x, enemy.z);
+        if (d < distance) { nearest = enemy; distance = d; }
+      }
+      if (nearest) { x = nearest.x; z = nearest.z; }
+      else if (unit.targetX !== undefined && unit.targetZ !== undefined &&
+        getDistance(unit.x, unit.z, unit.targetX, unit.targetZ) <= unit.unitDef.stats.range + 4) {
+        x = unit.targetX; z = unit.targetZ;
+      }
+      this.spawnGroundZone(unit.faction, unit.team, x, z, 5.5, 5, ab.potency, unit.id);
+      this.spawnParticleBurst(x, 1.5, z, 'spark', 18);
+      this.addFloatingText(x, 3.2, z, '🌩️ 長生天雷暴', '#38bdf8');
     } else {
       // 'whirlwind' or 'ki_burst' AOE burst
       sound.playMagicShot(gScale);
@@ -5217,8 +5498,9 @@ export class RtsEngine {
     this.updateContestedPoints(dt);
     this.updateStarRelic(dt);
 
-    // 4. Projectiles
+    // 4. Projectiles and Mongol Shaman ground zones
     this.updateProjectiles(dt);
+    this.updateGroundZones(dt);
 
     // 5. Floating texts, particle bursts, KO topples, Collapsing Buildings, Rubble decals, Shockwaves & Command rings
     this.updateFloatingTexts(dt);
@@ -5902,7 +6184,11 @@ export class RtsEngine {
       }
 
       // Cooldowns, timers & passive regeneration
-      if (unit.attackCooldown > 0) unit.attackCooldown -= dt;
+      const attackRateBuff = unit.buffAttackRateUntil && unit.buffAttackRateUntil > this.simTime ? 1.3 : 1;
+      const attackRateSlow = unit.slowUntil && unit.slowUntil > this.simTime
+        ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
+        : 1;
+      if (unit.attackCooldown > 0) unit.attackCooldown -= dt * attackRateBuff * attackRateSlow;
       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
       if (unit.hitFlashTimer && unit.hitFlashTimer > 0) unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - dt);
@@ -6212,7 +6498,10 @@ export class RtsEngine {
     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
     const rootSlow = (unit as any)._rootSlowUntil && (unit as any)._rootSlowUntil > this.simTime ? 0.55 : 1;
     const relicSlow = this.starRelicCarrierId === unit.id ? STAR_RELIC_CARRY_SPEED : 1;
-    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
+    const mongolSlow = unit.slowUntil && unit.slowUntil > this.simTime
+      ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
+      : 1;
+    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow;
     const regroupState = unit.formationGroupId
       ? this.formationRegroupByGroup.get(unit.formationGroupId)
       : undefined;
@@ -6322,6 +6611,27 @@ export class RtsEngine {
     }
 
     this.moveUnitAlongPath(unit, unit.targetX, unit.targetZ, dt);
+    // Mangudai can fire while galloping, preserving the civilization's defining hit-and-run role.
+    if (unit.unitDefId === 'mongol_mangudai' && unit.attackCooldown <= 0) {
+      let nearestTarget: UnitEntity | null = null;
+      let bestDistance = unit.unitDef.stats.range + 1.1;
+      for (const enemy of this.units) {
+        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile(unit, enemy)) continue;
+        const distance = getDistance(unit.x, unit.z, enemy.x, enemy.z);
+        if (distance <= bestDistance) {
+          nearestTarget = enemy;
+          bestDistance = distance;
+        }
+      }
+      if (nearestTarget) {
+        unit.attackCooldown = 1 / Math.max(0.35, unit.unitDef.stats.attackRate);
+        (unit as any)._attackSwing = 0.36;
+        this.spawnProjectile(
+          unit.x, 1.45, unit.z, nearestTarget.id, 'arrow',
+          unit.unitDef.stats.attack, unit.unitDef.visual.color, unit.id
+        );
+      }
+    }
     if (!unit.currentActionText || unit.currentActionText.includes('待命')) {
       unit.currentActionText = unit.attackMoveGoal ? '⚔️ 警戒推進中' : '👣 行軍移動中';
     }
@@ -6542,6 +6852,7 @@ export class RtsEngine {
           }
 
           target.hp -= dmg;
+          this.creditMongolRaidTribute(unit, target.type === 'building' ? 'building' : 'unit', target.hp <= 0);
           if (
             target.type === 'unit' &&
             (this.isHumanControlled(unit.faction) || this.isHumanControlled(target.faction))
@@ -8760,6 +9071,45 @@ export class RtsEngine {
             }
           }
         }
+      } else if (bldg.buildingType === 'ovoo_relay') {
+        bldg.ovooHornCooldown = Math.max(0, (bldg.ovooHornCooldown || 0) - dt);
+        const resources = this.getResourcesForFaction(bldg.faction);
+        const nearbyMine = this.resourceNodes.find(
+          (node) => node.amount > 0 &&
+            (node.resourceType === 'gold' || node.resourceType === 'stone') &&
+            getDistance(bldg.x, bldg.z, node.x, node.z) <= 14
+        );
+        if (bldg.ovooMode === 'sacred_extraction') {
+          if (nearbyMine) {
+            resources[nearbyMine.resourceType] += 0.75 * dt;
+            resources.stone += 0.2 * dt;
+          } else {
+            resources.gold += 0.35 * dt;
+            resources.stone += 0.25 * dt;
+          }
+          if (Math.floor(this.simTime * 2) !== Math.floor((this.simTime - dt) * 2)) {
+            this.spawnParticleBurst(bldg.x, 3.4, bldg.z, nearbyMine ? 'gold' : 'spark', 2);
+          }
+          this.syncHumanResourcesAlias();
+          if (this.isHumanControlled(bldg.faction)) {
+            const now = performance.now();
+            if (now - this.lastHudResSyncTime >= 250) {
+              this.lastHudResSyncTime = now;
+              this.onResourcesChange?.(this.playerResources);
+            }
+          }
+        } else {
+          if (nearbyMine) resources[nearbyMine.resourceType] += 0.25 * dt;
+          for (const ally of this.units) {
+            if (ally.hp <= 0 || ally.garrisonedInBuildingId || this.isHostile(bldg, ally)) continue;
+            if (getDistance(bldg.x, bldg.z, ally.x, ally.z) > 13.5) continue;
+            ally.buffSpeedUntil = Math.max(ally.buffSpeedUntil || 0, this.simTime + 0.8);
+            if (ally.unitDef.category === 'cavalry' || this.getCivilizationForFaction(ally.faction) === 'mongol') {
+              ally.hp = Math.min(ally.maxHp, ally.hp + 1.8 * dt);
+            }
+          }
+          if (nearbyMine && dt > 0) this.syncHumanResourcesAlias();
+        }
       }
 
       const hasNearbyForge =
@@ -8771,7 +9121,15 @@ export class RtsEngine {
             f.buildingType === 'armory_forge' &&
             getDistance(bldg.x, bldg.z, f.x, f.z) <= 16
         );
-      const speedBonusMult = getCappedProductionSpeedMultiplier(hasNearbyForge ? 1.25 : 1.0);
+      const hasNearbyYamOvoo =
+        bldg.buildingType !== 'ovoo_relay' &&
+        this.buildings.some(
+          (f) =>
+            f.faction === bldg.faction && f.isConstructed &&
+            f.buildingType === 'ovoo_relay' && f.ovooMode !== 'sacred_extraction' &&
+            getDistance(bldg.x, bldg.z, f.x, f.z) <= 16
+        );
+      const speedBonusMult = getCappedProductionSpeedMultiplier(hasNearbyForge || hasNearbyYamOvoo ? 1.25 : 1.0);
 
       // Active Civilization Tech Research Progress
       if (bldg.activeTechId) {
@@ -9052,6 +9410,7 @@ export class RtsEngine {
         }
 
         target.hp -= dmg;
+        this.creditMongolRaidTribute(attacker, target.type === 'building' ? 'building' : 'unit', target.hp <= 0);
         if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, attacker?.unitDef.category === 'siege' || proj.damage >= 20);
         (target as any).lastDamagedTime = performance.now();
         (target as any).hitFlashTimer = 0.08;
@@ -9764,6 +10123,32 @@ export class RtsEngine {
       const aiPop = this.getPopulationStats(aiId);
       const aiMaxPop = aiPop.max;
       const aiAge = this.ageByFaction[aiId] || 1;
+
+      // Mongol AI manages its Ovoo stance: extraction when safe, Yam relay for production/healing, war horn under threat.
+      if (aiCiv.id === 'mongol') {
+        for (const ovoo of aiBuildings.filter((building) => building.buildingType === 'ovoo_relay' && building.isConstructed)) {
+          const nearEnemy = aiHostileUnits.some((enemy) =>
+            !enemy.garrisonedInBuildingId && getDistance(ovoo.x, ovoo.z, enemy.x, enemy.z) <= 18
+          );
+          const nearMine = this.resourceNodes.some((node) =>
+            node.amount > 0 && (node.resourceType === 'gold' || node.resourceType === 'stone') &&
+            getDistance(ovoo.x, ovoo.z, node.x, node.z) <= 14
+          );
+          const activeProduction = aiBuildings.some((building) => building.id !== ovoo.id &&
+            (building.queue.length > 0 || !!building.activeTechId) &&
+            getDistance(ovoo.x, ovoo.z, building.x, building.z) <= 16
+          );
+          const wounded = aiArmy.some((unit) => unit.hp < unit.maxHp * 0.85 &&
+            getDistance(ovoo.x, ovoo.z, unit.x, unit.z) <= 13.5
+          );
+          if (nearEnemy && ovoo.ovooMode !== 'sacred_extraction') this.toggleOvooMode(ovoo.id);
+          else if (!nearEnemy && (activeProduction || wounded) && ovoo.ovooMode === 'sacred_extraction') this.toggleOvooMode(ovoo.id);
+          else if (!nearEnemy && nearMine && !activeProduction && !wounded && ovoo.ovooMode !== 'sacred_extraction') this.toggleOvooMode(ovoo.id);
+          if (nearEnemy && ovoo.ovooHornCooldown === 0 && aiArmy.some((unit) =>
+            getDistance(ovoo.x, ovoo.z, unit.x, unit.z) <= 16
+          )) this.triggerOvooWarHorn(ovoo.id);
+        }
+      }
 
       // Auto-trigger special abilities in combat for AI army units
       for (const u of aiArmy) {
