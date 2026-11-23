@@ -19,7 +19,7 @@ test('Mongol civilization: is the fourth selectable civilization with its own pr
   assert.equal(mongol.workerUnitId, 'mongol_herder');
   assert.equal(mongol.starterMeleeUnitId, 'mongol_foot_guard');
   assert.equal(mongol.uniqueBuildingType, 'ovoo_relay');
-  assert.ok(mongol.passiveBonuses.moveSpeedMultiplier > 1);
+  assert.ok((mongol.passiveBonuses.moveSpeedMultiplier ?? 1) > 1);
 });
 
 test('Mongol civilization: includes six units with correct age gates and model types', () => {
@@ -57,8 +57,8 @@ test('Mongol civilization: Ovoo definition is exclusive and available as a milit
   assert.equal(ovoo.id, 'ovoo_relay');
   assert.equal(ovoo.civExclusive, 'mongol');
   assert.equal(ovoo.requiredAge, 1);
-  assert.ok(ovoo.attack > 0);
-  assert.ok(ovoo.range > 0);
+  assert.ok((ovoo.attack ?? 0) > 0);
+  assert.ok((ovoo.range ?? 0) > 0);
   assert.equal(getBuildableTypesForCiv('medieval', 4).includes('ovoo_relay'), false);
 });
 
