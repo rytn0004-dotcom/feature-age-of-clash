@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
+import { mergeStaticUnitMeshes } from './unitMeshBatching';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
@@ -10759,6 +10760,7 @@ export function createUnitMesh(
   group.userData.visualFlags = flags;
   group.userData.visualUnitId = unitId;
   group.scale.set(s, s, s);
+  group.userData.staticMeshBatchStats = mergeStaticUnitMeshes(group);
   prepareUnitVisualLod(group);
   return group;
 }

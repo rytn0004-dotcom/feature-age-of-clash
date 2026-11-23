@@ -359,6 +359,22 @@ async function main() {
             const visibleIndividualFactionRings = unitMeshes.filter(
               (mesh) => mesh.userData?.unitFactionRingMesh?.visible === true,
             ).length;
+            const staticMeshBatching = unitMeshes.reduce((total, mesh) => {
+              const stats = mesh.userData?.staticMeshBatchStats;
+              if (!stats) return total;
+              total.unitsProcessed += 1;
+              total.eligibleMeshes += stats.eligibleMeshes || 0;
+              total.mergedSourceMeshes += stats.mergedSourceMeshes || 0;
+              total.mergedBatches += stats.mergedBatches || 0;
+              total.drawCallsSaved += stats.estimatedDrawCallsSaved || 0;
+              return total;
+            }, {
+              unitsProcessed: 0,
+              eligibleMeshes: 0,
+              mergedSourceMeshes: 0,
+              mergedBatches: 0,
+              drawCallsSaved: 0,
+            });
             return {
               state: e.gameState,
               simulatedSeconds: e.stats.gameDuration,
@@ -370,6 +386,7 @@ async function main() {
                 visibleIndividualShadows,
                 visibleIndividualFactionRings,
               },
+              staticMeshBatching,
               samples,
             };
           })()
@@ -385,6 +402,15 @@ async function main() {
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
       const decorations = capture.unitDecorations;
+      const staticMeshes = capture.staticMeshBatching;
+      assert.ok(staticMeshes?.unitsProcessed === decorations.unitMeshes, "Static mesh batching diagnostics are missing from one or more unit models.");
+      assert.ok(staticMeshes.mergedBatches > 0, "Static character mesh batching did not create any merged batches.");
+      assert.ok(staticMeshes.drawCallsSaved > 0, "Static character mesh batching did not reduce any mesh draw batches.");
+      assert.equal(
+        staticMeshes.drawCallsSaved,
+        staticMeshes.mergedSourceMeshes - staticMeshes.mergedBatches,
+        "Static mesh batching savings must match removed source meshes minus resulting batches.",
+      );
       assert.ok(decorations.shadowInstances > 0, "Unit contact-shadow batch did not receive instances.");
       assert.equal(decorations.shadowInstances, decorations.factionRingInstances, "Contact shadows and faction rings must share the same instance ordering.");
       assert.equal(decorations.visibleIndividualShadows, 0, "A unit contact shadow is still rendered individually.");
@@ -408,7 +434,8 @@ async function main() {
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
         " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
-        telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " + telemetry.renderer);
+        telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " +
+        staticMeshes.drawCallsSaved + " static mesh draws saved, " + telemetry.renderer);
     }
     report.result = "passed";
   } catch (error) {
