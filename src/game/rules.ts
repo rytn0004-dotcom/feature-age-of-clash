@@ -3292,6 +3292,7 @@ export function stepWildBoarState(
     ? Math.hypot(target.x - home!.x, target.z - home!.z)
     : 0;
 
+  let arrivedHomeThisStep = false;
   if (hasHome) {
     if (
       homeDistance >= WILD_BOAR_HOME_LEASH_RADIUS - 0.5 ||
@@ -3303,6 +3304,9 @@ export function stepWildBoarState(
     }
     if (node.animalReturningHome && homeDistance <= WILD_BOAR_HOME_ARRIVAL_RADIUS) {
       node.animalReturningHome = false;
+      node.animalVx = 0;
+      node.animalVz = 0;
+      arrivedHomeThisStep = true;
     }
   } else {
     node.animalReturningHome = false;
@@ -3314,7 +3318,7 @@ export function stepWildBoarState(
   const targetWithinHabitat = !hasHome ||
     !target ||
     targetHomeDistance <= WILD_BOAR_TARGET_HUNT_LEASH_RADIUS;
-  const canChase = !!target && targetWithinHabitat && !isReturning;
+  const canChase = !!target && targetWithinHabitat && !isReturning && !arrivedHomeThisStep;
   const dx = canChase ? target!.x - node.x : 0;
   const dz = canChase ? target!.z - node.z : 0;
   const distance = Math.hypot(dx, dz);
