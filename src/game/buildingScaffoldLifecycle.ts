@@ -1,32 +1,51 @@
 import type * as THREE from 'three';
 
-/** Permanently detach and release a completed building's temporary scaffold geometry. */
-export function removeCompletedBuildingScaffold(scaffoldGroup: THREE.Group): void {
-  if (scaffoldGroup.userData.scaffoldPermanentlyRemoved) return;
-
-  scaffoldGroup.visible = false;
+function disposeAndDetachScaffoldObject(scaffoldObject: THREE.Object3D): void {
+  scaffoldObject.visible = false;
   const ownedGeometries = new Set<THREE.BufferGeometry>();
-  scaffoldGroup.traverse((object) => {
+  scaffoldObject.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (mesh.isMesh && mesh.geometry) ownedGeometries.add(mesh.geometry);
   });
   ownedGeometries.forEach((geometry) => geometry.dispose());
 
-  scaffoldGroup.parent?.remove(scaffoldGroup);
-  scaffoldGroup.clear();
-  scaffoldGroup.userData.scaffoldPermanentlyRemoved = true;
+  scaffoldObject.parent?.remove(scaffoldObject);
+  scaffoldObject.clear();
+  scaffoldObject.userData.scaffoldPermanentlyRemoved = true;
 }
 
+/** Permanently detach and release a completed building's temporary scaffold geometry. */
+export function removeCompletedBuildingScaffold(scaffoldGroup: THREE.Group): void {
+  if (scaffoldGroup.userData.scaffoldPermanentlyRemoved) return;
+  disposeAndDetachScaffoldObject(scaffoldGroup);
+}
+
+function isConstructionScaffoldObject(object: THREE.Object3D): boolean {
+  return object.name === 'scaffoldGroup' ||
+    object.name.startsWith('scaffold') ||
+    object.name.startsWith('instancedScaffold');
+}
 
 /**
- * Remove the construction rig from a building root once the authoritative game
- * state says construction is complete. This also catches old completed buildings
- * whose visual animation may have missed its final transition.
+ * Remove every temporary scaffold object below a building root, not just the
+ * conventional wrapper group. The scan intentionally remains active after the
+ * first cleanup so orphaned/re-attached scaffold batches cannot survive.
  */
 export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void {
-  if (buildingRoot.userData.completedScaffoldRemoved) return;
+  const candidates: THREE.Object3D[] = [];
+  buildingRoot.traverse((object) => {
+    if (object !== buildingRoot && isConstructionScaffoldObject(object)) candidates.push(object);
+  });
 
-  const scaffoldGroup = buildingRoot.getObjectByName('scaffoldGroup') as THREE.Group | undefined;
-  if (scaffoldGroup?.isGroup) removeCompletedBuildingScaffold(scaffoldGroup);
+  const topLevelCandidates = candidates.filter((candidate) => {
+    let parent = candidate.parent;
+    while (parent && parent !== buildingRoot) {
+      if (isConstructionScaffoldObject(parent)) return false;
+      parent = parent.parent;
+    }
+    return true;
+  });
+
+  topLevelCandidates.forEach(disposeAndDetachScaffoldObject);
   buildingRoot.userData.completedScaffoldRemoved = true;
 }
