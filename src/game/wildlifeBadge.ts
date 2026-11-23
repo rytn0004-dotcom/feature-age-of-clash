@@ -37,6 +37,6 @@ export function getWildlifeBadgePresentation(
     actionText: isAlive
       ? isBoar ? '危險野獸・受到攻擊會反擊' : '受驚會逃・先獵殺再採肉'
       : '已擊倒・可採集肉類',
-    signature: `${isAlive ? 'alive' : 'carcass'}:${bucket}`,
+    signature: isAlive ? `alive:${Math.ceil(hp)}:${bucket}` : `carcass:${Math.round(node.amount)}:${Math.round(node.maxAmount)}`,
   };
 }

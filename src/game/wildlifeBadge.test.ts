@@ -65,3 +65,18 @@ test('wildlife badge: ignores ordinary resource nodes', () => {
     subtype: 'farm', animalAlive: true, animalHp: 10, animalMaxHp: 10, amount: 100, maxAmount: 100,
   }), null);
 });
+
+test('wildlife badge: exact HP changes refresh the label even inside the same visual bucket', () => {
+  const before = getWildlifeBadgePresentation({
+    subtype: 'boar', animalAlive: true, animalHp: 199, animalMaxHp: 200, amount: 900, maxAmount: 900,
+  });
+  const after = getWildlifeBadgePresentation({
+    subtype: 'boar', animalAlive: true, animalHp: 198, animalMaxHp: 200, amount: 900, maxAmount: 900,
+  });
+
+  assert.ok(before);
+  assert.ok(after);
+  assert.equal(Math.ceil(before.ratio * 20), Math.ceil(after.ratio * 20));
+  assert.notEqual(before.signature, after.signature);
+  assert.equal(after.valueText, '198/200 HP');
+});
