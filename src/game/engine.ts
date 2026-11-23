@@ -10718,7 +10718,7 @@ export class RtsEngine {
 
       if (combatCmd.type === 'defend_base' || combatCmd.type === 'retreat_to_base') {
         const defendAnchor = { x: anchorX, z: anchorZ, radius: 26 };
-        const baseClusterTarget = selectClusterFocusTarget(aiArmy, aiHostileUnits, aiHostileBuildings, {
+        const baseClusterTarget = selectClusterFocusTarget(aiArmy, this.units, this.buildings, {
           maxEnemyRangeFromCentroid: 40,
           defendAnchor,
         });
@@ -10858,7 +10858,7 @@ export class RtsEngine {
 
           const clusterTarget =
             combatCmd.type === 'cluster_attack'
-              ? selectClusterFocusTarget(strikeUnits, aiHostileUnits, aiHostileBuildings, {
+              ? selectClusterFocusTarget(strikeUnits, this.units, this.buildings, {
                   maxEnemyRangeFromCentroid: 32,
                 })
               : null;
@@ -10872,7 +10872,7 @@ export class RtsEngine {
           );
           const rangedFocusTarget =
             rangedStrikeUnits.length >= 2
-              ? selectClusterFocusTarget(rangedStrikeUnits, aiHostileUnits, aiHostileBuildings, {
+              ? selectClusterFocusTarget(rangedStrikeUnits, this.units, this.buildings, {
                   maxEnemyRangeFromCentroid: 32,
                 })
               : null;
