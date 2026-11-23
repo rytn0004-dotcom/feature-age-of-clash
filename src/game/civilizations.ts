@@ -617,8 +617,8 @@ export const CIVILIZATION_TECHS: TechDefinition[] = [
 
   // ================= MONGOL TECHNOLOGIES =================
   { id: 'mon_nomadic_wheels', civId: 'mongol', buildingType: 'ovoo_relay', name: '遊牧輕車與換馬制', icon: '🛞', roleTag: '機動',
-    description: '改良草原輕車與換馬驛程，讓蒙古軍隊以更快速度穿越戰場。', effectLabel: '全軍移速 +8% · 村民負重 +2',
-    cost: { food: 60, wood: 45, gold: 20, stone: 0 }, researchTime: 9, effect: { speedMultiplier: 1.08, carryCapacityBonus: 2 } },
+    description: '改良草原輕車與換馬驛程，讓蒙古軍隊以更快速度穿越戰場。', effectLabel: '全軍移速額外 +8%',
+    cost: { food: 60, wood: 45, gold: 20, stone: 0 }, researchTime: 9, effect: { speedMultiplier: 1.08 } },
   { id: 'mon_composite_bow', civId: 'mongol', buildingType: 'archery_range', name: '角木複合反曲弓', icon: '🏹', roleTag: '射程',
     description: '以牛角、樺木與獸筋壓合製作高初速彎弓，大幅延長突騎風箏射程。', effectLabel: '騎射／薩滿射程 +1.4 · 攻擊 +3',
     cost: { food: 80, wood: 65, gold: 55, stone: 0 }, researchTime: 11, requiredAge: 2, targetCategories: ['cavalry','ranged'],
