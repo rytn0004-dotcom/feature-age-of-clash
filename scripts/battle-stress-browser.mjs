@@ -142,6 +142,21 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
+      // Seed a bounded set of temporary buffs so the stress scenario exercises the
+      // live buff-ring batch instead of passing with an empty (zero-instance) batch.
+      const seededBuffUnits = await evaluate(`
+        (() => {
+          const e = window.__rtsEngine;
+          if (!e || !Array.isArray(e.units)) return 0;
+          const count = Math.min(12, e.units.length);
+          for (const unit of e.units.slice(0, count)) {
+            unit.buffSpeedUntil = e.simTime + 120;
+          }
+          return count;
+        })()
+      `);
+      assert.ok(seededBuffUnits >= 8, "Could not seed enough temporary buff-ring instances.");
+
       // The HUD is now a lazy-loaded React chunk. Engine setup can finish before
       // React has mounted that chunk, so wait for the actual controls before
       // measuring responsive layout at any viewport width.
@@ -448,11 +463,13 @@ async function main() {
         "Role marker instance batches do not match visible per-unit LOD state.",
       );
       assert.equal(decorations.visibleIndividualRoleMarkers, 0, "A role marker is still rendered as an individual mesh.");
+      assert.ok(decorations.expectedBuffRings >= Math.min(8, seededBuffUnits), "The scenario did not activate the seeded buff rings.");
       assert.equal(
         decorations.buffRingInstances,
         decorations.expectedBuffRings,
         "Buff-ring instance batch does not match active per-unit buffs.",
       );
+      assert.ok(decorations.expectedVisibleRoleMarkers > 0, "The mixed army did not produce any battlefield role markers.");
       assert.equal(decorations.visibleIndividualBuffRings, 0, "A buff ring is still rendered as an individual mesh.");
       assert.equal(decorations.visibleIndividualShadows, 0, "A unit contact shadow is still rendered individually.");
       assert.equal(decorations.visibleIndividualFactionRings, 0, "A unit faction ring is still rendered individually.");
@@ -470,7 +487,7 @@ async function main() {
       assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
-      report.scenarios.push({ count, initial, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
+      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
