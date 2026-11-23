@@ -9543,6 +9543,7 @@ export class RtsEngine {
 
   private evaluateAiLogic() {
     const unitsByFaction = groupEntitiesByFaction(this.units);
+    const buildingsByFaction = groupEntitiesByFaction(this.buildings);
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
@@ -9571,7 +9572,7 @@ export class RtsEngine {
       );
       const aiActiveWorkers = aiWorkers.filter((u) => !u.garrisonedInBuildingId);
       const aiArmy = aiUnits.filter((u) => u.unitDef.category !== 'worker' && !u.garrisonedInBuildingId);
-      const aiBuildings = this.buildings.filter((b) => b.faction === aiId && b.hp > 0);
+      const aiBuildings = (buildingsByFaction.get(aiId) || []).filter((building) => building.hp > 0);
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
       const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
@@ -9606,6 +9607,15 @@ export class RtsEngine {
         }
       }
 
+      // Build each AI's live hostile rosters once, then reuse them throughout this planning pass.
+      const aiReference = { faction: aiId, team: aiTeam };
+      const aiHostileUnits = this.units.filter(
+        (unit) => unit.hp > 0 && this.isHostile(aiReference, unit),
+      );
+      const aiHostileBuildings = this.buildings.filter(
+        (building) => building.hp > 0 && this.isHostile(aiReference, building),
+      );
+
       const anchorX = aiTC?.x ?? aiBuildings[0]?.x ?? 0;
       const anchorZ = aiTC?.z ?? aiBuildings[0]?.z ?? 0;
       const toCenterAngle = Math.atan2(-anchorZ, -anchorX);
@@ -9614,8 +9624,8 @@ export class RtsEngine {
       let underAttack = 0;
       let nearestEnemyDist = 60;
       let baseThreat: UnitEntity | null = null;
-      for (const enemy of this.units) {
-        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile({ faction: aiId, team: aiTeam }, enemy)) continue;
+      for (const enemy of aiHostileUnits) {
+        if (enemy.hp <= 0 || enemy.garrisonedInBuildingId) continue;
         const dBase = getDistance(anchorX, anchorZ, enemy.x, enemy.z);
         if (dBase < nearestEnemyDist) {
           nearestEnemyDist = dBase;
@@ -9796,8 +9806,8 @@ export class RtsEngine {
         }
       }
 
-      const enemyArmyCount = this.units.filter(
-        (u) => u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category !== 'worker' && this.isHostile({ faction: aiId, team: aiTeam }, u)
+      const enemyArmyCount = aiHostileUnits.filter(
+        (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId && unit.unitDef.category !== 'worker',
       ).length;
 
 
@@ -9809,12 +9819,11 @@ export class RtsEngine {
           const targets = this.contestedPoints
             .map((cp) => {
               const mine = cp.ownerFaction === aiId;
-              const threat = this.units.some(
-                (u) =>
-                  u.hp > 0 &&
-                  !u.garrisonedInBuildingId &&
-                  this.isHostile({ faction: aiId, team: aiTeam }, u) &&
-                  getDistance(u.x, u.z, cp.x, cp.z) <= cp.radius + 8
+              const threat = aiHostileUnits.some(
+                (unit) =>
+                  unit.hp > 0 &&
+                  !unit.garrisonedInBuildingId &&
+                  getDistance(unit.x, unit.z, cp.x, cp.z) <= cp.radius + 8,
               );
               let score = 0;
               if (cp.ownerFaction === 'neutral') score = 65;
@@ -9871,12 +9880,8 @@ export class RtsEngine {
           aiArmy.length >= raidArmyMin &&
           this.stats.gameDuration > raidTimeGate
         ) {
-          const enemyWorkers = this.units.filter(
-            (u) =>
-              u.hp > 0 &&
-              u.unitDef.category === 'worker' &&
-              !u.garrisonedInBuildingId &&
-              this.isHostile({ faction: aiId, team: aiTeam }, u)
+          const enemyWorkers = aiHostileUnits.filter(
+            (unit) => unit.hp > 0 && unit.unitDef.category === 'worker' && !unit.garrisonedInBuildingId,
           );
           let bestRaid: { x: number; z: number; score: number; targetId?: string } | null = null;
           for (const ew of enemyWorkers) {
@@ -9890,12 +9895,11 @@ export class RtsEngine {
               else if (node?.subtype === 'hunt' || node?.subtype === 'berry') score += 25;
               else score += 15;
             }
-            const nearTheirTc = this.buildings.some(
-              (b) =>
-                b.buildingType === 'town_center' &&
-                b.hp > 0 &&
-                b.faction === ew.faction &&
-                getDistance(b.x, b.z, ew.x, ew.z) < 14
+            const nearTheirTc = (buildingsByFaction.get(ew.faction) || []).some(
+              (building) =>
+                building.buildingType === 'town_center' &&
+                building.hp > 0 &&
+                getDistance(building.x, building.z, ew.x, ew.z) < 14
             );
             if (nearTheirTc) score -= 25;
             else score += 20;
@@ -9903,16 +9907,14 @@ export class RtsEngine {
               bestRaid = { x: ew.x, z: ew.z, score, targetId: ew.id };
             }
           }
-          for (const b of this.buildings) {
+          for (const b of aiHostileBuildings) {
             if (b.hp <= 0 || !b.isConstructed) continue;
-            if (!this.isHostile({ faction: aiId, team: aiTeam }, b)) continue;
             if (b.buildingType !== 'farm' && b.buildingType !== 'dock' && b.buildingType !== 'mining_camp') continue;
-            const guarded = this.units.some(
-              (u) =>
-                u.hp > 0 &&
-                u.unitDef.category !== 'worker' &&
-                u.faction === b.faction &&
-                getDistance(u.x, u.z, b.x, b.z) < 12
+            const guarded = (unitsByFaction.get(b.faction) || []).some(
+              (unit) =>
+                unit.hp > 0 &&
+                unit.unitDef.category !== 'worker' &&
+                getDistance(unit.x, unit.z, b.x, b.z) < 12
             );
             let score = b.buildingType === 'dock' ? 50 : b.buildingType === 'mining_camp' ? 45 : 30;
             if (guarded) score -= 30;
@@ -10507,15 +10509,15 @@ export class RtsEngine {
         siege: 0,
         fortificationCount: 0,
       };
-      for (const u of this.units) {
-        if (u.hp <= 0 || !this.isHostile({ faction: aiId, team: participant.team }, u)) continue;
+      for (const u of aiHostileUnits) {
+        if (u.hp <= 0) continue;
         if (u.unitDef.category === 'melee') enemyComposition.melee++;
         else if (u.unitDef.category === 'ranged') enemyComposition.ranged++;
         else if (u.unitDef.category === 'cavalry') enemyComposition.cavalry++;
         else if (u.unitDef.category === 'siege') enemyComposition.siege++;
       }
-      for (const eb of this.buildings) {
-        if (eb.hp <= 0 || !this.isHostile({ faction: aiId, team: participant.team }, eb)) continue;
+      for (const eb of aiHostileBuildings) {
+        if (eb.hp <= 0) continue;
         if (eb.buildingType === 'tower' || eb.buildingType === 'castle' || eb.buildingType === 'wall') {
           enemyComposition.fortificationCount++;
         }
@@ -10677,12 +10679,8 @@ export class RtsEngine {
         this.stats.gameDuration > (personality === 'hard' ? 70 : 100)
       ) {
         const siegeUnits = aiArmy.filter((u) => u.unitDef.category === 'siege');
-        const enemyTc = this.buildings.find(
-          (b) =>
-            b.hp > 0 &&
-            b.isConstructed &&
-            b.buildingType === 'town_center' &&
-            this.isHostile({ faction: aiId, team: aiTeam }, b)
+        const enemyTc = aiHostileBuildings.find(
+          (building) => building.hp > 0 && building.isConstructed && building.buildingType === 'town_center',
         );
         if (siegeUnits.length > 0 && enemyTc) {
           for (const s of siegeUnits) {
@@ -10807,17 +10805,13 @@ export class RtsEngine {
         });
       } else if (combatCmd.type === 'cluster_attack' || combatCmd.type === 'attack_player') {
         const enemyTc =
-          this.buildings.find(
-            (b) =>
-              b.hp > 0 &&
-              b.isConstructed &&
-              b.buildingType === 'town_center' &&
-              this.isHostile({ faction: aiId, team: aiTeam }, b)
+          aiHostileBuildings.find(
+            (building) => building.hp > 0 && building.isConstructed && building.buildingType === 'town_center',
           ) || null;
         const stronghold =
           enemyTc ||
-          findClosestEnemy(anchorX, anchorZ, aiId, this.buildings, Infinity, aiTeam) ||
-          findClosestEnemy(anchorX, anchorZ, aiId, this.units, Infinity, aiTeam);
+          findClosestEnemy(anchorX, anchorZ, aiId, aiHostileBuildings, Infinity, aiTeam) ||
+          findClosestEnemy(anchorX, anchorZ, aiId, aiHostileUnits, Infinity, aiTeam);
 
         if (stronghold) {
           const strikeUnits = aiArmy.filter(
@@ -10828,12 +10822,8 @@ export class RtsEngine {
           );
 
           // Preferred soft targets: exposed enemy villagers
-          const exposedWorkers = this.units.filter(
-            (u) =>
-              u.hp > 0 &&
-              u.unitDef.category === 'worker' &&
-              !u.garrisonedInBuildingId &&
-              this.isHostile({ faction: aiId, team: aiTeam }, u)
+          const exposedWorkers = aiHostileUnits.filter(
+            (unit) => unit.hp > 0 && unit.unitDef.category === 'worker' && !unit.garrisonedInBuildingId,
           );
           const exposedWorkerById = new Map(exposedWorkers.map((worker) => [worker.id, worker] as const));
           const raiderUnits = strikeUnits.filter(
@@ -10850,12 +10840,11 @@ export class RtsEngine {
           );
 
           const ecoBuilding =
-            this.buildings
+            aiHostileBuildings
               .filter(
                 (b) =>
                   b.hp > 0 &&
                   b.isConstructed &&
-                  this.isHostile({ faction: aiId, team: aiTeam }, b) &&
                   (b.buildingType === 'farm' ||
                     b.buildingType === 'dock' ||
                     b.buildingType === 'mining_camp' ||
