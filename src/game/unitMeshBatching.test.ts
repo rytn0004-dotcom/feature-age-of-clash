@@ -130,9 +130,11 @@ test('keeps different materials and render states in separate batches', () => {
   const other = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
   const sameStateA = createLargeStaticMesh(shared, -2);
   const sameStateB = createLargeStaticMesh(shared, -1);
+  sameStateA.castShadow = true;
+  sameStateB.castShadow = true;
   const differentMaterial = createLargeStaticMesh(other, 1);
   const differentShadowState = createLargeStaticMesh(shared, 2);
-  differentShadowState.castShadow = true;
+  differentShadowState.castShadow = false;
   root.add(sameStateA, sameStateB, differentMaterial, differentShadowState);
 
   const stats = mergeStaticUnitMeshes(root);
