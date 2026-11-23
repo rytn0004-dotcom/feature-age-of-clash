@@ -15,6 +15,7 @@ import {
   selectAiWorkerReassignment,
   shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
+  selectSiegeEscortAssignments,
   deductCost,
   addResources,
   calculateDamage,
@@ -3603,4 +3604,52 @@ test('AI forward gold selection returns null when no deposit has more than 80 go
     { id: 'other-resource', resourceType: 'food' as const, amount: 500, x: 1, z: 0 },
   ];
   assert.equal(selectBestForwardGoldNode(nodes, 0, 0, new Map()), null);
+});
+
+
+test('siege escort assignments persist while escort units move or intercept nearby threats', () => {
+  const siegeUnits = [
+    { id: 'ram-a', x: 0, z: 0 },
+    { id: 'ram-b', x: 30, z: 0 },
+  ];
+  const candidates = [
+    { id: 'persistent', x: 60, z: 0, state: 'attacking', siegeEscortTargetId: 'ram-b', unitDef: { category: 'melee' as const } },
+    { id: 'idle-near-a', x: 2, z: 0, state: 'idle', unitDef: { category: 'melee' as const } },
+    { id: 'idle-near-b', x: 32, z: 0, state: 'idle', unitDef: { category: 'cavalry' as const } },
+    { id: 'busy-no-link', x: 1, z: 1, state: 'attacking', unitDef: { category: 'melee' as const } },
+    { id: 'worker', x: 0, z: 1, state: 'idle', unitDef: { category: 'worker' as const } },
+    { id: 'other-siege', x: 0, z: 2, state: 'idle', unitDef: { category: 'siege' as const } },
+  ];
+
+  const assignments = selectSiegeEscortAssignments(siegeUnits, candidates, 3);
+  assert.equal(assignments.length, 3);
+  assert.ok(assignments.some((entry) => entry.escort.id === 'persistent' && entry.siegeId === 'ram-b'));
+  assert.ok(assignments.every((entry) => entry.escort.id !== 'busy-no-link'));
+  assert.ok(assignments.every((entry) => entry.escort.id !== 'worker' && entry.escort.id !== 'other-siege'));
+
+  const persistent = assignments.find((entry) => entry.escort.id === 'persistent');
+  assert.ok(persistent);
+  assert.equal(persistent.slotIndex, 0);
+  const sameSiege = assignments.filter((entry) => entry.siegeId === 'ram-b').sort((a, b) => a.slotIndex - b.slotIndex);
+  assert.deepEqual(sameSiege.map((entry) => entry.escort.id), ['persistent', 'idle-near-b']);
+});
+
+test('siege escort assignments release stale siege links and recruit only idle replacements', () => {
+  const siegeUnits = [{ id: 'ram-live', x: 0, z: 0 }];
+  const candidates = [
+    { id: 'stale-link', x: 2, z: 0, state: 'moving', siegeEscortTargetId: 'ram-dead', unitDef: { category: 'melee' as const } },
+    { id: 'busy', x: 1, z: 0, state: 'attacking', unitDef: { category: 'cavalry' as const } },
+    { id: 'idle', x: 3, z: 0, state: 'idle', unitDef: { category: 'melee' as const } },
+  ];
+
+  const assignments = selectSiegeEscortAssignments(siegeUnits, candidates, 2);
+  assert.deepEqual(assignments.map((entry) => entry.escort.id), ['idle']);
+  assert.equal(assignments[0].siegeId, 'ram-live');
+  assert.equal(assignments[0].slotIndex, 0);
+});
+
+test('siege escort assignments stay empty without active siege engines or a usable capacity', () => {
+  const escort = { id: 'guard', x: 0, z: 0, state: 'idle', unitDef: { category: 'melee' as const } };
+  assert.deepEqual(selectSiegeEscortAssignments([], [escort], 2), []);
+  assert.deepEqual(selectSiegeEscortAssignments([{ id: 'ram', x: 0, z: 0 }], [escort], 0), []);
 });
