@@ -18,6 +18,47 @@ export interface FormationRegroupState {
 export const FORMATION_REGROUP_STALL_SECONDS = 1.8;
 export const FORMATION_REGROUP_ABANDON_STALL_SECONDS = 4.5;
 
+export interface FormationStallCandidate {
+  id: string;
+  formationGroupId?: string;
+  hp: number;
+  stuckDuration?: number;
+}
+
+/** Groups recoverable stalled units once per update instead of rescanning the full army per squad. */
+export function groupStalledFormationUnits<T extends FormationStallCandidate>(
+  units: readonly T[],
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+
+  for (const unit of units) {
+    const groupId = unit.formationGroupId;
+    const stuckDuration = unit.stuckDuration || 0;
+    if (
+      !groupId ||
+      unit.hp <= 0 ||
+      stuckDuration < FORMATION_REGROUP_STALL_SECONDS ||
+      stuckDuration >= FORMATION_REGROUP_ABANDON_STALL_SECONDS
+    ) {
+      continue;
+    }
+
+    const members = groups.get(groupId) || [];
+    members.push(unit);
+    groups.set(groupId, members);
+  }
+
+  for (const members of groups.values()) {
+    members.sort(
+      (a, b) =>
+        (b.stuckDuration || 0) - (a.stuckDuration || 0) ||
+        a.id.localeCompare(b.id),
+    );
+  }
+
+  return groups;
+}
+
 /** Returns clamped progress along a squad's shared order vector (0 = start, 1 = goal). */
 export function getFormationMoveProgress(
   x: number,
