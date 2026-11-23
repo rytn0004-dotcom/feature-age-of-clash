@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
+import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import {
@@ -7477,6 +7478,7 @@ export class RtsEngine {
         (bldg as any)._constructImpulse = 1.35;
         const mesh = this.buildingMeshes.get(bldg.id);
         if (mesh) {
+          removeBuildingScaffoldFromRoot(mesh);
           applyBuildingConstructionVisuals(
             mesh,
             computeBuildingVisualState(true, 1, bldg.hp, bldg.maxHp),
@@ -8556,6 +8558,7 @@ export class RtsEngine {
       }
 
       const bMesh = this.buildingMeshes.get(bldg.id);
+      if (bMesh && bldg.isConstructed) removeBuildingScaffoldFromRoot(bMesh);
       const visState = computeBuildingVisualState(bldg.isConstructed, bldg.buildProgress, bldg.hp, bldg.maxHp);
       if (bMesh) {
         if (bldg.buildingType === 'gate') updateGateDoorAnimation(bMesh, !!bldg.gateOpen || !!bldg.wallBreached, dt);

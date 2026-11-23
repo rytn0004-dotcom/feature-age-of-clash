@@ -16,3 +16,17 @@ export function removeCompletedBuildingScaffold(scaffoldGroup: THREE.Group): voi
   scaffoldGroup.clear();
   scaffoldGroup.userData.scaffoldPermanentlyRemoved = true;
 }
+
+
+/**
+ * Remove the construction rig from a building root once the authoritative game
+ * state says construction is complete. This also catches old completed buildings
+ * whose visual animation may have missed its final transition.
+ */
+export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void {
+  if (buildingRoot.userData.completedScaffoldRemoved) return;
+
+  const scaffoldGroup = buildingRoot.getObjectByName('scaffoldGroup') as THREE.Group | undefined;
+  if (scaffoldGroup?.isGroup) removeCompletedBuildingScaffold(scaffoldGroup);
+  buildingRoot.userData.completedScaffoldRemoved = true;
+}
