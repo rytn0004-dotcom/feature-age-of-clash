@@ -1763,10 +1763,16 @@ export const HUD: React.FC<HUDProps> = ({
                 {!selectedUnits.length && !selectedBuilding && selectedNode && (
                   <div className="flex items-center gap-3 w-full">
                     <span className="text-xs font-bold text-white">
-                      {selectedNode.subtype === 'berry'
+                      {selectedNode.subtype === 'boar'
+                        ? '🐗 野生野豬'
+                        : selectedNode.subtype === 'berry'
                         ? '🫐 野生漿果'
                         : selectedNode.subtype === 'hunt'
-                        ? '🦌 野生鹿群'
+                        ? '🦌 野生山羌'
+                        : selectedNode.subtype === 'deep_fish'
+                        ? '🐠 深海魚群'
+                        : selectedNode.subtype === 'shore_fish'
+                        ? '🐟 沿岸魚群'
                         : selectedNode.resourceType === 'gold'
                         ? '🪙 金礦'
                         : selectedNode.resourceType === 'wood'
@@ -2869,6 +2875,11 @@ export const HUD: React.FC<HUDProps> = ({
             {/* If a Resource Node is selected */}
             {!selectedUnits.length && !selectedBuilding && selectedNode && (() => {
               const isRichNode = selectedNode.nodeTier === 'rich';
+              const isWildlifeNode = selectedNode.subtype === 'boar' || selectedNode.subtype === 'hunt';
+              const wildlifeMaxHp = Math.max(1, selectedNode.animalMaxHp || (selectedNode.subtype === 'boar' ? 200 : 32));
+              const wildlifeHp = Math.max(0, selectedNode.animalHp ?? wildlifeMaxHp);
+              const isLiveWildlife = isWildlifeNode && selectedNode.animalAlive !== false && wildlifeHp > 0;
+              const wildlifeHpRatio = Math.max(0, Math.min(1, wildlifeHp / wildlifeMaxHp));
               const activeTechs = engine.getResearchedTechs(observedFactionId);
               const effMult = getEffectiveGatherMultiplier(selectedNode, activeTechs);
               const idleCount = playerUnits.filter(
@@ -2888,6 +2899,8 @@ export const HUD: React.FC<HUDProps> = ({
                     ? '🫐'
                     : selectedNode.subtype === 'hunt'
                     ? '🦌'
+                    : selectedNode.subtype === 'boar'
+                    ? '🐗'
                     : selectedNode.resourceType === 'gold'
                     ? '🪙'
                     : selectedNode.resourceType === 'wood'
@@ -2905,6 +2918,7 @@ export const HUD: React.FC<HUDProps> = ({
                         {selectedNode.subtype === 'deep_fish' && '深海魚群 (僅漁船可捕撈 · ×1.55 最快)'}
                         {selectedNode.subtype === 'shore_fish' && '沿岸魚群 (Shore Fish · ×1.32)'}
                         {selectedNode.subtype === 'hunt' && '野生山羌 (Wild Muntjac · ×1.15)'}
+                        {selectedNode.subtype === 'boar' && '野生野豬 (Wild Boar · Aggressive Wildlife)'}
                         {selectedNode.subtype === 'berry' && '野生漿果叢 (Forage Berry Bush · ×1.0)'}
                         {selectedNode.resourceType === 'gold' && (isRichNode ? '高純度富金礦脈 (Rich Gold Vein)' : '天然金礦脈 (Gold Ore Node)')}
                         {selectedNode.resourceType === 'wood' && (isRichNode ? '遠古神木林 (Ancient Heartwood)' : '茂密森林原木 (Forest Timber)')}
@@ -2914,6 +2928,7 @@ export const HUD: React.FC<HUDProps> = ({
                           selectedNode.subtype !== 'shore_fish' &&
                           selectedNode.subtype !== 'berry' &&
                           selectedNode.subtype !== 'hunt' &&
+                          selectedNode.subtype !== 'boar' &&
                           '成熟麥田作物 (Harvest Farm · ×1.0)'}
                       </span>
                       {isRichNode && (
@@ -2952,6 +2967,28 @@ export const HUD: React.FC<HUDProps> = ({
                       />
                     </div>
                   </div>
+
+                  {isLiveWildlife && (
+                    <div className="space-y-1" data-wildlife-health="true">
+                      <div className="flex items-center justify-between text-xs text-slate-300">
+                        <span>{selectedNode.subtype === 'boar' ? '野豬生命值' : '山羌生命值'}</span>
+                        <span className="font-mono font-bold text-rose-300">
+                          {Math.ceil(wildlifeHp)} / {wildlifeMaxHp} HP
+                        </span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                        <div
+                          className="h-full bg-gradient-to-r from-red-700 via-rose-500 to-orange-400 transition-all"
+                          style={{ width: `${wildlifeHpRatio * 100}%` }}
+                        />
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        {selectedNode.subtype === 'boar'
+                          ? '高風險野獸：受到攻擊後會反擊，建議多人圍獵'
+                          : '野生動物：受到驚嚇會逃跑，需先擊倒才能採集肉類'}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Quick dispatch & resource management actions */}
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1">

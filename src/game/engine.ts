@@ -3,6 +3,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
+import { isFishAnimationSubtype } from './fishAnimationRegistry';
+import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -473,6 +475,8 @@ export class RtsEngine {
   private nodeMeshes = new Map<string, THREE.Group>();
   /** Static membership index for tree-only ambient animation; excludes animals and resource nodes. */
   private windAnimatedNodeMeshes = new Set<THREE.Group>();
+  /** Only fish resource roots are visited by the per-frame external swim-animation pass. */
+  private fishAnimatedNodeMeshes = new Set<THREE.Group>();
   /** Bounded round-robin queue for resource-node distance LOD and shadow updates. */
   private resourceVisualLodQueue = new RoundRobinBatch<THREE.Group>((mesh) => String(mesh.userData.id ?? ''));
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
@@ -1334,6 +1338,7 @@ export class RtsEngine {
     this.animatedBuildingMeshes.clear();
     this.nodeMeshes.clear();
     this.windAnimatedNodeMeshes.clear();
+    this.fishAnimatedNodeMeshes.clear();
     this.resourceVisualLodQueue.clear();
     this.unitLodAccumulator = 0;
     this.buildingLodAccumulator = 0;
@@ -2444,6 +2449,11 @@ export class RtsEngine {
       amount,
       maxAmount: amount,
     };
+    if (resolvedSubtype === 'boar' || resolvedSubtype === 'hunt') {
+      node.animalMaxHp = resolvedSubtype === 'boar' ? 200 : 32;
+      node.animalHp = node.animalMaxHp;
+      node.animalAlive = true;
+    }
     this.resourceNodes.push(node);
     this.navGridDirty = true;
 
@@ -2480,9 +2490,11 @@ export class RtsEngine {
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
     this.resourceVisualLodQueue.add(mesh);
+    if (isFishAnimationSubtype(resolvedSubtype)) this.fishAnimatedNodeMeshes.add(mesh);
     if (mesh.userData.treeWind) this.windAnimatedNodeMeshes.add(mesh);
     if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
-    if (resolvedSubtype === 'shore_fish' || resolvedSubtype === 'deep_fish') attachFishAssetLod(mesh);
+    if (isFishAnimationSubtype(resolvedSubtype)) attachFishAssetLod(mesh);
+    if (resolvedSubtype === 'boar' || resolvedSubtype === 'hunt') this.updateWildlifeOverheadBadge(node, mesh);
     if (type === 'wood' && nodeTier === 'standard') {
       const variantSeed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
       attachKayKitTreeLod(mesh, variantSeed % 2 === 0 ? 'A' : 'B');
@@ -5068,7 +5080,7 @@ export class RtsEngine {
       }
 
       this.updateUnitVisualLods(rawDt);
-      this.nodeMeshes.forEach((mesh) => {
+      this.fishAnimatedNodeMeshes.forEach((mesh) => {
         if (mesh.userData.fishAssetLod) updateFishAssetAnimations(mesh, rawDt);
       });
       let renderCallMs = 0;
@@ -6963,6 +6975,7 @@ export class RtsEngine {
             this.scene.remove(mesh);
             this.nodeMeshes.delete(node.id);
             this.windAnimatedNodeMeshes.delete(mesh);
+            this.fishAnimatedNodeMeshes.delete(mesh);
             this.resourceVisualLodQueue.remove(node.id);
           }
           if (
@@ -7709,6 +7722,31 @@ export class RtsEngine {
    * - 山羌 flee once per encounter and re-arm only after the threat disengages.
    * - 野豬 remain calm until hit, then charge and retaliate against their attacker.
    */
+  private updateWildlifeOverheadBadge(node: ResourceNode, mesh: THREE.Group): void {
+    const presentation = getWildlifeBadgePresentation(node);
+    if (!presentation || (node as any)._wildlifeBadgeSignature === presentation.signature) return;
+
+    (node as any)._wildlifeBadgeSignature = presentation.signature;
+    const badge = (mesh.userData.badgeSprite as THREE.Sprite | undefined) ||
+      (mesh.getObjectByName('badgeSprite') as THREE.Sprite | undefined);
+    if (badge) {
+      badge.visible = this.showOverheadBadges;
+      updateBadgeSprite(
+        badge,
+        presentation.title,
+        presentation.icon,
+        presentation.valueText,
+        presentation.ratio,
+        false,
+        false,
+        presentation.actionText,
+      );
+    }
+
+    // Keep the selected wildlife inspector's HP bar in sync without forcing a React update every frame.
+    if (this.selectedNodeId === node.id) this.onSelectionChange?.();
+  }
+
   private updateWildAnimals(dt: number) {
     const DETECT = 18;
     let deerIdx = 0;
@@ -7763,6 +7801,7 @@ export class RtsEngine {
         node.animalVz = 0;
         node.animalYaw = (this.resourceNodes.indexOf(node) * 1.9) % (Math.PI * 2);
       }
+      if (mesh) this.updateWildlifeOverheadBadge(node, mesh);
 
       if (!node.animalAlive) {
         if (mesh) {
