@@ -1697,7 +1697,7 @@ export const INITIAL_MODS: GameMod[] = [
     id: 'mod_mongol', name: '草原蒙古汗國 (Mongol Steppe Khaganate)', author: 'AgeOfClash Devs',
     description: '蒙古刀盾步兵、突騎移動射擊、怯薛重騎衝鋒、長生天薩滿雷域與敖包大驛站。',
     version: '1.0.0', enabled: true, unitDefinitions: MONGOL_UNITS,
-    balanceMultipliers: { gatherRate: 1, unitHp: 1, unitDamage: 1, buildSpeed: 1, moveSpeed: 1.08 },
+    balanceMultipliers: { gatherRate: 1, unitHp: 1, unitDamage: 1, buildSpeed: 1, moveSpeed: 1 },
     aiRules: [],
   },
 ];
