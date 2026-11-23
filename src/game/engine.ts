@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
+import { createUnitLodHighDetailSet } from './unitLodSelection';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -5471,14 +5472,16 @@ export class RtsEngine {
     this.camera.updateMatrixWorld(true);
 
     if (updateUnits) {
+      const highDetailUnitIds = createUnitLodHighDetailSet(
+        this.selectedUnitIds,
+        this.inspectedEntity?.type === 'unit' ? this.inspectedEntity.id : null,
+      );
       for (const unit of this.units) {
         if (unit.hp <= 0) continue;
         const mesh = this.unitMeshes.get(unit.id);
         if (!mesh || !mesh.visible) continue;
 
-        const forceHighDetail =
-          this.selectedUnitIds.includes(unit.id) ||
-          (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
+        const forceHighDetail = highDetailUnitIds.has(unit.id);
         updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
         updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
       }
