@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { createEntityIdIndex } from './entityLookup';
+import { createEntityIdIndex, groupEntitiesByFaction } from './entityLookup';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -9542,6 +9542,7 @@ export class RtsEngine {
   }
 
   private evaluateAiLogic() {
+    const unitsByFaction = groupEntitiesByFaction(this.units);
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
@@ -9563,7 +9564,7 @@ export class RtsEngine {
       const aiCiv = getCivilizationConfig(participant.civilization);
       const aiRes = this.getResourcesForFaction(aiId);
 
-      const aiUnits = this.units.filter((u) => u.faction === aiId && u.hp > 0);
+      const aiUnits = (unitsByFaction.get(aiId) || []).filter((unit) => unit.hp > 0);
       const aiNavalBoats = aiUnits.filter((u) => u.unitDef.category === 'worker' && (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat'));
       const aiWorkers = aiUnits.filter(
         (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'

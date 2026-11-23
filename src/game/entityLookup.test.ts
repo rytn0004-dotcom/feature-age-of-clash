@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEntityIdIndex } from './entityLookup';
+import { createEntityIdIndex, groupEntitiesByFaction } from './entityLookup';
 
 test('entity index: resolves IDs to the original entity objects', () => {
   const first = { id: 'unit-1', hp: 20 };
@@ -34,4 +34,29 @@ test('entity index: safely handles empty and immutable inputs', () => {
   assert.equal(empty.size, 0);
   assert.deepEqual([...index.keys()], ['one', 'two']);
   assert.deepEqual(source.map((entity) => entity.id), ['one', 'two']);
+});
+
+
+test('entity faction grouping: preserves entity identity and source order in one stable bucket per faction', () => {
+  const firstBlue = { id: 'blue-1', faction: 'blue', hp: 100 };
+  const red = { id: 'red-1', faction: 'red', hp: 100 };
+  const secondBlue = { id: 'blue-2', faction: 'blue', hp: 0 };
+  const groups = groupEntitiesByFaction([firstBlue, red, secondBlue]);
+
+  assert.deepEqual([...groups.keys()], ['blue', 'red']);
+  assert.equal(groups.get('blue')?.[0], firstBlue);
+  assert.equal(groups.get('blue')?.[1], secondBlue);
+  assert.equal(groups.get('red')?.[0], red);
+  assert.deepEqual(groups.get('blue')?.map((entity) => entity.id), ['blue-1', 'blue-2']);
+});
+
+test('entity faction grouping: handles empty and immutable collections without mutation', () => {
+  assert.equal(groupEntitiesByFaction([]).size, 0);
+  const entities: readonly { id: string; faction: string }[] = [
+    { id: 'one', faction: 'gold' },
+    { id: 'two', faction: 'gold' },
+  ];
+  const grouped = groupEntitiesByFaction(entities);
+  assert.deepEqual(grouped.get('gold')?.map((entity) => entity.id), ['one', 'two']);
+  assert.deepEqual(entities.map((entity) => entity.id), ['one', 'two']);
 });
