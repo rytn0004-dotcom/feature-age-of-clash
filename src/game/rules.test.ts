@@ -3459,14 +3459,32 @@ test('wild boar (野豬): ranged hunters hold a safe firing band while frontline
     unitDef: { category: 'melee' as const, isNaval: false },
   } as unknown as UnitEntity;
 
-  const selected = selectWildBoarAggroTarget('archer', 0, 0, [ranged, frontliner], 'boar');
-  assert.equal(selected?.id, 'infantry', 'a nearby frontline hunter draws aggro away from a fragile ranged hunter');
+  const worker = {
+    id: 'villager',
+    x: 1,
+    z: 0,
+    hp: 55,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'worker' as const, isNaval: false },
+  } as unknown as UnitEntity;
+  const selected = selectWildBoarAggroTarget('archer', 0, 0, [ranged, worker, frontliner], 'boar');
+  assert.equal(selected?.id, 'infantry', 'military frontline takes aggro before a closer worker, protecting the villager and ranged line');
 
   const farFrontliner = { ...frontliner, x: WILD_BOAR_FRONTLINE_SCREEN_RADIUS + 0.1 } as UnitEntity;
   assert.equal(
     selectWildBoarAggroTarget('archer', 0, 0, [ranged, farFrontliner], 'boar')?.id,
     'archer',
     'the ranged target remains locked until a frontline hunter reaches screening distance',
+  );
+  assert.equal(
+    selectWildBoarAggroTarget('archer', 0, 0, [
+      ranged,
+      worker,
+      { ...farFrontliner, x: WILD_BOAR_FRONTLINE_SCREEN_RADIUS + 0.1 },
+    ], 'boar')?.id,
+    'villager',
+    'a worker only screens when no military frontline is inside the protection radius',
   );
 
   const band = getWildBoarRangedHuntPlan(14, 0, 0, 0, 12);

@@ -3260,6 +3260,7 @@ export function selectWildBoarAggroTarget(
   if (lockedTarget) {
     if (lockedTarget.unitDef.category === 'ranged') {
       let nearestFrontliner: UnitEntity | null = null;
+      let nearestFrontlinePriority = Number.POSITIVE_INFINITY;
       let nearestFrontlineDistance = Number.POSITIVE_INFINITY;
       for (const candidate of candidates) {
         const category = candidate.unitDef.category;
@@ -3275,13 +3276,20 @@ export function selectWildBoarAggroTarget(
           (category !== 'worker' && category !== 'melee' && category !== 'cavalry' && category !== 'special')
         ) continue;
         const distance = Math.hypot(candidate.x - boarX, candidate.z - boarZ);
+        const frontlinePriority = category === 'worker' ? 1 : 0;
         if (
           distance <= WILD_BOAR_FRONTLINE_SCREEN_RADIUS &&
-          (distance < nearestFrontlineDistance - 1e-9 ||
-            (Math.abs(distance - nearestFrontlineDistance) <= 1e-9 &&
-              (!nearestFrontliner || candidate.id.localeCompare(nearestFrontliner.id) < 0)))
+          (
+            frontlinePriority < nearestFrontlinePriority ||
+            (frontlinePriority === nearestFrontlinePriority && (
+              distance < nearestFrontlineDistance - 1e-9 ||
+              (Math.abs(distance - nearestFrontlineDistance) <= 1e-9 &&
+                (!nearestFrontliner || candidate.id.localeCompare(nearestFrontliner.id) < 0))
+            ))
+          )
         ) {
           nearestFrontliner = candidate;
+          nearestFrontlinePriority = frontlinePriority;
           nearestFrontlineDistance = distance;
         }
       }
