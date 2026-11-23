@@ -15,7 +15,9 @@ test('role marker batches use distinct crest and siege geometries with dynamic i
   assert.equal(crest.count, 0);
   assert.equal(siege.count, 0);
   assert.notEqual(crest.geometry, siege.geometry);
-  assert.equal(crest.material, siege.material === crest.material ? crest.material : crest.material);
+  assert.notEqual(crest.material, siege.material, 'Crest and siege role markers keep their faction-role colors.');
+  assert.equal((crest.material as THREE.MeshBasicMaterial).color.getHex(), 0xfacc15);
+  assert.equal((siege.material as THREE.MeshBasicMaterial).color.getHex(), 0xf97316);
   assert.equal((crest.material as THREE.Material).transparent, true);
   assert.equal((siege.material as THREE.Material).transparent, true);
 
