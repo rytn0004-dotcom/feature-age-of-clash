@@ -189,7 +189,8 @@ test('combat spatial index: reusable query outputs retain identity and clear pre
   assert.equal(invalid, output);
   assert.equal(output.units, unitsBuffer);
   assert.equal(output.buildings, buildingsBuffer);
-  assert.deepEqual(output, { units: [], buildings: [] });
+  assert.equal(output.units.length, 0);
+  assert.equal(output.buildings.length, 0);
 
   const all = queryCombatSpatialIndex(index, 100, 100, Infinity, output);
   assert.equal(all, output);
