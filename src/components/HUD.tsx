@@ -1760,33 +1760,47 @@ export const HUD: React.FC<HUDProps> = ({
                     )}
                   </div>
                 )}
-                {!selectedUnits.length && !selectedBuilding && selectedNode && (
-                  <div className="flex items-center gap-3 w-full">
-                    <span className="text-xs font-bold text-white">
-                      {selectedNode.subtype === 'boar'
-                        ? '🐗 野生野豬'
-                        : selectedNode.subtype === 'berry'
-                        ? '🫐 野生漿果'
-                        : selectedNode.subtype === 'hunt'
-                        ? '🦌 野生山羌'
-                        : selectedNode.subtype === 'deep_fish'
-                        ? '🐠 深海魚群'
-                        : selectedNode.subtype === 'shore_fish'
-                        ? '🐟 沿岸魚群'
-                        : selectedNode.resourceType === 'gold'
-                        ? '🪙 金礦'
-                        : selectedNode.resourceType === 'wood'
-                        ? '🪵 森林'
-                        : selectedNode.resourceType === 'stone'
-                        ? '🪨 石料'
-                        : '🌾 農田'}
-                    </span>
-                    <div className="w-28 h-2 bg-slate-800 rounded-full overflow-hidden shrink-0">
-                      <div className="h-full bg-amber-400" style={{ width: `${(selectedNode.amount / selectedNode.maxAmount) * 100}%` }} />
+                {!selectedUnits.length && !selectedBuilding && selectedNode && (() => {
+                  const isWildlife = selectedNode.subtype === 'boar' || selectedNode.subtype === 'hunt';
+                  const maxHp = Math.max(1, selectedNode.animalMaxHp || (selectedNode.subtype === 'boar' ? 200 : 32));
+                  const hp = Math.max(0, Math.min(maxHp, selectedNode.animalHp ?? maxHp));
+                  const isLiveWildlife = isWildlife && selectedNode.animalAlive !== false && hp > 0;
+                  const ratio = isLiveWildlife ? hp / maxHp : selectedNode.amount / Math.max(1, selectedNode.maxAmount);
+                  const label =
+                    selectedNode.subtype === 'boar'
+                      ? '🐗 野生野豬'
+                      : selectedNode.subtype === 'berry'
+                      ? '🫐 野生漿果'
+                      : selectedNode.subtype === 'hunt'
+                      ? '🦌 野生山羌'
+                      : selectedNode.subtype === 'deep_fish'
+                      ? '🐠 深海魚群'
+                      : selectedNode.subtype === 'shore_fish'
+                      ? '🐟 沿岸魚群'
+                      : selectedNode.resourceType === 'gold'
+                      ? '🪙 金礦'
+                      : selectedNode.resourceType === 'wood'
+                      ? '🪵 森林'
+                      : selectedNode.resourceType === 'stone'
+                      ? '🪨 石料'
+                      : '🌾 農田';
+                  return (
+                    <div className="flex items-center gap-3 w-full">
+                      <span className="text-xs font-bold text-white">{label}</span>
+                      <div className="w-28 h-2 bg-slate-800 rounded-full overflow-hidden shrink-0">
+                        <div
+                          className={`h-full ${isLiveWildlife ? 'bg-rose-400' : 'bg-amber-400'}`}
+                          style={{ width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-amber-300 font-mono font-bold">
+                        {isLiveWildlife
+                          ? `${Math.ceil(hp)}/${maxHp} HP`
+                          : `${Math.round(selectedNode.amount)}/${selectedNode.maxAmount}`}
+                      </span>
                     </div>
-                    <span className="text-xs text-amber-300 font-mono font-bold">{Math.round(selectedNode.amount)}/{selectedNode.maxAmount}</span>
-                  </div>
-                )}
+                  );
+                })()}
                 {!selectedUnits.length && !selectedBuilding && !selectedNode && selectedContestedPoint && (() => {
                   const summary = getContestedShrineSummary(selectedContestedPoint, engine.participants);
                   return (
