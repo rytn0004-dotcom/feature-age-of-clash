@@ -9047,6 +9047,9 @@ export function createUnitMesh(
 
   const roleIcons: Record<string, string> = {
     villager: '⛏️',
+    horse_archer: '🏹',
+    keshik: '🛡️',
+    shaman: '🌩️',
     boat: '⛵',
     swordsman: '⚔️',
     archer: '🏹',
@@ -9070,6 +9073,8 @@ export function createUnitMesh(
       ? '🔥'
       : unitId === 'scout_rider'
       ? '🔭'
+      : unitId === 'mongol_herder'
+      ? '🐎'
       : unitId === 'anime_katana_shinigami'
       ? '🗡️'
       : unitId === 'fantasy_paladin'
