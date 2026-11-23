@@ -28,10 +28,12 @@ function isConstructionScaffoldObject(object: THREE.Object3D): boolean {
 
 /**
  * Remove every temporary scaffold object below a building root, not just the
- * conventional wrapper group. The scan intentionally remains active after the
- * first cleanup so orphaned/re-attached scaffold batches cannot survive.
+ * conventional wrapper group. All scaffold objects exist before a building
+ * reaches its completed state, so this expensive tree scan only needs to run once.
  */
 export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void {
+  if (buildingRoot.userData.completedScaffoldRemoved) return;
+
   const candidates: THREE.Object3D[] = [];
   buildingRoot.traverse((object) => {
     if (object !== buildingRoot && isConstructionScaffoldObject(object)) candidates.push(object);

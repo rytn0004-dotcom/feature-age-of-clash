@@ -75,22 +75,23 @@ test('building scaffold lifecycle: removes wrapper, orphaned frame and instance 
   assert.equal(orphanBatch.wasDisposed(), true);
 });
 
-test('building scaffold lifecycle: removes scaffold objects reattached after an earlier cleanup', () => {
+test('building scaffold lifecycle: completed building roots are scanned only once', () => {
   const building = new Group();
-  removeBuildingScaffoldFromRoot(building);
-  assert.equal(building.userData.completedScaffoldRemoved, true);
-
-  const reattachedScaffold = new Group();
-  reattachedScaffold.name = 'scaffoldGroup';
-  const frame = new Group();
-  frame.name = 'scaffoldFrame';
-  reattachedScaffold.add(frame);
-  building.add(reattachedScaffold);
+  const originalTraverse = building.traverse.bind(building);
+  let traverseCalls = 0;
+  building.traverse = (callback) => {
+    traverseCalls += 1;
+    return originalTraverse(callback);
+  };
 
   removeBuildingScaffoldFromRoot(building);
+  const callsAfterCleanup = traverseCalls;
+  assert.equal(callsAfterCleanup, 1);
 
-  assert.equal(building.getObjectByName('scaffoldGroup'), undefined);
-  assert.equal(building.getObjectByName('scaffoldFrame'), undefined);
+  removeBuildingScaffoldFromRoot(building);
+  removeBuildingScaffoldFromRoot(building);
+
+  assert.equal(traverseCalls, callsAfterCleanup);
   assert.equal(building.userData.completedScaffoldRemoved, true);
 });
 
