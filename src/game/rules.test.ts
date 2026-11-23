@@ -3479,9 +3479,12 @@ test('wild boar (野豬): pursuit stays inside habitat and completes a return af
   assert.equal(step.isReturning, true, 'once return begins, a newly closer hunter cannot reverse the boar mid-return');
   assert.ok(returning.x < 12, 'return hysteresis keeps the boar moving toward home');
 
-  for (let i = 0; i < 120; i++) {
+  let returnSteps = 0;
+  while (returning.animalReturningHome && returnSteps < 120) {
     step = stepWildBoarState(returning, nearbyHunter, 0.1, isBlocked, home);
+    returnSteps++;
   }
+  assert.ok(returnSteps < 120, 'the boar must complete a finite return instead of circling home');
   assert.equal(returning.animalReturningHome, false, 'return state clears only after reaching the home arrival radius');
   assert.ok(
     Math.hypot(returning.x - home.x, returning.z - home.z) <= WILD_BOAR_HOME_ARRIVAL_RADIUS + 0.2,
