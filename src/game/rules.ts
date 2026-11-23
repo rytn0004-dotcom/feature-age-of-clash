@@ -1250,7 +1250,7 @@ export function selectBestForwardGoldNode<
   let best: { node: T; score: number } | null = null;
 
   for (const node of nodes) {
-    if (node.resourceType !== 'gold' || node.amount <= 80) continue;
+    if (node.resourceType !== 'gold' || !(node.amount > 80)) continue;
 
     const homeDistance = getDistance(anchorX, anchorZ, node.x, node.z);
     const centerDistance = getDistance(0, 0, node.x, node.z);
