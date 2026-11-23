@@ -3824,24 +3824,31 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
 
     // Wooden plank catwalks at mid-level for builders
     const frontWalk = new THREE.Mesh(new THREE.BoxGeometry(px * 1.95, 0.06, 0.38), scaffoldPlankMat);
+    frontWalk.name = 'scaffoldFrontWalk';
     frontWalk.position.set(0, ledgerH1 + 0.05, pz - 0.12);
     const rightWalk = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.06, pz * 1.95), scaffoldPlankMat);
+    rightWalk.name = 'scaffoldRightWalk';
     rightWalk.position.set(px - 0.12, ledgerH1 + 0.05, 0);
     planksGroup.add(frontWalk, rightWalk);
 
     // Timber Hoist Jib Arm & Suspended Rope/Beam Bundle
     const jibMast = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.08, scafH * 0.45, 6), scaffoldPoleMat);
+    jibMast.name = 'scaffoldHoistMast';
     jibMast.position.set(-px, scafH + scafH * 0.18, pz);
     const jibArm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.95), scaffoldPoleMat);
+    jibArm.name = 'scaffoldHoistArm';
     jibArm.position.set(-px, scafH + scafH * 0.36, pz + 0.32);
     jibArm.rotation.x = -0.22;
     scaffoldFrame.add(jibMast, jibArm);
 
     const hoistPivot = new THREE.Group();
+    hoistPivot.name = 'scaffoldHoistAssembly';
     hoistPivot.position.set(-px, scafH + scafH * 0.4, pz + 0.68);
     const ropeDrop = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.85, 5), scaffoldRopeMat);
+    ropeDrop.name = 'scaffoldHoistRope';
     ropeDrop.position.y = -0.42;
     const hungTimber = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.24), scaffoldCrateMat);
+    hungTimber.name = 'scaffoldHoistLoad';
     hungTimber.position.y = -0.88;
     hoistPivot.add(ropeDrop, hungTimber);
     scaffoldFrame.add(hoistPivot);
@@ -3849,6 +3856,7 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
 
     // Corner supply crates & stacked timber logs on construction plot edge
     const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.55), scaffoldCrateMat);
+    crate.name = 'scaffoldSupplyCrate';
     crate.position.set(px - 0.35, 0.24, pz + 0.28);
     scaffoldFrame.add(crate);
     const scaffoldLogGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.95, 6);
