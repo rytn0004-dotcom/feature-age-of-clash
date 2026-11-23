@@ -6,6 +6,7 @@ import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
+import { initializeWildlifeSimulationState } from './wildlifeInitialization';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -7795,14 +7796,9 @@ export class RtsEngine {
         node.animalHomeX ??= node.x;
         node.animalHomeZ ??= node.z;
       }
-      if (node.animalAlive === undefined) {
-        node.animalMaxHp = maxHp;
-        node.animalHp = maxHp;
-        node.animalAlive = true;
-        node.animalVx = 0;
-        node.animalVz = 0;
-        node.animalYaw = (this.resourceNodes.indexOf(node) * 1.9) % (Math.PI * 2);
-      }
+      // Health may already be initialized at spawn; movement state still needs its own initialization.
+      const wildlifeIndex = node.animalYaw === undefined ? this.resourceNodes.indexOf(node) : 0;
+      initializeWildlifeSimulationState(node, wildlifeIndex, maxHp);
       if (mesh) this.updateWildlifeOverheadBadge(node, mesh);
 
       if (!node.animalAlive) {
