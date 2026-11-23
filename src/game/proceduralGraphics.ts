@@ -1089,6 +1089,44 @@ export function createTownCenterMesh(faction: FactionId, civId?: CivilizationId)
     crystal.position.y = 8.65;
     crystal.name = 'animatedCrystal';
     group.add(crystal);
+  } else if (civ === 'mongol') {
+    // Mongol Golden Khagan Palace Ger (Ordus Tent): circular dais, felt walls, domed roof and Sulde banners.
+    const feltMat = new THREE.MeshStandardMaterial({
+      color: 0xf8f3e3, map: stoneMaps.map, normalMap: stoneMaps.normalMap,
+      normalScale: new THREE.Vector2(0.35, 0.35), roughness: 0.78,
+    });
+    const crimsonCarpetMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.72 });
+    const dais = new THREE.Mesh(new THREE.CylinderGeometry(3.55, 3.85, 0.56, 26), darkStoneMat);
+    dais.position.y = 0.28; dais.receiveShadow = true; dais.castShadow = true; group.add(dais);
+    const carpet = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.14, 1.85), crimsonCarpetMat);
+    carpet.position.set(0, 0.18, 2.95); group.add(carpet);
+    const gerWall = new THREE.Mesh(new THREE.CylinderGeometry(2.95, 3.05, 2.25, 26), feltMat);
+    gerWall.position.y = 1.68; gerWall.castShadow = true; gerWall.receiveShadow = true; group.add(gerWall);
+    [1.15, 2.68].forEach((ry) => {
+      const sash = new THREE.Mesh(new THREE.TorusGeometry(3.02, 0.085, 10, 28), ry > 2 ? goldMat : crimsonCarpetMat);
+      sash.rotation.x = Math.PI / 2; sash.position.y = ry; group.add(sash);
+    });
+    const domeRoof = new THREE.Mesh(makeLatheGeo([
+      [3.38, 0.0], [3.12, 0.42], [2.45, 1.25], [1.45, 2.05],
+      [0.72, 2.48], [0.58, 2.82], [0.01, 2.95],
+    ], 26), roofMat);
+    domeRoof.position.y = 2.75; domeRoof.castShadow = true; group.add(domeRoof);
+    const toonoRing = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.11, 10, 22), goldMat);
+    toonoRing.rotation.x = Math.PI / 2; toonoRing.position.y = 5.45;
+    const crownCap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.56, 0.72, 16), goldMat);
+    crownCap.position.y = 5.85; group.add(toonoRing, crownCap);
+    addArchedDoorway(group, 0, 0.56, 2.95, 1.38, 1.72, goldMat, woodMat, ironMat);
+    addWarmLantern(group, -1.05, 2.15, 2.95, ironMat);
+    addWarmLantern(group, 1.05, 2.15, 2.95, ironMat);
+    [-2.45, 2.45].forEach((sx) => {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 4.4, 10), woodMat);
+      pole.position.set(sx, 2.2, 2.2);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.52, 12), goldMat);
+      cap.position.set(sx, 4.55, 2.2);
+      const tuft = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.08, 0.78, 12), feltMat);
+      tuft.position.set(sx, 3.85, 2.2);
+      group.add(pole, cap, tuft);
+    });
   } else {
     // Medieval Fortified Keep: Stepped Stone Plinth + Buttresses + Half-Timbered Upper Hall + Hipped Roof + 4 Turrets (fits <= 4.18m collider)
     const plinth = new THREE.Mesh(roundedBuildingBox(5.6, 0.72, 5.6), darkStoneMat);
@@ -1885,6 +1923,32 @@ export function createHouseMesh(faction: FactionId, civId?: CivilizationId): THR
     emissiveIntensity: 0.55,
     roughness: 0.2,
   });
+
+  if (civ === 'mongol') {
+    // Nomadic white-felt ger with braided crimson sash and smoke-crown roof ring.
+    const feltMat = new THREE.MeshStandardMaterial({ color: 0xf8f3e3, roughness: 0.78 });
+    const sashMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.7 });
+    const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(1.42, 1.54, 0.24, 22), stoneMat);
+    baseRing.position.y = 0.12; baseRing.receiveShadow = true;
+    const yurtBody = new THREE.Mesh(new THREE.CylinderGeometry(1.26, 1.32, 1.15, 22), feltMat);
+    yurtBody.position.y = 0.8; yurtBody.castShadow = true;
+    const sash = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.05, 8, 24), sashMat);
+    sash.rotation.x = Math.PI / 2; sash.position.y = 0.92;
+    const dome = new THREE.Mesh(makeLatheGeo([
+      [1.42, 0.0], [1.24, 0.28], [0.72, 0.82], [0.28, 1.12], [0.01, 1.18],
+    ], 22), roofMat);
+    dome.position.y = 1.36; dome.castShadow = true;
+    const crown = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.05, 8, 18), woodMat);
+    crown.rotation.x = Math.PI / 2; crown.position.y = 2.42;
+    group.add(baseRing, yurtBody, sash, dome, crown);
+    addArchedDoorway(group, 0, 0.24, 1.26, 0.66, 0.96, woodMat, woodMat, ironMat);
+    const badge = createBadgeSprite(
+      colors.isHostile ? `${colors.labelPrefix || ''}草原蒙古包` : '草原蒙古包',
+      '🏠', '600', 0.95, colors.isHostile, false
+    );
+    badge.position.set(0, 3.25, 0); badge.name = 'bldgBadge'; group.add(badge);
+    return group;
+  }
 
   // 1. Stone foundation plinth (fits neatly inside house 1.65m collision radius)
   const plinth = new THREE.Mesh(roundedBuildingBox(2.75, 0.32, 2.45), stoneMat);
@@ -3453,6 +3517,70 @@ export function createSpiritShrineMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
+/** Mongol sacred Ovoo/Yam Relay: stone cairn, ritual poles, Khata streamers and a mode-coloured spirit orb. */
+export function createOvooRelayMesh(faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  addContactShadow(group, 3.25);
+  const stoneMaps = getStoneMasonryMaps();
+  const woodMaps = getTimberWoodMaps();
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x78716c, map: stoneMaps.map, normalMap: stoneMaps.normalMap,
+    normalScale: new THREE.Vector2(1, 1), roughness: 0.92,
+  });
+  const darkStoneMat = new THREE.MeshStandardMaterial({
+    color: 0x44403c, map: stoneMaps.map, normalMap: stoneMaps.normalMap, roughness: 0.95,
+  });
+  const birchMat = new THREE.MeshStandardMaterial({
+    color: 0xe7e5e4, map: woodMaps.map, normalMap: woodMaps.normalMap, roughness: 0.84,
+  });
+  const cyanSilk = new THREE.MeshStandardMaterial({ color: 0x0284c7, side: THREE.DoubleSide, roughness: 0.55 });
+  const goldSilk = new THREE.MeshStandardMaterial({ color: 0xf59e0b, side: THREE.DoubleSide, roughness: 0.5 });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(2.65, 2.95, 0.42, 24), darkStoneMat);
+  base.position.y = 0.21; base.receiveShadow = true; group.add(base);
+  const rock = makeCraggyRockGeo(0.55, 2);
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2;
+    const radius = i % 2 === 0 ? 1.55 : 0.95;
+    const boulder = new THREE.Mesh(rock, i % 2 === 0 ? stoneMat : darkStoneMat);
+    boulder.position.set(Math.cos(angle) * radius, i % 2 === 0 ? 0.55 : 1.05, Math.sin(angle) * radius);
+    boulder.scale.set(1.15, 0.78, 1.05); boulder.rotation.y = angle; boulder.castShadow = true; group.add(boulder);
+  }
+  const mound = new THREE.Mesh(makeLatheGeo([
+    [1.45, 0.4], [1.18, 1.1], [0.85, 1.75], [0.42, 2.05], [0.01, 2.1],
+  ], 18), stoneMat);
+  mound.castShadow = true; group.add(mound);
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2 + 0.2;
+    const pole = new THREE.Mesh(makeTubeGeo([
+      [Math.cos(angle) * 0.22, 1.85, Math.sin(angle) * 0.22],
+      [Math.cos(angle) * 0.65, 3.3, Math.sin(angle) * 0.65],
+      [Math.cos(angle) * 1.05, 4.75, Math.sin(angle) * 1.05],
+    ], 0.065, 12, 8), birchMat);
+    pole.castShadow = true; group.add(pole);
+    const silkGeo = new THREE.PlaneGeometry(0.72, 0.26); silkGeo.translate(0.36, 0, 0);
+    const silk = new THREE.Mesh(silkGeo, i % 2 === 0 ? cyanSilk : goldSilk);
+    silk.position.set(Math.cos(angle) * 0.85, 4.15 - (i % 2) * 0.35, Math.sin(angle) * 0.85);
+    silk.rotation.y = angle; silk.name = 'animatedFlag'; group.add(silk);
+  }
+  const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.48, 1), new THREE.MeshBasicMaterial({ color: 0xf59e0b }));
+  orb.position.set(0, 3.65, 0); orb.name = 'animatedCrystal'; group.add(orb);
+  const post1 = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.2, 10), birchMat);
+  post1.position.set(-0.75, 0.6, 2.35);
+  const post2 = post1.clone(); post2.position.set(0.75, 0.6, 2.35);
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1.75, 10), birchMat);
+  rail.rotation.z = Math.PI / 2; rail.position.set(0, 1.08, 2.35);
+  group.add(post1, post2, rail);
+  const aura = createActiveAuraRing(13.2, 13.5, 0xf59e0b, 0.2);
+  aura.name = 'activeAuraRing'; group.add(aura);
+  const badge = createBadgeSprite(
+    colors.isHostile ? `${colors.labelPrefix || ''}敖包驛站` : '敖包驛站',
+    '🗿', '1650', 1, colors.isHostile, false
+  );
+  badge.position.set(0, 5.45, 0); badge.name = 'bldgBadge'; group.add(badge);
+  return group;
+}
+
 export function createManaWellMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -4687,6 +4815,9 @@ export function createBuildingMesh(
       break;
     case 'mana_well':
       group = createManaWellMesh(faction);
+      break;
+    case 'ovoo_relay':
+      group = createOvooRelayMesh(faction);
       break;
     case 'landmark_aachen':
     case 'landmark_barracks':
