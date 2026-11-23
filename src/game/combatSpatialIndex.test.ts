@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
+  type CombatSpatialCandidates,
   queryCombatSpatialIndex,
   rebuildCombatSpatialIndexInPlace,
 } from './combatSpatialIndex';
@@ -170,11 +171,12 @@ test('combat spatial index: rebuild reuses maps, active arrays and bucket arrays
 });
 
 test('combat spatial index: reusable query outputs retain identity and clear previous candidates', () => {
-  const index = createCombatSpatialIndex(
-    [{ id: 'near', x: 0, z: 0, hp: 100 }],
-    [{ id: 'tower', x: 1, z: 0, hp: 500 }],
-  );
-  const output = { units: [] as Array<{ id: string; x: number; z: number; hp: number }>, buildings: [] as Array<{ id: string; x: number; z: number; hp: number }> };
+  type TestUnit = { id: string; x: number; z: number; hp: number };
+  type TestBuilding = { id: string; x: number; z: number; hp: number };
+  const unit: TestUnit = { id: 'near', x: 0, z: 0, hp: 100 };
+  const building: TestBuilding = { id: 'tower', x: 1, z: 0, hp: 500 };
+  const index = createCombatSpatialIndex<TestUnit, TestBuilding>([unit], [building]);
+  const output: CombatSpatialCandidates<TestUnit, TestBuilding> = { units: [], buildings: [] };
   const unitsBuffer = output.units;
   const buildingsBuffer = output.buildings;
 
