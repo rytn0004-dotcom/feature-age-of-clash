@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initializeWildlifeSimulationState } from './wildlifeInitialization';
+import { initializeWildlifeSimulationState, type WildlifeSimulationState } from './wildlifeInitialization';
 
 test('wildlife initialization: preserves spawned HP/alive state while initializing motion', () => {
-  const node = {
+  const node: WildlifeSimulationState = {
     animalAlive: true,
     animalHp: 200,
     animalMaxHp: 200,
@@ -20,7 +20,7 @@ test('wildlife initialization: preserves spawned HP/alive state while initializi
 });
 
 test('wildlife initialization: preserves existing motion and health fields', () => {
-  const node = {
+  const node: WildlifeSimulationState = {
     animalAlive: true,
     animalHp: 12,
     animalMaxHp: 32,
@@ -40,7 +40,7 @@ test('wildlife initialization: preserves existing motion and health fields', () 
 });
 
 test('wildlife initialization: does not revive a previously dead animal', () => {
-  const node = {
+  const node: WildlifeSimulationState = {
     animalAlive: false,
     animalHp: 0,
   };
@@ -55,7 +55,7 @@ test('wildlife initialization: does not revive a previously dead animal', () => 
 });
 
 test('wildlife initialization: restores missing HP from a living legacy state', () => {
-  const node = {
+  const node: WildlifeSimulationState = {
     animalAlive: true,
   };
 
@@ -67,8 +67,8 @@ test('wildlife initialization: restores missing HP from a living legacy state', 
 });
 
 test('wildlife initialization: derives alive state from existing HP when the flag is missing', () => {
-  const liveNode = { animalHp: 6, animalMaxHp: 32 };
-  const deadNode = { animalHp: 0, animalMaxHp: 32 };
+  const liveNode: WildlifeSimulationState = { animalHp: 6, animalMaxHp: 32 };
+  const deadNode: WildlifeSimulationState = { animalHp: 0, animalMaxHp: 32 };
 
   initializeWildlifeSimulationState(liveNode, 1, 32);
   initializeWildlifeSimulationState(deadNode, 2, 32);
