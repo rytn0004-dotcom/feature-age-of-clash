@@ -156,6 +156,7 @@ import {
   triggerWildAnimalPanic,
   stepWildBoarState,
   triggerWildBoarAggression,
+  selectWildBoarAggroTarget,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -6707,6 +6708,7 @@ export class RtsEngine {
           node.animalMoveBlend = 0;
           node.animalAggroTargetId = undefined;
           node.animalAggroUntil = 0;
+          node.animalAttackCooldown = 0;
           this.addFloatingText(node.x, 1.8, node.z, isBoar ? '野豬倒地' : '山羌倒地', '#fca5a5');
           const nm = this.nodeMeshes.get(node.id);
           if (nm) {
@@ -7635,6 +7637,7 @@ export class RtsEngine {
       node.animalMoveBlend = 0;
       node.animalAggroTargetId = undefined;
       node.animalAggroUntil = 0;
+      node.animalAttackCooldown = 0;
       if (mesh) {
         mesh.position.y = 0;
         mesh.rotation.x = 0.55;
@@ -7690,11 +7693,13 @@ export class RtsEngine {
         // Do not let unrelated attack-move units wound wildlife just by passing nearby.
 
         const target = (node.animalAggroUntil || 0) > this.simTime
-          ? this.units.find((u) => u.id === node.animalAggroTargetId && u.hp > 0 && !u.garrisonedInBuildingId)
-          : undefined;
+          ? selectWildBoarAggroTarget(node.animalAggroTargetId, node.x, node.z, this.units, node.id)
+          : null;
         if (!target) {
           node.animalAggroTargetId = undefined;
           node.animalAggroUntil = 0;
+        } else {
+          node.animalAggroTargetId = target.id;
         }
         const step = stepWildBoarState(node, target ? { x: target.x, z: target.z } : null, dt, isAnimalBlocked);
 

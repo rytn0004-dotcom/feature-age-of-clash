@@ -4,6 +4,7 @@ import {
   canAfford,
   canAssembleFieldRam,
   canUnitGatherNode,
+  selectWildBoarAggroTarget,
   estimateConstructionTimeRemaining,
   getConstructionWorkerMultiplier,
   FIELD_RAM_COST,
@@ -43,7 +44,7 @@ import {
   STAR_RELIC_CHANNEL_SEC,
   STAR_RELIC_FALL_AT,
 } from './rules';
-import { AiRule, ResourceNode, EntityCommon } from '../types/game';
+import { AiRule, ResourceNode, EntityCommon, UnitEntity } from '../types/game';
 import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
 import {
   canResearchTech,
@@ -3371,8 +3372,52 @@ test('wild boar (野豬): aggression refreshes safely, dead animals ignore provo
 
   triggerWildBoarAggression(boar, 'hunter-1', 10);
   triggerWildBoarAggression(boar, 'hunter-2', 11);
-  assert.equal(boar.animalAggroTargetId, 'hunter-2');
-  assert.equal(boar.animalAggroUntil, 19, 'A newer hit refreshes the aggression leash from its own timestamp');
+  assert.equal(boar.animalAggroTargetId, 'hunter-1', 'a second hunter must not overwrite an active target lock');
+  assert.equal(boar.animalAggroUntil, 19, 'every deliberate hit refreshes the shared aggression lease');
+
+  const makeHunter = (id: string, x: number, nodeId = boar.id, hp = 100) => ({
+    id,
+    x,
+    z: 0,
+    hp,
+    state: 'gathering' as const,
+    targetResourceNodeId: nodeId,
+    unitDef: { isNaval: false },
+  }) as unknown as UnitEntity;
+  const lockedHunter = makeHunter('hunter-1', 10);
+  const closerHunter = makeHunter('hunter-2', 1);
+  assert.equal(
+    selectWildBoarAggroTarget('hunter-1', 0, 0, [lockedHunter, closerHunter], boar.id)?.id,
+    'hunter-1',
+    'a valid locked hunter remains the target even when another hunter is closer',
+  );
+  assert.equal(
+    selectWildBoarAggroTarget('withdrawn-hunter', 0, 0, [lockedHunter, closerHunter], boar.id)?.id,
+    'hunter-2',
+    'when the locked hunter is no longer eligible, the nearest active hunter takes over',
+  );
+  assert.equal(
+    selectWildBoarAggroTarget('hunter-1', 0, 0, [
+      makeHunter('hunter-1', 10, boar.id, 0),
+      closerHunter,
+    ], boar.id)?.id,
+    'hunter-2',
+    'dead hunters cannot retain the boar target lock',
+  );
+  assert.equal(
+    selectWildBoarAggroTarget(undefined, 0, 0, [
+      makeHunter('z-hunter', 2),
+      makeHunter('a-hunter', -2),
+      makeHunter('naval', 0, boar.id, 100),
+    ].map((hunter) => hunter.id === 'naval'
+      ? ({ ...hunter, unitDef: { isNaval: true } } as unknown as UnitEntity)
+      : hunter), boar.id)?.id,
+    'a-hunter',
+    'equal-distance fallback selects the lexicographically stable ground hunter and ignores boats',
+  );
+  triggerWildBoarAggression(boar, 'hunter-3', 19);
+  assert.equal(boar.animalAggroTargetId, 'hunter-3', 'a new provocation may claim the boar after the old lease expires');
+  assert.equal(boar.animalAggroUntil, 27);
 
   const blockedCharge = stepWildBoarState(boar, { x: 6, z: 0 }, 0.1, () => true);
   assert.equal(blockedCharge.isCharging, false);
