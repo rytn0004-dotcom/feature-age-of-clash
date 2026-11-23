@@ -359,6 +359,28 @@ async function main() {
             const visibleIndividualFactionRings = unitMeshes.filter(
               (mesh) => mesh.userData?.unitFactionRingMesh?.visible === true,
             ).length;
+            const dyingMeshes = (Array.isArray(e.dyingEffects) ? e.dyingEffects : [])
+              .map((effect) => effect?.mesh)
+              .filter(Boolean);
+            const decorationMeshes = [...unitMeshes, ...dyingMeshes];
+            const roleMarkerMeshes = decorationMeshes
+              .map((mesh) => mesh.userData?.unitRoleMarkerMesh)
+              .filter(Boolean);
+            const expectedVisibleRoleMarkers = roleMarkerMeshes.filter(
+              (marker) => marker.userData?.lodVisible !== false,
+            ).length;
+            const visibleIndividualRoleMarkers = roleMarkerMeshes.filter(
+              (marker) => marker.visible === true,
+            ).length;
+            const buffRingMeshes = decorationMeshes
+              .map((mesh) => mesh.userData?.unitBuffRingMesh)
+              .filter(Boolean);
+            const expectedBuffRings = buffRingMeshes.filter(
+              (ring) => ring.userData?.batchVisible === true,
+            ).length;
+            const visibleIndividualBuffRings = buffRingMeshes.filter(
+              (ring) => ring.visible === true,
+            ).length;
             const staticMeshBatching = unitMeshes.reduce((total, mesh) => {
               const stats = mesh.userData?.staticMeshBatchStats;
               if (!stats) return total;
@@ -385,6 +407,13 @@ async function main() {
                 factionRingInstances: e.unitFactionRingBatch?.count ?? 0,
                 visibleIndividualShadows,
                 visibleIndividualFactionRings,
+                roleCrestInstances: e.unitRoleCrestBatch?.count ?? 0,
+                roleSiegeInstances: e.unitRoleSiegeBatch?.count ?? 0,
+                expectedVisibleRoleMarkers,
+                visibleIndividualRoleMarkers,
+                buffRingInstances: e.unitBuffRingBatch?.count ?? 0,
+                expectedBuffRings,
+                visibleIndividualBuffRings,
               },
               staticMeshBatching,
               samples,
@@ -413,6 +442,18 @@ async function main() {
       );
       assert.ok(decorations.shadowInstances > 0, "Unit contact-shadow batch did not receive instances.");
       assert.equal(decorations.shadowInstances, decorations.factionRingInstances, "Contact shadows and faction rings must share the same instance ordering.");
+      assert.equal(
+        decorations.roleCrestInstances + decorations.roleSiegeInstances,
+        decorations.expectedVisibleRoleMarkers,
+        "Role marker instance batches do not match visible per-unit LOD state.",
+      );
+      assert.equal(decorations.visibleIndividualRoleMarkers, 0, "A role marker is still rendered as an individual mesh.");
+      assert.equal(
+        decorations.buffRingInstances,
+        decorations.expectedBuffRings,
+        "Buff-ring instance batch does not match active per-unit buffs.",
+      );
+      assert.equal(decorations.visibleIndividualBuffRings, 0, "A buff ring is still rendered as an individual mesh.");
       assert.equal(decorations.visibleIndividualShadows, 0, "A unit contact shadow is still rendered individually.");
       assert.equal(decorations.visibleIndividualFactionRings, 0, "A unit faction ring is still rendered individually.");
       assert.ok(
@@ -435,7 +476,9 @@ async function main() {
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
         " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
         telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " +
-        staticMeshes.drawCallsSaved + " static mesh draws saved, " + telemetry.renderer);
+        staticMeshes.drawCallsSaved + " static mesh draws saved, " +
+        (decorations.roleCrestInstances + decorations.roleSiegeInstances) + " role markers, " +
+        decorations.buffRingInstances + " buff rings, " + telemetry.renderer);
     }
     report.result = "passed";
   } catch (error) {

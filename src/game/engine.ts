@@ -258,6 +258,8 @@ import {
   createUnitMesh,
   createUnitContactShadowBatch,
   createUnitFactionRingBatch,
+  createUnitRoleMarkerBatch,
+  createUnitBuffRingBatch,
   updateUnitVisualLod,
   updateBuildingVisualLod,
   updateDistanceShadowLod,
@@ -436,9 +438,15 @@ export class RtsEngine {
   private unitMeshes = new Map<string, THREE.Group>();
   private unitContactShadowBatch: THREE.InstancedMesh | null = null;
   private unitFactionRingBatch: THREE.InstancedMesh | null = null;
+  private unitRoleCrestBatch: THREE.InstancedMesh | null = null;
+  private unitRoleSiegeBatch: THREE.InstancedMesh | null = null;
+  private unitBuffRingBatch: THREE.InstancedMesh | null = null;
   private unitDecorationDummy = new THREE.Object3D();
   private unitDecorationColor = new THREE.Color();
   private unitDecorationInstanceCursor = 0;
+  private unitRoleCrestInstanceCursor = 0;
+  private unitRoleSiegeInstanceCursor = 0;
+  private unitBuffRingInstanceCursor = 0;
   private buildingMeshes = new Map<string, THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
@@ -601,7 +609,16 @@ export class RtsEngine {
     this.scene = new THREE.Scene();
     this.unitContactShadowBatch = createUnitContactShadowBatch();
     this.unitFactionRingBatch = createUnitFactionRingBatch();
-    this.scene.add(this.unitContactShadowBatch, this.unitFactionRingBatch);
+    this.unitRoleCrestBatch = createUnitRoleMarkerBatch('crest');
+    this.unitRoleSiegeBatch = createUnitRoleMarkerBatch('siege');
+    this.unitBuffRingBatch = createUnitBuffRingBatch();
+    this.scene.add(
+      this.unitContactShadowBatch,
+      this.unitFactionRingBatch,
+      this.unitRoleCrestBatch,
+      this.unitRoleSiegeBatch,
+      this.unitBuffRingBatch,
+    );
     this.scene.background = new THREE.Color(0xc4e0f2);
     this.scene.fog = new THREE.FogExp2(0xc4e0f2, 0.0044);
 
@@ -1907,10 +1924,112 @@ export class RtsEngine {
   private prepareUnitMeshForDecorationBatch(mesh: THREE.Group): void {
     const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
     const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    const roleMarker = mesh.userData.battlefieldRoleMarker as THREE.Mesh | undefined;
+    const buffRing = mesh.getObjectByName('unitBuffRing') as THREE.Mesh | undefined;
     mesh.userData.unitContactShadowMesh = shadow;
     mesh.userData.unitFactionRingMesh = factionRing;
+    mesh.userData.unitRoleMarkerMesh = roleMarker;
+    mesh.userData.unitBuffRingMesh = buffRing;
     if (shadow) shadow.visible = false;
     if (factionRing) factionRing.visible = false;
+    if (roleMarker && this.unitRoleCrestBatch && this.unitRoleSiegeBatch) {
+      roleMarker.userData.instancedBatch = true;
+      roleMarker.userData.lodVisible = roleMarker.visible;
+      roleMarker.visible = false;
+    }
+    if (buffRing && this.unitBuffRingBatch) {
+      buffRing.userData.instancedBatch = true;
+      buffRing.userData.batchVisible = false;
+      buffRing.visible = false;
+    }
+  }
+
+  private writeUnitRoleMarkerInstance(mesh: THREE.Group): void {
+    const roleMarker = mesh.userData.unitRoleMarkerMesh as THREE.Mesh | undefined;
+    if (!roleMarker) return;
+
+    const shouldShow = roleMarker.userData.lodVisible !== false;
+    const kind = mesh.userData.battlefieldRoleMarkerKind as 'crest' | 'siege' | undefined;
+    const batch = kind === 'crest'
+      ? this.unitRoleCrestBatch
+      : kind === 'siege'
+        ? this.unitRoleSiegeBatch
+        : null;
+    if (!roleMarker.userData.instancedBatch || !batch) {
+      roleMarker.visible = shouldShow;
+      return;
+    }
+    if (!shouldShow) {
+      roleMarker.visible = false;
+      return;
+    }
+
+    const cursor = kind === 'crest'
+      ? this.unitRoleCrestInstanceCursor
+      : this.unitRoleSiegeInstanceCursor;
+    if (cursor >= batch.instanceMatrix.count) {
+      // Preserve the original child mesh when a custom battle exceeds the batch capacity.
+      roleMarker.visible = true;
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    batch.setMatrixAt(cursor, roleMarker.matrixWorld);
+    roleMarker.visible = false;
+    if (kind === 'crest') this.unitRoleCrestInstanceCursor++;
+    else this.unitRoleSiegeInstanceCursor++;
+  }
+
+  private writeUnitBuffRingInstance(mesh: THREE.Group): void {
+    const buffRing = mesh.userData.unitBuffRingMesh as THREE.Mesh | undefined;
+    if (!buffRing) return;
+
+    const shouldShow = buffRing.userData.batchVisible === true;
+    if (!buffRing.userData.instancedBatch || !this.unitBuffRingBatch) {
+      buffRing.visible = shouldShow;
+      return;
+    }
+    if (!shouldShow) {
+      buffRing.visible = false;
+      return;
+    }
+    if (this.unitBuffRingInstanceCursor >= this.unitBuffRingBatch.instanceMatrix.count) {
+      buffRing.visible = true;
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    this.unitBuffRingBatch.setMatrixAt(this.unitBuffRingInstanceCursor, buffRing.matrixWorld);
+    this.unitBuffRingInstanceCursor++;
+    buffRing.visible = false;
+  }
+
+  private writeUnitRoleAndBuffInstances(mesh: THREE.Group): void {
+    this.writeUnitRoleMarkerInstance(mesh);
+    this.writeUnitBuffRingInstance(mesh);
+  }
+
+  private rebuildUnitRoleMarkerInstances(): void {
+    this.unitRoleCrestInstanceCursor = 0;
+    this.unitRoleSiegeInstanceCursor = 0;
+    for (const mesh of this.unitMeshes.values()) {
+      if (mesh.visible) this.writeUnitRoleMarkerInstance(mesh);
+    }
+    for (const effect of this.dyingEffects) {
+      this.writeUnitRoleMarkerInstance(effect.mesh);
+    }
+    this.finalizeUnitRoleMarkerInstances();
+  }
+
+  private finalizeUnitRoleMarkerInstances(): void {
+    if (this.unitRoleCrestBatch) {
+      this.unitRoleCrestBatch.count = this.unitRoleCrestInstanceCursor;
+      if (this.unitRoleCrestInstanceCursor > 0) this.unitRoleCrestBatch.instanceMatrix.needsUpdate = true;
+    }
+    if (this.unitRoleSiegeBatch) {
+      this.unitRoleSiegeBatch.count = this.unitRoleSiegeInstanceCursor;
+      if (this.unitRoleSiegeInstanceCursor > 0) this.unitRoleSiegeBatch.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private writeUnitDecorationInstances(mesh: THREE.Group): void {
@@ -1970,6 +2089,11 @@ export class RtsEngine {
         this.unitFactionRingBatch.instanceMatrix.needsUpdate = true;
         if (this.unitFactionRingBatch.instanceColor) this.unitFactionRingBatch.instanceColor.needsUpdate = true;
       }
+    }
+    this.finalizeUnitRoleMarkerInstances();
+    if (this.unitBuffRingBatch) {
+      this.unitBuffRingBatch.count = this.unitBuffRingInstanceCursor;
+      if (this.unitBuffRingInstanceCursor > 0) this.unitBuffRingBatch.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -5005,6 +5129,9 @@ export class RtsEngine {
 
     // Unit decoration batches replace the per-unit contact-shadow and faction-ring draw calls.
     this.unitDecorationInstanceCursor = 0;
+    this.unitRoleCrestInstanceCursor = 0;
+    this.unitRoleSiegeInstanceCursor = 0;
+    this.unitBuffRingInstanceCursor = 0;
     // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
@@ -5016,8 +5143,9 @@ export class RtsEngine {
         }
         mesh.visible = true;
         mesh.position.set(unit.x, 0, unit.z);
-        this.writeUnitDecorationInstances(mesh);
         this.animateUnitMesh(unit, mesh, dt);
+        this.writeUnitDecorationInstances(mesh);
+        this.writeUnitRoleAndBuffInstances(mesh);
       }
     }
 
@@ -5049,6 +5177,7 @@ export class RtsEngine {
         this.dyingEffects.splice(i, 1);
       } else {
         this.writeUnitDecorationInstances(de.mesh);
+        this.writeUnitRoleAndBuffInstances(de.mesh);
       }
     }
     this.finalizeUnitDecorationInstances();
@@ -5300,6 +5429,8 @@ export class RtsEngine {
       updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
       updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
+    // Rebuild role markers immediately after their distance-LOD state changes, including while paused.
+    this.rebuildUnitRoleMarkerInstances();
 
     for (const building of this.buildings) {
       if (!building.isConstructed || building.hp <= 0) continue;
@@ -9009,9 +9140,11 @@ export class RtsEngine {
     }
     if (parts.buffRing) {
       const hasBuff = !!(unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime);
-      parts.buffRing.visible = hasBuff;
+      parts.buffRing.userData.batchVisible = hasBuff;
+      parts.buffRing.visible = parts.buffRing.userData.instancedBatch === true ? false : hasBuff;
       if (hasBuff) {
-        parts.buffRing.scale.setScalar(1 + Math.sin(t * 7) * 0.08);
+        const baseScale = Number(parts.buffRing.userData.baseScale) || unitScale;
+        parts.buffRing.scale.setScalar(baseScale * (1 + Math.sin(t * 7) * 0.08));
       }
     }
 

@@ -8698,7 +8698,12 @@ export function updateUnitVisualLod(
     if (roleMarker) {
       const markerThreshold = Number(group.userData.roleMarkerLodThresholdPx) || 22;
       const shouldShow = forceHighDetail || projectedHeight >= markerThreshold;
-      if (roleMarker.visible !== shouldShow) roleMarker.visible = shouldShow;
+      if (roleMarker.userData.instancedBatch === true) {
+        roleMarker.userData.lodVisible = shouldShow;
+        roleMarker.visible = false;
+      } else if (roleMarker.visible !== shouldShow) {
+        roleMarker.visible = shouldShow;
+      }
     }
   }
 }
@@ -8729,6 +8734,55 @@ const sharedUnitRoleRingMaterials: Record<'crest' | 'siege', THREE.MeshBasicMate
     depthWrite: false,
   }),
 };
+
+const sharedUnitBuffRingGeometry = new THREE.RingGeometry(0.74, 0.9, 20);
+sharedUnitBuffRingGeometry.rotateX(-Math.PI / 2);
+const sharedUnitBuffRingMaterial = new THREE.MeshBasicMaterial({
+  color: 0x38bdf8,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.82,
+  depthWrite: false,
+});
+
+export type UnitRoleMarkerKind = 'crest' | 'siege';
+
+function createUnitDecorationBatch(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  name: string,
+  capacity = 8192,
+): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(geometry, material, Math.max(1, Math.floor(capacity)));
+  batch.name = name;
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
+}
+
+/** One global draw batch for all visible crest or siege role markers. */
+export function createUnitRoleMarkerBatch(
+  kind: UnitRoleMarkerKind,
+  capacity = 8192,
+): THREE.InstancedMesh {
+  return createUnitDecorationBatch(
+    sharedUnitRoleRingGeometry[kind],
+    sharedUnitRoleRingMaterials[kind],
+    kind === 'crest' ? 'unitRoleCrestBatch' : 'unitRoleSiegeBatch',
+    capacity,
+  );
+}
+
+/** One shared-geometry draw batch for temporary movement-speed buff rings. */
+export function createUnitBuffRingBatch(capacity = 8192): THREE.InstancedMesh {
+  return createUnitDecorationBatch(
+    sharedUnitBuffRingGeometry,
+    sharedUnitBuffRingMaterial,
+    'unitBuffRingBatch',
+    capacity,
+  );
+}
 const unitFactionRingMaterialCache = new Map<number, THREE.MeshBasicMaterial>();
 
 function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
@@ -8822,22 +8876,17 @@ export function createUnitMesh(
     roleMarker.position.y = 0.034;
     group.add(roleMarker);
     group.userData.battlefieldRoleMarker = roleMarker;
+    group.userData.battlefieldRoleMarkerKind = visualProfile.roleMarker;
   }
 
-  const buffRingGeo = new THREE.RingGeometry(0.74 * s, 0.9 * s, 20);
-  buffRingGeo.rotateX(-Math.PI / 2);
-  const buffRing = new THREE.Mesh(
-    buffRingGeo,
-    new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.82,
-      depthWrite: false,
-    })
-  );
+  const buffRing = new THREE.Mesh(sharedUnitBuffRingGeometry, sharedUnitBuffRingMaterial);
+  buffRing.name = 'unitBuffRing';
+  // Preserve the previous per-unit geometry scale while sharing one ring geometry.
+  buffRing.scale.setScalar(s);
   buffRing.position.y = 0.04;
   buffRing.visible = false;
+  buffRing.userData.baseScale = s;
+  buffRing.userData.batchVisible = false;
   group.add(buffRing);
 
   const vetGeo = new THREE.TorusGeometry(0.32 * s, 0.035 * s, 6, 16);
