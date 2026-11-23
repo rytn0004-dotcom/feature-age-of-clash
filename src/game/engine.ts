@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { createEntityIdIndex } from './entityLookup';
 import {
+  createCombatSpatialIndex,
+  queryCombatSpatialIndex,
+  type CombatSpatialIndex,
+} from './combatSpatialIndex';
+import {
   AgeLevel,
   BuildingEntity,
   BuildingType,
@@ -155,6 +160,7 @@ import {
   selectClusterFocusTarget,
   selectOptimalCombatTarget,
   shouldSwitchCombatTarget,
+  type CombatTargetContext,
   isWallLinkedToTower,
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
@@ -170,7 +176,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
 } from './collision';
-import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles } from './pathfinding';
+import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles, worldToGrid } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import {
@@ -192,6 +198,26 @@ import {
   MOVEMENT_STALL_RECOVERY_SECONDS,
   shouldRecoverStalledPath,
 } from './movementDiagnostics';
+import {
+  findNarrowPassageOnRoute,
+  getFormationCohesionSpeedScale,
+  getFormationMoveProgress,
+  getFormationNarrowPassageTrafficScale,
+  getFormationTacticalSlot,
+  measureFormationRegroup,
+  shouldRefreshFormationTacticalSlot,
+  shouldAiCavalryDisengage,
+  type FormationMovementMember,
+  type FormationTacticalMember,
+  type FormationTacticalRole,
+  type FormationNarrowPassage,
+  type FormationRegroupState,
+} from './formationMovement';
+type FormationRegroupRuntimeState = FormationRegroupState & {
+  members: FormationMovementMember[];
+  narrowPassage?: FormationNarrowPassage;
+};
+
 import {
   ControlGroupsMap,
   createEmptyControlGroups,
@@ -230,6 +256,10 @@ import {
   createStoneQuarryMesh,
   createTreeMesh,
   createUnitMesh,
+  createUnitContactShadowBatch,
+  createUnitFactionRingBatch,
+  createUnitRoleMarkerBatch,
+  createUnitBuffRingBatch,
   updateUnitVisualLod,
   updateBuildingVisualLod,
   updateDistanceShadowLod,
@@ -347,6 +377,9 @@ export class RtsEngine {
 
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
+  private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
+  private combatUnitLookupById = new Map<string, UnitEntity>();
+  private combatBuildingLookupById = new Map<string, BuildingEntity>();
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
   private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
@@ -388,6 +421,13 @@ export class RtsEngine {
   // Control Groups (1-9) & Quick Cycling Indices
   public controlGroups: ControlGroupsMap = createEmptyControlGroups();
   private lastGroupKeyTime: Record<number, number> = {};
+  private movementGroupSequence = 0;
+  private formationRegroupByGroup = new Map<string, FormationRegroupRuntimeState>();
+  private formationTacticalMembersByGroup = new Map<string, FormationTacticalMember[]>();
+  private formationPassageCacheByGroup = new Map<
+    string,
+    { grid: NavGrid; scannedAt: number; passage: FormationNarrowPassage | null }
+  >();
   private idleCycleIdx = 0;
   private militaryBldgCycleIdx = 0;
 
@@ -396,6 +436,17 @@ export class RtsEngine {
 
   // Meshes cache
   private unitMeshes = new Map<string, THREE.Group>();
+  private unitContactShadowBatch: THREE.InstancedMesh | null = null;
+  private unitFactionRingBatch: THREE.InstancedMesh | null = null;
+  private unitRoleCrestBatch: THREE.InstancedMesh | null = null;
+  private unitRoleSiegeBatch: THREE.InstancedMesh | null = null;
+  private unitBuffRingBatch: THREE.InstancedMesh | null = null;
+  private unitDecorationDummy = new THREE.Object3D();
+  private unitDecorationColor = new THREE.Color();
+  private unitDecorationInstanceCursor = 0;
+  private unitRoleCrestInstanceCursor = 0;
+  private unitRoleSiegeInstanceCursor = 0;
+  private unitBuffRingInstanceCursor = 0;
   private buildingMeshes = new Map<string, THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
@@ -556,6 +607,18 @@ export class RtsEngine {
     this.createPerformanceOverlay();
 
     this.scene = new THREE.Scene();
+    this.unitContactShadowBatch = createUnitContactShadowBatch();
+    this.unitFactionRingBatch = createUnitFactionRingBatch();
+    this.unitRoleCrestBatch = createUnitRoleMarkerBatch('crest');
+    this.unitRoleSiegeBatch = createUnitRoleMarkerBatch('siege');
+    this.unitBuffRingBatch = createUnitBuffRingBatch();
+    this.scene.add(
+      this.unitContactShadowBatch,
+      this.unitFactionRingBatch,
+      this.unitRoleCrestBatch,
+      this.unitRoleSiegeBatch,
+      this.unitBuffRingBatch,
+    );
     this.scene.background = new THREE.Color(0xc4e0f2);
     this.scene.fog = new THREE.FogExp2(0xc4e0f2, 0.0044);
 
@@ -1858,6 +1921,182 @@ export class RtsEngine {
     });
   }
 
+  private prepareUnitMeshForDecorationBatch(mesh: THREE.Group): void {
+    const shadow = mesh.getObjectByName('contactShadow') as THREE.Mesh | undefined;
+    const factionRing = mesh.getObjectByName('unitFactionRing') as THREE.Mesh | undefined;
+    const roleMarker = mesh.userData.battlefieldRoleMarker as THREE.Mesh | undefined;
+    const buffRing = mesh.getObjectByName('unitBuffRing') as THREE.Mesh | undefined;
+    mesh.userData.unitContactShadowMesh = shadow;
+    mesh.userData.unitFactionRingMesh = factionRing;
+    mesh.userData.unitRoleMarkerMesh = roleMarker;
+    mesh.userData.unitBuffRingMesh = buffRing;
+    if (shadow) shadow.visible = false;
+    if (factionRing) factionRing.visible = false;
+    if (roleMarker && this.unitRoleCrestBatch && this.unitRoleSiegeBatch) {
+      roleMarker.userData.instancedBatch = true;
+      roleMarker.userData.lodVisible = roleMarker.visible;
+      roleMarker.visible = false;
+    }
+    if (buffRing && this.unitBuffRingBatch) {
+      buffRing.userData.instancedBatch = true;
+      buffRing.userData.batchVisible = false;
+      buffRing.visible = false;
+    }
+  }
+
+  private writeUnitRoleMarkerInstance(mesh: THREE.Group): void {
+    const roleMarker = mesh.userData.unitRoleMarkerMesh as THREE.Mesh | undefined;
+    if (!roleMarker) return;
+
+    const shouldShow = roleMarker.userData.lodVisible !== false;
+    const kind = mesh.userData.battlefieldRoleMarkerKind as 'crest' | 'siege' | undefined;
+    const batch = kind === 'crest'
+      ? this.unitRoleCrestBatch
+      : kind === 'siege'
+        ? this.unitRoleSiegeBatch
+        : null;
+    if (!roleMarker.userData.instancedBatch || !batch) {
+      roleMarker.visible = shouldShow;
+      return;
+    }
+    if (!shouldShow) {
+      roleMarker.visible = false;
+      return;
+    }
+
+    const cursor = kind === 'crest'
+      ? this.unitRoleCrestInstanceCursor
+      : this.unitRoleSiegeInstanceCursor;
+    if (cursor >= batch.instanceMatrix.count) {
+      // Preserve the original child mesh when a custom battle exceeds the batch capacity.
+      roleMarker.visible = true;
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    batch.setMatrixAt(cursor, roleMarker.matrixWorld);
+    roleMarker.visible = false;
+    if (kind === 'crest') this.unitRoleCrestInstanceCursor++;
+    else this.unitRoleSiegeInstanceCursor++;
+  }
+
+  private writeUnitBuffRingInstance(mesh: THREE.Group): void {
+    const buffRing = mesh.userData.unitBuffRingMesh as THREE.Mesh | undefined;
+    if (!buffRing) return;
+
+    const shouldShow = buffRing.userData.batchVisible === true;
+    if (!buffRing.userData.instancedBatch || !this.unitBuffRingBatch) {
+      buffRing.visible = shouldShow;
+      return;
+    }
+    if (!shouldShow) {
+      buffRing.visible = false;
+      return;
+    }
+    if (this.unitBuffRingInstanceCursor >= this.unitBuffRingBatch.instanceMatrix.count) {
+      buffRing.visible = true;
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    this.unitBuffRingBatch.setMatrixAt(this.unitBuffRingInstanceCursor, buffRing.matrixWorld);
+    this.unitBuffRingInstanceCursor++;
+    buffRing.visible = false;
+  }
+
+  private writeUnitRoleAndBuffInstances(mesh: THREE.Group): void {
+    this.writeUnitRoleMarkerInstance(mesh);
+    this.writeUnitBuffRingInstance(mesh);
+  }
+
+  private rebuildUnitRoleMarkerInstances(): void {
+    this.unitRoleCrestInstanceCursor = 0;
+    this.unitRoleSiegeInstanceCursor = 0;
+    for (const mesh of this.unitMeshes.values()) {
+      if (mesh.visible) this.writeUnitRoleMarkerInstance(mesh);
+    }
+    for (const effect of this.dyingEffects) {
+      this.writeUnitRoleMarkerInstance(effect.mesh);
+    }
+    this.finalizeUnitRoleMarkerInstances();
+  }
+
+  private finalizeUnitRoleMarkerInstances(): void {
+    if (this.unitRoleCrestBatch) {
+      this.unitRoleCrestBatch.count = this.unitRoleCrestInstanceCursor;
+      if (this.unitRoleCrestInstanceCursor > 0) this.unitRoleCrestBatch.instanceMatrix.needsUpdate = true;
+    }
+    if (this.unitRoleSiegeBatch) {
+      this.unitRoleSiegeBatch.count = this.unitRoleSiegeInstanceCursor;
+      if (this.unitRoleSiegeInstanceCursor > 0) this.unitRoleSiegeBatch.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  private writeUnitDecorationInstances(mesh: THREE.Group): void {
+    const shadow = mesh.userData.unitContactShadowMesh as THREE.Mesh | undefined;
+    const factionRing = mesh.userData.unitFactionRingMesh as THREE.Mesh | undefined;
+    const shadowBatch = this.unitContactShadowBatch;
+    const ringBatch = this.unitFactionRingBatch;
+    if (!shadow || !factionRing || !shadowBatch || !ringBatch) {
+      if (shadow) shadow.visible = true;
+      if (factionRing) factionRing.visible = true;
+      return;
+    }
+
+    const instanceIndex = this.unitDecorationInstanceCursor;
+    if (instanceIndex >= shadowBatch.instanceMatrix.count || instanceIndex >= ringBatch.instanceMatrix.count) {
+      // Keep decoration visible if a custom scenario exceeds the preallocated instancing capacity.
+      shadow.visible = true;
+      factionRing.visible = true;
+      return;
+    }
+
+    shadow.visible = false;
+    factionRing.visible = false;
+    const rootScale = mesh.scale.x;
+    this.unitDecorationDummy.position.set(
+      mesh.position.x,
+      mesh.position.y + shadow.position.y * mesh.scale.y,
+      mesh.position.z,
+    );
+    this.unitDecorationDummy.rotation.set(0, 0, 0);
+    const shadowScale = Math.abs(shadow.scale.x * rootScale);
+    this.unitDecorationDummy.scale.set(shadowScale, shadowScale, shadowScale);
+    this.unitDecorationDummy.updateMatrix();
+    shadowBatch.setMatrixAt(instanceIndex, this.unitDecorationDummy.matrix);
+
+    this.unitDecorationDummy.position.y = mesh.position.y + factionRing.position.y * mesh.scale.y;
+    const ringScale = Math.abs(factionRing.scale.x * rootScale);
+    this.unitDecorationDummy.scale.set(ringScale, ringScale, ringScale);
+    this.unitDecorationDummy.updateMatrix();
+    ringBatch.setMatrixAt(instanceIndex, this.unitDecorationDummy.matrix);
+
+    const ringMaterial = factionRing.material as THREE.MeshBasicMaterial;
+    this.unitDecorationColor.copy(ringMaterial.color);
+    ringBatch.setColorAt(instanceIndex, this.unitDecorationColor);
+    this.unitDecorationInstanceCursor++;
+  }
+
+  private finalizeUnitDecorationInstances(): void {
+    const count = this.unitDecorationInstanceCursor;
+    if (this.unitContactShadowBatch) {
+      this.unitContactShadowBatch.count = count;
+      if (count > 0) this.unitContactShadowBatch.instanceMatrix.needsUpdate = true;
+    }
+    if (this.unitFactionRingBatch) {
+      this.unitFactionRingBatch.count = count;
+      if (count > 0) {
+        this.unitFactionRingBatch.instanceMatrix.needsUpdate = true;
+        if (this.unitFactionRingBatch.instanceColor) this.unitFactionRingBatch.instanceColor.needsUpdate = true;
+      }
+    }
+    this.finalizeUnitRoleMarkerInstances();
+    if (this.unitBuffRingBatch) {
+      this.unitBuffRingBatch.count = this.unitBuffRingInstanceCursor;
+      if (this.unitBuffRingInstanceCursor > 0) this.unitBuffRingBatch.instanceMatrix.needsUpdate = true;
+    }
+  }
+
   public addUnit(def: UnitDefinition, faction: FactionId, x: number, z: number, stableId?: string): UnitEntity {
     const id = stableId || `unit_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const team = this.getParticipant(faction)?.team ?? (faction === 'player' ? 1 : 2);
@@ -1910,6 +2149,7 @@ export class RtsEngine {
       level: unit.level || 1,
       visualSeed: unit.id,
     });
+    this.prepareUnitMeshForDecorationBatch(mesh);
     mesh.position.set(x, 0, z);
     Object.assign(mesh.userData, { type: 'unit', id, faction, team });
     this.scene.add(mesh);
@@ -2995,18 +3235,19 @@ export class RtsEngine {
   public issueMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction))
+      .sort((a, b) => a.id.localeCompare(b.id));
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
     sound.playOrder();
     this.spawnCommandIndicator(x, z, 'move');
 
-    // Formation dispersion
-    const count = playerUnits.length;
-    const spacing = 1.5;
-    const cols = Math.ceil(Math.sqrt(count));
+    const goal = {
+      x: Math.max(-95, Math.min(95, x)),
+      z: Math.max(-95, Math.min(95, z)),
+    };
 
-    // Transport with cargo: move then unload near destination
+    // Transport with cargo: move then unload near destination.
     const transports = playerUnits.filter((u) => u.unitDefId === 'transport_boat');
     if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
       const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
@@ -3015,8 +3256,9 @@ export class RtsEngine {
         return;
       }
       transports.forEach((boat) => {
-        boat.targetX = Math.max(-95, Math.min(95, x));
-        boat.targetZ = Math.max(-95, Math.min(95, z));
+        this.clearFormationMovement(boat);
+        boat.targetX = goal.x;
+        boat.targetZ = goal.z;
         boat.attackMoveGoal = null;
         boat.targetEntityId = undefined;
         boat.waypoints = undefined;
@@ -3027,17 +3269,92 @@ export class RtsEngine {
       return;
     }
 
-    playerUnits.forEach((unit, idx) => {
-      const row = Math.floor(idx / cols);
-      const col = idx % cols;
-      const ox = (col - (cols - 1) / 2) * spacing;
-      const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
-      const tx = Math.max(-95, Math.min(95, x + ox));
-      const tz = Math.max(-95, Math.min(95, z + oz));
+    // Combat groups use the same role lanes as AI: melee screens the front, cavalry
+    // spreads to the flanks, ranged/special units stay protected, and siege remains rearward.
+    const combatUnits = playerUnits.filter(
+      (unit) =>
+        unit.unitDef.category !== 'worker' &&
+        !unit.unitDef.isNaval &&
+        unit.unitDefId !== 'transport_boat',
+    );
+    const groupOrigin = combatUnits.length > 0
+      ? {
+          x: combatUnits.reduce((sum, unit) => sum + unit.x, 0) / combatUnits.length,
+          z: combatUnits.reduce((sum, unit) => sum + unit.z, 0) / combatUnits.length,
+        }
+      : goal;
+    const dx = goal.x - groupOrigin.x;
+    const dz = goal.z - groupOrigin.z;
+    const length = Math.hypot(dx, dz);
+    const dirX = length > 0.001 ? dx / length : 1;
+    const dirZ = length > 0.001 ? dz / length : 0;
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    // Centre the whole role formation on the clicked destination. The required
+    // forward offset depends on the selected composition: a pure melee group is
+    // shallower than a siege-heavy column.
+    let cavalryFormationIndex = 0;
+    const averageFormationDepth = combatUnits.length > 0
+      ? combatUnits.reduce((total, unit) => {
+          let depth = 9;
+          if (unit.unitDef.category === 'melee') depth = 5.2;
+          else if (unit.unitDef.category === 'ranged') depth = 11.2;
+          else if (unit.unitDef.category === 'siege') depth = 18.5;
+          else if (unit.unitDef.category === 'cavalry') {
+            depth = 8.2 + Math.floor(cavalryFormationIndex / 2) * 1.4;
+            cavalryFormationIndex += 1;
+          }
+          return total + depth;
+        }, 0) / combatUnits.length
+      : 0;
+    const formationSpacingScale = Math.min(1.55, 1 + Math.max(0, combatUnits.length - 8) * 0.006);
+    const formationAnchor = {
+      x: goal.x + dirX * averageFormationDepth * formationSpacingScale,
+      z: goal.z + dirZ * averageFormationDepth * formationSpacingScale,
+    };
+    const formationSlots = new Map(
+      (combatUnits.length > 1
+        ? layoutCombatFormation(combatUnits, formationAnchor)
+        : []).map((slot) => [slot.unitId, slot] as const),
+    );
+    const groupId = combatUnits.length > 1
+      ? `player:${combatUnits[0].faction}:${++this.movementGroupSequence}`
+      : undefined;
+    const soloCombatIds = new Set(combatUnits.length === 1 ? combatUnits.map((unit) => unit.id) : []);
+    const reserveUnits = playerUnits.filter(
+      (unit) => !formationSlots.has(unit.id) && !soloCombatIds.has(unit.id),
+    );
+    const reserveCols = Math.max(1, Math.ceil(Math.sqrt(reserveUnits.length)));
+
+    playerUnits.forEach((unit) => {
+      const slot = formationSlots.get(unit.id);
+      const reserveIndex = reserveUnits.findIndex((entry) => entry.id === unit.id);
+      const reserveRow = Math.floor(Math.max(0, reserveIndex) / reserveCols);
+      const reserveCol = Math.max(0, reserveIndex) % reserveCols;
+      const reserveSpacing = 1.7;
+      const reserveLateral = (reserveCol - (reserveCols - 1) / 2) * reserveSpacing;
+      const reserveDepth = 11 + reserveRow * reserveSpacing;
+      const reserveTarget = combatUnits.length === 0
+        ? {
+            x: goal.x + reserveLateral,
+            z: goal.z + (reserveRow - (Math.ceil(reserveUnits.length / reserveCols) - 1) / 2) * reserveSpacing,
+          }
+        : {
+            x: goal.x - dirX * reserveDepth + sideX * reserveLateral,
+            z: goal.z - dirZ * reserveDepth + sideZ * reserveLateral,
+          };
+      const target = slot
+        ? { x: slot.x, z: slot.z }
+        : soloCombatIds.has(unit.id)
+          ? goal
+          : {
+              x: Math.max(-95, Math.min(95, reserveTarget.x)),
+              z: Math.max(-95, Math.min(95, reserveTarget.z)),
+            };
 
       if (queue) {
         if (!unit.commandQueue) unit.commandQueue = [];
-        unit.commandQueue.push({ type: 'move', x: tx, z: tz });
+        unit.commandQueue.push({ type: 'move', x: target.x, z: target.z });
         unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
@@ -3045,8 +3362,8 @@ export class RtsEngine {
       unit.commandQueue = undefined;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
-      unit.targetX = tx;
-      unit.targetZ = tz;
+      unit.targetX = target.x;
+      unit.targetZ = target.z;
       unit.attackMoveGoal = null;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
@@ -3054,8 +3371,12 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
+      if (groupId && slot) this.assignFormationMovement(unit, groupId, groupOrigin, goal);
+      else this.clearFormationMovement(unit);
       unit.state = 'moving';
-      unit.currentActionText = '👣 行軍移動中';
+      unit.currentActionText = slot
+        ? `👣 陣形行軍 · ${slot.role === 'frontline' ? '前排' : slot.role === 'backline' ? '遠程' : slot.role === 'flank' ? '側翼' : slot.role === 'siege' ? '攻城' : '支援'}`
+        : '👣 行軍移動中';
     });
   }
 
@@ -3083,7 +3404,17 @@ export class RtsEngine {
       this.spawnCommandIndicator(target.x, target.z, 'attack');
     }
 
+    const targetAnchor = target ? { x: target.x, z: target.z } : null;
+    const combatGroups = new Map<string, UnitEntity[]>();
+    for (const unit of playerUnits) {
+      if (unit.unitDef.category === 'worker' || unit.unitDef.isNaval || unit.unitDefId === 'transport_boat') continue;
+      const group = combatGroups.get(unit.faction) || [];
+      group.push(unit);
+      combatGroups.set(unit.faction, group);
+    }
+
     playerUnits.forEach((unit) => {
+      this.clearFormationMovement(unit);
       unit.attackMoveGoal = null;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
@@ -3096,6 +3427,19 @@ export class RtsEngine {
       unit.state = 'attacking';
       unit.currentActionText = '⚔️ 奔赴交戰';
     });
+
+    if (targetAnchor) {
+      for (const [faction, members] of combatGroups) {
+        members.sort((a, b) => a.id.localeCompare(b.id));
+        if (members.length < 2) continue;
+        const origin = {
+          x: members.reduce((sum, unit) => sum + unit.x, 0) / members.length,
+          z: members.reduce((sum, unit) => sum + unit.z, 0) / members.length,
+        };
+        const groupId = `player-attack:${faction}:${++this.movementGroupSequence}`;
+        members.forEach((unit) => this.assignFormationMovement(unit, groupId, origin, targetAnchor));
+      }
+    }
   }
 
   private getResourceDisplayMeta(node: ResourceNode): { icon: string; action: string; name: string } {
@@ -4783,6 +5127,11 @@ export class RtsEngine {
     resolveUnitBuildingCollisions(this.units, this.buildings);
     resolveUnitResourceCollisions(this.units, this.resourceNodes);
 
+    // Unit decoration batches replace the per-unit contact-shadow and faction-ring draw calls.
+    this.unitDecorationInstanceCursor = 0;
+    this.unitRoleCrestInstanceCursor = 0;
+    this.unitRoleSiegeInstanceCursor = 0;
+    this.unitBuffRingInstanceCursor = 0;
     // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
@@ -4795,6 +5144,8 @@ export class RtsEngine {
         mesh.visible = true;
         mesh.position.set(unit.x, 0, unit.z);
         this.animateUnitMesh(unit, mesh, dt);
+        this.writeUnitDecorationInstances(mesh);
+        this.writeUnitRoleAndBuffInstances(mesh);
       }
     }
 
@@ -4824,8 +5175,12 @@ export class RtsEngine {
       if (p >= 1) {
         this.scene.remove(de.mesh);
         this.dyingEffects.splice(i, 1);
+      } else {
+        this.writeUnitDecorationInstances(de.mesh);
+        this.writeUnitRoleAndBuffInstances(de.mesh);
       }
     }
+    this.finalizeUnitDecorationInstances();
 
     for (let i = this.collapsingBuildings.length - 1; i >= 0; i--) {
       const cb = this.collapsingBuildings[i];
@@ -4905,6 +5260,7 @@ export class RtsEngine {
       this.aiTickAccumulator = 0;
       this.aiDecisionCount += 1;
       const aiDecisionStartedAt = performance.now();
+      this.rebuildCombatSpatialIndex();
       try {
         this.evaluateAiLogic();
       } finally {
@@ -5073,6 +5429,8 @@ export class RtsEngine {
       updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
       updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
     }
+    // Rebuild role markers immediately after their distance-LOD state changes, including while paused.
+    this.rebuildUnitRoleMarkerInstances();
 
     for (const building of this.buildings) {
       if (!building.isConstructed || building.hp <= 0) continue;
@@ -5098,7 +5456,309 @@ export class RtsEngine {
     });
   }
 
+  private measureNavCorridorWidth(
+    navGrid: NavGrid,
+    x: number,
+    z: number,
+    directionX: number,
+    directionZ: number,
+  ): number {
+    if (![x, z, directionX, directionZ].every(Number.isFinite)) return 0;
+    const sideX = -directionZ;
+    const sideZ = directionX;
+    const isWalkable = (offset: number): boolean => {
+      const cell = worldToGrid(
+        x + sideX * offset,
+        z + sideZ * offset,
+        navGrid.halfExtent,
+        navGrid.cellSize,
+        navGrid.dim,
+      );
+      return navGrid.blocked[cell.gz * navGrid.dim + cell.gx] === 0;
+    };
+    if (!isWalkable(0)) return 0;
+
+    let leftWidth = 0;
+    let rightWidth = 0;
+    for (let offset = navGrid.cellSize; offset <= 4.5; offset += navGrid.cellSize) {
+      if (isWalkable(offset)) leftWidth = offset;
+      else break;
+    }
+    for (let offset = navGrid.cellSize; offset <= 4.5; offset += navGrid.cellSize) {
+      if (isWalkable(-offset)) rightWidth = offset;
+      else break;
+    }
+    return leftWidth + rightWidth + navGrid.cellSize;
+  }
+
+  private refreshFormationRegroupState(): void {
+    this.formationRegroupByGroup.clear();
+    this.formationTacticalMembersByGroup.clear();
+    const membersByGroup = new Map<string, FormationMovementMember[]>();
+
+    for (const unit of this.units) {
+      const groupId = unit.formationGroupId;
+      const origin = unit.formationOrderOrigin;
+      const goal = unit.formationOrderGoal;
+      if (
+        unit.hp <= 0 ||
+        unit.garrisonedInBuildingId ||
+        !groupId ||
+        !origin ||
+        !goal ||
+        (unit.state !== 'moving' && unit.state !== 'attacking')
+      ) {
+        continue;
+      }
+
+      const members = membersByGroup.get(groupId) || [];
+      members.push({
+        id: unit.id,
+        x: unit.x,
+        z: unit.z,
+        stuckDuration: unit.stuckDuration,
+        formationOrderOrigin: origin,
+        formationOrderGoal: goal,
+      });
+      membersByGroup.set(groupId, members);
+      const tacticalMembers = this.formationTacticalMembersByGroup.get(groupId) || [];
+      tacticalMembers.push({ id: unit.id, category: unit.unitDef.category });
+      this.formationTacticalMembersByGroup.set(groupId, tacticalMembers);
+    }
+
+    for (const tacticalMembers of this.formationTacticalMembersByGroup.values()) {
+      tacticalMembers.sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    for (const [groupId, members] of membersByGroup) {
+      const measuredState = measureFormationRegroup(members);
+      const stalledUnits = this.units
+        .filter(
+          (unit) =>
+            unit.formationGroupId === groupId &&
+            unit.hp > 0 &&
+            (unit.stuckDuration || 0) >= 1.8 &&
+            (unit.stuckDuration || 0) < 4.5,
+        )
+        .sort(
+          (a, b) =>
+            (b.stuckDuration || 0) - (a.stuckDuration || 0) ||
+            a.id.localeCompare(b.id),
+        );
+      let cached = this.formationPassageCacheByGroup.get(groupId);
+
+      if (stalledUnits.length > 0 || cached) {
+        const navGrid = this.getNavGrid();
+        const shouldScan =
+          !cached ||
+          cached.grid !== navGrid ||
+          (!cached.passage && this.simTime - cached.scannedAt >= 1.2);
+        if (shouldScan && stalledUnits.length > 0) {
+          const stalledUnit = stalledUnits[0];
+          const goalX =
+            stalledUnit.targetX ??
+            (stalledUnit.formationOrderGoal && stalledUnit.formationOrderGoal.x);
+          const goalZ =
+            stalledUnit.targetZ ??
+            (stalledUnit.formationOrderGoal && stalledUnit.formationOrderGoal.z);
+          if (goalX !== undefined && goalZ !== undefined) {
+            const pathIsCurrent =
+              !!stalledUnit.waypoints?.length &&
+              !!stalledUnit.pathGoal &&
+              getDistance(stalledUnit.pathGoal.x, stalledUnit.pathGoal.z, goalX, goalZ) <= 1.8;
+            const route = pathIsCurrent
+              ? stalledUnit.waypoints!
+              : findPath(stalledUnit.x, stalledUnit.z, goalX, goalZ, navGrid);
+            const passage = findNarrowPassageOnRoute(
+              [{ x: stalledUnit.x, z: stalledUnit.z }, ...route],
+              (x, z, directionX, directionZ) =>
+                this.measureNavCorridorWidth(navGrid, x, z, directionX, directionZ),
+            );
+            cached = { grid: navGrid, scannedAt: this.simTime, passage };
+            this.formationPassageCacheByGroup.set(groupId, cached);
+          } else {
+            cached = { grid: navGrid, scannedAt: this.simTime, passage: null };
+            this.formationPassageCacheByGroup.set(groupId, cached);
+          }
+        } else if (cached && cached.grid !== navGrid) {
+          cached = { grid: navGrid, scannedAt: this.simTime, passage: null };
+          this.formationPassageCacheByGroup.set(groupId, cached);
+        }
+      }
+
+      const passage = cached?.passage || undefined;
+      const activeMembers = members.filter(
+        (member) =>
+          !Number.isFinite(member.stuckDuration) ||
+          (member.stuckDuration as number) < 4.5,
+      );
+      const hasMembersNearPassage = !!passage && activeMembers.some((member) => {
+        const dx = member.x - passage.x;
+        const dz = member.z - passage.z;
+        const along = dx * passage.directionX + dz * passage.directionZ;
+        const lateral = dx * -passage.directionZ + dz * passage.directionX;
+        return (
+          Math.abs(along) <= passage.halfLength + 8.5 &&
+          Math.abs(lateral) <= passage.width * 0.5 + 8.5
+        );
+      });
+
+      if (measuredState || hasMembersNearPassage) {
+        const progressValues = activeMembers.map((member) =>
+          getFormationMoveProgress(
+            member.x,
+            member.z,
+            member.formationOrderOrigin,
+            member.formationOrderGoal,
+          ),
+        );
+        this.formationRegroupByGroup.set(groupId, {
+          slowestProgress:
+            measuredState?.slowestProgress ??
+            (progressValues.length > 0 ? Math.min(...progressValues) : 0),
+          activeMemberCount: measuredState?.activeMemberCount ?? activeMembers.length,
+          stalledMemberCount: measuredState?.stalledMemberCount ?? 0,
+          members,
+          narrowPassage: passage,
+        });
+      } else {
+        this.formationPassageCacheByGroup.delete(groupId);
+      }
+    }
+
+    for (const groupId of this.formationPassageCacheByGroup.keys()) {
+      if (!membersByGroup.has(groupId)) this.formationPassageCacheByGroup.delete(groupId);
+    }
+  }
+
+  private assignFormationMovement(
+    unit: UnitEntity,
+    groupId: string,
+    origin: { x: number; z: number },
+    goal: { x: number; z: number },
+  ): void {
+    unit.formationGroupId = groupId;
+    unit.formationOrderOrigin = { ...origin };
+    unit.formationOrderGoal = { ...goal };
+    unit.stuckDuration = 0;
+    unit.stuckAccumulator = 0;
+    unit.pathRecoveryCooldown = 0;
+  }
+
+  private clearFormationMovement(unit: UnitEntity): void {
+    unit.formationGroupId = undefined;
+    unit.formationOrderOrigin = undefined;
+    unit.formationOrderGoal = undefined;
+    this.clearFormationTacticalState(unit);
+  }
+
+  private clearFormationTacticalState(unit: UnitEntity): void {
+    unit.formationTacticalTargetId = undefined;
+    unit.formationTacticalAnchor = undefined;
+    unit.formationTacticalGoal = undefined;
+    unit.formationTacticalRole = undefined;
+    unit.formationTacticalShieldWall = undefined;
+  }
+
+  private rebuildCombatSpatialIndex(): void {
+    this.combatSpatialIndex = createCombatSpatialIndex(this.units, this.buildings);
+  }
+
+  /**
+   * Uses one nearby-candidate query for both hostile target scoring and local ally
+   * focus bonuses. The existing scoring function still applies exact range,
+   * hostility, counter-unit and target-priority checks.
+   */
+  private selectNearbyCombatTarget(
+    attacker: UnitEntity,
+    maxSearchRange: number,
+    includeBuildings = true,
+    context: CombatTargetContext = {},
+  ): UnitEntity | BuildingEntity | null {
+    if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+    const safeRange = Number.isFinite(maxSearchRange)
+      ? Math.max(0, maxSearchRange)
+      : Infinity;
+    const queryRadius = Math.max(16, safeRange);
+    const candidates = queryCombatSpatialIndex(
+      this.combatSpatialIndex!,
+      attacker.x,
+      attacker.z,
+      queryRadius,
+    );
+    return selectOptimalCombatTarget(
+      attacker,
+      candidates.units,
+      includeBuildings ? candidates.buildings : [],
+      candidates.units,
+      { ...context, maxSearchRange: safeRange },
+    );
+  }
+
+  private resolveFormationTacticalSlot(
+    unit: UnitEntity,
+    target: UnitEntity | BuildingEntity,
+    targetRadius: number,
+  ): { x: number; z: number; role: FormationTacticalRole; shieldWall: boolean } | null {
+    const groupId = unit.formationGroupId;
+    const groupOrigin = unit.formationOrderOrigin;
+    const members = groupId ? this.formationTacticalMembersByGroup.get(groupId) : undefined;
+    if (!groupId || !groupOrigin || !members || members.length < 2) {
+      this.clearFormationTacticalState(unit);
+      return null;
+    }
+
+    const targetAnchor = { x: target.x, z: target.z };
+    const shieldWallComposition =
+      members.filter((member) => member.category === 'melee').length >= 2 &&
+      members.some((member) => member.category === 'ranged');
+    if (
+      shieldWallComposition !== !!unit.formationTacticalShieldWall ||
+      shouldRefreshFormationTacticalSlot(
+        unit.formationTacticalTargetId,
+        unit.formationTacticalAnchor,
+        target.id,
+        targetAnchor,
+      )
+    ) {
+      const tacticalSlot = getFormationTacticalSlot({
+        unitId: unit.id,
+        members,
+        category: unit.unitDef.category,
+        groupOrigin,
+        memberPosition: { x: unit.x, z: unit.z },
+        target: { ...targetAnchor, radius: targetRadius },
+        attackRange: unit.unitDef.stats.range,
+        unitRadius: getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
+      });
+      if (!tacticalSlot) {
+        this.clearFormationTacticalState(unit);
+        return null;
+      }
+
+      unit.formationTacticalTargetId = target.id;
+      unit.formationTacticalAnchor = targetAnchor;
+      unit.formationTacticalGoal = { x: tacticalSlot.x, z: tacticalSlot.z };
+      unit.formationTacticalRole = tacticalSlot.role;
+      unit.formationTacticalShieldWall = tacticalSlot.shieldWall;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+    }
+
+    if (!unit.formationTacticalGoal || !unit.formationTacticalRole) return null;
+    return {
+      ...unit.formationTacticalGoal,
+      role: unit.formationTacticalRole,
+      shieldWall: !!unit.formationTacticalShieldWall,
+    };
+  }
+
   private updateUnits(dt: number) {
+    this.combatUnitLookupById = createEntityIdIndex(this.units);
+    this.combatBuildingLookupById = createEntityIdIndex(this.buildings);
+    this.rebuildCombatSpatialIndex();
+    this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
     let anyDied = false;
 
@@ -5156,7 +5816,8 @@ export class RtsEngine {
       if (unit.garrisonedInBuildingId) {
         if (unit.garrisonedInBuildingId.startsWith('transport:')) {
           const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
-          const boat = this.units.find((b) => b.id === boatId && b.hp > 0);
+          const boatCandidate = this.combatUnitLookupById.get(boatId);
+          const boat = boatCandidate && boatCandidate.hp > 0 ? boatCandidate : undefined;
           if (!boat) {
             unit.garrisonedInBuildingId = undefined;
             unit.state = 'idle';
@@ -5171,7 +5832,11 @@ export class RtsEngine {
             continue;
           }
         }
-        const hostBldg = this.buildings.find((b) => b.id === unit.garrisonedInBuildingId && b.hp > 0 && b.isConstructed);
+        const hostId = unit.garrisonedInBuildingId;
+        const hostCandidate = hostId ? this.combatBuildingLookupById.get(hostId) : undefined;
+        const hostBldg = hostCandidate && hostCandidate.hp > 0 && hostCandidate.isConstructed
+          ? hostCandidate
+          : undefined;
         if (!hostBldg) {
           unit.garrisonedInBuildingId = undefined;
           unit.state = 'idle';
@@ -5196,7 +5861,7 @@ export class RtsEngine {
       switch (unit.state) {
         case 'moving':
           if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker') {
-            const patrolThreat = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, { maxSearchRange: 10 });
+            const patrolThreat = this.selectNearbyCombatTarget(unit, 10);
             if (patrolThreat) {
               unit.targetEntityId = patrolThreat.id;
               unit.waypoints = undefined;
@@ -5206,9 +5871,10 @@ export class RtsEngine {
             }
           }
           if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
-            const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
-            });
+            const enemy = this.selectNearbyCombatTarget(
+              unit,
+              Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
+            );
             if (enemy) {
               unit.targetEntityId = enemy.id;
               unit.waypoints = undefined;
@@ -5248,9 +5914,10 @@ export class RtsEngine {
           }
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
           if (unit.unitDef.category !== 'worker') {
-            const enemy = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-              maxSearchRange: Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
-            });
+            const enemy = this.selectNearbyCombatTarget(
+              unit,
+              Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),
+            );
             if (enemy) {
               unit.targetEntityId = enemy.id;
               unit.waypoints = undefined;
@@ -5446,7 +6113,39 @@ export class RtsEngine {
     const hasteMult = unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime ? 1.35 : 1;
     const rootSlow = (unit as any)._rootSlowUntil && (unit as any)._rootSlowUntil > this.simTime ? 0.55 : 1;
     const relicSlow = this.starRelicCarrierId === unit.id ? STAR_RELIC_CARRY_SPEED : 1;
-    const speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
+    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow;
+    const regroupState = unit.formationGroupId
+      ? this.formationRegroupByGroup.get(unit.formationGroupId)
+      : undefined;
+    if (
+      regroupState &&
+      regroupState.stalledMemberCount > 0 &&
+      unit.formationOrderOrigin &&
+      unit.formationOrderGoal
+    ) {
+      const progress = getFormationMoveProgress(
+        unit.x,
+        unit.z,
+        unit.formationOrderOrigin,
+        unit.formationOrderGoal,
+      );
+      speed *= getFormationCohesionSpeedScale(progress, regroupState.slowestProgress, true);
+    }
+    const trafficScale =
+      regroupState?.narrowPassage
+        ? getFormationNarrowPassageTrafficScale(
+            unit.id,
+            regroupState.members,
+            regroupState.narrowPassage,
+          )
+        : 1;
+    if (trafficScale < 0.999) {
+      // Waiting for a squadmate is deliberate traffic control, not a pathfinding stall.
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+    }
+    speed *= trafficScale;
     const dx = (activeTarget.x - unit.x) / distToWp;
     const dz = (activeTarget.z - unit.z) / distToWp;
     const stepLen = Math.min(distToWp, speed * dt);
@@ -5483,6 +6182,7 @@ export class RtsEngine {
       unit.targetZ = unit.wallPatrolRoute[index].z;
     }
     if (unit.targetX === undefined || unit.targetZ === undefined) {
+      this.clearFormationMovement(unit);
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.currentActionText = '💤 待命中 (閒置)';
@@ -5507,6 +6207,7 @@ export class RtsEngine {
       unit.stuckDuration = 0;
       unit.stuckAccumulator = 0;
       unit.pathRecoveryCooldown = 0;
+      this.clearFormationMovement(unit);
       unit.state = 'idle';
       unit.attackMoveGoal = null;
       unit.velocity = { x: 0, z: 0 };
@@ -5529,13 +6230,14 @@ export class RtsEngine {
 
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
+      this.clearFormationTacticalState(unit);
       unit.state = 'idle';
       unit.currentActionText = '💤 待命中 (閒置)';
       return;
     }
 
-    let targetUnit = this.units.find((u) => u.id === unit.targetEntityId);
-    let targetBuilding = this.buildings.find((b) => b.id === unit.targetEntityId);
+    let targetUnit = this.combatUnitLookupById.get(unit.targetEntityId);
+    let targetBuilding = this.combatBuildingLookupById.get(unit.targetEntityId);
     if (
       targetUnit &&
       targetUnit.unitDefId === 'transport_boat' &&
@@ -5567,9 +6269,11 @@ export class RtsEngine {
           target.type === 'building' &&
           unit.unitDef.category !== 'siege' &&
           unit.unitDefId !== 'fantasy_treant';
-        const nearbyThreat = selectOptimalCombatTarget(unit, this.units, shouldSwitchOffBuilding ? [] : this.buildings, this.units, {
-          maxSearchRange: Math.max(11, unit.unitDef.stats.range + 6),
-        });
+        const nearbyThreat = this.selectNearbyCombatTarget(
+          unit,
+          Math.max(11, unit.unitDef.stats.range + 6),
+          !shouldSwitchOffBuilding,
+        );
         if (nearbyThreat && nearbyThreat.id !== target.id && (shouldSwitchOffBuilding || nearbyThreat.hp < nearbyThreat.maxHp * 0.45)) {
           unit.targetEntityId = nearbyThreat.id;
           unit.waypoints = undefined;
@@ -5581,11 +6285,13 @@ export class RtsEngine {
     }
 
     if (!target || target.hp <= 0 || (target.type === 'unit' && (target as UnitEntity).garrisonedInBuildingId)) {
+      this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
-      const followUp = selectOptimalCombatTarget(unit, this.units, this.buildings, this.units, {
-        maxSearchRange: Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
-      });
+      const followUp = this.selectNearbyCombatTarget(
+        unit,
+        Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
+      );
       if (followUp && (!this.isHumanControlled(unit.faction) || !!unit.attackMoveGoal)) {
         unit.targetEntityId = followUp.id;
         unit.state = 'attacking';
@@ -5624,9 +6330,26 @@ export class RtsEngine {
           )
         : getBuildingCollisionRadius(target as BuildingEntity);
     const effectiveDist = Math.max(0, dist - targetRadius);
+    const tacticalSlot = this.resolveFormationTacticalSlot(unit, target, targetRadius);
+    if (
+      tacticalSlot &&
+      getDistance(unit.x, unit.z, tacticalSlot.x, tacticalSlot.z) > 0.9
+    ) {
+      this.moveUnitAlongPath(unit, tacticalSlot.x, tacticalSlot.z, dt);
+      const roleLabel =
+        tacticalSlot.role === 'frontline'
+          ? tacticalSlot.shieldWall ? '步兵盾牆' : '步兵防線'
+          : tacticalSlot.role === 'backline'
+            ? '遠程射位'
+            : tacticalSlot.role === 'flank'
+              ? '騎兵側翼'
+              : '攻城後列';
+      unit.currentActionText = `⚔️ 戰術部署 · ${roleLabel}`;
+      return;
+    }
 
     if (effectiveDist > range) {
-      this.moveUnitAlongPath(unit, target.x, target.z, dt);
+      this.moveUnitAlongPath(unit, tacticalSlot?.x ?? target.x, tacticalSlot?.z ?? target.z, dt);
     } else {
       // A unit already in weapon range is engaging, not movement-stalled.
       unit.stuckDuration = 0;
@@ -8417,9 +9140,11 @@ export class RtsEngine {
     }
     if (parts.buffRing) {
       const hasBuff = !!(unit.buffSpeedUntil && unit.buffSpeedUntil > this.simTime);
-      parts.buffRing.visible = hasBuff;
+      parts.buffRing.userData.batchVisible = hasBuff;
+      parts.buffRing.visible = parts.buffRing.userData.instancedBatch === true ? false : hasBuff;
       if (hasBuff) {
-        parts.buffRing.scale.setScalar(1 + Math.sin(t * 7) * 0.08);
+        const baseScale = Number(parts.buffRing.userData.baseScale) || unitScale;
+        parts.buffRing.scale.setScalar(baseScale * (1 + Math.sin(t * 7) * 0.08));
       }
     }
 
@@ -8995,6 +9720,91 @@ export class RtsEngine {
           if (b.garrisonedUnitIds && b.garrisonedUnitIds.length > 0) {
             this.ungarrisonRecoveredAiUnits(b.id, 0.72);
           }
+        }
+      }
+
+      // Cavalry operating away from the base also need a way to break contact.
+      // Only evaluate already-wounded riders, then compare local combat numbers
+      // so healthy scouts and evenly matched charges are not pulled out of battle.
+      const disengagingCavalry = aiArmy
+        .filter(
+          (unit) =>
+            unit.unitDef.category === 'cavalry' &&
+            unit.hp > 0 &&
+            !unit.garrisonedInBuildingId &&
+            unit.state !== 'garrisoning' &&
+            unit.hp / Math.max(1, unit.maxHp) <= (personality === 'defensive' ? 0.58 : 0.5)
+        )
+        .map((unit) => {
+          const radiusSquared = 11.5 * 11.5;
+          const nearbyEnemyCount = this.units.filter(
+            (enemy) =>
+              enemy.hp > 0 &&
+              !enemy.garrisonedInBuildingId &&
+              enemy.unitDef.category !== 'worker' &&
+              this.isHostile({ faction: aiId, team: aiTeam }, enemy) &&
+              (enemy.x - unit.x) ** 2 + (enemy.z - unit.z) ** 2 <= radiusSquared
+          ).length;
+          const nearbyAllyCount = aiArmy.filter(
+            (ally) =>
+              ally.hp > 0 &&
+              !ally.garrisonedInBuildingId &&
+              (ally.x - unit.x) ** 2 + (ally.z - unit.z) ** 2 <= radiusSquared
+          ).length;
+          return {
+            unit,
+            shouldDisengage: shouldAiCavalryDisengage({
+              hp: unit.hp,
+              maxHp: unit.maxHp,
+              nearbyEnemyCount,
+              nearbyAllyCount,
+              personality,
+            }),
+          };
+        })
+        .filter((entry) => entry.shouldDisengage)
+        .sort(
+          (a, b) =>
+            a.unit.hp / Math.max(1, a.unit.maxHp) -
+            b.unit.hp / Math.max(1, b.unit.maxHp)
+        );
+
+      if (disengagingCavalry.length > 0) {
+        const fieldShelters = aiBuildings
+          .filter((building) => building.hp > 0 && building.isConstructed && getBuildingMaxGarrison(building) > 0)
+          .map((building) => ({
+            id: building.id,
+            x: building.x,
+            z: building.z,
+            bldg: building,
+            freeSlots: getAvailableGarrisonSlots(
+              getBuildingMaxGarrison(building),
+              building.garrisonedUnitIds?.length || 0,
+              countPendingGarrisonReservations(building.id, building.faction, aiUnits)
+            ),
+          }))
+          .filter((shelter) => shelter.freeSlots > 0);
+
+        for (const entry of disengagingCavalry) {
+          const rider = entry.unit;
+          const shelter = selectNearestGarrisonShelter(rider.x, rider.z, fieldShelters);
+          if (!shelter) continue;
+          shelter.freeSlots--;
+          this.clearFormationMovement(rider);
+          rider.targetGarrisonBuildingId = shelter.bldg.id;
+          rider.targetEntityId = undefined;
+          rider.targetBuildingId = undefined;
+          rider.targetResourceNodeId = undefined;
+          rider.attackMoveGoal = null;
+          rider.commandQueue = undefined;
+          rider.wallPatrolRoute = undefined;
+          rider.wallPatrolIndex = undefined;
+          rider.waypoints = undefined;
+          rider.pathGoal = undefined;
+          rider.pathCooldown = 0;
+          rider.velocity = { x: 0, z: 0 };
+          rider.state = 'garrisoning';
+          rider.currentActionText = '🐎 騎兵脫戰 · 反包圍撤退';
         }
       }
 
@@ -9934,7 +10744,7 @@ export class RtsEngine {
             maxSearchRange: 30,
           };
           const bestTarget =
-            selectOptimalCombatTarget(unit, this.units, [], this.units, targetContext) || activeThreat;
+            this.selectNearbyCombatTarget(unit, targetContext.maxSearchRange || 30, false, targetContext) || activeThreat;
 
           if (bestTarget) {
             const currentTarget =
@@ -9989,9 +10799,7 @@ export class RtsEngine {
 
         aiArmy.forEach((unit, idx) => {
           if (unit.state === 'idle') {
-            const nearbyEnemy = selectOptimalCombatTarget(unit, this.units, [], this.units, {
-              maxSearchRange: 14,
-            });
+            const nearbyEnemy = this.selectNearbyCombatTarget(unit, 14, false);
             if (nearbyEnemy) {
               unit.targetEntityId = nearbyEnemy.id;
               unit.waypoints = undefined;
@@ -10076,12 +10884,52 @@ export class RtsEngine {
                   maxEnemyRangeFromCentroid: 32,
                 })
               : null;
+          // Keep the main ranged line on one high-value target. Raiding units
+          // are excluded so their worker-harassment orders remain independent.
+          const rangedStrikeUnits = strikeUnits.filter(
+            (unit, index) =>
+              unit.unitDef.category === 'ranged' &&
+              index % 3 !== 0 &&
+              unit.unitDef.stats.speed < 3.6
+          );
+          const rangedFocusTarget =
+            rangedStrikeUnits.length >= 2
+              ? selectClusterFocusTarget(rangedStrikeUnits, this.units, this.buildings, {
+                  maxEnemyRangeFromCentroid: 32,
+                })
+              : null;
 
           const goalX = stronghold.x;
           const goalZ = stronghold.z;
+          const formationGroupId = `ai:${aiId}:${combatCmd.type}:${stronghold.id}`;
+          const existingFormationMember = strikeUnits.find(
+            (unit) =>
+              unit.formationGroupId === formationGroupId &&
+              unit.formationOrderOrigin &&
+              unit.formationOrderGoal &&
+              getDistance(unit.formationOrderGoal.x, unit.formationOrderGoal.z, goalX, goalZ) <= 2,
+          );
+          const formationOrigin = existingFormationMember?.formationOrderOrigin || {
+            x: strikeUnits.reduce((sum, unit) => sum + unit.x, 0) / Math.max(1, strikeUnits.length),
+            z: strikeUnits.reduce((sum, unit) => sum + unit.z, 0) / Math.max(1, strikeUnits.length),
+          };
           const formationSlots = new Map(
             layoutCombatFormation(strikeUnits, { x: goalX, z: goalZ }).map((entry) => [entry.unitId, entry] as const)
           );
+
+          strikeUnits.forEach((unit) => {
+            if (unit.unitDef.category !== 'worker') {
+              if (
+                unit.formationGroupId !== formationGroupId ||
+                !unit.formationOrderGoal ||
+                getDistance(unit.formationOrderGoal.x, unit.formationOrderGoal.z, goalX, goalZ) > 2
+              ) {
+                this.assignFormationMovement(unit, formationGroupId, formationOrigin, { x: goalX, z: goalZ });
+              }
+            } else {
+              this.clearFormationMovement(unit);
+            }
+          });
 
           strikeUnits.forEach((unit, idx) => {
             const slot = formationSlots.get(unit.id);
@@ -10147,6 +10995,7 @@ export class RtsEngine {
             const assignedPreyId = raidTargetByUnit.get(unit.id);
             const prey = assignedPreyId ? exposedWorkerById.get(assignedPreyId) : undefined;
             if (isRaider && prey) {
+              this.clearFormationMovement(unit);
               const goalChanged =
                 !unit.attackMoveGoal ||
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, prey.x, prey.z) > 3;
@@ -10162,6 +11011,7 @@ export class RtsEngine {
 
             // A stable subset of raiders pressures economy buildings; avoid a fresh random roll every AI tick.
             if (isRaider && ecoBuilding && idx % 3 === 1) {
+              this.clearFormationMovement(unit);
               const goalChanged =
                 !unit.attackMoveGoal ||
                 getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, ecoBuilding.x, ecoBuilding.z) > 3;
@@ -10180,26 +11030,31 @@ export class RtsEngine {
               clusterFocusTargetId: clusterTarget?.id,
               maxSearchRange: 28,
             };
-            const optimalLocal = selectOptimalCombatTarget(
+            const optimalLocal = this.selectNearbyCombatTarget(
               unit,
-              this.units,
-              this.buildings,
-              this.units,
-              targetContext
+              targetContext.maxSearchRange || 28,
+              true,
+              targetContext,
             );
-            const chosen = optimalLocal || clusterTarget || stronghold;
+            const chosen =
+              unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
+                ? rangedFocusTarget
+                : optimalLocal || clusterTarget || stronghold;
             const currentTarget =
               (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
               (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
-            const targetChanged = shouldSwitchCombatTarget(
-              unit,
-              currentTarget,
-              chosen,
-              this.units,
-              targetContext,
-              18
-            );
+            const targetChanged =
+              unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
+                ? currentTarget?.id !== rangedFocusTarget.id
+                : shouldSwitchCombatTarget(
+                    unit,
+                    currentTarget,
+                    chosen,
+                    this.units,
+                    targetContext,
+                    18
+                  );
             const goalChanged =
               !unit.attackMoveGoal ||
               getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
@@ -10208,7 +11063,10 @@ export class RtsEngine {
               unit.attackMoveGoal = { x: goalX, z: goalZ };
               unit.waypoints = undefined;
               unit.state = 'attacking';
-              unit.currentActionText = '集群進攻';
+              unit.currentActionText =
+                unit.unitDef.category === 'ranged' && rangedFocusTarget
+                  ? '🏹 集中火力 · 共同目標'
+                  : '集群進攻';
             }
           });
         }
@@ -10494,8 +11352,9 @@ export class RtsEngine {
         researchedTechIds: techs,
         unitId: unit.unitDefId,
         level: unit.level || 1,
-      visualSeed: unit.id,
+        visualSeed: unit.id,
       });
+      this.prepareUnitMeshForDecorationBatch(next);
       next.position.copy(pos);
       next.rotation.y = rotY;
       Object.assign(next.userData, {

@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition, LandmarkType, ShrineType } from '../types/game';
 import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
+import { mergeStaticUnitMeshes } from './unitMeshBatching';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
@@ -725,6 +726,16 @@ export function addContactShadow(group: THREE.Group, radius: number): THREE.Mesh
   mesh.position.y = 0.018;
   group.add(mesh);
   return mesh;
+}
+
+/** A single instanced draw call for all unit contact shadows in an RTS match. */
+export function createUnitContactShadowBatch(capacity = 8192): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(shadowGeo, shadowMat, Math.max(1, Math.floor(capacity)));
+  batch.name = 'unitContactShadowBatch';
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
 }
 
 // Subtle architectural edge rounding; radius is kept small to preserve silhouette.
@@ -8687,7 +8698,12 @@ export function updateUnitVisualLod(
     if (roleMarker) {
       const markerThreshold = Number(group.userData.roleMarkerLodThresholdPx) || 22;
       const shouldShow = forceHighDetail || projectedHeight >= markerThreshold;
-      if (roleMarker.visible !== shouldShow) roleMarker.visible = shouldShow;
+      if (roleMarker.userData.instancedBatch === true) {
+        roleMarker.userData.lodVisible = shouldShow;
+        roleMarker.visible = false;
+      } else if (roleMarker.visible !== shouldShow) {
+        roleMarker.visible = shouldShow;
+      }
     }
   }
 }
@@ -8718,6 +8734,55 @@ const sharedUnitRoleRingMaterials: Record<'crest' | 'siege', THREE.MeshBasicMate
     depthWrite: false,
   }),
 };
+
+const sharedUnitBuffRingGeometry = new THREE.RingGeometry(0.74, 0.9, 20);
+sharedUnitBuffRingGeometry.rotateX(-Math.PI / 2);
+const sharedUnitBuffRingMaterial = new THREE.MeshBasicMaterial({
+  color: 0x38bdf8,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.82,
+  depthWrite: false,
+});
+
+export type UnitRoleMarkerKind = 'crest' | 'siege';
+
+function createUnitDecorationBatch(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  name: string,
+  capacity = 8192,
+): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(geometry, material, Math.max(1, Math.floor(capacity)));
+  batch.name = name;
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
+}
+
+/** One global draw batch for all visible crest or siege role markers. */
+export function createUnitRoleMarkerBatch(
+  kind: UnitRoleMarkerKind,
+  capacity = 8192,
+): THREE.InstancedMesh {
+  return createUnitDecorationBatch(
+    sharedUnitRoleRingGeometry[kind],
+    sharedUnitRoleRingMaterials[kind],
+    kind === 'crest' ? 'unitRoleCrestBatch' : 'unitRoleSiegeBatch',
+    capacity,
+  );
+}
+
+/** One shared-geometry draw batch for temporary movement-speed buff rings. */
+export function createUnitBuffRingBatch(capacity = 8192): THREE.InstancedMesh {
+  return createUnitDecorationBatch(
+    sharedUnitBuffRingGeometry,
+    sharedUnitBuffRingMaterial,
+    'unitBuffRingBatch',
+    capacity,
+  );
+}
 const unitFactionRingMaterialCache = new Map<number, THREE.MeshBasicMaterial>();
 
 function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
@@ -8733,6 +8798,28 @@ function getUnitFactionRingMaterial(color: number): THREE.MeshBasicMaterial {
     unitFactionRingMaterialCache.set(color, material);
   }
   return material;
+}
+
+const unitFactionRingBatchMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.85,
+  depthWrite: false,
+});
+
+/** A single instanced draw call for unit faction rings; per-instance colors preserve faction identity. */
+export function createUnitFactionRingBatch(capacity = 8192): THREE.InstancedMesh {
+  const batch = new THREE.InstancedMesh(
+    sharedUnitFactionRingGeometry,
+    unitFactionRingBatchMaterial,
+    Math.max(1, Math.floor(capacity)),
+  );
+  batch.name = 'unitFactionRingBatch';
+  batch.count = 0;
+  batch.frustumCulled = false;
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return batch;
 }
 
 export function getUnitVisualFlags(ctx?: UnitVisualContext) {
@@ -8775,6 +8862,7 @@ export function createUnitMesh(
   addContactShadow(group, 0.72 * s);
 
   const factionRing = new THREE.Mesh(sharedUnitFactionRingGeometry, getUnitFactionRingMaterial(colors.ring));
+  factionRing.name = 'unitFactionRing';
   factionRing.scale.setScalar(s);
   factionRing.position.y = 0.025;
   group.add(factionRing);
@@ -8788,22 +8876,17 @@ export function createUnitMesh(
     roleMarker.position.y = 0.034;
     group.add(roleMarker);
     group.userData.battlefieldRoleMarker = roleMarker;
+    group.userData.battlefieldRoleMarkerKind = visualProfile.roleMarker;
   }
 
-  const buffRingGeo = new THREE.RingGeometry(0.74 * s, 0.9 * s, 20);
-  buffRingGeo.rotateX(-Math.PI / 2);
-  const buffRing = new THREE.Mesh(
-    buffRingGeo,
-    new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.82,
-      depthWrite: false,
-    })
-  );
+  const buffRing = new THREE.Mesh(sharedUnitBuffRingGeometry, sharedUnitBuffRingMaterial);
+  buffRing.name = 'unitBuffRing';
+  // Preserve the previous per-unit geometry scale while sharing one ring geometry.
+  buffRing.scale.setScalar(s);
   buffRing.position.y = 0.04;
   buffRing.visible = false;
+  buffRing.userData.baseScale = s;
+  buffRing.userData.batchVisible = false;
   group.add(buffRing);
 
   const vetGeo = new THREE.TorusGeometry(0.32 * s, 0.035 * s, 6, 16);
@@ -10726,6 +10809,7 @@ export function createUnitMesh(
   group.userData.visualFlags = flags;
   group.userData.visualUnitId = unitId;
   group.scale.set(s, s, s);
+  group.userData.staticMeshBatchStats = mergeStaticUnitMeshes(group);
   prepareUnitVisualLod(group);
   return group;
 }

@@ -142,6 +142,21 @@ async function main() {
       assert.equal(initial.seed, seed);
       assert.equal(initial.map, map);
 
+      // Seed a bounded set of temporary buffs so the stress scenario exercises the
+      // live buff-ring batch instead of passing with an empty (zero-instance) batch.
+      const seededBuffUnits = await evaluate(`
+        (() => {
+          const e = window.__rtsEngine;
+          if (!e || !Array.isArray(e.units)) return 0;
+          const count = Math.min(12, e.units.length);
+          for (const unit of e.units.slice(0, count)) {
+            unit.buffSpeedUntil = e.simTime + 120;
+          }
+          return count;
+        })()
+      `);
+      assert.ok(seededBuffUnits >= 8, "Could not seed enough temporary buff-ring instances.");
+
       // The HUD is now a lazy-loaded React chunk. Engine setup can finish before
       // React has mounted that chunk, so wait for the actual controls before
       // measuring responsive layout at any viewport width.
@@ -348,9 +363,74 @@ async function main() {
             if (!e || !overlay || overlay.style.display === 'none') return null;
             const samples = Array.isArray(e.performanceSamples) ? e.performanceSamples : [];
             if (samples.length < ${minCaptureSamples}) return null;
+            const units = Array.isArray(e.units) ? e.units : [];
+            const unitMeshes = e.unitMeshes instanceof Map ? [...e.unitMeshes.values()] : [];
+            const liveNonGarrisonedUnits = units.filter(
+              (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId,
+            ).length;
+            const visibleIndividualShadows = unitMeshes.filter(
+              (mesh) => mesh.userData?.unitContactShadowMesh?.visible === true,
+            ).length;
+            const visibleIndividualFactionRings = unitMeshes.filter(
+              (mesh) => mesh.userData?.unitFactionRingMesh?.visible === true,
+            ).length;
+            const dyingMeshes = (Array.isArray(e.dyingEffects) ? e.dyingEffects : [])
+              .map((effect) => effect?.mesh)
+              .filter(Boolean);
+            const decorationMeshes = [...unitMeshes, ...dyingMeshes];
+            const roleMarkerMeshes = decorationMeshes
+              .map((mesh) => mesh.userData?.unitRoleMarkerMesh)
+              .filter(Boolean);
+            const expectedVisibleRoleMarkers = roleMarkerMeshes.filter(
+              (marker) => marker.userData?.lodVisible !== false,
+            ).length;
+            const visibleIndividualRoleMarkers = roleMarkerMeshes.filter(
+              (marker) => marker.visible === true,
+            ).length;
+            const buffRingMeshes = decorationMeshes
+              .map((mesh) => mesh.userData?.unitBuffRingMesh)
+              .filter(Boolean);
+            const expectedBuffRings = buffRingMeshes.filter(
+              (ring) => ring.userData?.batchVisible === true,
+            ).length;
+            const visibleIndividualBuffRings = buffRingMeshes.filter(
+              (ring) => ring.visible === true,
+            ).length;
+            const staticMeshBatching = unitMeshes.reduce((total, mesh) => {
+              const stats = mesh.userData?.staticMeshBatchStats;
+              if (!stats) return total;
+              total.unitsProcessed += 1;
+              total.eligibleMeshes += stats.eligibleMeshes || 0;
+              total.mergedSourceMeshes += stats.mergedSourceMeshes || 0;
+              total.mergedBatches += stats.mergedBatches || 0;
+              total.drawCallsSaved += stats.estimatedDrawCallsSaved || 0;
+              return total;
+            }, {
+              unitsProcessed: 0,
+              eligibleMeshes: 0,
+              mergedSourceMeshes: 0,
+              mergedBatches: 0,
+              drawCallsSaved: 0,
+            });
             return {
               state: e.gameState,
               simulatedSeconds: e.stats.gameDuration,
+              unitDecorations: {
+                liveNonGarrisonedUnits,
+                unitMeshes: unitMeshes.length,
+                shadowInstances: e.unitContactShadowBatch?.count ?? 0,
+                factionRingInstances: e.unitFactionRingBatch?.count ?? 0,
+                visibleIndividualShadows,
+                visibleIndividualFactionRings,
+                roleCrestInstances: e.unitRoleCrestBatch?.count ?? 0,
+                roleSiegeInstances: e.unitRoleSiegeBatch?.count ?? 0,
+                expectedVisibleRoleMarkers,
+                visibleIndividualRoleMarkers,
+                buffRingInstances: e.unitBuffRingBatch?.count ?? 0,
+                expectedBuffRings,
+                visibleIndividualBuffRings,
+              },
+              staticMeshBatching,
               samples,
             };
           })()
@@ -365,6 +445,38 @@ async function main() {
 
       assert.equal(telemetry.state, "playing", "Simulation left the playing state.");
       assert.ok(telemetry.simulatedSeconds > 0, "Simulation clock did not advance.");
+      const decorations = capture.unitDecorations;
+      const staticMeshes = capture.staticMeshBatching;
+      assert.ok(staticMeshes?.unitsProcessed === decorations.unitMeshes, "Static mesh batching diagnostics are missing from one or more unit models.");
+      assert.ok(staticMeshes.mergedBatches > 0, "Static character mesh batching did not create any merged batches.");
+      assert.ok(staticMeshes.drawCallsSaved > 0, "Static character mesh batching did not reduce any mesh draw batches.");
+      assert.equal(
+        staticMeshes.drawCallsSaved,
+        staticMeshes.mergedSourceMeshes - staticMeshes.mergedBatches,
+        "Static mesh batching savings must match removed source meshes minus resulting batches.",
+      );
+      assert.ok(decorations.shadowInstances > 0, "Unit contact-shadow batch did not receive instances.");
+      assert.equal(decorations.shadowInstances, decorations.factionRingInstances, "Contact shadows and faction rings must share the same instance ordering.");
+      assert.equal(
+        decorations.roleCrestInstances + decorations.roleSiegeInstances,
+        decorations.expectedVisibleRoleMarkers,
+        "Role marker instance batches do not match visible per-unit LOD state.",
+      );
+      assert.equal(decorations.visibleIndividualRoleMarkers, 0, "A role marker is still rendered as an individual mesh.");
+      assert.ok(decorations.expectedBuffRings >= Math.min(8, seededBuffUnits), "The scenario did not activate the seeded buff rings.");
+      assert.equal(
+        decorations.buffRingInstances,
+        decorations.expectedBuffRings,
+        "Buff-ring instance batch does not match active per-unit buffs.",
+      );
+      assert.ok(decorations.expectedVisibleRoleMarkers > 0, "The mixed army did not produce any battlefield role markers.");
+      assert.equal(decorations.visibleIndividualBuffRings, 0, "A buff ring is still rendered as an individual mesh.");
+      assert.equal(decorations.visibleIndividualShadows, 0, "A unit contact shadow is still rendered individually.");
+      assert.equal(decorations.visibleIndividualFactionRings, 0, "A unit faction ring is still rendered individually.");
+      assert.ok(
+        decorations.shadowInstances >= decorations.liveNonGarrisonedUnits,
+        "Instanced decorations are missing one or more visible live units.",
+      );
       for (const key of ["fps", "frameAverageMs", "p95Ms", "hitchMs", "simulationAverageMs", "renderAverageMs", "drawCalls", "triangles", "aiDecisionAverageMs"]) {
         assert.ok(Number.isFinite(telemetry[key]) && telemetry[key] > 0, "Invalid F3 metric: " + key);
       }
@@ -375,11 +487,15 @@ async function main() {
       assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
-      report.scenarios.push({ count, initial, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
+      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
-        " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
-        telemetry.drawCalls + " draws, " + telemetry.renderer);
+        " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
+        " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
+        telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " +
+        staticMeshes.drawCallsSaved + " static mesh draws saved, " +
+        (decorations.roleCrestInstances + decorations.roleSiegeInstances) + " role markers, " +
+        decorations.buffRingInstances + " buff rings, " + telemetry.renderer);
     }
     report.result = "passed";
   } catch (error) {

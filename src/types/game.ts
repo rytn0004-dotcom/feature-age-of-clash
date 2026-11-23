@@ -300,6 +300,18 @@ export interface UnitEntity extends EntityCommon {
   buffSpeedUntil?: number;
   buffDefenseBonus?: number;
   attackMoveGoal?: { x: number; z: number } | null;
+  /** Shared order identity used to keep manually selected and AI squads moving cohesively. */
+  formationGroupId?: string;
+  /** Shared order vector; all living members of a squad use the same origin and destination. */
+  formationOrderOrigin?: { x: number; z: number };
+  formationOrderGoal?: { x: number; z: number };
+  /** Cached target and role-based point used to avoid retarget jitter during combat. */
+  formationTacticalTargetId?: string;
+  formationTacticalAnchor?: { x: number; z: number };
+  formationTacticalGoal?: { x: number; z: number };
+  formationTacticalRole?: 'frontline' | 'backline' | 'flank' | 'siege';
+  /** True when this unit is part of a mixed infantry shield-wall screen. */
+  formationTacticalShieldWall?: boolean;
   /** Repeating route used by guards assigned to patrol a friendly wall chain. */
   wallPatrolRoute?: Array<{ x: number; z: number }>;
   wallPatrolIndex?: number;
