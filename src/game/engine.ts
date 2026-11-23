@@ -2889,6 +2889,31 @@ export class RtsEngine {
     this.onStateChange?.();
   }
 
+  private isLandPointClear(x: number, z: number, radius = 0.7): boolean {
+    if (Math.abs(x) > 94 || Math.abs(z) > 94) return false;
+    if (this.mapLayout) {
+      if (
+        isPointInTerrainObstacle(
+          x,
+          z,
+          this.mapLayout.waterRects,
+          this.mapLayout.waterDiscs,
+          this.mapLayout.bridges
+        )
+      ) return false;
+      for (const cliff of this.mapLayout.cliffDiscs) {
+        if (Math.hypot(x - cliff.x, z - cliff.z) <= cliff.radius + radius) return false;
+      }
+    }
+    for (const building of this.buildings) {
+      if (building.hp <= 0) continue;
+      const buildingRadius = getBuildingCollisionRadius(building);
+      if (buildingRadius > 0 &&
+        Math.hypot(x - building.x, z - building.z) <= buildingRadius + radius) return false;
+    }
+    return true;
+  }
+
   public toggleOvooMode(buildingId: string): boolean {
     const building = this.buildings.find((entry) =>
       entry.id === buildingId && entry.hp > 0 && entry.buildingType === 'ovoo_relay'
@@ -12181,6 +12206,17 @@ export class RtsEngine {
     this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];
+    this.groundZones.forEach((zone) => {
+      this.scene.remove(zone.mesh);
+      zone.mesh.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry?.dispose();
+        if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
+        else mesh.material?.dispose();
+      });
+    });
+    this.groundZones = [];
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
     this.cleanupWindowListeners.forEach((fn) => fn());
