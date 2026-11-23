@@ -3,19 +3,27 @@ export interface EntityWithStableId {
 }
 
 /**
- * Build a per-update lookup table for entity IDs.
+ * Rebuild an existing lookup table in place.
  *
- * Keep the first occurrence for each ID so lookups retain Array.find semantics
- * even if malformed input temporarily contains duplicate IDs.
+ * Keeping the Map instance avoids allocating a new hash table on every simulation
+ * step while preserving Array.find's first-match behavior for duplicate IDs.
  */
-export function createEntityIdIndex<T extends EntityWithStableId>(
+export function rebuildEntityIdIndex<T extends EntityWithStableId>(
+  index: Map<string, T>,
   entities: readonly T[],
 ): Map<string, T> {
-  const index = new Map<string, T>();
+  index.clear();
   for (const entity of entities) {
     if (!index.has(entity.id)) index.set(entity.id, entity);
   }
   return index;
+}
+
+/** Create a new lookup table when a persistent one is not available. */
+export function createEntityIdIndex<T extends EntityWithStableId>(
+  entities: readonly T[],
+): Map<string, T> {
+  return rebuildEntityIdIndex(new Map<string, T>(), entities);
 }
 
 

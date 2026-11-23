@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { createEntityIdIndex, groupEntitiesByFaction } from './entityLookup';
+import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
+  rebuildCombatSpatialIndexInPlace,
+  type CombatSpatialCandidates,
   type CombatSpatialIndex,
 } from './combatSpatialIndex';
 import {
@@ -383,6 +385,15 @@ export class RtsEngine {
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
   private combatUnitLookupById = new Map<string, UnitEntity>();
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
+  /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
+  private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
+    units: [],
+    buildings: [],
+  };
+  private cavalryRetreatQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
+    units: [],
+    buildings: [],
+  };
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
   private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
@@ -1291,6 +1302,13 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    this.combatSpatialIndex = null;
+    this.combatUnitLookupById.clear();
+    this.combatBuildingLookupById.clear();
+    this.combatTargetQueryScratch.units.length = 0;
+    this.combatTargetQueryScratch.buildings.length = 0;
+    this.cavalryRetreatQueryScratch.units.length = 0;
+    this.cavalryRetreatQueryScratch.buildings.length = 0;
     this.resourceNodes = [];
     this.contestedPoints = [];
     this.starRelicPhase = 'waiting';
@@ -5653,7 +5671,16 @@ export class RtsEngine {
   }
 
   private rebuildCombatSpatialIndex(): void {
+    if (this.combatSpatialIndex) {
+      rebuildCombatSpatialIndexInPlace(this.combatSpatialIndex, this.units, this.buildings);
+      return;
+    }
     this.combatSpatialIndex = createCombatSpatialIndex(this.units, this.buildings);
+  }
+
+  private rebuildCombatEntityLookups(): void {
+    rebuildEntityIdIndex(this.combatUnitLookupById, this.units);
+    rebuildEntityIdIndex(this.combatBuildingLookupById, this.buildings);
   }
 
   /**
@@ -5677,6 +5704,7 @@ export class RtsEngine {
       attacker.x,
       attacker.z,
       queryRadius,
+      this.combatTargetQueryScratch,
     );
     return selectOptimalCombatTarget(
       attacker,
@@ -5747,8 +5775,7 @@ export class RtsEngine {
   }
 
   private updateUnits(dt: number) {
-    this.combatUnitLookupById = createEntityIdIndex(this.units);
-    this.combatBuildingLookupById = createEntityIdIndex(this.buildings);
+    this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
     this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
@@ -8812,11 +8839,12 @@ export class RtsEngine {
   private updateProjectiles(dt: number) {
     if (this.projectiles.length === 0) return;
 
-    // Resolve projectile target/attacker IDs in O(1) instead of rescanning both entity
-    // arrays for every arrow, spell, and siege shot in a crowded battle.
-    // The helper intentionally preserves Array.find's first-match behavior for duplicate IDs.
-    const unitsById = createEntityIdIndex(this.units);
-    const buildingsById = createEntityIdIndex(this.buildings);
+    // Refresh the persistent O(1) lookup tables after unit/building simulation,
+    // because production and destruction may have changed the entity arrays this frame.
+    // The helper preserves Array.find's first-match behavior for duplicate IDs.
+    this.rebuildCombatEntityLookups();
+    const unitsById = this.combatUnitLookupById;
+    const buildingsById = this.combatBuildingLookupById;
     const remaining: Projectile[] = [];
 
     for (const proj of this.projectiles) {
@@ -9744,6 +9772,7 @@ export class RtsEngine {
             unit.x,
             unit.z,
             11.5,
+            this.cavalryRetreatQueryScratch,
           ).units;
           const { nearbyEnemyCount, nearbyAllyCount } = countNearbyCombatForces(
             nearbyUnits,
