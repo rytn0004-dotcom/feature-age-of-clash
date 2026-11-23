@@ -3203,11 +3203,61 @@ export function stepWildAnimalState(
 }
 
 
-/** Records the unit that provoked a wild boar. Boars do not attack passers-by. */
+/** Records the first unit that provoked a wild boar; active hunts keep a stable target lease. */
 export function triggerWildBoarAggression(node: ResourceNode, attackerId: string, simTime: number): void {
   if (!node.animalAlive || !attackerId) return;
-  node.animalAggroTargetId = attackerId;
-  node.animalAggroUntil = Math.max(node.animalAggroUntil || 0, simTime + 8);
+  const activeUntil = node.animalAggroUntil || 0;
+  if (!node.animalAggroTargetId || activeUntil <= simTime) {
+    node.animalAggroTargetId = attackerId;
+  }
+  node.animalAggroUntil = Math.max(activeUntil, simTime + 8);
+}
+
+/**
+ * Keeps a boar committed to its current hunter while that unit is still actively hunting.
+ * If the hunter dies, is garrisoned, changes orders, or becomes invalid, hand off to the
+ * nearest living ground unit still gathering this exact boar. Stable ID tie-breaking makes
+ * the fallback deterministic across clients and replays.
+ */
+export function selectWildBoarAggroTarget(
+  currentTargetId: string | undefined,
+  boarX: number,
+  boarZ: number,
+  candidates: readonly UnitEntity[],
+  nodeId: string,
+): UnitEntity | null {
+  if (!Number.isFinite(boarX) || !Number.isFinite(boarZ) || !nodeId) return null;
+
+  let lockedTarget: UnitEntity | null = null;
+  let nearestTarget: UnitEntity | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    if (
+      candidate.hp <= 0 ||
+      candidate.garrisonedInBuildingId ||
+      candidate.unitDef.isNaval ||
+      candidate.state !== 'gathering' ||
+      candidate.targetResourceNodeId !== nodeId ||
+      !candidate.id ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z)
+    ) continue;
+
+    if (candidate.id === currentTargetId) lockedTarget = candidate;
+
+    const distance = Math.hypot(candidate.x - boarX, candidate.z - boarZ);
+    if (
+      distance < nearestDistance - 1e-9 ||
+      (Math.abs(distance - nearestDistance) <= 1e-9 &&
+        (!nearestTarget || candidate.id.localeCompare(nearestTarget.id) < 0))
+    ) {
+      nearestTarget = candidate;
+      nearestDistance = distance;
+    }
+  }
+
+  return lockedTarget ?? nearestTarget;
 }
 
 export interface WildBoarStepOutput {
