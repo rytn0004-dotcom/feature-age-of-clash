@@ -8,6 +8,7 @@ import {
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
   getFormationTacticalSlot,
+  groupStalledFormationUnits,
   measureFormationRegroup,
   shouldRefreshFormationTacticalSlot,
   shouldAiCavalryDisengage,
@@ -23,6 +24,23 @@ const member = (id: string, x: number, stuckDuration = 0) => ({
   stuckDuration,
   formationOrderOrigin: origin,
   formationOrderGoal: goal,
+});
+
+test('formation regroup: stalled units are grouped once with stable priority and bounded thresholds', () => {
+  const grouped = groupStalledFormationUnits([
+    { id: 'tie-b', formationGroupId: 'alpha', hp: 100, stuckDuration: 2.8 },
+    { id: 'fresh', formationGroupId: 'alpha', hp: 100, stuckDuration: 1.79 },
+    { id: 'tie-a', formationGroupId: 'alpha', hp: 100, stuckDuration: 2.8 },
+    { id: 'threshold', formationGroupId: 'alpha', hp: 100, stuckDuration: FORMATION_REGROUP_STALL_SECONDS },
+    { id: 'abandoned', formationGroupId: 'alpha', hp: 100, stuckDuration: FORMATION_REGROUP_ABANDON_STALL_SECONDS },
+    { id: 'dead', formationGroupId: 'alpha', hp: 0, stuckDuration: 3.2 },
+    { id: 'other-group', formationGroupId: 'beta', hp: 100, stuckDuration: 2.1 },
+    { id: 'no-group', hp: 100, stuckDuration: 3.2 },
+  ]);
+
+  assert.deepEqual([...grouped.keys()].sort(), ['alpha', 'beta']);
+  assert.deepEqual(grouped.get('alpha')?.map((unit) => unit.id), ['tie-a', 'tie-b', 'threshold']);
+  assert.deepEqual(grouped.get('beta')?.map((unit) => unit.id), ['other-group']);
 });
 
 test('formation movement: progress is projected onto the shared order vector and clamped', () => {
