@@ -9664,13 +9664,15 @@ export function createUnitMesh(
     const rHand = new THREE.Mesh(unitHandGeo, fleshMat);
     rHand.position.set(0, -0.25, 0.1);
     rightArmPivot.add(rArm, rHand);
-  } else if (mType === 'knight') {
+  } else if (mType === 'knight' || mType === 'horse_archer' || mType === 'keshik') {
     const isScout = unitId === 'scout_rider';
     const isPaladin = unitId === 'fantasy_paladin';
+    const isHorseArcher = mType === 'horse_archer';
+    const isKeshik = mType === 'keshik';
     bodyPivot.position.y = 0.0;
 
     const horseMat = new THREE.MeshStandardMaterial({
-      color: isPaladin ? 0xf8fafc : isScout ? 0x8b5a2b : 0x5c2b10,
+      color: isPaladin ? 0xf8fafc : isHorseArcher ? 0xa16207 : isKeshik ? 0x3b2314 : isScout ? 0x8b5a2b : 0x5c2b10,
       map: resFurMaps.map,
       normalMap: resFurMaps.normalMap,
       normalScale: new THREE.Vector2(0.65, 0.65),
@@ -9678,7 +9680,7 @@ export function createUnitMesh(
       roughness: 0.6,
     });
     const maneMat = new THREE.MeshStandardMaterial({
-      color: isPaladin ? 0xfef3c7 : isScout ? 0x292524 : 0x1e1b18,
+      color: isPaladin ? 0xfef3c7 : isHorseArcher ? 0x1c1917 : isKeshik ? 0x0f172a : isScout ? 0x292524 : 0x1e1b18,
       roughness: 0.86,
     });
     animParts.hitMaterials.push(horseMat);
@@ -9689,7 +9691,16 @@ export function createUnitMesh(
     horseBody.castShadow = true;
     bodyPivot.add(horseBody);
 
-    if (!isScout) {
+    if (isKeshik) {
+      const lamellarMat = new THREE.MeshStandardMaterial({ color: 0xca8a04, roughness: 0.32, metalness: 0.78 });
+      const barding = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.415, 0.76, 20), lamellarMat);
+      barding.rotation.x = Math.PI / 2;
+      barding.position.set(0, 0.86, 0.02);
+      const peytral = new THREE.Mesh(new THREE.SphereGeometry(0.36, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), armorMat);
+      peytral.rotation.x = Math.PI / 2;
+      peytral.position.set(0, 0.88, 0.44);
+      bodyPivot.add(barding, peytral);
+    } else if (!isScout && !isHorseArcher) {
       const caparisonMat = isPaladin ? goldTrimMat : armorMat;
       const barding = new THREE.Mesh(new THREE.CylinderGeometry(0.355, 0.41, 0.72, 14), caparisonMat);
       barding.rotation.x = Math.PI / 2;
@@ -9701,7 +9712,6 @@ export function createUnitMesh(
     } else {
       const saddleCloth = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 0.58), armorMat);
       saddleCloth.position.set(0, 1.12, -0.04);
-      // Rolled bedroll & leather saddlebags
       const bedroll = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8), leatherMat);
       bedroll.rotation.z = Math.PI / 2;
       bedroll.position.set(0, 1.24, -0.32);
@@ -9760,8 +9770,8 @@ export function createUnitMesh(
     mane.position.set(0, 0.26, 0.02);
     mane.rotation.x = 0.48;
     horseHeadPivot.add(hNeck, hHead, mane);
-    if (!isScout) {
-      const chamfron = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.09, 0.3), isPaladin ? goldTrimMat : steelMat);
+    if (!isScout && !isHorseArcher) {
+      const chamfron = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.09, 0.3), isPaladin || isKeshik ? goldTrimMat : steelMat);
       chamfron.position.set(0, 0.51, 0.3);
       chamfron.rotation.x = 0.48;
       horseHeadPivot.add(chamfron);
@@ -9869,6 +9879,79 @@ export function createUnitMesh(
       const lightCore = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfef08a }));
       lightCore.position.set(0.04, 0.46, 0.72);
       rightArmPivot.add(haft, hammerHead, lightCore);
+    } else if (isHorseArcher) {
+      // Mongol Mangudai: mobile composite-bow rider with a felt malakhai and hip quiver.
+      const rider = new THREE.Mesh(unitTunicGeo, armorMat);
+      rider.position.set(0, 1.18, -0.04);
+      rider.castShadow = true;
+      const sash = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.032, 8, 18), goldTrimMat);
+      sash.rotation.x = Math.PI / 2;
+      sash.position.set(0, 1.42, -0.04);
+      const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+      head.position.set(0, 1.88, -0.02);
+      const furBrim = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.055, 10, 18), maneMat);
+      furBrim.rotation.x = Math.PI / 2;
+      furBrim.position.set(0, 1.98, -0.02);
+      const malakhaiCone = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.32, 16), armorMat);
+      malakhaiCone.position.set(0, 2.12, -0.02);
+      const quiver = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.065, 0.48, 12), leatherMat);
+      quiver.position.set(-0.24, 1.38, -0.22);
+      quiver.rotation.z = 0.32;
+      bodyPivot.add(rider, sash, head, furBrim, malakhaiCone, quiver);
+
+      leftArmPivot.position.set(-0.26, 1.64, 0.06);
+      bodyPivot.add(leftArmPivot);
+      const bow = new THREE.Mesh(unitBowGeo, hullOakMat);
+      bow.position.set(0.08, 0, 0.28);
+      const bowString = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.84, 6), steelMat);
+      bowString.position.set(0.08, 0, 0.14);
+      leftArmPivot.add(bow, bowString);
+
+      rightArmPivot.position.set(0.28, 1.64, 0.04);
+      bodyPivot.add(rightArmPivot);
+      const rArm = new THREE.Mesh(unitArmSegmentGeo, armorMat);
+      rArm.position.set(0, -0.12, 0.08);
+      rightArmPivot.add(rArm);
+    } else if (isKeshik) {
+      // Mongol Keshik: gilded lamellar, red horsehair plume, round shield and long lance.
+      const rider = new THREE.Mesh(unitBreastplateGeo, armorMat);
+      rider.position.set(0, 1.18, -0.04);
+      rider.castShadow = true;
+      const cape = new THREE.Mesh(unitCapeGeo, new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.72 }));
+      cape.position.set(0, 1.44, -0.26);
+      cape.rotation.x = 0.25;
+      const rPaulL = new THREE.Mesh(unitPauldronGeo, goldTrimMat);
+      rPaulL.position.set(-0.27, 1.72, -0.04);
+      const rPaulR = new THREE.Mesh(unitPauldronGeo, goldTrimMat);
+      rPaulR.position.set(0.27, 1.72, -0.04);
+      const helm = new THREE.Mesh(unitHelmGeo, steelMat);
+      helm.position.set(0, 1.88, -0.04);
+      const helmSpike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.28, 12), goldTrimMat);
+      helmSpike.position.set(0, 2.28, -0.04);
+      const plume = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.28, 12), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
+      plume.rotation.x = -0.7;
+      plume.position.set(0, 2.24, -0.16);
+      bodyPivot.add(rider, cape, rPaulL, rPaulR, helm, helmSpike, plume);
+
+      leftArmPivot.position.set(-0.3, 1.66, 0.04);
+      bodyPivot.add(leftArmPivot);
+      const roundShield = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.06, 18), goldTrimMat);
+      roundShield.rotation.z = Math.PI / 2;
+      roundShield.position.set(-0.1, -0.08, 0.12);
+      leftArmPivot.add(roundShield);
+
+      rightArmPivot.position.set(0.32, 1.66, 0.06);
+      bodyPivot.add(rightArmPivot);
+      const lanceShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.056, 2.15, 12), hullOakMat);
+      lanceShaft.rotation.x = Math.PI / 2.25;
+      lanceShaft.position.set(0.05, 0.02, 0.62);
+      const lanceTip = new THREE.Mesh(new THREE.ConeGeometry(0.072, 0.4, 10), goldTrimMat);
+      lanceTip.rotation.x = Math.PI / 2.25;
+      lanceTip.position.set(0.05, 0.18, 1.7);
+      const yakTuft = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.04, 0.32, 12), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
+      yakTuft.rotation.x = Math.PI / 2.25;
+      yakTuft.position.set(0.05, 0.11, 1.38);
+      rightArmPivot.add(lanceShaft, lanceTip, yakTuft);
     } else {
       // Heavy Armored Royal Knight with Great-Helm, Plume, Vamplate Lance & Heater Shield
       const rider = new THREE.Mesh(unitBreastplateGeo, armorMat);
