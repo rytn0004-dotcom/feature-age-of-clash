@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
 } from './combatSpatialIndex';
@@ -111,4 +112,23 @@ test('combat spatial index: infinite range retains all living candidates', () =>
   const result = queryCombatSpatialIndex(index, 500, 500, Infinity);
   assert.deepEqual(result.units.map((unit) => unit.id), ['one']);
   assert.deepEqual(result.buildings.map((building) => building.id), ['town']);
+});
+
+
+test('combat spatial index: local cavalry force counts preserve AI faction and worker semantics', () => {
+  const units = [
+    { id: 'rider', x: 0, z: 0, hp: 45, faction: 'blue', unitDef: { category: 'cavalry' } },
+    { id: 'ally', x: 4, z: 0, hp: 100, faction: 'blue', unitDef: { category: 'melee' } },
+    { id: 'enemy', x: 8, z: 0, hp: 100, faction: 'red', unitDef: { category: 'ranged' } },
+    { id: 'enemy-worker', x: 2, z: 0, hp: 100, faction: 'red', unitDef: { category: 'worker' } },
+    { id: 'same-team-other-faction', x: 3, z: 0, hp: 100, faction: 'green', unitDef: { category: 'melee' } },
+    { id: 'dead-enemy', x: 1, z: 0, hp: 0, faction: 'red', unitDef: { category: 'melee' } },
+    { id: 'garrisoned-enemy', x: 1, z: 0, hp: 100, faction: 'red', garrisonedInBuildingId: 'keep', unitDef: { category: 'melee' } },
+    { id: 'far-enemy', x: 11.51, z: 0, hp: 100, faction: 'red', unitDef: { category: 'melee' } },
+  ];
+  const index = createCombatSpatialIndex(units, []);
+  const nearby = queryCombatSpatialIndex(index, 0, 0, 11.5).units;
+  const counts = countNearbyCombatForces(nearby, 'blue', (unit) => unit.faction === 'red');
+
+  assert.deepEqual(counts, { nearbyEnemyCount: 1, nearbyAllyCount: 2 });
 });
