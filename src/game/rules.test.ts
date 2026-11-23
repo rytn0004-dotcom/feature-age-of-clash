@@ -11,6 +11,7 @@ import {
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
   selectAiWorkerResourceType,
+  selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
@@ -3562,4 +3563,44 @@ test('combat formations widen their lateral spacing for larger armies', async ()
     'larger armies should reserve wider frontline spacing instead of collapsing into a narrow clump',
   );
   assert.equal(layoutCombatFormation(makeUnits(1), { x: 30, z: 0 }).length, 1);
+});
+
+
+test('AI forward gold selection matches stable score ranking without sorting', () => {
+  const nodes = [
+    { id: 'first-tie', resourceType: 'gold' as const, amount: 200, x: 5, z: 0 },
+    { id: 'second-tie', resourceType: 'gold' as const, amount: 200, x: -5, z: 0 },
+    { id: 'low-stock', resourceType: 'gold' as const, amount: 80, x: 0, z: 0 },
+    { id: 'stone', resourceType: 'stone' as const, amount: 900, x: 0, z: 0 },
+  ];
+  const workerCounts = new Map<string, number>();
+  const selected = selectBestForwardGoldNode(nodes, 0, 0, workerCounts);
+
+  assert.equal(selected?.node.id, 'first-tie', 'equal scores retain original resource-node order');
+  assert.equal(
+    selected?.score,
+    200 * 0.02 - getDistance(0, 0, 5, 0) * 0.4 - getDistance(0, 0, 5, 0) * 0.15,
+  );
+});
+
+test('AI forward gold selection recalculates congestion for each worker', () => {
+  const nodes = [
+    { id: 'nearby', resourceType: 'gold' as const, amount: 200, x: 4, z: 0 },
+    { id: 'forward', resourceType: 'gold' as const, amount: 200, x: 6, z: 0 },
+  ];
+
+  assert.equal(selectBestForwardGoldNode(nodes, 0, 0, new Map())?.node.id, 'nearby');
+  assert.equal(
+    selectBestForwardGoldNode(nodes, 0, 0, new Map([['nearby', 1]]))?.node.id,
+    'forward',
+    'a newly assigned gatherer must immediately affect the next worker\'s congestion score',
+  );
+});
+
+test('AI forward gold selection returns null when no deposit has more than 80 gold', () => {
+  const nodes = [
+    { id: 'depleted', resourceType: 'gold' as const, amount: 80, x: 0, z: 0 },
+    { id: 'other-resource', resourceType: 'food' as const, amount: 500, x: 1, z: 0 },
+  ];
+  assert.equal(selectBestForwardGoldNode(nodes, 0, 0, new Map()), null);
 });
