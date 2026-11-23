@@ -10742,7 +10742,7 @@ export class RtsEngine {
               currentTarget,
               bestTarget,
               this.units,
-              targetContext,
+              { defendAnchor, maxSearchRange: targetContext.maxSearchRange },
               18
             );
             const needsAnchorSync =
@@ -11021,17 +11021,16 @@ export class RtsEngine {
               (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
               (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||
               null;
-            const targetChanged =
-              unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
-                ? currentTarget?.id !== rangedFocusTarget.id
-                : shouldSwitchCombatTarget(
-                    unit,
-                    currentTarget,
-                    chosen,
-                    this.units,
-                    targetContext,
-                    18
-                  );
+            // Compare candidates without the transient cluster-focus bonus. Otherwise a new
+            // focus ID can manufacture a +42 score jump and bypass target hysteresis.
+            const targetChanged = shouldSwitchCombatTarget(
+              unit,
+              currentTarget,
+              chosen,
+              this.units,
+              { maxSearchRange: targetContext.maxSearchRange },
+              18,
+            );
             const goalChanged =
               !unit.attackMoveGoal ||
               getDistance(unit.attackMoveGoal.x, unit.attackMoveGoal.z, goalX, goalZ) > 2;
