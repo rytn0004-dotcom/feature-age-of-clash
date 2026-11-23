@@ -1587,7 +1587,7 @@ export function getBattlefieldVisualProfile(
   return { tier, ...profiles[tier] };
 }
 
-export type ParticleBudgetKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
+export type ParticleBudgetKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
 /** Preserve combat feedback while trimming decorative bursts during low quality or large battles. */
 export function computeParticleBurstCount(
@@ -1608,7 +1608,7 @@ export function computeParticleBurstCount(
   const densityRange = critical ? 520 : 300;
   const densityFloor = critical ? 0.55 : 0.3;
   const densityScale = Math.max(densityFloor, 1 - Math.max(0, safeUnitCount - densityStart) / densityRange);
-  const materialScale = kind === 'leaf' || kind === 'dust' || kind === 'smoke' ? 0.9 : 1;
+  const materialScale = kind === 'leaf' || kind === 'meat' || kind === 'dust' || kind === 'smoke' ? 0.9 : 1;
   return Math.max(1, Math.min(count, Math.floor(count * qualityScale * densityScale * materialScale)));
 }
 
