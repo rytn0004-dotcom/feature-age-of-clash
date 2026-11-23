@@ -291,7 +291,7 @@ import {
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 
-type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'dust' | 'smoke' | 'ember';
+type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
 type ParticleRenderLayer = 'solid' | 'smoke';
 
@@ -823,6 +823,7 @@ export class RtsEngine {
       gold: new THREE.Color(0xfbbf24),
       stone: new THREE.Color(0x94a3b8),
       leaf: new THREE.Color(0x22c55e),
+      meat: new THREE.Color(0x9f1239),
       dust: new THREE.Color(0xe2e8f0),
       smoke: new THREE.Color(0x475569),
       ember: new THREE.Color(0xf97316),
@@ -926,8 +927,18 @@ export class RtsEngine {
       p.renderLayer = targetLayer;
 
       const angle = (i / budgetedCount) * Math.PI * 2 + Math.random() * 0.65;
-      const speed = isBuoyant ? 0.35 + Math.random() * 0.85 : 1.6 + Math.random() * 2.6;
-      const baseScale = kind === 'smoke' ? 2.1 + Math.random() * 1.4 : kind === 'ember' ? 0.75 + Math.random() * 0.5 : 0.8 + Math.random() * 0.6;
+      const speed = isBuoyant
+        ? 0.35 + Math.random() * 0.85
+        : kind === 'meat'
+          ? 0.45 + Math.random() * 0.95
+          : 1.6 + Math.random() * 2.6;
+      const baseScale = kind === 'smoke'
+        ? 2.1 + Math.random() * 1.4
+        : kind === 'ember'
+          ? 0.75 + Math.random() * 0.5
+          : kind === 'meat'
+            ? 0.34 + Math.random() * 0.28
+            : 0.8 + Math.random() * 0.6;
       p.kind = kind;
       p.x = x + (isBuoyant ? (Math.random() - 0.5) * 1.2 : 0);
       p.y = y;
@@ -937,10 +948,22 @@ export class RtsEngine {
       p.scale = baseScale;
       p.baseScale = baseScale;
       p.vx = Math.cos(angle) * speed;
-      p.vy = kind === 'smoke' ? 1.8 + Math.random() * 1.2 : kind === 'ember' ? 2.6 + Math.random() * 1.8 : 2.4 + Math.random() * 2.5;
+      p.vy = kind === 'smoke'
+        ? 1.8 + Math.random() * 1.2
+        : kind === 'ember'
+          ? 2.6 + Math.random() * 1.8
+          : kind === 'meat'
+            ? 0.35 + Math.random() * 0.75
+            : 2.4 + Math.random() * 2.5;
       p.vz = Math.sin(angle) * speed;
       p.life = 0;
-      p.maxLife = kind === 'smoke' ? 0.85 + Math.random() * 0.45 : kind === 'ember' ? 0.55 + Math.random() * 0.35 : 0.32 + Math.random() * 0.24;
+      p.maxLife = kind === 'smoke'
+        ? 0.85 + Math.random() * 0.45
+        : kind === 'ember'
+          ? 0.55 + Math.random() * 0.35
+          : kind === 'meat'
+            ? 0.2 + Math.random() * 0.18
+            : 0.32 + Math.random() * 0.24;
       p.active = true;
 
       const batch = targetLayer === 'smoke' ? this.particleSmokeBatch : this.particleSolidBatch;
@@ -986,8 +1009,8 @@ export class RtsEngine {
       p.x += p.vx * dt;
       p.y = Math.max(0.05, p.y + p.vy * dt);
       p.z += p.vz * dt;
-      p.rotationX += (p.kind === 'smoke' ? 1.6 : 6) * dt;
-      p.rotationY += (p.kind === 'smoke' ? 1.4 : 5) * dt;
+      p.rotationX += (p.kind === 'smoke' ? 1.6 : p.kind === 'meat' ? 10 : 6) * dt;
+      p.rotationY += (p.kind === 'smoke' ? 1.4 : p.kind === 'meat' ? 8 : 5) * dt;
       this.writeParticleInstance(p, true);
       if (p.renderLayer === 'smoke') {
         smokeChanged = true;
@@ -6757,15 +6780,19 @@ export class RtsEngine {
         (unit as any)._gatherFxTimer = 0;
         (unit as any)._gatherNodeType = node.subtype || node.resourceType;
         const pKind: ParticleKind =
-          node.resourceType === 'wood'
-            ? 'wood'
-            : node.resourceType === 'gold'
-            ? 'gold'
-            : node.resourceType === 'stone'
-            ? 'stone'
-            : node.subtype === 'shore_fish' || node.subtype === 'deep_fish'
-            ? 'spark'
-            : 'leaf';
+          node.subtype === 'boar' || node.subtype === 'hunt'
+            ? node.animalAlive === false
+              ? 'meat'
+              : 'hit'
+            : node.resourceType === 'wood'
+              ? 'wood'
+              : node.resourceType === 'gold'
+                ? 'gold'
+                : node.resourceType === 'stone'
+                  ? 'stone'
+                  : node.subtype === 'shore_fish' || node.subtype === 'deep_fish'
+                    ? 'spark'
+                    : 'leaf';
         this.spawnParticleBurst(node.x, node.subtype === 'shore_fish' || node.subtype === 'deep_fish' ? 0.35 : 0.85, node.z, pKind, 4);
       } else {
         (unit as any)._gatherFxTimer = fxTimer;
