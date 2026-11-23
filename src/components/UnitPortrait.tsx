@@ -58,6 +58,19 @@ export const UnitPortrait: React.FC<UnitPortraitProps> = ({
           </g>
         );
 
+      case 'mongol_herder':
+        return (
+          <g stroke="#0f172a" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round">
+            <path d="M14 58 C16 42 23 38 32 38 C41 38 48 42 50 58 Z" fill="#92400e" />
+            <path d="M22 26 Q32 12 42 26 L45 30 L19 30 Z" fill="#f8f3e3" />
+            <circle cx="32" cy="29" r="8.5" fill="#f3c69f" />
+            <path d="M22 23 Q32 18 42 23" fill="none" stroke="#b91c1c" strokeWidth="3" />
+            <path d="M23 40 L32 51 L41 40" fill="none" stroke="#fbbf24" strokeWidth="2.2" />
+            <line x1="45" y1="55" x2="54" y2="16" stroke="#92400e" strokeWidth="3" />
+            <path d="M51 16 L60 20 L52 24 Z" fill="#f59e0b" />
+          </g>
+        );
+
       case 'villager':
       case 'fallback_villager':
         return (
@@ -127,6 +140,20 @@ export const UnitPortrait: React.FC<UnitPortraitProps> = ({
             {/* Iron pick */}
             <line x1="15" y1="56" x2="18" y2="32" stroke={`url(#${woodId})`} strokeWidth="2.6" />
             <path d="M11 33 C17 30 22 30 26 35" fill="none" stroke={`url(#${steelId})`} strokeWidth="3" />
+          </g>
+        );
+
+      case 'mongol_foot_guard':
+        return (
+          <g stroke="#0f172a" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round">
+            <path d="M14 58 C15 41 23 37 32 37 C41 37 49 41 50 58 Z" fill="#a16207" />
+            <path d="M20 28 Q22 14 32 14 Q43 14 44 28 L46 32 L18 32 Z" fill="#78350f" />
+            <path d="M25 20 Q32 15 39 20" stroke="#fbbf24" strokeWidth="2.2" fill="none" />
+            <rect x="25" y="25" width="14" height="3" rx="1" fill="#0f172a" />
+            <path d="M9 35 L23 33 L25 48 L17 57 L9 48 Z" fill="#92400e" />
+            <circle cx="17" cy="45" r="5" fill="#d6d3d1" />
+            <polygon points="48,45 57,12 60,18 52,49" fill="#e2e8f0" />
+            <line x1="44" y1="46" x2="54" y2="46" stroke="#fbbf24" strokeWidth="3" />
           </g>
         );
 
@@ -200,6 +227,11 @@ export const UnitPortrait: React.FC<UnitPortraitProps> = ({
           </g>
         );
 
+      case 'mongol_lancer':
+      case 'mongol_mangudai':
+      case 'mongol_keshik':
+      case 'fallback_horse_archer':
+      case 'fallback_keshik':
       case 'knight':
       case 'fallback_knight':
         return (
@@ -298,6 +330,21 @@ export const UnitPortrait: React.FC<UnitPortraitProps> = ({
               points="21,25 14,16 24,18 22,6 31,15 35,4 38,16 47,8 43,20 51,18 42,26 32,21"
               fill="#facc15"
             />
+          </g>
+        );
+
+      case 'mongol_shaman':
+      case 'fallback_shaman':
+        return (
+          <g stroke="#0f172a" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round">
+            <path d="M14 58 L20 36 L44 36 L50 58 Z" fill="#075985" />
+            <path d="M21 37 L32 48 L43 37" fill="#38bdf8" />
+            <circle cx="32" cy="29" r="7.5" fill="#f3c69f" />
+            <path d="M20 29 Q20 13 32 13 Q44 13 44 29 L40 33 L24 33 Z" fill="#164e63" />
+            <path d="M25 20 Q32 13 39 20" fill="none" stroke="#fbbf24" strokeWidth="2.4" />
+            <line x1="51" y1="56" x2="51" y2="18" stroke="#92400e" strokeWidth="3" />
+            <polygon points="51,8 57,16 51,24 45,16" fill="#38bdf8" />
+            <path d="M46 12 L56 20 M56 12 L46 20" stroke="#e0f2fe" strokeWidth="1.4" />
           </g>
         );
 
