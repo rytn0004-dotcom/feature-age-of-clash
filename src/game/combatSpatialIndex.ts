@@ -6,6 +6,34 @@ export interface CombatSpatialUnit {
   garrisonedInBuildingId?: string;
 }
 
+export interface CombatForceCandidate extends CombatSpatialUnit {
+  faction: string;
+  unitDef: { category: string };
+}
+
+export interface LocalCombatForceCounts {
+  nearbyEnemyCount: number;
+  nearbyAllyCount: number;
+}
+
+/** Counts nearby forces from already range-filtered candidates using AI roster semantics. */
+export function countNearbyCombatForces<Unit extends CombatForceCandidate>(
+  candidates: readonly Unit[],
+  friendlyFactionId: string,
+  isHostile: (unit: Unit) => boolean,
+): LocalCombatForceCounts {
+  let nearbyEnemyCount = 0;
+  let nearbyAllyCount = 0;
+
+  for (const unit of candidates) {
+    if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.category === 'worker') continue;
+    if (unit.faction === friendlyFactionId) nearbyAllyCount++;
+    else if (isHostile(unit)) nearbyEnemyCount++;
+  }
+
+  return { nearbyEnemyCount, nearbyAllyCount };
+}
+
 export interface CombatSpatialBuilding {
   id: string;
   x: number;

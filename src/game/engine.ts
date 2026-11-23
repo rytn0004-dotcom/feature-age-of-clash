@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { createEntityIdIndex } from './entityLookup';
 import {
+  countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
   type CombatSpatialIndex,
@@ -9726,21 +9727,17 @@ export class RtsEngine {
             unit.hp / Math.max(1, unit.maxHp) <= (personality === 'defensive' ? 0.58 : 0.5)
         )
         .map((unit) => {
-          const radiusSquared = 11.5 * 11.5;
-          const nearbyEnemyCount = this.units.filter(
-            (enemy) =>
-              enemy.hp > 0 &&
-              !enemy.garrisonedInBuildingId &&
-              enemy.unitDef.category !== 'worker' &&
-              this.isHostile({ faction: aiId, team: aiTeam }, enemy) &&
-              (enemy.x - unit.x) ** 2 + (enemy.z - unit.z) ** 2 <= radiusSquared
-          ).length;
-          const nearbyAllyCount = aiArmy.filter(
-            (ally) =>
-              ally.hp > 0 &&
-              !ally.garrisonedInBuildingId &&
-              (ally.x - unit.x) ** 2 + (ally.z - unit.z) ** 2 <= radiusSquared
-          ).length;
+          const nearbyUnits = queryCombatSpatialIndex(
+            this.combatSpatialIndex!,
+            unit.x,
+            unit.z,
+            11.5,
+          ).units;
+          const { nearbyEnemyCount, nearbyAllyCount } = countNearbyCombatForces(
+            nearbyUnits,
+            aiId,
+            (enemy) => this.isHostile({ faction: aiId, team: aiTeam }, enemy),
+          );
           return {
             unit,
             shouldDisengage: shouldAiCavalryDisengage({
