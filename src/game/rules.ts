@@ -3260,33 +3260,82 @@ export function selectWildBoarAggroTarget(
   return lockedTarget ?? nearestTarget;
 }
 
+export const WILD_BOAR_HOME_LEASH_RADIUS = 26;
+export const WILD_BOAR_HOME_ARRIVAL_RADIUS = 1.8;
+export const WILD_BOAR_TARGET_HUNT_LEASH_RADIUS = 31;
+
 export interface WildBoarStepOutput {
   distMoved: number;
   actualSpeed: number;
   yaw: number;
   isCharging: boolean;
+  isReturning: boolean;
 }
 
-/** Pursuit steering for provoked boars; stops at melee distance and respects terrain blockers. */
+/**
+ * Pursuit steering for provoked boars. They may chase only inside their habitat leash;
+ * after disengagement or reaching the leash, they finish a calm return to their home anchor.
+ */
 export function stepWildBoarState(
   node: ResourceNode,
   target: { x: number; z: number } | null,
   dt: number,
-  isBlocked: (cx: number, cz: number) => boolean
+  isBlocked: (cx: number, cz: number) => boolean,
+  home?: { x: number; z: number } | null,
 ): WildBoarStepOutput {
   const prevX = node.x;
   const prevZ = node.z;
   const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
-  const dx = target ? target.x - node.x : 0;
-  const dz = target ? target.z - node.z : 0;
+  const hasHome = !!home && Number.isFinite(home.x) && Number.isFinite(home.z);
+  const homeDistance = hasHome ? Math.hypot(node.x - home!.x, node.z - home!.z) : 0;
+  const targetHomeDistance = hasHome && target
+    ? Math.hypot(target.x - home!.x, target.z - home!.z)
+    : 0;
+
+  if (hasHome) {
+    if (
+      homeDistance >= WILD_BOAR_HOME_LEASH_RADIUS - 0.5 ||
+      (!target && homeDistance > WILD_BOAR_HOME_ARRIVAL_RADIUS) ||
+      (!!target && targetHomeDistance > WILD_BOAR_TARGET_HUNT_LEASH_RADIUS &&
+        homeDistance > WILD_BOAR_HOME_ARRIVAL_RADIUS)
+    ) {
+      node.animalReturningHome = true;
+    }
+    if (node.animalReturningHome && homeDistance <= WILD_BOAR_HOME_ARRIVAL_RADIUS) {
+      node.animalReturningHome = false;
+    }
+  } else {
+    node.animalReturningHome = false;
+  }
+
+  const isReturning = !!hasHome &&
+    !!node.animalReturningHome &&
+    homeDistance > WILD_BOAR_HOME_ARRIVAL_RADIUS;
+  const targetWithinHabitat = !hasHome ||
+    !target ||
+    targetHomeDistance <= WILD_BOAR_TARGET_HUNT_LEASH_RADIUS;
+  const canChase = !!target && targetWithinHabitat && !isReturning;
+  const dx = canChase ? target!.x - node.x : 0;
+  const dz = canChase ? target!.z - node.z : 0;
   const distance = Math.hypot(dx, dz);
   const attackRange = 2.25;
   let targetVx = 0;
   let targetVz = 0;
   let isCharging = false;
+  let movementAngle: number | null = null;
 
-  if (target && distance > attackRange) {
-    const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, Math.atan2(dz, dx), isBlocked);
+  if (isReturning && hasHome) {
+    const homeDx = home!.x - node.x;
+    const homeDz = home!.z - node.z;
+    movementAngle = Math.atan2(homeDz, homeDx);
+    const returnAngle = pickWildAnimalEscapeAngle(node.x, node.z, movementAngle, isBlocked);
+    if (returnAngle !== null) {
+      targetVx = Math.cos(returnAngle) * 2.45;
+      targetVz = Math.sin(returnAngle) * 2.45;
+    }
+  } else if (canChase && distance > attackRange) {
+    movementAngle = Math.atan2(dz, dx);
+    const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, movementAngle, isBlocked);
     if (chaseAngle !== null) {
       targetVx = Math.cos(chaseAngle) * 4.15;
       targetVz = Math.sin(chaseAngle) * 4.15;
@@ -3294,12 +3343,35 @@ export function stepWildBoarState(
     }
   }
 
-  const blend = 1 - Math.exp(-(isCharging ? 11 : 9) * clampedDt);
+  const blend = 1 - Math.exp(-((isReturning ? 7.5 : isCharging ? 11 : 9)) * clampedDt);
   node.animalVx = (node.animalVx || 0) + (targetVx - (node.animalVx || 0)) * blend;
   node.animalVz = (node.animalVz || 0) + (targetVz - (node.animalVz || 0)) * blend;
 
   let nx = Math.max(-91, Math.min(91, node.x + node.animalVx * clampedDt));
   let nz = Math.max(-91, Math.min(91, node.z + node.animalVz * clampedDt));
+
+  // Never allow momentum to carry the animal outside its fixed habitat radius.
+  if (hasHome) {
+    const fromHomeX = nx - home!.x;
+    const fromHomeZ = nz - home!.z;
+    const nextHomeDistance = Math.hypot(fromHomeX, fromHomeZ);
+    if (nextHomeDistance > WILD_BOAR_HOME_LEASH_RADIUS) {
+      const scale = WILD_BOAR_HOME_LEASH_RADIUS / nextHomeDistance;
+      const leashX = home!.x + fromHomeX * scale;
+      const leashZ = home!.z + fromHomeZ * scale;
+      if (!isBlocked(leashX, leashZ)) {
+        nx = leashX;
+        nz = leashZ;
+      } else {
+        nx = prevX;
+        nz = prevZ;
+      }
+      node.animalVx = 0;
+      node.animalVz = 0;
+      isCharging = false;
+    }
+  }
+
   if (isBlocked(nx, nz)) {
     nx = prevX;
     nz = prevZ;
@@ -3316,9 +3388,9 @@ export function stepWildBoarState(
   const actualSpeed = distMoved / clampedDt;
   let yaw = node.animalYaw ?? 0;
   if (distMoved > 0.002 && actualSpeed > 0.15) yaw = Math.atan2(-movedZ, movedX);
-  else if (target && distance > 0.01) yaw = Math.atan2(-dz, dx);
+  else if (movementAngle !== null) yaw = Math.atan2(-Math.sin(movementAngle), Math.cos(movementAngle));
   node.animalYaw = yaw;
-  return { distMoved, actualSpeed, yaw, isCharging };
+  return { distMoved, actualSpeed, yaw, isCharging, isReturning };
 }
 
 export interface AiTechCandidateInput {
