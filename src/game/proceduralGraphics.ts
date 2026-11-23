@@ -3723,12 +3723,15 @@ function attachBuildingConstructionRig(group: THREE.Group, type: BuildingType): 
   );
   padMesh.position.y = 0.025;
   padMesh.receiveShadow = true;
+  padMesh.name = 'scaffoldPad';
   scaffoldGroup.add(padMesh);
 
   const scaffoldFrame = new THREE.Group();
+  scaffoldFrame.name = 'scaffoldFrame';
   scaffoldGroup.add(scaffoldFrame);
 
   const planksGroup = new THREE.Group();
+  planksGroup.name = 'scaffoldPlanksGroup';
   scaffoldFrame.add(planksGroup);
 
   const scafH = Math.max(1.5, Math.min(6.4, maxY * 0.84));
