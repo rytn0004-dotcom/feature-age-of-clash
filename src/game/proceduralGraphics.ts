@@ -3581,6 +3581,7 @@ export function createOvooRelayMesh(faction: FactionId): THREE.Group {
   aura.rotation.x = -Math.PI / 2;
   aura.position.y = 0.075;
   aura.name = 'activeAuraRing';
+  group.userData.activeAuraRing = aura;
   group.add(aura);
   const badge = createBadgeSprite(
     colors.isHostile ? `${colors.labelPrefix || ''}敖包驛站` : '敖包驛站',
