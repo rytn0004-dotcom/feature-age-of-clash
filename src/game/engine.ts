@@ -6193,6 +6193,15 @@ export class RtsEngine {
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
       if (unit.hitFlashTimer && unit.hitFlashTimer > 0) unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - dt);
       if (unit.recoilTimer && unit.recoilTimer > 0) unit.recoilTimer = Math.max(0, unit.recoilTimer - dt);
+      if (unit.slowUntil && unit.slowUntil <= this.simTime) {
+        unit.slowUntil = undefined;
+        unit.slowFactor = undefined;
+      }
+      if (unit.armorShredUntil && unit.armorShredUntil <= this.simTime) {
+        unit.armorShredUntil = undefined;
+        unit.armorShredAmount = undefined;
+      }
+      if (unit.buffAttackRateUntil && unit.buffAttackRateUntil <= this.simTime) unit.buffAttackRateUntil = undefined;
       if (unit.unitDef.stats.hpRegenPerSec && unit.hp < unit.maxHp) {
         unit.hp = Math.min(unit.maxHp, unit.hp + unit.unitDef.stats.hpRegenPerSec * dt);
       }
