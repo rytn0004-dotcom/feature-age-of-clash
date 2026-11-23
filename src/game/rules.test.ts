@@ -1085,6 +1085,27 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
 
   // Target hysteresis: retain a sound target, but switch decisively to a wounded high-value counter.
   const criticalArcher = mkUnit('eaCritical', 'ai2', 2, 'ranged', 2, 0, 1, 65, 14, 3.4);
+  const rangedAttacker = mkUnit('ranged-attacker', 'ai1', 1, 'ranged', 0, 0, 65, 65, 14, 3.4);
+  const stableRangedTarget = mkUnit('stable-ranged', 'ai2', 2, 'ranged', 5, 0, 65, 65, 14, 3.4);
+  const marginalRangedTarget = mkUnit('marginal-ranged', 'ai2', 2, 'ranged', 5.2, 0, 65, 65, 14, 3.4);
+  const criticalRangedTarget = mkUnit('critical-ranged', 'ai2', 2, 'ranged', 5.2, 0, 1, 65, 14, 3.4);
+
+  assert.equal(
+    shouldSwitchCombatTarget(rangedAttacker, stableRangedTarget, marginalRangedTarget, [], { maxSearchRange: 28 }, 18),
+    false,
+    'ranged units should keep a valid target when a new cluster focus is only marginally better',
+  );
+  assert.equal(
+    shouldSwitchCombatTarget(rangedAttacker, stableRangedTarget, marginalRangedTarget, [], { maxSearchRange: 28, clusterFocusTargetId: marginalRangedTarget.id }, 18),
+    true,
+    'the transient cluster bonus would otherwise overwhelm hysteresis',
+  );
+  assert.equal(
+    shouldSwitchCombatTarget(rangedAttacker, stableRangedTarget, criticalRangedTarget, [], { maxSearchRange: 28 }, 18),
+    true,
+    'a decisively wounded target must still attract focus fire',
+  );
+
   assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, enemyMelee), false);
   assert.equal(shouldSwitchCombatTarget(swordsman, enemyMelee, criticalArcher), true);
   assert.equal(shouldSwitchCombatTarget(swordsman, { ...enemyMelee, hp: 0 }, criticalArcher), true);
