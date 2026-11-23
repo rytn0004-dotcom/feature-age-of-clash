@@ -29,11 +29,11 @@ test('merges opaque sibling meshes and bakes local transforms without changing b
   pivot.add(first, second);
 
   root.updateMatrixWorld(true);
-  const expectedBounds = new THREE.Box3().setFromObject(root);
+  const expectedBounds = new THREE.Box3().setFromObject(root, true);
   const originalVertex = first.geometry.attributes.position.getX(0);
   const stats = mergeStaticUnitMeshes(root);
   root.updateMatrixWorld(true);
-  const actualBounds = new THREE.Box3().setFromObject(root);
+  const actualBounds = new THREE.Box3().setFromObject(root, true);
   const batches = pivot.children.filter((child) => (child as THREE.Mesh).isMesh) as THREE.Mesh[];
 
   assert.equal(stats.eligibleMeshes, 2);
@@ -132,7 +132,7 @@ test('keeps different materials and render states in separate batches', () => {
   const sameStateB = createLargeStaticMesh(shared, -1);
   const differentMaterial = createLargeStaticMesh(other, 1);
   const differentShadowState = createLargeStaticMesh(shared, 2);
-  differentShadowState.castShadow = false;
+  differentShadowState.castShadow = true;
   root.add(sameStateA, sameStateB, differentMaterial, differentShadowState);
 
   const stats = mergeStaticUnitMeshes(root);
