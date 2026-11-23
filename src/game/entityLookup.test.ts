@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEntityIdIndex, groupEntitiesByFaction } from './entityLookup';
+import { createEntityIdIndex, groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 
 test('entity index: resolves IDs to the original entity objects', () => {
   const first = { id: 'unit-1', hp: 20 };
@@ -59,4 +59,24 @@ test('entity faction grouping: handles empty and immutable collections without m
   const grouped = groupEntitiesByFaction(entities);
   assert.deepEqual(grouped.get('gold')?.map((entity) => entity.id), ['one', 'two']);
   assert.deepEqual(entities.map((entity) => entity.id), ['one', 'two']);
+});
+
+
+test('entity index: rebuilds the same map, removes stale IDs and preserves first duplicate', () => {
+  const previous = { id: 'old', hp: 1 };
+  const first = { id: 'shared', faction: 'blue', hp: 20 };
+  const duplicate = { id: 'shared', faction: 'red', hp: 35 };
+  const index = createEntityIdIndex([previous]);
+  const originalMap = index;
+
+  const rebuilt = rebuildEntityIdIndex(index, [first, duplicate]);
+
+  assert.equal(rebuilt, originalMap);
+  assert.equal(index.size, 1);
+  assert.equal(index.has('old'), false);
+  assert.equal(index.get('shared'), first);
+  assert.equal(index.get('missing'), undefined);
+
+  rebuildEntityIdIndex(index, []);
+  assert.equal(index.size, 0);
 });

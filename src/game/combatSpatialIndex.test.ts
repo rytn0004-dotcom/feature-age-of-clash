@@ -4,6 +4,7 @@ import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
+  rebuildCombatSpatialIndexInPlace,
 } from './combatSpatialIndex';
 
 test('combat spatial index: queries exact circular neighbors across cell boundaries', () => {
@@ -131,4 +132,65 @@ test('combat spatial index: local cavalry force counts preserve AI faction and w
   const counts = countNearbyCombatForces(nearby, 'blue', (unit) => unit.faction === 'red');
 
   assert.deepEqual(counts, { nearbyEnemyCount: 1, nearbyAllyCount: 2 });
+});
+
+
+test('combat spatial index: rebuild reuses maps, active arrays and bucket arrays without stale cells', () => {
+  const firstUnit = { id: 'first', x: 1, z: 1, hp: 100 };
+  const firstBuilding = { id: 'first-building', x: 2, z: 1, hp: 500 };
+  const index = createCombatSpatialIndex([firstUnit], [firstBuilding], 16);
+  const unitsArray = index.units;
+  const buildingsArray = index.buildings;
+  const unitMap = index.unitBuckets;
+  const buildingMap = index.buildingBuckets;
+  const unitBucket = index.unitBuckets.get('0:0');
+  const buildingBucket = index.buildingBuckets.get('0:0');
+
+  const movedUnit = { id: 'moved', x: 97, z: 81, hp: 100 };
+  const movedBuilding = { id: 'moved-building', x: 98, z: 82, hp: 700 };
+  const rebuilt = rebuildCombatSpatialIndexInPlace(index, [movedUnit], [movedBuilding]);
+
+  assert.equal(rebuilt, index);
+  assert.equal(index.units, unitsArray);
+  assert.equal(index.buildings, buildingsArray);
+  assert.equal(index.unitBuckets, unitMap);
+  assert.equal(index.buildingBuckets, buildingMap);
+  assert.equal(index.unitBuckets.has('0:0'), false);
+  assert.equal(index.buildingBuckets.has('0:0'), false);
+  assert.equal(index.unitBuckets.get('6:5'), unitBucket);
+  assert.equal(index.buildingBuckets.get('6:5'), buildingBucket);
+  assert.deepEqual(index.units.map((unit) => unit.id), ['moved']);
+  assert.deepEqual(index.buildings.map((building) => building.id), ['moved-building']);
+
+  const cleared = rebuildCombatSpatialIndexInPlace(index, [], []);
+  assert.equal(cleared.units.length, 0);
+  assert.equal(cleared.buildings.length, 0);
+  assert.equal(cleared.unitBuckets.size, 0);
+  assert.equal(cleared.buildingBuckets.size, 0);
+});
+
+test('combat spatial index: reusable query outputs retain identity and clear previous candidates', () => {
+  const index = createCombatSpatialIndex(
+    [{ id: 'near', x: 0, z: 0, hp: 100 }],
+    [{ id: 'tower', x: 1, z: 0, hp: 500 }],
+  );
+  const output = { units: [] as Array<{ id: string; x: number; z: number; hp: number }>, buildings: [] as Array<{ id: string; x: number; z: number; hp: number }> };
+  const unitsBuffer = output.units;
+  const buildingsBuffer = output.buildings;
+
+  const first = queryCombatSpatialIndex(index, 0, 0, 5, output);
+  assert.equal(first, output);
+  assert.deepEqual(output.units.map((unit) => unit.id), ['near']);
+  assert.deepEqual(output.buildings.map((building) => building.id), ['tower']);
+
+  const invalid = queryCombatSpatialIndex(index, Number.NaN, 0, 5, output);
+  assert.equal(invalid, output);
+  assert.equal(output.units, unitsBuffer);
+  assert.equal(output.buildings, buildingsBuffer);
+  assert.deepEqual(output, { units: [], buildings: [] });
+
+  const all = queryCombatSpatialIndex(index, 100, 100, Infinity, output);
+  assert.equal(all, output);
+  assert.deepEqual(output.units.map((unit) => unit.id), ['near']);
+  assert.deepEqual(output.buildings.map((building) => building.id), ['tower']);
 });
