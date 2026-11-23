@@ -9143,7 +9143,16 @@ export class RtsEngine {
               ally.hp = Math.min(ally.maxHp, ally.hp + 1.8 * dt);
             }
           }
-          if (nearbyMine && dt > 0) this.syncHumanResourcesAlias();
+          if (nearbyMine && dt > 0) {
+            this.syncHumanResourcesAlias();
+            if (this.isHumanControlled(bldg.faction)) {
+              const now = performance.now();
+              if (now - this.lastHudResSyncTime >= 250) {
+                this.lastHudResSyncTime = now;
+                this.onResourcesChange?.(this.playerResources);
+              }
+            }
+          }
         }
       }
 
