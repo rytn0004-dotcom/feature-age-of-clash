@@ -5,6 +5,8 @@ import {
   canAssembleFieldRam,
   canUnitGatherNode,
   selectWildBoarAggroTarget,
+  getWildBoarRangedHuntPlan,
+  WILD_BOAR_FRONTLINE_SCREEN_RADIUS,
   WILD_BOAR_HOME_LEASH_RADIUS,
   WILD_BOAR_HOME_ARRIVAL_RADIUS,
   estimateConstructionTimeRemaining,
@@ -3433,6 +3435,58 @@ test('wild boar (野豬): aggression refreshes safely, dead animals ignore provo
   triggerWildBoarAggression(boar, 'late-hit', 15);
   assert.equal(boar.animalAggroTargetId, undefined, 'Dead boars cannot reacquire attackers');
   assert.equal(boar.animalAggroUntil, 0);
+});
+
+
+test('wild boar (野豬): ranged hunters hold a safe firing band while frontline hunters screen them', () => {
+  const ranged = {
+    id: 'archer',
+    x: 20,
+    z: 0,
+    hp: 50,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'ranged' as const, isNaval: false },
+  } as unknown as UnitEntity;
+  const frontliner = {
+    id: 'infantry',
+    x: 7,
+    z: 0,
+    hp: 88,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'melee' as const, isNaval: false },
+  } as unknown as UnitEntity;
+
+  const selected = selectWildBoarAggroTarget('archer', 0, 0, [ranged, frontliner], 'boar');
+  assert.equal(selected?.id, 'infantry', 'a nearby frontline hunter draws aggro away from a fragile ranged hunter');
+
+  const farFrontliner = { ...frontliner, x: WILD_BOAR_FRONTLINE_SCREEN_RADIUS + 0.1 } as UnitEntity;
+  assert.equal(
+    selectWildBoarAggroTarget('archer', 0, 0, [ranged, farFrontliner], 'boar')?.id,
+    'archer',
+    'the ranged target remains locked until a frontline hunter reaches screening distance',
+  );
+
+  const band = getWildBoarRangedHuntPlan(14, 0, 0, 0, 12);
+  assert.ok(band);
+  assert.equal(band.mode, 'approach');
+  assert.ok(Math.abs(band.minRange - 5.9) < 1e-9);
+  assert.equal(band.maxRange, 8);
+  assert.ok(Math.abs(Math.hypot(band.goalX, band.goalZ) - band.preferredRange) < 1e-9);
+
+  const retreat = getWildBoarRangedHuntPlan(2, 0, 0, 0, 12);
+  assert.ok(retreat);
+  assert.equal(retreat.mode, 'retreat');
+  assert.ok(retreat.goalX > 0, 'retreat goal points away from the boar');
+  assert.ok(Math.abs(Math.hypot(retreat.goalX, retreat.goalZ) - retreat.preferredRange) < 1e-9);
+
+  const hold = getWildBoarRangedHuntPlan(6.8, 0, 0, 0, 12);
+  assert.ok(hold);
+  assert.equal(hold.mode, 'hold', 'ranged hunters stop moving inside the firing band and deal damage');
+  assert.equal(getWildBoarRangedHuntPlan(0, 0, 0, 0, 12, Math.PI / 2)?.mode, 'retreat');
+  assert.equal(getWildBoarRangedHuntPlan(0, 0, 0, 0, 1.5), null);
+  assert.equal(getWildBoarRangedHuntPlan(Number.NaN, 0, 0, 0, 12), null);
 });
 
 

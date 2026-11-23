@@ -3257,7 +3257,83 @@ export function selectWildBoarAggroTarget(
     }
   }
 
-  return lockedTarget ?? nearestTarget;
+  if (lockedTarget) {
+    if (lockedTarget.unitDef.category === 'ranged') {
+      let nearestFrontliner: UnitEntity | null = null;
+      let nearestFrontlineDistance = Number.POSITIVE_INFINITY;
+      for (const candidate of candidates) {
+        const category = candidate.unitDef.category;
+        if (
+          candidate.hp <= 0 ||
+          candidate.garrisonedInBuildingId ||
+          candidate.unitDef.isNaval ||
+          candidate.state !== 'gathering' ||
+          candidate.targetResourceNodeId !== nodeId ||
+          !candidate.id ||
+          !Number.isFinite(candidate.x) ||
+          !Number.isFinite(candidate.z) ||
+          (category !== 'worker' && category !== 'melee' && category !== 'cavalry' && category !== 'special')
+        ) continue;
+        const distance = Math.hypot(candidate.x - boarX, candidate.z - boarZ);
+        if (
+          distance <= WILD_BOAR_FRONTLINE_SCREEN_RADIUS &&
+          (distance < nearestFrontlineDistance - 1e-9 ||
+            (Math.abs(distance - nearestFrontlineDistance) <= 1e-9 &&
+              (!nearestFrontliner || candidate.id.localeCompare(nearestFrontliner.id) < 0)))
+        ) {
+          nearestFrontliner = candidate;
+          nearestFrontlineDistance = distance;
+        }
+      }
+      if (nearestFrontliner) return nearestFrontliner;
+    }
+    return lockedTarget;
+  }
+
+  return nearestTarget;
+}
+
+export const WILD_BOAR_FRONTLINE_SCREEN_RADIUS = 9;
+
+export interface WildBoarRangedHuntPlan {
+  mode: 'approach' | 'retreat' | 'hold';
+  goalX: number;
+  goalZ: number;
+  minRange: number;
+  preferredRange: number;
+  maxRange: number;
+}
+
+/** Compute a compact firing band for ranged units explicitly ordered to hunt a boar. */
+export function getWildBoarRangedHuntPlan(
+  unitX: number,
+  unitZ: number,
+  boarX: number,
+  boarZ: number,
+  weaponRange: number,
+  fallbackAngle = 0,
+): WildBoarRangedHuntPlan | null {
+  if (
+    ![unitX, unitZ, boarX, boarZ, weaponRange, fallbackAngle].every(Number.isFinite) ||
+    weaponRange <= 2.25
+  ) return null;
+
+  const maxRange = Math.max(4.8, Math.min(8, weaponRange * 0.68));
+  const minRange = Math.max(3.2, maxRange - 2.1);
+  const preferredRange = (minRange + maxRange) * 0.5;
+  const dx = unitX - boarX;
+  const dz = unitZ - boarZ;
+  const distance = Math.hypot(dx, dz);
+  const angle = distance > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
+
+  return {
+    mode: distance > maxRange ? 'approach' : distance < minRange ? 'retreat' : 'hold',
+    goalX: boarX + Math.cos(angle) * preferredRange,
+    goalZ: boarZ + Math.sin(angle) * preferredRange,
+    minRange,
+    preferredRange,
+    maxRange,
+  };
 }
 
 export const WILD_BOAR_HOME_LEASH_RADIUS = 26;

@@ -157,6 +157,7 @@ import {
   stepWildBoarState,
   triggerWildBoarAggression,
   selectWildBoarAggroTarget,
+  getWildBoarRangedHuntPlan,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -6647,12 +6648,41 @@ export class RtsEngine {
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
     const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
-    const gatherRange =
+    const isLiveBoar = node.subtype === 'boar' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const fallbackAngle = unit.id.split('').reduce(
+      (sum, char, index) => sum + char.charCodeAt(0) * (index + 1),
+      0,
+    ) * 0.017453292519943295;
+    const rangedBoarPlan = isLiveBoar && unit.unitDef.category === 'ranged'
+      ? getWildBoarRangedHuntPlan(
+          unit.x,
+          unit.z,
+          node.x,
+          node.z,
+          unit.unitDef.stats.range,
+          fallbackAngle,
+        )
+      : null;
+
+    if (rangedBoarPlan && rangedBoarPlan.mode !== 'hold') {
+      this.moveUnitAlongPath(unit, rangedBoarPlan.goalX, rangedBoarPlan.goalZ, dt);
+      unit.currentActionText = rangedBoarPlan.mode === 'retreat'
+        ? '🏹 拉開距離 · 遠程掩護'
+        : '🏹 接近射擊位置';
+      return;
+    }
+
+    if (rangedBoarPlan) {
+      unit.currentActionText = '🏹 遠程掩護野豬 (' + Math.ceil(node.animalHp ?? 200) + ' HP)';
+    }
+
+    const gatherRange = rangedBoarPlan?.maxRange ?? (
       node.subtype === 'deep_fish'
         ? Math.max(5.5, nodeRadius + 4.4)
         : node.subtype === 'shore_fish'
         ? Math.max(3.6, nodeRadius + 2.65)
-        : nodeRadius + 1.35;
+        : nodeRadius + 1.35
+    );
 
     if (dist > gatherRange) {
       this.moveUnitAlongPath(unit, node.x, node.z, dt);
