@@ -185,6 +185,7 @@ import {
 import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles, worldToGrid } from './pathfinding';
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
+import { updateAmbientTreeWind } from './ambientTreeWind';
 import {
   formatPerformanceTelemetryCsv,
   getAverageAiDecisionMs,
@@ -465,6 +466,8 @@ export class RtsEngine {
   private unitBuffRingInstanceCursor = 0;
   private buildingMeshes = new Map<string, THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
+  /** Static membership index for tree-only ambient animation; excludes animals and resource nodes. */
+  private windAnimatedNodeMeshes = new Set<THREE.Group>();
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
   private projectileMeshes = new Map<string, { mesh: THREE.Mesh; type: Projectile['type'] }>();
   private projectilePool: Record<Projectile['type'], THREE.Mesh[]> = {
@@ -1320,6 +1323,7 @@ export class RtsEngine {
     this.unitMeshes.clear();
     this.buildingMeshes.clear();
     this.nodeMeshes.clear();
+    this.windAnimatedNodeMeshes.clear();
     this.projectileMeshes.forEach((entry) => {
       entry.mesh.visible = false;
       (this.projectilePool[entry.type] || this.projectilePool.arrow).push(entry.mesh);
@@ -2460,6 +2464,7 @@ export class RtsEngine {
     mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
+    if (mesh.userData.treeWind) this.windAnimatedNodeMeshes.add(mesh);
     if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
     if (resolvedSubtype === 'shore_fish' || resolvedSubtype === 'deep_fish') attachFishAssetLod(mesh);
     if (type === 'wood' && nodeTier === 'standard') {
@@ -5126,26 +5131,7 @@ export class RtsEngine {
       if (rFlag) rFlag.rotation.y = Math.sin(this.simTime * 5.8) * 0.35;
     }
 
-    let envIdx = 0;
-    this.nodeMeshes.forEach((nMesh) => {
-      const wind = nMesh.userData.treeWind as { phase?: number; amplitude?: number; frequency?: number } | undefined;
-      const phase = Number.isFinite(wind?.phase) ? wind!.phase! : envIdx * 0.7;
-      const amplitude = Number.isFinite(wind?.amplitude) ? wind!.amplitude! : 0.035;
-      const frequency = Number.isFinite(wind?.frequency) ? wind!.frequency! : 1.6;
-      const swayZ = Math.sin(this.simTime * frequency + phase) * amplitude;
-      const swayX = Math.cos(this.simTime * frequency * 0.76 + phase * 0.71) * amplitude * 0.58;
-      const canopy = nMesh.userData.treeCanopy as THREE.Object3D | undefined;
-      if (canopy) {
-        canopy.rotation.z = swayZ;
-        canopy.rotation.x = swayX;
-      }
-      const distanceLodTree = nMesh.userData.treeAssetLod as THREE.Object3D | undefined;
-      if (distanceLodTree) {
-        distanceLodTree.rotation.z = swayZ;
-        distanceLodTree.rotation.x = swayX;
-      }
-      envIdx++;
-    });
+    updateAmbientTreeWind(this.windAnimatedNodeMeshes, this.simTime);
 
     // 1. Camera Input pan & smooth camera focus damping
     this.handleCameraMovement(dt);
@@ -6921,6 +6907,7 @@ export class RtsEngine {
           if (mesh) {
             this.scene.remove(mesh);
             this.nodeMeshes.delete(node.id);
+            this.windAnimatedNodeMeshes.delete(mesh);
           }
           if (
             this.depletedResourceBatch &&
