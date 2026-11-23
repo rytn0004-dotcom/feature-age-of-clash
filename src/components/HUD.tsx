@@ -2653,6 +2653,44 @@ export const HUD: React.FC<HUDProps> = ({
                   )}
                 </div>
 
+                {selectedBuilding.buildingType === 'ovoo_relay' && selectedBuilding.isConstructed && (
+                  <div data-ovoo-controls="true" className="rounded border border-amber-500/35 bg-amber-950/20 p-2 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black text-amber-200">🗿 敖包驛站雙模態</span>
+                      <span className="text-[10px] font-mono text-slate-300">
+                        {selectedBuilding.ovooMode === 'sacred_extraction' ? '敖包聚靈' : '驛馬軍令'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-300">
+                      {selectedBuilding.ovooMode === 'sacred_extraction'
+                        ? '聚靈模式：依附近金／石礦脈穩定產出資源，並啟用雙重靈箭防衛'
+                        : '驛馬模式：周邊建築訓練與研發加速，附近友軍獲得移速增益，騎兵緩慢治療'}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        data-ovoo-toggle-mode="true"
+                        disabled={isSpectator}
+                        onClick={() => engine.toggleOvooMode(selectedBuilding.id)}
+                        className="rounded border border-amber-400/50 bg-amber-900/45 px-2 py-1 text-[10px] font-bold text-amber-100 hover:bg-amber-800/60 disabled:opacity-40"
+                      >
+                        🔄 切換至{selectedBuilding.ovooMode === 'sacred_extraction' ? '驛馬軍令' : '敖包聚靈'}
+                      </button>
+                      <button
+                        type="button"
+                        data-ovoo-war-horn="true"
+                        disabled={isSpectator || (selectedBuilding.ovooHornCooldown || 0) > 0}
+                        onClick={() => engine.triggerOvooWarHorn(selectedBuilding.id)}
+                        className="rounded border border-yellow-400/50 bg-yellow-900/35 px-2 py-1 text-[10px] font-bold text-yellow-100 hover:bg-yellow-800/60 disabled:opacity-40"
+                      >
+                        🔥 長生天戰鼓 {(selectedBuilding.ovooHornCooldown || 0) > 0
+                          ? `· ${Math.ceil(selectedBuilding.ovooHornCooldown || 0)}秒`
+                          : '· 可吹響'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Right Pane: Unit Training & Civilization Tech Research */}
                 {selectedBuilding.isConstructed &&
                   (selectedBuilding.buildingDef.trainableUnits.length > 0 ||
