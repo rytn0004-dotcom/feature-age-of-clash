@@ -9360,9 +9360,86 @@ export function createUnitMesh(
     lHand.position.set(0, -0.26, 0.09);
     leftArmPivot.add(lArm, lHand);
   } else if (mType === 'swordsman') {
+    const isMongolFootGuard = unitId === 'mongol_foot_guard';
     const isShinigami = unitId === 'anime_katana_shinigami';
 
-    if (isShinigami) {
+    if (isMongolFootGuard) {
+      // Age I Steppe Foot Guard: layered leather lamellar, fur-edged cap, round shield and curved saber.
+      const deelMat = new THREE.MeshStandardMaterial({
+        color: unitDef.visual.color || 0x92400e,
+        map: unitClothMaps.map,
+        normalMap: unitClothMaps.normalMap,
+        normalScale: new THREE.Vector2(0.8, 0.8),
+        roughnessMap: unitClothMaps.roughnessMap || null,
+        roughness: 0.82,
+      });
+      const lamellarMat = new THREE.MeshStandardMaterial({
+        color: 0x9a5b2c,
+        map: resLeatherMaps.map,
+        normalMap: resLeatherMaps.normalMap,
+        roughnessMap: resLeatherMaps.roughnessMap || null,
+        roughness: 0.72,
+      });
+      const furMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.96 });
+      animParts.hitMaterials.push(deelMat, lamellarMat, furMat);
+      addBipedLegs(darkMat, leatherMat, false);
+
+      const torso = new THREE.Mesh(unitTunicGeo, deelMat);
+      torso.scale.set(1.02, 1.02, 1.02);
+      torso.castShadow = true;
+      bodyPivot.add(torso);
+      for (let row = 0; row < 3; row++) {
+        const y = 0.28 + row * 0.15;
+        const plate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.38 - row * 0.025, 0.105, 0.075),
+          lamellarMat
+        );
+        plate.position.set(0, y, 0.185);
+        plate.rotation.x = -0.12;
+        bodyPivot.add(plate);
+      }
+      const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.105, 12), leatherMat);
+      belt.position.y = 0.2;
+      const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.06), goldTrimMat);
+      buckle.position.set(0, 0.2, 0.22);
+      bodyPivot.add(belt, buckle);
+
+      const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+      head.position.y = 0.76;
+      const furBand = new THREE.Mesh(
+        new THREE.SphereGeometry(0.235, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.42),
+        furMat
+      );
+      furBand.position.y = 0.79;
+      const ironCap = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.31, 8), steelMat);
+      ironCap.position.y = 0.91;
+      const noseGuard = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.22, 0.045), goldTrimMat);
+      noseGuard.position.set(0, 0.75, 0.205);
+      bodyPivot.add(head, furBand, ironCap, noseGuard);
+
+      leftArmPivot.position.set(-0.31, 0.5, 0.04);
+      bodyPivot.add(leftArmPivot);
+      const leftArm = new THREE.Mesh(unitArmSegmentGeo, deelMat);
+      leftArm.position.set(0, -0.14, 0.04);
+      const roundShield = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.1, 16), lamellarMat);
+      roundShield.rotation.x = Math.PI / 2;
+      roundShield.position.set(-0.02, -0.05, 0.2);
+      const shieldBoss = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), goldTrimMat);
+      shieldBoss.position.set(-0.02, -0.05, 0.27);
+      leftArmPivot.add(leftArm, roundShield, shieldBoss);
+
+      rightArmPivot.position.set(0.31, 0.5, 0.04);
+      bodyPivot.add(rightArmPivot);
+      const rightArm = new THREE.Mesh(unitArmSegmentGeo, deelMat);
+      rightArm.position.set(0, -0.14, 0.04);
+      const saber = new THREE.Mesh(unitKatanaGeo, damascusBladeMat);
+      saber.position.set(0.02, -0.12, 0.22);
+      saber.rotation.x = Math.PI / 5;
+      const saberGuard = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.018, 6, 12), goldTrimMat);
+      saberGuard.rotation.x = Math.PI / 2;
+      saberGuard.position.set(0.02, -0.13, 0.19);
+      rightArmPivot.add(rightArm, saber, saberGuard);
+    } else if (isShinigami) {
       // Soul Reaper / Samurai Katana Master (Hakama + Haori + Kabuto/Horns + Dual Scabbard + Curved Nodachi)
       const robeDarkMat = new THREE.MeshStandardMaterial({
         color: 0x0f172a,
