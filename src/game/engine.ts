@@ -186,6 +186,7 @@ import { buildNavGrid, buildWaterNavGrid, findPath, NavGrid, TerrainNavObstacles
 import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import { updateAmbientTreeWind } from './ambientTreeWind';
+import { RoundRobinBatch } from './roundRobinBatch';
 import {
   formatPerformanceTelemetryCsv,
   getAverageAiDecisionMs,
@@ -468,6 +469,8 @@ export class RtsEngine {
   private nodeMeshes = new Map<string, THREE.Group>();
   /** Static membership index for tree-only ambient animation; excludes animals and resource nodes. */
   private windAnimatedNodeMeshes = new Set<THREE.Group>();
+  /** Bounded round-robin queue for resource-node distance LOD and shadow updates. */
+  private resourceVisualLodQueue = new RoundRobinBatch<THREE.Group>((mesh) => String(mesh.userData.id ?? ''));
   private depletedResourceBatch: ResourceDepletionBatch | null = null;
   private projectileMeshes = new Map<string, { mesh: THREE.Mesh; type: Projectile['type'] }>();
   private projectilePool: Record<Projectile['type'], THREE.Mesh[]> = {
@@ -558,6 +561,8 @@ export class RtsEngine {
   private cameraPanVelX = 0;
   private cameraPanVelZ = 0;
   private unitLodAccumulator = 0;
+  private buildingLodAccumulator = 0;
+  private resourceLodAccumulator = 0;
   private edgeScrollDirX = 0;
   private edgeScrollDirZ = 0;
   private keysHeld = new Set<string>();
@@ -1324,6 +1329,10 @@ export class RtsEngine {
     this.buildingMeshes.clear();
     this.nodeMeshes.clear();
     this.windAnimatedNodeMeshes.clear();
+    this.resourceVisualLodQueue.clear();
+    this.unitLodAccumulator = 0;
+    this.buildingLodAccumulator = 0;
+    this.resourceLodAccumulator = 0;
     this.projectileMeshes.forEach((entry) => {
       entry.mesh.visible = false;
       (this.projectilePool[entry.type] || this.projectilePool.arrow).push(entry.mesh);
@@ -2464,6 +2473,7 @@ export class RtsEngine {
     mesh.userData = { ...mesh.userData, type: 'resource', id, resourceType: type, subtype: resolvedSubtype };
     this.scene.add(mesh);
     this.nodeMeshes.set(id, mesh);
+    this.resourceVisualLodQueue.add(mesh);
     if (mesh.userData.treeWind) this.windAnimatedNodeMeshes.add(mesh);
     if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
     if (resolvedSubtype === 'shore_fish' || resolvedSubtype === 'deep_fish') attachFishAssetLod(mesh);
@@ -5438,11 +5448,21 @@ export class RtsEngine {
     this.camera.lookAt(this.cameraTarget.x, 0, this.cameraTarget.z);
   }
 
-  /** Refresh unit micro-detail visibility at a low cadence, including while paused. */
+  /** Refresh unit and static-world visual LODs on independent, bounded cadences. */
   private updateUnitVisualLods(dt: number): void {
-    this.unitLodAccumulator += Math.min(dt, 0.25);
-    if (this.unitLodAccumulator < 0.22) return;
-    this.unitLodAccumulator = 0;
+    const elapsed = Math.min(dt, 0.25);
+    this.unitLodAccumulator += elapsed;
+    this.buildingLodAccumulator += elapsed;
+    this.resourceLodAccumulator += elapsed;
+
+    const updateUnits = this.unitLodAccumulator >= 0.22;
+    const updateBuildings = this.buildingLodAccumulator >= 0.44;
+    const updateResources = this.resourceLodAccumulator >= 0.1;
+    if (!updateUnits && !updateBuildings && !updateResources) return;
+
+    if (updateUnits) this.unitLodAccumulator = 0;
+    if (updateBuildings) this.buildingLodAccumulator = 0;
+    if (updateResources) this.resourceLodAccumulator = 0;
 
     const viewportHeight = Math.max(
       1,
@@ -5450,42 +5470,69 @@ export class RtsEngine {
     );
     this.camera.updateMatrixWorld(true);
 
-    for (const unit of this.units) {
-      if (unit.hp <= 0) continue;
-      const mesh = this.unitMeshes.get(unit.id);
-      if (!mesh || !mesh.visible) continue;
+    if (updateUnits) {
+      for (const unit of this.units) {
+        if (unit.hp <= 0) continue;
+        const mesh = this.unitMeshes.get(unit.id);
+        if (!mesh || !mesh.visible) continue;
 
-      const forceHighDetail =
-        this.selectedUnitIds.includes(unit.id) ||
-        (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
-      updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
-      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
-    }
-    // Rebuild role markers immediately after their distance-LOD state changes, including while paused.
-    this.rebuildUnitRoleMarkerInstances();
-
-    for (const building of this.buildings) {
-      if (!building.isConstructed || building.hp <= 0) continue;
-      const mesh = this.buildingMeshes.get(building.id);
-      if (!mesh || !mesh.visible) continue;
-      const forceHighDetail =
-        this.selectedBuildingId === building.id ||
-        (this.inspectedEntity?.type === 'building' && this.inspectedEntity.id === building.id);
-      updateBuildingVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
-      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
+        const forceHighDetail =
+          this.selectedUnitIds.includes(unit.id) ||
+          (this.inspectedEntity?.type === 'unit' && this.inspectedEntity.id === unit.id);
+        updateUnitVisualLod(mesh, this.camera, viewportHeight, forceHighDetail, unit.level || 1);
+        updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
+      }
+      // Rebuild role markers immediately after their distance-LOD state changes, including while paused.
+      this.rebuildUnitRoleMarkerInstances();
     }
 
-    this.nodeMeshes.forEach((mesh) => {
-      const forceHighDetail = this.selectedNodeId === mesh.userData.id;
-      updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
-      if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
-      if (mesh.userData.deerAssetLod) {
-        updateDeerVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
+    // Buildings are fewer and mostly stationary; halve their full-list refresh rate.
+    if (updateBuildings) {
+      for (const building of this.buildings) {
+        if (!building.isConstructed || building.hp <= 0) continue;
+        const mesh = this.buildingMeshes.get(building.id);
+        if (!mesh || !mesh.visible) continue;
+        const forceHighDetail =
+          this.selectedBuildingId === building.id ||
+          (this.inspectedEntity?.type === 'building' && this.inspectedEntity.id === building.id);
+        updateBuildingVisualLod(mesh, this.camera, viewportHeight, forceHighDetail);
+        updateDistanceShadowLod(mesh, this.camera, viewportHeight, forceHighDetail);
       }
-      if (mesh.userData.fishAssetLod) {
-        updateFishVisualLod(mesh, this.camera, viewportHeight, this.selectedNodeId === mesh.userData.id);
+    }
+
+    // Resource nodes can number in the hundreds. Process a fixed budget every 100ms
+    // so tree/deer/fish LOD and distance shadows do not create periodic full-map spikes.
+    if (updateResources) {
+      this.resourceVisualLodQueue.process(64, (mesh) => {
+        if (!mesh.visible || !mesh.parent) return;
+        const isSelected = this.selectedNodeId === mesh.userData.id;
+        updateDistanceShadowLod(mesh, this.camera, viewportHeight, isSelected);
+        if (mesh.userData.treeAssetLod) updateTreeVisualLod(mesh, this.camera, viewportHeight);
+        if (mesh.userData.deerAssetLod) {
+          updateDeerVisualLod(mesh, this.camera, viewportHeight, isSelected);
+        }
+        if (mesh.userData.fishAssetLod) {
+          updateFishVisualLod(mesh, this.camera, viewportHeight, isSelected);
+        }
+      });
+    }
+
+    // Selected static objects bypass the normal cadence/batch wait for immediate detail.
+    if (updateUnits && this.selectedBuildingId) {
+      const mesh = this.buildingMeshes.get(this.selectedBuildingId);
+      if (mesh?.visible) {
+        updateBuildingVisualLod(mesh, this.camera, viewportHeight, true);
+        updateDistanceShadowLod(mesh, this.camera, viewportHeight, true);
       }
-    });
+    }
+    if (updateUnits && this.selectedNodeId) {
+      const mesh = this.nodeMeshes.get(this.selectedNodeId);
+      if (mesh) {
+        updateDistanceShadowLod(mesh, this.camera, viewportHeight, true);
+        if (mesh.userData.deerAssetLod) updateDeerVisualLod(mesh, this.camera, viewportHeight, true);
+        if (mesh.userData.fishAssetLod) updateFishVisualLod(mesh, this.camera, viewportHeight, true);
+      }
+    }
   }
 
   private measureNavCorridorWidth(
@@ -6908,6 +6955,7 @@ export class RtsEngine {
             this.scene.remove(mesh);
             this.nodeMeshes.delete(node.id);
             this.windAnimatedNodeMeshes.delete(mesh);
+            this.resourceVisualLodQueue.remove(node.id);
           }
           if (
             this.depletedResourceBatch &&
