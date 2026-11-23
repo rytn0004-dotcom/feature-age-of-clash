@@ -243,7 +243,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               </svg>
               <div>
                 <div className="text-amber-400 text-[11px] font-bold tracking-widest uppercase">
-                  Age of Clash · Three Civilizations RTS
+                  Age of Clash · Four Civilizations RTS
                 </div>
                 <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight drop-shadow-md">
                   世紀帝國：<span className="text-amber-400">亂鬥爭霸</span>
@@ -308,6 +308,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                       ? '⚡ 氣彈超戰士專屬歷練 Lv.1~5 · 科技樹'
                       : humanCiv.id === 'medieval'
                       ? '🛡️ 鍛造工坊護甲光環 · 科技樹研發'
+                      : humanCiv.id === 'mongol'
+                      ? '🐎 敖包雙模態 · 騎射游擊與以戰養戰'
                       : '💚 魔力之泉回血光環 · 科技樹研發'}
                   </div>
                 </div>
