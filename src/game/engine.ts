@@ -8954,6 +8954,7 @@ export class RtsEngine {
               armory_forge: '⚒️',
               spirit_shrine: '⛩️',
               mana_well: '🔮',
+              ovoo_relay: '🗿',
             };
             const icon = bIcons[bldg.buildingType] || '🏛️';
             const statusText = isUnderAttack
