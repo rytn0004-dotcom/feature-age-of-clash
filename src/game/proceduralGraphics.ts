@@ -5,7 +5,7 @@ import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition
 import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
 import { mergeStaticUnitMeshes } from './unitMeshBatching';
-import { removeCompletedBuildingScaffold } from './buildingScaffoldLifecycle';
+import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
@@ -3900,7 +3900,7 @@ export function applyBuildingConstructionVisuals(
     }
   } else {
     // Once dismantled, scaffold parts are removed and their per-building geometry is released.
-    removeCompletedBuildingScaffold(rig.scaffoldGroup);
+    removeBuildingScaffoldFromRoot(mesh);
   }
 
   // Subtle tactile masonry/timber settle pulse when workers strike with hammers
