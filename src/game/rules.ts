@@ -457,7 +457,7 @@ export function calculateDamage(
  */
 export function getUnitVsUnitDamage(
   attackerAttack: number,
-  defender: Pick<UnitEntity, 'unitDef' | 'buffSpeedUntil' | 'buffDefenseBonus'>,
+  defender: Pick<UnitEntity, 'unitDef' | 'buffSpeedUntil' | 'buffDefenseBonus' | 'armorShredUntil' | 'armorShredAmount'>,
   isRangedProjectile = false,
   currentSimTime = 0,
   attackerBonusVsCategory?: Partial<Record<UnitCategory, number>>
@@ -468,7 +468,10 @@ export function getUnitVsUnitDamage(
       : 0;
   const pierceArmor = isRangedProjectile ? defender.unitDef.stats.rangedDefense || 0 : 0;
   const counterBonus = attackerBonusVsCategory?.[defender.unitDef.category] || 0;
-  const totalDef = (defender.unitDef.stats.defense || 0) + buffDef + pierceArmor;
+  const armorShred = defender.armorShredUntil && defender.armorShredUntil > currentSimTime
+    ? Math.max(0, defender.armorShredAmount || 0)
+    : 0;
+  const totalDef = Math.max(0, (defender.unitDef.stats.defense || 0) + buffDef + pierceArmor - armorShred);
   return calculateDamage(attackerAttack + counterBonus, totalDef);
 }
 
@@ -666,7 +669,7 @@ export function getBuildingMaxGarrison(
 }
 
 export function computeGarrisonDefenseProfile(
-  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'garrisonedUnitIds'>,
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'garrisonedUnitIds' | 'ovooMode'>,
   allUnits: Array<Pick<UnitEntity, 'id' | 'hp' | 'unitDef'>>,
   defenderTechIds: string[] = []
 ): {
@@ -702,7 +705,9 @@ export function computeGarrisonDefenseProfile(
     return { volleyCount: 0, damagePerBolt: 0, range: baseRange, cooldown: 1.4 };
   }
 
-  const baseBolts = isCastle ? 3 : requiresGarrisonToFire ? 0 : 1;
+  const baseBolts = isCastle ? 3 : building.buildingType === 'ovoo_relay'
+    ? building.ovooMode === 'sacred_extraction' ? 2 : 1
+    : requiresGarrisonToFire ? 0 : 1;
   const extraBolts = Math.min(6, Math.ceil(mannedCount / 2) + (mannedCount > 0 ? 1 : 0));
   const volleyCount = Math.max(1, baseBolts + extraBolts);
 
@@ -743,7 +748,7 @@ export interface BuildingCombatStats {
  * Computes human-readable combat, attack method/type, range, and structural defense stats for building inspection HUD.
  */
 export function getBuildingCombatStats(
-  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'garrisonedUnitIds'>,
+  building: Pick<BuildingEntity, 'buildingDef' | 'buildingType' | 'garrisonedUnitIds' | 'ovooMode'>,
   allUnits: Array<Pick<UnitEntity, 'id' | 'hp' | 'unitDef'>>,
   defenderAge = 1,
   defenderTechIds: string[] = []
@@ -755,7 +760,7 @@ export function getBuildingCombatStats(
   const effectiveRange = defProfile.range > 0 ? defProfile.range : baseRange;
   const canFireFromGarrison = !!building.buildingDef.canGarrisonAttack;
   const isCastle = building.buildingType === 'castle' || building.buildingType === 'landmark_citadel';
-  const isArcaneOrShrine = building.buildingType === 'mana_well' || building.buildingType === 'spirit_shrine';
+  const isArcaneOrShrine = building.buildingType === 'mana_well' || building.buildingType === 'spirit_shrine' || building.buildingType === 'ovoo_relay';
   const requiresGarrison =
     building.buildingType === 'town_center' ||
     building.buildingType === 'armory_forge' ||
@@ -781,7 +786,9 @@ export function getBuildingCombatStats(
     ? '重型城防弩砲'
     : '物理穿刺遠程';
 
-  const attackMethod = requiresGarrison
+  const attackMethod = building.buildingType === 'ovoo_relay'
+    ? building.ovooMode === 'sacred_extraction' ? '敖包聚靈·雙重靈箭' : '敖包驛站·靈箭哨戒'
+    : requiresGarrison
     ? isArcaneOrShrine
       ? '駐軍感應齊射'
       : '駐軍齊射箭雨'
