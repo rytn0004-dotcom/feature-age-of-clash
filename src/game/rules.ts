@@ -2347,6 +2347,115 @@ export function selectSiegeEscortUnits<
     .map((entry) => entry.unit);
 }
 
+export interface SiegeEscortAssignment<T> {
+  escort: T;
+  siegeId: string;
+  /** Stable lateral slot within this siege unit's escort screen. */
+  slotIndex: number;
+}
+
+/**
+ * Maintains a stable escort roster around active siege units.
+ * Previously assigned escorts stay attached while moving or intercepting threats;
+ * only idle, unassigned units may be recruited into the screen.
+ */
+export function selectSiegeEscortAssignments<
+  T extends {
+    id: string;
+    x: number;
+    z: number;
+    state: string;
+    siegeEscortTargetId?: string;
+    unitDef: { category: UnitCategory };
+  }
+>(
+  siegeUnits: readonly { id: string; x: number; z: number }[],
+  candidates: readonly T[],
+  maxEscortCount: number,
+): SiegeEscortAssignment<T>[] {
+  const limit = Number.isFinite(maxEscortCount) ? Math.max(0, Math.floor(maxEscortCount)) : 0;
+  const activeSieges = siegeUnits
+    .filter((siege) => !!siege.id && Number.isFinite(siege.x) && Number.isFinite(siege.z))
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (activeSieges.length === 0 || limit === 0) return [];
+
+  const siegeById = new Map(activeSieges.map((siege) => [siege.id, siege] as const));
+  const isEligible = (unit: T) =>
+    !!unit.id &&
+    Number.isFinite(unit.x) &&
+    Number.isFinite(unit.z) &&
+    unit.unitDef.category !== 'siege' &&
+    unit.unitDef.category !== 'worker' &&
+    (unit.unitDef.category === 'melee' ||
+      unit.unitDef.category === 'cavalry' ||
+      unit.unitDef.category === 'ranged' ||
+      unit.unitDef.category === 'special');
+  const rolePenalty: Partial<Record<UnitCategory, number>> = {
+    melee: 0,
+    cavalry: 2.2,
+    ranged: 7.5,
+    special: 9,
+  };
+
+  const chosen: Array<{ escort: T; siegeId: string }> = [];
+  const chosenIds = new Set<string>();
+
+  // Keep existing links first so a moving escort is never dropped and re-recruited
+  // on every AI planning tick.
+  for (const candidate of candidates) {
+    if (chosen.length >= limit) break;
+    if (
+      !isEligible(candidate) ||
+      (candidate.state !== 'idle' && candidate.state !== 'moving' && candidate.state !== 'attacking') ||
+      !candidate.siegeEscortTargetId ||
+      !siegeById.has(candidate.siegeEscortTargetId) ||
+      chosenIds.has(candidate.id)
+    ) continue;
+
+    chosen.push({ escort: candidate, siegeId: candidate.siegeEscortTargetId });
+    chosenIds.add(candidate.id);
+  }
+
+  const rankedIdle: Array<{ escort: T; siegeId: string; score: number; sourceIndex: number }> = [];
+  candidates.forEach((candidate, sourceIndex) => {
+    if (!isEligible(candidate) || candidate.state !== 'idle' || chosenIds.has(candidate.id)) return;
+
+    let bestSiegeId: string | null = null;
+    let bestScore = Infinity;
+    for (const siege of activeSieges) {
+      const score =
+        getDistance(siege.x, siege.z, candidate.x, candidate.z) * 0.75 +
+        (rolePenalty[candidate.unitDef.category] ?? 9);
+      if (
+        score < bestScore - 0.0001 ||
+        (Math.abs(score - bestScore) <= 0.0001 && (!bestSiegeId || siege.id < bestSiegeId))
+      ) {
+        bestScore = score;
+        bestSiegeId = siege.id;
+      }
+    }
+    if (bestSiegeId) rankedIdle.push({ escort: candidate, siegeId: bestSiegeId, score: bestScore, sourceIndex });
+  });
+
+  rankedIdle.sort((a, b) => a.score - b.score || a.sourceIndex - b.sourceIndex);
+  for (const entry of rankedIdle) {
+    if (chosen.length >= limit) break;
+    chosen.push({ escort: entry.escort, siegeId: entry.siegeId });
+    chosenIds.add(entry.escort.id);
+  }
+
+  const nextSlotBySiege = new Map<string, number>();
+  return chosen
+    .slice()
+    .sort((a, b) => a.siegeId.localeCompare(b.siegeId) || a.escort.id.localeCompare(b.escort.id))
+    .map((entry) => {
+      const slotIndex = nextSlotBySiege.get(entry.siegeId) || 0;
+      nextSlotBySiege.set(entry.siegeId, slotIndex + 1);
+      return { ...entry, slotIndex };
+    });
+}
+
 export function selectClusterFocusTarget(
   squadUnits: UnitEntity[],
   hostileUnits: UnitEntity[],

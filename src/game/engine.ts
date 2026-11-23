@@ -90,7 +90,7 @@ import {
   getAvailableGarrisonSlots,
   selectNearestGarrisonShelter,
   resolveAiKnightUnitId,
-  selectSiegeEscortUnits,
+  selectSiegeEscortAssignments,
   FIELD_RAM_COST,
   FIELD_RAM_ASSEMBLY_DURATION,
   FIELD_RAM_TECH_ID,
@@ -10698,45 +10698,126 @@ export class RtsEngine {
       }
 
 
-      // Organize siege with the army: when age >= 2 and army pushing, send siege toward enemy TC
-      if (
+      const combatCmd = plan.combatAction;
+      const siegePushEnabled =
+        !!combatCmd &&
+        (combatCmd.type === 'cluster_attack' || combatCmd.type === 'attack_player') &&
         personality !== 'defensive' &&
         personality !== 'easy' &&
         aiAge >= 2 &&
         aiArmy.length >= (personality === 'hard' ? 4 : 5) &&
-        this.stats.gameDuration > (personality === 'hard' ? 70 : 100)
-      ) {
-        const siegeUnits = aiArmy.filter((u) => u.unitDef.category === 'siege');
-        const enemyTc = aiHostileBuildings.find(
-          (building) => building.hp > 0 && building.isConstructed && building.buildingType === 'town_center',
-        );
-        if (siegeUnits.length > 0 && enemyTc) {
-          for (const s of siegeUnits) {
-            if (s.state === 'idle' || s.state === 'moving') {
-              s.targetEntityId = enemyTc.id;
-              s.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
-              s.state = 'attacking';
-              s.currentActionText = '攻城推進';
-            }
-          }
-          // Escort with nearby idle frontline units; do not steal units from active orders.
-          const escort = selectSiegeEscortUnits(
+        this.stats.gameDuration > (personality === 'hard' ? 70 : 100);
+      const siegeUnits = siegePushEnabled
+        ? aiArmy.filter((unit) => unit.hp > 0 && unit.unitDef.category === 'siege')
+        : [];
+      const enemyTc = siegePushEnabled
+        ? aiHostileBuildings.find(
+            (building) => building.hp > 0 && building.isConstructed && building.buildingType === 'town_center',
+          ) || null
+        : null;
+      const siegeEscortAssignments = enemyTc && siegeUnits.length > 0
+        ? selectSiegeEscortAssignments(
             siegeUnits,
             aiArmy,
-            Math.min(4, Math.max(2, siegeUnits.length * 2))
-          );
-          for (const e of escort) {
-            if (e.state === 'idle') {
-              e.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
-              e.targetEntityId = enemyTc.id;
-              e.state = 'attacking';
+            Math.min(4, Math.max(2, siegeUnits.length * 2)),
+          )
+        : [];
+      const assignedEscortIds = new Set(siegeEscortAssignments.map((assignment) => assignment.escort.id));
+
+      // Release escorts whose siege engine died, whose target changed, or whose army
+      // stopped pushing. They rejoin the regular combat plan in this same AI tick.
+      for (const unit of aiArmy) {
+        if (!unit.siegeEscortTargetId || assignedEscortIds.has(unit.id)) continue;
+        unit.siegeEscortTargetId = undefined;
+        if (unit.currentActionText?.startsWith('攻城護衛')) {
+          this.clearFormationMovement(unit);
+          unit.targetEntityId = undefined;
+          unit.targetX = undefined;
+          unit.targetZ = undefined;
+          unit.attackMoveGoal = null;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          unit.state = 'idle';
+          unit.currentActionText = '💤 待命中 (閒置)';
+        }
+      }
+
+      if (enemyTc && siegeUnits.length > 0) {
+        for (const siege of siegeUnits) {
+          if (
+            siege.state !== 'attacking' ||
+            siege.targetEntityId !== enemyTc.id ||
+            !siege.attackMoveGoal ||
+            getDistance(siege.attackMoveGoal.x, siege.attackMoveGoal.z, enemyTc.x, enemyTc.z) > 2
+          ) {
+            siege.targetEntityId = enemyTc.id;
+            siege.attackMoveGoal = { x: enemyTc.x, z: enemyTc.z };
+            siege.waypoints = undefined;
+            siege.state = 'attacking';
+            siege.currentActionText = '攻城推進';
+          }
+        }
+
+        const siegeById = new Map(siegeUnits.map((siege) => [siege.id, siege] as const));
+        for (const { escort, siegeId, slotIndex } of siegeEscortAssignments) {
+          const siege = siegeById.get(siegeId);
+          if (!siege) continue;
+          escort.siegeEscortTargetId = siege.id;
+          const toObjectiveX = enemyTc.x - siege.x;
+          const toObjectiveZ = enemyTc.z - siege.z;
+          const objectiveLength = Math.hypot(toObjectiveX, toObjectiveZ) || 1;
+          const dirX = toObjectiveX / objectiveLength;
+          const dirZ = toObjectiveZ / objectiveLength;
+          const sideX = -dirZ;
+          const sideZ = dirX;
+          const side = slotIndex % 2 === 0 ? -1 : 1;
+          const rank = Math.floor(slotIndex / 2);
+          const lateral = side * (3.2 + rank * 1.8);
+          const followX = Math.max(-84, Math.min(84, siege.x - dirX * 5.5 + sideX * lateral));
+          const followZ = Math.max(-84, Math.min(84, siege.z - dirZ * 5.5 + sideZ * lateral));
+          const followGoal = { x: followX, z: followZ };
+          const nearbyThreat = this.selectNearbyCombatTarget(escort, 12, false);
+
+          this.clearFormationMovement(escort);
+          escort.attackMoveGoal = followGoal;
+          if (nearbyThreat) {
+            if (escort.state !== 'attacking' || escort.targetEntityId !== nearbyThreat.id) {
+              escort.targetEntityId = nearbyThreat.id;
+              escort.waypoints = undefined;
+              escort.pathGoal = undefined;
+              escort.state = 'attacking';
             }
+            escort.currentActionText = '攻城護衛 · 截擊';
+            continue;
+          }
+
+          if (getDistance(escort.x, escort.z, followX, followZ) > 2.2) {
+            const goalChanged =
+              escort.targetX === undefined ||
+              escort.targetZ === undefined ||
+              getDistance(escort.targetX, escort.targetZ, followX, followZ) > 1.5;
+            if (escort.state !== 'moving' || goalChanged || escort.targetEntityId) {
+              escort.targetEntityId = undefined;
+              escort.targetX = followX;
+              escort.targetZ = followZ;
+              escort.waypoints = undefined;
+              escort.pathGoal = undefined;
+              escort.pathCooldown = 0;
+              escort.state = 'moving';
+            }
+            escort.currentActionText = '攻城護衛 · 跟進';
+          } else {
+            escort.targetEntityId = undefined;
+            escort.targetX = undefined;
+            escort.targetZ = undefined;
+            escort.waypoints = undefined;
+            escort.state = 'idle';
+            escort.currentActionText = '攻城護衛 · 護衛位置';
           }
         }
       }
 
       // 6. Execute Tactical Combat Actions (Defend, Rally/Patrol, 1v1 Counter & Cluster Push)
-      const combatCmd = plan.combatAction;
       if (!combatCmd || aiArmy.length === 0) continue;
 
       // Reuse id indexes throughout this AI decision pass instead of rescanning full entity arrays per unit.
@@ -10752,6 +10833,7 @@ export class RtsEngine {
         const activeThreat = baseThreat && nearestEnemyDist <= 28 ? baseThreat : null;
 
         aiArmy.forEach((unit, idx) => {
+          if (unit.siegeEscortTargetId) return;
           const targetContext = {
             defendAnchor,
             clusterFocusTargetId: baseClusterTarget?.id,
@@ -10812,6 +10894,7 @@ export class RtsEngine {
         const cols = Math.max(2, Math.ceil(Math.sqrt(aiArmy.length)));
 
         aiArmy.forEach((unit, idx) => {
+          if (unit.siegeEscortTargetId) return;
           if (unit.state === 'idle') {
             const nearbyEnemy = this.selectNearbyCombatTarget(unit, 14, false);
             if (nearbyEnemy) {
@@ -10844,6 +10927,7 @@ export class RtsEngine {
         if (stronghold) {
           const strikeUnits = aiArmy.filter(
             (u) =>
+              !u.siegeEscortTargetId &&
               u.currentActionText !== '奪取據點' &&
               u.currentActionText !== '礦區警戒' &&
               (u.state === 'idle' || u.state === 'moving' || u.state === 'attacking')
@@ -10884,7 +10968,7 @@ export class RtsEngine {
               )[0] || null;
 
           const clusterTarget =
-            combatCmd.type === 'cluster_attack'
+            strikeUnits.length > 0
               ? selectClusterFocusTarget(strikeUnits, this.units, this.buildings, {
                   maxEnemyRangeFromCentroid: 32,
                 })
@@ -11044,7 +11128,7 @@ export class RtsEngine {
             const chosen =
               unit.unitDef.category === 'ranged' && rangedFocusTarget && rangedFocusTarget.hp > 0
                 ? rangedFocusTarget
-                : optimalLocal || clusterTarget || stronghold;
+                : clusterTarget || optimalLocal || stronghold;
             const currentTarget =
               (unit.targetEntityId ? combatUnitById.get(unit.targetEntityId) : undefined) ||
               (unit.targetEntityId ? combatBuildingById.get(unit.targetEntityId) : undefined) ||

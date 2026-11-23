@@ -284,6 +284,8 @@ export interface UnitEntity extends EntityCommon {
   targetX?: number;
   targetZ?: number;
   targetEntityId?: string;
+  /** AI escort assignment links a frontline unit to the siege engine it screens. */
+  siegeEscortTargetId?: string;
   state: 'idle' | 'moving' | 'attacking' | 'gathering' | 'returning_resource' | 'building' | 'assembling' | 'garrisoning';
   fieldAssemblyProjectId?: string;
   carryingResource?: { type: ResourceType; amount: number };
