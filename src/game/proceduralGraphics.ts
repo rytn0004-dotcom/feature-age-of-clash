@@ -5,6 +5,7 @@ import { BuildingEntity, BuildingType, CivilizationId, FactionId, UnitDefinition
 import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
 import { mergeStaticUnitMeshes } from './unitMeshBatching';
+import { removeCompletedBuildingScaffold } from './buildingScaffoldLifecycle';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 
 export interface DeerAnimParts {
@@ -3886,8 +3887,8 @@ export function applyBuildingConstructionVisuals(
   const rig = mesh.userData.buildRig as BuildingVisualRig | undefined;
   if (!rig) return;
 
-  rig.scaffoldGroup.visible = state.showScaffold;
-  if (state.showScaffold) {
+  if (state.showScaffold && !rig.scaffoldGroup.userData.scaffoldPermanentlyRemoved) {
+    rig.scaffoldGroup.visible = true;
     rig.padMesh.scale.set(1, Math.max(0.2, state.foundationReveal), 1);
     rig.scaffoldFrame.scale.set(1, state.scaffoldHeightScale, 1);
     rig.planksGroup.visible = state.planksOpacity > 0.06;
@@ -3897,6 +3898,9 @@ export function applyBuildingConstructionVisuals(
         rig.maxY * 0.84 * 1.4 - Math.sin(simTime * 2.1) * 0.16;
       rig.pulleyLoad.rotation.z = Math.sin(simTime * 1.4) * 0.05;
     }
+  } else {
+    // Once dismantled, scaffold parts are removed and their per-building geometry is released.
+    removeCompletedBuildingScaffold(rig.scaffoldGroup);
   }
 
   // Subtle tactile masonry/timber settle pulse when workers strike with hammers
