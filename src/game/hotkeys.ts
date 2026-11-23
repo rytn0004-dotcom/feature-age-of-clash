@@ -19,6 +19,7 @@ export const BUILDING_HOTKEYS: Partial<Record<BuildingType, string>> = {
   armory_forge: 'K',
   spirit_shrine: 'K',
   mana_well: 'K',
+  ovoo_relay: 'K',
   wall: 'O',
   gate: '0',
   tower: 'T',
