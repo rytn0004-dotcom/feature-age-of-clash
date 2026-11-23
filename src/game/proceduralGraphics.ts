@@ -3571,8 +3571,17 @@ export function createOvooRelayMesh(faction: FactionId): THREE.Group {
   const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1.75, 10), birchMat);
   rail.rotation.z = Math.PI / 2; rail.position.set(0, 1.08, 2.35);
   group.add(post1, post2, rail);
-  const aura = createActiveAuraRing(13.2, 13.5, 0xf59e0b, 0.2);
-  aura.name = 'activeAuraRing'; group.add(aura);
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(6.25, 6.55, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0xf59e0b, transparent: true, opacity: 0.18,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.075;
+  aura.name = 'activeAuraRing';
+  group.add(aura);
   const badge = createBadgeSprite(
     colors.isHostile ? `${colors.labelPrefix || ''}敖包驛站` : '敖包驛站',
     '🗿', '1650', 1, colors.isHostile, false
