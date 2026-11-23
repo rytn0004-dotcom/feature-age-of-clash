@@ -225,6 +225,12 @@ export const CIVILIZATION_LIST: CivilizationConfig[] = [
       archery_range: '突騎彎弓營盤', stable: '汗國戰馬牧廄', siege_workshop: '草原攻城工坊',
       ovoo_relay: '敖包驛站', dock: '北疆河港渡口', wall: '鹿砦拒馬木柵',
       gate: '汗國木柵城門', tower: '草原狼煙瞭望塔', castle: '汗國御前牙帳堡',
+      landmark_aachen: '長生天敖包聖壇',
+      landmark_barracks: '怯薛萬騎大營',
+      landmark_guildhall: '絲路萬帳貿易大市',
+      landmark_citadel: '大汗鐵騎牙帳城',
+      landmark_observatory: '蒼狼天穹觀星台',
+      landmark_arsenal: '汗國重炮軍械營',
     },
     trainableByBuilding: {
       town_center: ['mongol_herder'],
