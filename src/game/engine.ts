@@ -7685,28 +7685,9 @@ export class RtsEngine {
       }
 
       if (isBoar) {
-        // Military units can wound the boar with active attacks / attack-move.
-        for (const attacker of this.units) {
-          if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
-            (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
-          const d = getDistance(node.x, node.z, attacker.x, attacker.z);
-          if (d > Math.max(2.6, (attacker.unitDef.stats.range || 1.5) + 0.65)) continue;
-          let hitCd = (attacker as any)._huntHitCd || 0;
-          hitCd -= dt;
-          if (hitCd <= 0) {
-            const dmg = Math.max(1, attacker.unitDef.stats.attack);
-            node.animalHp = Math.max(0, (node.animalHp || maxHp) - dmg);
-            hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
-            triggerWildBoarAggression(node, attacker.id, this.simTime);
-            this.addFloatingText(node.x, 1.7, node.z, `-${dmg}`, '#fca5a5');
-          }
-          (attacker as any)._huntHitCd = hitCd;
-          if ((node.animalHp || 0) <= 0) {
-            killAnimal(node, mesh, '野豬倒地');
-            break;
-          }
-        }
-        if (!node.animalAlive) continue;
+        // All deliberate hunters (workers and military) deal damage through
+        // stepUnitGathering after receiving this node's explicit gather order.
+        // Do not let unrelated attack-move units wound wildlife just by passing nearby.
 
         const target = (node.animalAggroUntil || 0) > this.simTime
           ? this.units.find((u) => u.id === node.animalAggroTargetId && u.hp > 0 && !u.garrisonedInBuildingId)
