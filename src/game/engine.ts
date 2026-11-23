@@ -96,6 +96,7 @@ import {
   computeAiWorkerAllocation,
   shouldAiQueueWorker,
   selectAiWorkerResourceType,
+  selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
@@ -10128,24 +10129,22 @@ export class RtsEngine {
         if (w.state !== 'idle') continue;
         // Contest forward gold: if we are poor on gold, claim nodes closer to map center / contested
         if (aiRes.gold < 120 && activeCounts.gold < desiredAlloc.gold) {
-          const forwardGold = this.resourceNodes
-            .filter((n) => n.resourceType === 'gold' && n.amount > 80)
-            .map((n) => {
-              const dHome = getDistance(anchorX, anchorZ, n.x, n.z);
-              const dCenter = getDistance(0, 0, n.x, n.z);
-              // Prefer somewhat forward mines (not only safest)
-              const congestion = nodeWorkerCounts.get(n.id) || 0;
-              return { n, score: n.amount * 0.02 - dHome * 0.4 - dCenter * 0.15 - congestion * 8 };
-            })
-            .sort((a, b) => b.score - a.score)[0];
+          // Prefer somewhat forward mines (not only safest). A single-pass
+          // maximum preserves stable tie order without allocating/sorting per worker.
+          const forwardGold = selectBestForwardGoldNode(
+            this.resourceNodes,
+            anchorX,
+            anchorZ,
+            nodeWorkerCounts,
+          );
           if (forwardGold && forwardGold.score > -30) {
-            w.targetResourceNodeId = forwardGold.n.id;
+            w.targetResourceNodeId = forwardGold.node.id;
             w.waypoints = undefined;
             w.state = 'gathering';
             activeCounts.gold++;
             nodeWorkerCounts.set(
-              forwardGold.n.id,
-              (nodeWorkerCounts.get(forwardGold.n.id) || 0) + 1
+              forwardGold.node.id,
+              (nodeWorkerCounts.get(forwardGold.node.id) || 0) + 1
             );
             continue;
           }

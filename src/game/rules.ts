@@ -1232,6 +1232,37 @@ export function getDistance(x1: number, z1: number, x2: number, z2: number): num
   return Math.sqrt(dx * dx + dz * dz);
 }
 
+/**
+ * Select the highest-scoring forward gold deposit without allocating and sorting
+ * a temporary candidate array for every idle AI worker.
+ *
+ * Strictly-greater replacement preserves Array.sort's stable source order for
+ * equal scores, matching the previous filter/map/sort selection behavior.
+ */
+export function selectBestForwardGoldNode<
+  T extends Pick<ResourceNode, 'id' | 'resourceType' | 'amount' | 'x' | 'z'>
+>(
+  nodes: readonly T[],
+  anchorX: number,
+  anchorZ: number,
+  nodeWorkerCounts: ReadonlyMap<string, number>,
+): { node: T; score: number } | null {
+  let best: { node: T; score: number } | null = null;
+
+  for (const node of nodes) {
+    if (node.resourceType !== 'gold' || !(node.amount > 80)) continue;
+
+    const homeDistance = getDistance(anchorX, anchorZ, node.x, node.z);
+    const centerDistance = getDistance(0, 0, node.x, node.z);
+    const congestion = nodeWorkerCounts.get(node.id) || 0;
+    const score = node.amount * 0.02 - homeDistance * 0.4 - centerDistance * 0.15 - congestion * 8;
+
+    if (!best || score > best.score) best = { node, score };
+  }
+
+  return best;
+}
+
 export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
   deep_fish: 1.55,
   shore_fish: 1.32,
