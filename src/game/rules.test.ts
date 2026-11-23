@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canAfford,
   canAssembleFieldRam,
+  canUnitGatherNode,
   estimateConstructionTimeRemaining,
   getConstructionWorkerMultiplier,
   FIELD_RAM_COST,
@@ -3323,6 +3324,32 @@ test('wild deer (山羌): panic re-arms only after disengagement and cooldown, n
 
   const renewedThreat = stepWildAnimalState(deer, { x: -2, z: 0, d: 2 }, 103, 0.05, () => false, () => 0.5);
   assert.equal(renewedThreat.isFleeing, true, 'A genuinely new encounter can trigger a new finite panic');
+});
+
+test('wild boar (野豬): only explicit ground-unit hunting orders can harvest the animal', () => {
+  const boar = { resourceType: 'food' as const, subtype: 'boar' as const };
+  const groundHunters = [
+    { id: 'villager', category: 'worker' as const, isNaval: false },
+    { id: 'infantry', category: 'melee' as const, isNaval: false },
+    { id: 'archer', category: 'ranged' as const, isNaval: false },
+    { id: 'cavalry', category: 'cavalry' as const, isNaval: false },
+    { id: 'siege', category: 'siege' as const, isNaval: false },
+    { id: 'special', category: 'special' as const, isNaval: false },
+  ];
+
+  for (const hunter of groundHunters) {
+    assert.equal(
+      canUnitGatherNode(hunter, boar),
+      true,
+      `${hunter.category} units should be able to join an explicitly assigned boar hunt`,
+    );
+  }
+
+  assert.equal(
+    canUnitGatherNode({ id: 'fishing_boat', category: 'worker', isNaval: true }, boar),
+    false,
+    'naval units cannot harvest a land animal',
+  );
 });
 
 test('wild boar (野豬): aggression refreshes safely, dead animals ignore provocation, and blocked charges stop', async () => {
