@@ -3629,9 +3629,9 @@ test('siege escort assignments persist while escort units move or intercept near
 
   const persistent = assignments.find((entry) => entry.escort.id === 'persistent');
   assert.ok(persistent);
-  assert.equal(persistent.slotIndex, 0);
+  assert.equal(persistent.slotIndex, 1, 'slot indices are assigned in deterministic escort-ID order');
   const sameSiege = assignments.filter((entry) => entry.siegeId === 'ram-b').sort((a, b) => a.slotIndex - b.slotIndex);
-  assert.deepEqual(sameSiege.map((entry) => entry.escort.id), ['persistent', 'idle-near-b']);
+  assert.deepEqual(sameSiege.map((entry) => entry.escort.id), ['idle-near-b', 'persistent']);
 });
 
 test('siege escort assignments release stale siege links and recruit only idle replacements', () => {
