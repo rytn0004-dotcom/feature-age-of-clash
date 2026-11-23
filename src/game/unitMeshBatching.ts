@@ -146,7 +146,7 @@ function isMeshEligible(
   const geometry = mesh.geometry;
   if (
     geometry.groups.length > 0 ||
-    geometry.isInstancedBufferGeometry ||
+    (geometry as THREE.BufferGeometry & { isInstancedBufferGeometry?: boolean }).isInstancedBufferGeometry ||
     Object.keys(geometry.userData || {}).length > 0 ||
     Object.values(geometry.morphAttributes).some((attributes) => attributes.length > 0) ||
     geometry.drawRange.start !== 0 ||
