@@ -9,7 +9,7 @@ export interface Resources {
 
 export type FactionId = string;
 
-export type CivilizationId = 'medieval' | 'anime' | 'fantasy';
+export type CivilizationId = 'medieval' | 'anime' | 'fantasy' | 'mongol';
 
 export type MapPresetId = 'river_valley' | 'highland_basin' | 'twin_lakes';
 export type ResourceRichness = 'standard' | 'abundant';
@@ -94,7 +94,10 @@ export interface UnitDefinition {
       | 'golem'
       | 'ram'
       | 'cannon'
-      | 'boat';
+      | 'boat'
+      | 'horse_archer'
+      | 'keshik'
+      | 'shaman';
     scale?: number;
     projectileType?: 'arrow' | 'fireball' | 'ki_blast' | 'slash';
     weaponColor?: string;
@@ -102,7 +105,7 @@ export interface UnitDefinition {
   isNaval?: boolean;
   specialAbility?: {
     name: string;
-    type: 'whirlwind' | 'ki_burst' | 'heal' | 'haste';
+    type: 'whirlwind' | 'ki_burst' | 'heal' | 'haste' | 'kiting_volley' | 'trample_charge' | 'sky_storm';
     cooldown: number;
     potency: number;
     description: string;
@@ -139,6 +142,7 @@ export type BuildingType =
   | 'armory_forge'
   | 'spirit_shrine'
   | 'mana_well'
+  | 'ovoo_relay'
   | LandmarkType;
 
 export interface TechDefinition {
@@ -301,6 +305,14 @@ export interface UnitEntity extends EntityCommon {
   level?: number;
   buffSpeedUntil?: number;
   buffDefenseBonus?: number;
+  /** Temporary attack-speed aura from a Mongol Ovoo war horn. */
+  buffAttackRateUntil?: number;
+  /** Temporary armour reduction applied by Mangudai piercing volleys. */
+  armorShredUntil?: number;
+  armorShredAmount?: number;
+  /** Temporary movement and attack slow from cavalry impact or Shaman storm. */
+  slowUntil?: number;
+  slowFactor?: number;
   attackMoveGoal?: { x: number; z: number } | null;
   /** Shared order identity used to keep manually selected and AI squads moving cohesively. */
   formationGroupId?: string;
@@ -383,6 +395,8 @@ export interface BuildingEntity extends EntityCommon {
   hitFlashTimer?: number;
   garrisonedUnitIds?: string[];
   lastAttackerFaction?: FactionId;
+  ovooMode?: 'yam_relay' | 'sacred_extraction';
+  ovooHornCooldown?: number;
 }
 
 export interface ResourceNode {
@@ -426,6 +440,23 @@ export interface ResourceNode {
   animalYaw?: number;
   animalMoveBlend?: number;
   animalGaitPhase?: number;
+}
+
+/** Temporary area effect created by the Mongol Steppe Shaman. */
+export interface GroundZoneEffect {
+  id: string;
+  kind: 'sky_storm';
+  faction: FactionId;
+  team?: number;
+  casterId?: string;
+  x: number;
+  z: number;
+  radius: number;
+  remaining: number;
+  duration: number;
+  tickAccum: number;
+  damagePerTick: number;
+  slowFactor: number;
 }
 
 /** Strategic shrine identity; each blessing supports a different army/economy plan. */
