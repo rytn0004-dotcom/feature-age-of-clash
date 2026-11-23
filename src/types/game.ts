@@ -411,6 +411,11 @@ export interface ResourceNode {
   /** Aggressor identity and leash time for dangerous wildlife such as wild boars. */
   animalAggroTargetId?: string;
   animalAggroUntil?: number;
+  /** Original habitat center; the boar returns here after disengaging from a hunt. */
+  animalHomeX?: number;
+  animalHomeZ?: number;
+  /** Hysteresis latch: once a boar starts returning, it completes the return before chasing again. */
+  animalReturningHome?: boolean;
   /** Simulation timestamp when the boar may attack again. */
   animalAttackCooldown?: number;
   /** Calm wander state machine timer & current target heading */

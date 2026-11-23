@@ -5,6 +5,8 @@ import {
   canAssembleFieldRam,
   canUnitGatherNode,
   selectWildBoarAggroTarget,
+  WILD_BOAR_HOME_LEASH_RADIUS,
+  WILD_BOAR_HOME_ARRIVAL_RADIUS,
   estimateConstructionTimeRemaining,
   getConstructionWorkerMultiplier,
   FIELD_RAM_COST,
@@ -3431,6 +3433,71 @@ test('wild boar (野豬): aggression refreshes safely, dead animals ignore provo
   triggerWildBoarAggression(boar, 'late-hit', 15);
   assert.equal(boar.animalAggroTargetId, undefined, 'Dead boars cannot reacquire attackers');
   assert.equal(boar.animalAggroUntil, 0);
+});
+
+
+test('wild boar (野豬): pursuit stays inside habitat and completes a return after disengagement', async () => {
+  const { stepWildBoarState } = await import('./rules');
+  const home = { x: 0, z: 0 };
+  const isBlocked = () => false;
+  const makeBoar = (x: number, returning = false): ResourceNode => ({
+    id: 'boar_home_test',
+    resourceType: 'food',
+    subtype: 'boar',
+    x,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 200,
+    animalMaxHp: 200,
+    animalAlive: true,
+    animalHomeX: home.x,
+    animalHomeZ: home.z,
+    animalReturningHome: returning,
+    animalVx: 0,
+    animalVz: 0,
+  });
+
+  const safeTarget = makeBoar(0);
+  const farHunterStep = stepWildBoarState(safeTarget, { x: 50, z: 0 }, 0.1, isBlocked, home);
+  assert.equal(farHunterStep.isCharging, false, 'a hunter beyond the habitat hunt radius cannot pull a boar away');
+  assert.equal(safeTarget.x, 0, 'a boar at home stays put when the target is outside its habitat range');
+
+  const displaced = makeBoar(22);
+  const outOfRangeHunter = stepWildBoarState(displaced, { x: 60, z: 0 }, 0.1, isBlocked, home);
+  assert.equal(outOfRangeHunter.isReturning, true, 'a boar away from home returns when its hunter leaves the habitat radius');
+  assert.ok(displaced.x < 22, 'the return vector points toward the original habitat center');
+
+  const abandoned = makeBoar(30);
+  let step = stepWildBoarState(abandoned, null, 0.1, isBlocked, home);
+  assert.equal(step.isReturning, true, 'a disengaged boar starts returning home');
+  assert.ok(Math.hypot(abandoned.x, abandoned.z) <= WILD_BOAR_HOME_LEASH_RADIUS + 1e-9);
+
+  const returning = makeBoar(12, true);
+  const nearbyHunter = { x: 8, z: 0 };
+  step = stepWildBoarState(returning, nearbyHunter, 0.1, isBlocked, home);
+  assert.equal(step.isReturning, true, 'once return begins, a newly closer hunter cannot reverse the boar mid-return');
+  assert.ok(returning.x < 12, 'return hysteresis keeps the boar moving toward home');
+
+  let returnSteps = 0;
+  while (returning.animalReturningHome && returnSteps < 120) {
+    step = stepWildBoarState(returning, nearbyHunter, 0.1, isBlocked, home);
+    returnSteps++;
+  }
+  assert.ok(returnSteps < 120, 'the boar must complete a finite return instead of circling home');
+  assert.equal(returning.animalReturningHome, false, 'return state clears only after reaching the home arrival radius');
+  assert.ok(
+    Math.hypot(returning.x - home.x, returning.z - home.z) <= WILD_BOAR_HOME_ARRIVAL_RADIUS + 0.2,
+    'boar returns close to its habitat anchor before resuming pursuit',
+  );
+
+  const leashed = makeBoar(WILD_BOAR_HOME_LEASH_RADIUS - 0.1);
+  let maxRadius = 0;
+  for (let i = 0; i < 80; i++) {
+    stepWildBoarState(leashed, { x: 20, z: 0 }, 0.1, isBlocked, home);
+    maxRadius = Math.max(maxRadius, Math.hypot(leashed.x - home.x, leashed.z - home.z));
+  }
+  assert.ok(maxRadius <= WILD_BOAR_HOME_LEASH_RADIUS + 1e-9, 'momentum cannot push a boar outside its hard habitat leash');
 });
 
 

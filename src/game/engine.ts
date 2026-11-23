@@ -7650,6 +7650,11 @@ export class RtsEngine {
       if ((!isBoar && node.subtype !== 'hunt') || node.amount <= 0) continue;
       const mesh = this.nodeMeshes.get(node.id);
       const maxHp = isBoar ? 200 : 32;
+      if (isBoar) {
+        // Preserve the initial map position as the habitat anchor even after the boar moves.
+        node.animalHomeX ??= node.x;
+        node.animalHomeZ ??= node.z;
+      }
       if (node.animalAlive === undefined) {
         node.animalMaxHp = maxHp;
         node.animalHp = maxHp;
@@ -7701,7 +7706,13 @@ export class RtsEngine {
         } else {
           node.animalAggroTargetId = target.id;
         }
-        const step = stepWildBoarState(node, target ? { x: target.x, z: target.z } : null, dt, isAnimalBlocked);
+        const step = stepWildBoarState(
+          node,
+          target ? { x: target.x, z: target.z } : null,
+          dt,
+          isAnimalBlocked,
+          { x: node.animalHomeX ?? node.x, z: node.animalHomeZ ?? node.z },
+        );
 
         if (mesh) {
           mesh.position.set(node.x, 0, node.z);
@@ -7718,7 +7729,7 @@ export class RtsEngine {
             parts.blLeg.rotation.z = -stride * 0.92;
             const bob = moving ? Math.abs(Math.sin(phase * 2)) * 0.025 : Math.sin(phase) * 0.012;
             parts.bodyPivot.position.y += (0.72 + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
-            const headTilt = step.isCharging ? -0.13 : Math.sin(this.simTime * 1.4) * 0.025;
+            const headTilt = step.isCharging ? -0.13 : step.isReturning ? 0.075 : Math.sin(this.simTime * 1.4) * 0.025;
             parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
             parts.tailPivot.rotation.y = Math.sin(this.simTime * 4.4) * 0.26;
           }
