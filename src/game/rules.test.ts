@@ -3227,6 +3227,7 @@ test('battlefield visual hierarchy: workers stay compact while champions and sig
 
 test('battlefield particle budget: preserve key combat cues and reduce decorative bursts under load', () => {
   assert.equal(computeParticleBurstCount(12, 2, 40, 'dust'), 10);
+  assert.equal(computeParticleBurstCount(12, 2, 40, 'meat'), 10);
   assert.equal(computeParticleBurstCount(0, 0, 500, 'hit'), 0);
 
   const lowQualityHit = computeParticleBurstCount(18, 0, 520, 'hit');
