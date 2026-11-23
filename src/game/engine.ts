@@ -10137,7 +10137,7 @@ export class RtsEngine {
       // Mongol AI manages its Ovoo stance: extraction when safe, Yam relay for production/healing, war horn under threat.
       if (aiCiv.id === 'mongol') {
         for (const ovoo of aiBuildings.filter((building) => building.buildingType === 'ovoo_relay' && building.isConstructed)) {
-          const nearEnemy = aiHostileUnits.some((enemy) =>
+          const nearEnemy = this.units.some((enemy) =>
             !enemy.garrisonedInBuildingId && getDistance(ovoo.x, ovoo.z, enemy.x, enemy.z) <= 18
           );
           const nearMine = this.resourceNodes.some((node) =>
