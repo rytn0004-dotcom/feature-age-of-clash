@@ -166,8 +166,9 @@ export function shouldDeferBlockedWallConstructionTarget(
   next: BlockedWallConstructionTarget | undefined,
 ): boolean {
   return !!nextCommand &&
+    !!next &&
     nextCommand.type === 'build' &&
-    nextCommand.buildingId === next?.id &&
+    nextCommand.buildingId === next.id &&
     !!current.wallChainId &&
     current.id !== next.id &&
     current.isWall &&
