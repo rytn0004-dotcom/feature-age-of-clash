@@ -71,6 +71,7 @@ import {
   getTrainableUnitsForBuilding,
   getTrainingTimeMultiplier,
 } from './civilizations';
+import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -10168,11 +10169,15 @@ export class RtsEngine {
       const aiMaxPop = aiPop.max;
       const aiAge = this.ageByFaction[aiId] || 1;
 
-      // Mongol AI manages its Ovoo stance: extraction when safe, Yam relay for production/healing, war horn under threat.
+      // Mongol AI keeps each Ovoo in Yam mode for production, healing, or nearby threats;
+      // sacred extraction is preferred only when the local area is safe and a mine is nearby.
       if (aiCiv.id === 'mongol') {
         for (const ovoo of aiBuildings.filter((building) => building.buildingType === 'ovoo_relay' && building.isConstructed)) {
-          const nearEnemy = this.units.some((enemy) =>
-            !enemy.garrisonedInBuildingId && getDistance(ovoo.x, ovoo.z, enemy.x, enemy.z) <= 18
+          const nearEnemy = hasNearbyHostileUnit(
+            ovoo,
+            this.units,
+            (enemy) => this.isHostile(ovoo, enemy),
+            18,
           );
           const nearMine = this.resourceNodes.some((node) =>
             node.amount > 0 && (node.resourceType === 'gold' || node.resourceType === 'stone') &&
@@ -10182,15 +10187,25 @@ export class RtsEngine {
             (building.queue.length > 0 || !!building.activeTechId) &&
             getDistance(ovoo.x, ovoo.z, building.x, building.z) <= 16
           );
-          const wounded = aiArmy.some((unit) => unit.hp < unit.maxHp * 0.85 &&
+          const wounded = aiArmy.some((unit) => unit.hp > 0 && unit.hp < unit.maxHp * 0.85 &&
+            !unit.garrisonedInBuildingId &&
             getDistance(ovoo.x, ovoo.z, unit.x, unit.z) <= 13.5
           );
-          if (nearEnemy && ovoo.ovooMode !== 'sacred_extraction') this.toggleOvooMode(ovoo.id);
-          else if (!nearEnemy && (activeProduction || wounded) && ovoo.ovooMode === 'sacred_extraction') this.toggleOvooMode(ovoo.id);
-          else if (!nearEnemy && nearMine && !activeProduction && !wounded && ovoo.ovooMode !== 'sacred_extraction') this.toggleOvooMode(ovoo.id);
-          if (nearEnemy && ovoo.ovooHornCooldown === 0 && aiArmy.some((unit) =>
+          const nearbyFriendlyArmy = aiArmy.some((unit) =>
+            unit.hp > 0 && !unit.garrisonedInBuildingId &&
             getDistance(ovoo.x, ovoo.z, unit.x, unit.z) <= 16
-          )) this.triggerOvooWarHorn(ovoo.id);
+          );
+          const policy = evaluateMongolOvooPolicy({
+            currentMode: ovoo.ovooMode ?? 'yam_relay',
+            hasNearbyHostiles: nearEnemy,
+            hasNearbyMine: nearMine,
+            hasActiveProduction: activeProduction,
+            hasWoundedArmy: wounded,
+            hasNearbyFriendlyArmy: nearbyFriendlyArmy,
+            hornCooldown: ovoo.ovooHornCooldown ?? 0,
+          });
+          if (policy.shouldChangeMode) this.toggleOvooMode(ovoo.id);
+          if (policy.shouldTriggerWarHorn) this.triggerOvooWarHorn(ovoo.id);
         }
       }
 
