@@ -312,6 +312,7 @@ import {
   planWallChainExtension,
   type WallEndpointSnap,
 } from './wallSnapping';
+import { getConstructionApproachPoint } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
@@ -357,6 +358,8 @@ interface AiEconomyFlowState {
 const AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS = 12;
 const AI_WORKER_REBALANCE_INTERVAL_SECONDS = 6;
 const MAX_WALL_CHAIN_SEGMENTS = 120;
+const BUILD_APPROACH_CANDIDATE_COUNT = 8;
+const BUILD_APPROACH_RETRY_DELAY_SECONDS = 1.6;
 const MAX_PERFORMANCE_SAMPLES = 3600;
 
 export class RtsEngine {
@@ -5250,12 +5253,27 @@ export class RtsEngine {
 
     const builderCount = Math.min(workers.length, segments.length);
     if (builderCount > 0) {
+      const availableWorkers = [...workers];
       for (let index = 0; index < builderCount; index++) {
         const startIndex = Math.floor((index * segments.length) / builderCount);
         const endIndex = Math.floor(((index + 1) * segments.length) / builderCount);
         const assignedSegments = segments.slice(startIndex, endIndex);
         const first = assignedSegments[0];
-        const worker = workers[index];
+        let nearestWorkerIndex = 0;
+        let nearestWorkerDistance = Infinity;
+        for (let candidateIndex = 0; candidateIndex < availableWorkers.length; candidateIndex++) {
+          const candidate = availableWorkers[candidateIndex];
+          const distance = getDistance(candidate.x, candidate.z, first.x, first.z);
+          if (distance < nearestWorkerDistance) {
+            nearestWorkerDistance = distance;
+            nearestWorkerIndex = candidateIndex;
+          }
+        }
+        const worker = availableWorkers.splice(nearestWorkerIndex, 1)[0];
+        worker.buildApproachBuildingId = undefined;
+        worker.buildApproachIndex = undefined;
+        worker.buildApproachRetryAt = undefined;
+        worker.buildApproachRecoveryCount = undefined;
         worker.targetBuildingId = first.id;
         worker.targetResourceNodeId = undefined;
         worker.targetEntityId = undefined;
@@ -7058,7 +7076,12 @@ export class RtsEngine {
       }
     }
 
-    if (!unit.waypoints || unit.waypoints.length === 0 || (goalShifted && (!unit.pathCooldown || unit.pathCooldown <= 0))) {
+    const pathSearchReady = !unit.pathCooldown || unit.pathCooldown <= 0;
+    const needsPathSearch =
+      !unit.waypoints ||
+      (unit.waypoints.length === 0 && pathSearchReady) ||
+      (goalShifted && pathSearchReady);
+    if (needsPathSearch && pathSearchReady) {
       const measurePathSearch = this.performanceOverlayVisible;
       const isAiPathSearch = measurePathSearch && this.participants.some(
         (participant) => participant.id === unit.faction && participant.controller === 'ai'
@@ -7075,7 +7098,14 @@ export class RtsEngine {
       }
       unit.waypoints = nextWaypoints;
       unit.pathGoal = { x: goalX, z: goalZ };
-      unit.pathCooldown = 0.4;
+      // Failed routes wait longer before being retried; this avoids an A* loop
+      // when terrain fully separates a unit from its destination.
+      unit.pathCooldown = nextWaypoints.length > 0 ? 0.4 : 0.85;
+    }
+
+    if (!unit.waypoints || unit.waypoints.length === 0) {
+      unit.velocity = { x: 0, z: 0 };
+      return;
     }
 
     // Advance through waypoints cleanly
@@ -7088,7 +7118,7 @@ export class RtsEngine {
       }
     }
 
-    const activeTarget = unit.waypoints[0] || { x: goalX, z: goalZ };
+    const activeTarget = unit.waypoints[0];
     const distToWp = getDistance(unit.x, unit.z, activeTarget.x, activeTarget.z);
     if (distToWp <= 0.001) return;
 
@@ -8635,6 +8665,10 @@ export class RtsEngine {
     const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     const repairingStructure = !!bldg && bldg.isConstructed && !repairingWall && bldg.hp < bldg.maxHp;
     if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall && !repairingStructure)) {
+      unit.buildApproachBuildingId = undefined;
+      unit.buildApproachIndex = undefined;
+      unit.buildApproachRetryAt = undefined;
+      unit.buildApproachRecoveryCount = undefined;
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
       if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
@@ -8648,21 +8682,81 @@ export class RtsEngine {
         ? `🔧 修復${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`
         : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
 
-    // A breached wall is passable, so use its footprint to define the carpenter's work ring.
+    // Keep a stable approach slot for the active foundation. Recomputing the angle
+    // from the worker's moving position every tick caused the destination to orbit
+    // around the wall and made blocked multi-segment routes look like idle villagers.
     const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
     const workRingRad = bldgRad + 0.95;
-    let idHash = 0;
-    for (let i = 0; i < unit.id.length; i++) idHash = (idHash * 31 + unit.id.charCodeAt(i)) | 0;
-    const approachAng = Math.atan2(unit.z - bldg.z, unit.x - bldg.x) + ((idHash % 7) - 3) * 0.04;
-    const slotX = bldg.x + Math.cos(approachAng) * workRingRad;
-    const slotZ = bldg.z + Math.sin(approachAng) * workRingRad;
-
     const distToCenter = getDistance(unit.x, unit.z, bldg.x, bldg.z);
     const buildReach = Math.max(2.2, bldgRad + 1.55);
 
     if (distToCenter > buildReach) {
-      this.moveUnitAlongPath(unit, slotX, slotZ, dt);
-    } else {
+      if (unit.buildApproachBuildingId !== bldg.id) {
+        unit.buildApproachBuildingId = bldg.id;
+        unit.buildApproachIndex = 0;
+        unit.buildApproachAngle = Math.atan2(unit.z - bldg.z, unit.x - bldg.x);
+        unit.buildApproachRetryAt = undefined;
+        unit.buildApproachRecoveryCount = unit.pathRecoveryCount || 0;
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.pathCooldown = 0;
+      }
+
+      const advanceApproach = () => {
+        const nextIndex = ((unit.buildApproachIndex || 0) + 1) % BUILD_APPROACH_CANDIDATE_COUNT;
+        unit.buildApproachIndex = nextIndex;
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.pathCooldown = 0;
+        if (nextIndex === 0) {
+          unit.buildApproachRetryAt = this.simTime + BUILD_APPROACH_RETRY_DELAY_SECONDS;
+        }
+      };
+
+      // A route that stayed empty through its retry cooldown was unreachable.
+      // Move to another side rather than retrying the same blocked point forever.
+      const pathFailed =
+        !!unit.pathGoal &&
+        !!unit.waypoints &&
+        unit.waypoints.length === 0 &&
+        (!unit.pathCooldown || unit.pathCooldown <= 0);
+      const recoveryCount = unit.pathRecoveryCount || 0;
+      if (recoveryCount > (unit.buildApproachRecoveryCount || 0)) {
+        unit.buildApproachRecoveryCount = recoveryCount;
+        advanceApproach();
+      } else if (pathFailed) {
+        advanceApproach();
+      }
+
+      if (unit.buildApproachRetryAt && this.simTime < unit.buildApproachRetryAt) {
+        unit.velocity = { x: 0, z: 0 };
+        unit.currentActionText = '🧭 尋找可施工位置';
+        return;
+      }
+      unit.buildApproachRetryAt = undefined;
+
+      const approach = getConstructionApproachPoint(
+        { x: bldg.x, z: bldg.z },
+        Math.min(workRingRad, buildReach - 0.25),
+        unit.buildApproachAngle ?? 0,
+        unit.buildApproachIndex ?? 0,
+      );
+      this.moveUnitAlongPath(unit, approach.x, approach.z, dt);
+      if (!unit.waypoints?.length) {
+        unit.currentActionText = '🧭 尋找可施工位置';
+      } else {
+        unit.currentActionText = '🔨 前往施工位置';
+      }
+      return;
+    }
+
+    // Reached a valid construction ring; do not carry a stale candidate into
+    // the next wall segment or repair target.
+    unit.buildApproachBuildingId = undefined;
+    unit.buildApproachIndex = undefined;
+    unit.buildApproachRetryAt = undefined;
+    unit.buildApproachRecoveryCount = undefined;
+    {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
       const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
@@ -8728,6 +8822,10 @@ export class RtsEngine {
         this.spawnParticleBurst(bldg.x, 1.4, bldg.z, 'gold', 6);
         this.addFloatingText(bldg.x, 2.7, bldg.z, '🧱 城牆缺口已修復 · 防線恢復', '#86efac');
         unit.targetBuildingId = undefined;
+        unit.buildApproachBuildingId = undefined;
+        unit.buildApproachIndex = undefined;
+        unit.buildApproachRetryAt = undefined;
+        unit.buildApproachRecoveryCount = undefined;
         if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 修復完成'; }
         return;
       }
@@ -8736,6 +8834,10 @@ export class RtsEngine {
         bldg.hp = bldg.maxHp;
         bldg.hitFlashTimer = 0;
         unit.targetBuildingId = undefined;
+        unit.buildApproachBuildingId = undefined;
+        unit.buildApproachIndex = undefined;
+        unit.buildApproachRetryAt = undefined;
+        unit.buildApproachRecoveryCount = undefined;
         this.addFloatingText(bldg.x, 2.6, bldg.z, `🔧 ${bldg.buildingDef.name.split(' ')[0]}修復完成`, '#86efac');
         if (!this.tryDequeueCommand(unit)) {
           unit.state = 'idle';
@@ -8769,6 +8871,10 @@ export class RtsEngine {
         if (this.isHumanControlled(bldg.faction)) this.stats.buildingsConstructed++;
         if (this.selectedBuildingId === bldg.id) this.onSelectionChange?.();
         unit.targetBuildingId = undefined;
+        unit.buildApproachBuildingId = undefined;
+        unit.buildApproachIndex = undefined;
+        unit.buildApproachRetryAt = undefined;
+        unit.buildApproachRecoveryCount = undefined;
 
         const factionCiv = getCivilizationConfig(this.getCivilizationForFaction(bldg.faction));
         if (bldg.buildingType === factionCiv.uniqueBuildingType) {
