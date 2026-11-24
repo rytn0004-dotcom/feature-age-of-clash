@@ -151,3 +151,75 @@ test('collision broad phase: non-harvesters are kept clear of resource nodes and
   assert.ok(Math.abs(Math.hypot(soldier.x, soldier.z) - expected) < 1e-6);
   assert.deepEqual([farmWorker.x, farmWorker.z], [20, 0]);
 });
+
+
+test('wall preview broad-phase detects terrain, building and resource blockers', async () => {
+  const { isWallChainPreviewObstructed } = await import('./collision');
+  const placements = [{ x: 0, z: 0 }, { x: 2.7, z: 0 }];
+
+  assert.equal(isWallChainPreviewObstructed(placements, 1.48, [], []), false);
+  assert.equal(
+    isWallChainPreviewObstructed(
+      [{ x: 0, z: 0 }, { x: 2.7, z: 0 }],
+      1.48,
+      [],
+      [],
+      [],
+      [{ x: 1.35, z: 0, radius: 0.2, kind: 'cliff' } as any],
+      [],
+      [{ x: 0, z: 0 }, { x: 2.7, z: 0 }],
+    ),
+    true,
+    'terrain blockers between projected wall centres should turn the preview red',
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(
+      placements,
+      1.48,
+      [],
+      [],
+      [],
+      [{ x: 2.7, z: 0, radius: 0.2, kind: 'cliff' } as any],
+    ),
+    true,
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(
+      placements,
+      1.48,
+      [makeBuilding('blocking-house', 2.7, 0, 'house', 1.65)],
+      [],
+    ),
+    true,
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(
+      placements,
+      1.48,
+      [],
+      [{
+        id: 'blocking-mine',
+        x: 2.7,
+        z: 0,
+        amount: 100,
+        resourceType: 'gold',
+      } as unknown as ResourceNode],
+    ),
+    true,
+  );
+});
+
+test('wall preview broad-phase ignores destroyed buildings and depleted resource nodes', async () => {
+  const { isWallChainPreviewObstructed } = await import('./collision');
+  const placement = [{ x: 0, z: 0 }];
+  const destroyed = { ...makeBuilding('destroyed', 0, 0), hp: 0 };
+  const depleted = {
+    id: 'depleted',
+    x: 0,
+    z: 0,
+    amount: 0,
+    resourceType: 'gold',
+  } as unknown as ResourceNode;
+
+  assert.equal(isWallChainPreviewObstructed(placement, 1.48, [destroyed], [depleted]), false);
+});
