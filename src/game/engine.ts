@@ -320,6 +320,7 @@ import {
   accumulateActiveConstructionWorkerCount,
   assignWorkersToConstructionTargets,
   getConstructionApproachPoint,
+  shouldDeferBlockedWallConstructionTarget,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -8878,6 +8879,67 @@ export class RtsEngine {
     return this.beginFieldRamAssembly(this.humanPlayerId, selected, true);
   }
 
+  /**
+   * If the active wall segment has exhausted every approach direction, rotate
+   * it behind the remaining segments of the same chain. The worker can keep
+   * building reachable sections and will revisit this segment later.
+   */
+  private deferBlockedWallChainSegment(unit: UnitEntity, building: BuildingEntity): boolean {
+    const queue = unit.commandQueue;
+    const nextCommand = queue?.[0];
+    if (!queue?.length || nextCommand?.type !== 'build') return false;
+
+    const nextBuilding = this.buildings.find((candidate) => candidate.id === nextCommand.buildingId);
+    if (!shouldDeferBlockedWallConstructionTarget(
+      {
+        id: building.id,
+        wallChainId: building.wallChainId,
+        faction: building.faction,
+        hp: building.hp,
+        isWall: !!building.buildingDef.isWall,
+        isConstructed: building.isConstructed,
+      },
+      nextCommand,
+      nextBuilding
+        ? {
+            id: nextBuilding.id,
+            wallChainId: nextBuilding.wallChainId,
+            faction: nextBuilding.faction,
+            hp: nextBuilding.hp,
+            isWall: !!nextBuilding.buildingDef.isWall,
+            isConstructed: nextBuilding.isConstructed,
+          }
+        : undefined,
+    )) {
+      return false;
+    }
+
+    // Keep the chain's queued segments together and preserve later Shift orders.
+    let insertIndex = 0;
+    while (insertIndex < queue.length) {
+      const command = queue[insertIndex];
+      if (command.type !== 'build') break;
+      const queuedBuilding = this.buildings.find((candidate) => candidate.id === command.buildingId);
+      if (!queuedBuilding || queuedBuilding.wallChainId !== building.wallChainId || !queuedBuilding.buildingDef.isWall) break;
+      insertIndex++;
+    }
+    queue.splice(insertIndex, 0, { type: 'build', buildingId: building.id });
+
+    unit.targetBuildingId = undefined;
+    unit.buildApproachBuildingId = undefined;
+    unit.buildApproachIndex = undefined;
+    unit.buildApproachRetryAt = undefined;
+    unit.buildApproachRecoveryCount = undefined;
+    unit.buildApproachAngle = undefined;
+    unit.waypoints = undefined;
+    unit.pathGoal = undefined;
+    unit.pathCooldown = 0;
+
+    if (!this.tryDequeueCommand(unit)) return false;
+    unit.currentActionText = '🧱 此段受阻，先施工下一段';
+    return true;
+  }
+
   private stepUnitBuilding(unit: UnitEntity, dt: number) {
     if (!unit.targetBuildingId) {
       if (!this.tryDequeueCommand(unit)) {
@@ -8937,7 +8999,9 @@ export class RtsEngine {
         unit.pathCooldown = 0;
         if (nextIndex === 0) {
           unit.buildApproachRetryAt = this.simTime + BUILD_APPROACH_RETRY_DELAY_SECONDS;
+          if (this.deferBlockedWallChainSegment(unit, bldg)) return true;
         }
+        return false;
       };
 
       // A route that stayed empty through its retry cooldown was unreachable.
@@ -8948,12 +9012,13 @@ export class RtsEngine {
         unit.waypoints.length === 0 &&
         (!unit.pathCooldown || unit.pathCooldown <= 0);
       const recoveryCount = unit.pathRecoveryCount || 0;
-      if (recoveryCount > (unit.buildApproachRecoveryCount || 0)) {
-        unit.buildApproachRecoveryCount = recoveryCount;
-        advanceApproach();
-      } else if (pathFailed) {
-        advanceApproach();
-      }
+      const deferredToNextWallSegment =
+        recoveryCount > (unit.buildApproachRecoveryCount || 0)
+          ? (unit.buildApproachRecoveryCount = recoveryCount, advanceApproach())
+          : pathFailed
+            ? advanceApproach()
+            : false;
+      if (deferredToNextWallSegment) return;
 
       if (unit.buildApproachRetryAt && this.simTime < unit.buildApproachRetryAt) {
         unit.velocity = { x: 0, z: 0 };
