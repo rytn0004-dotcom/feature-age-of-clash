@@ -119,3 +119,46 @@ test('building scaffold lifecycle: removes the rising architecture facade frame 
   assert.equal(sharedGeometry.wasDisposed(), false, 'cached facade geometry must remain available to other buildings');
   assert.equal(building.userData.completedScaffoldRemoved, true);
 });
+
+
+test('building scaffold lifecycle: a late-added construction overlay is removed after the first completion scan', () => {
+  const building = new Group();
+  const originalBuildingBody = new Group();
+  originalBuildingBody.name = 'buildingBody';
+  building.add(originalBuildingBody);
+
+  const originalTraverse = building.traverse.bind(building);
+  let traverseCalls = 0;
+  building.traverse = (callback) => {
+    traverseCalls += 1;
+    return originalTraverse(callback);
+  };
+
+  removeBuildingScaffoldFromRoot(building);
+  assert.equal(traverseCalls, 1);
+  assert.equal(building.userData.completedScaffoldChildCount, 1);
+
+  // Civilization/age model refreshes may attach a temporary facade after the
+  // initial construction cleanup. A changed root child count must trigger one
+  // new scan rather than leaving the overlay in the finished building.
+  const lateFacade = new Group();
+  lateFacade.name = 'originalArchitectureFacadeKit';
+  lateFacade.userData.removeOnConstructionComplete = true;
+  lateFacade.userData.ownsGeometry = false;
+  const sharedGeometry = createTrackedGeometry();
+  const material = new MeshBasicMaterial();
+  lateFacade.add(new Mesh(sharedGeometry.geometry, material));
+  building.add(lateFacade);
+
+  removeBuildingScaffoldFromRoot(building);
+
+  assert.equal(lateFacade.parent, null);
+  assert.equal(building.getObjectByName('originalArchitectureFacadeKit'), undefined);
+  assert.equal(sharedGeometry.wasDisposed(), false, 'shared facade geometry must remain cached');
+  assert.equal(building.userData.completedScaffoldChildCount, 1);
+  assert.equal(traverseCalls, 2);
+
+  removeBuildingScaffoldFromRoot(building);
+  assert.equal(traverseCalls, 2, 'unchanged completed roots must not be rescanned each frame');
+  material.dispose();
+});
