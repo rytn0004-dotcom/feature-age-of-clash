@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CONSTRUCTION_APPROACH_DIRECTION_COUNT, getConstructionApproachPoint } from './constructionApproach';
+import {
+  CONSTRUCTION_APPROACH_DIRECTION_COUNT,
+  assignWorkersToConstructionTargets,
+  getConstructionApproachPoint,
+} from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
   const center = { x: 12, z: -7 };
@@ -23,4 +27,17 @@ test('construction approach candidate indices wrap safely', () => {
   const wrapped = getConstructionApproachPoint(center, 3, 0.25, 8);
   const first = getConstructionApproachPoint(center, 3, 0.25, 0);
   assert.deepEqual(wrapped, first);
+});
+test('construction targets are globally matched to the closest distinct workers', () => {
+  const workers = [{ x: 0, z: 0 }, { x: 100, z: 0 }];
+  const targets = [{ x: 49, z: 0 }, { x: 0, z: 0 }];
+
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [1, 0]);
+});
+
+test('construction matching leaves excess targets unassigned without duplicating workers', () => {
+  const workers = [{ x: 0, z: 0 }];
+  const targets = [{ x: 0, z: 0 }, { x: 10, z: 0 }];
+
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [0, -1]);
 });
