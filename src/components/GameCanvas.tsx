@@ -21,6 +21,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
   const dragStartRef = useRef<{ x: number; y: number; shiftKey: boolean } | null>(null);
   const lastClickedUnitRef = useRef<{ id: string; defId: string; time: number } | null>(null);
   const lastHoverCheckRef = useRef(0);
+  const wallPreviewPointRef = useRef<{ x: number; z: number } | null>(null);
+  const wallPreviewRafRef = useRef<number | null>(null);
+  const lastWallInfoRefreshRef = useRef(0);
   const [marqueeBox, setMarqueeBox] = useState<{
     left: number;
     top: number;
@@ -39,6 +42,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     tone: 'gather' | 'build' | 'attack' | 'rally' | 'select';
     iconKind?: 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison' | 'contested';
   } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (wallPreviewRafRef.current !== null) {
+        cancelAnimationFrame(wallPreviewRafRef.current);
+        wallPreviewRafRef.current = null;
+      }
+      wallPreviewPointRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -459,6 +472,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           if (engine.placementBuildingType === 'wall') {
             const result = engine.handleWallPlacementClick(worldPoint.x, worldPoint.z, e.shiftKey);
             setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
+            lastWallInfoRefreshRef.current = performance.now();
             if (result === 'committed') setWallPlacementInfo(null);
           } else {
             engine.confirmPlacement(worldPoint.x, worldPoint.z, e.shiftKey);
@@ -509,8 +523,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       if (hoverHint) setHoverHint(null);
       const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
       if (worldPoint) {
-        engine.updateWallPlacementPreview(worldPoint.x, worldPoint.z);
-        setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
+        wallPreviewPointRef.current = { x: worldPoint.x, z: worldPoint.z };
+        // Coalesce high-frequency pointer events into one scene update per display frame.
+        if (wallPreviewRafRef.current === null) {
+          wallPreviewRafRef.current = requestAnimationFrame(() => {
+            wallPreviewRafRef.current = null;
+            const activeEngine = engineRef.current;
+            const latestPoint = wallPreviewPointRef.current;
+            if (!activeEngine || activeEngine.placementBuildingType !== 'wall' || !latestPoint) return;
+            activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
+
+            // Terrain/overlap validation is substantially heavier than moving the ghost.
+            // Refresh the HUD at 10 Hz instead of once for every pointer event.
+            const now = performance.now();
+            if (now - lastWallInfoRefreshRef.current >= 100) {
+              setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
+              lastWallInfoRefreshRef.current = now;
+            }
+          });
+        }
       }
       return;
     }
