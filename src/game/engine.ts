@@ -7569,6 +7569,23 @@ export class RtsEngine {
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
+      if (hasQueuedFollowUp) {
+        unit.targetResourceNodeId = undefined;
+        unit.waypoints = undefined;
+        if (unit.carryingResource && unit.carryingResource.amount >= 1) {
+          unit.state = 'returning_resource';
+          unit.currentActionText = '🏃 送回剩餘資源後執行佇列';
+        } else {
+          unit.queuedGatherStopAfterDeposit = false;
+          if (!this.tryDequeueCommand(unit)) {
+            unit.state = 'idle';
+            unit.currentActionText = '💤 附近資源已採盡';
+          }
+        }
+        return;
+      }
+
       const carriedType = unit.carryingResource?.type;
       const fallbackType = node?.resourceType ?? carriedType;
       const nextNode = isBoat
@@ -7906,8 +7923,14 @@ export class RtsEngine {
 
       if (unit.carryingResource.amount >= unit.unitDef.stats.carryCapacity) {
         unit.waypoints = undefined;
+        if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
+          unit.targetResourceNodeId = undefined;
+          unit.queuedGatherStopAfterDeposit = true;
+        }
         unit.state = 'returning_resource';
-        unit.currentActionText = `🏃 運送物資回基地`;
+        unit.currentActionText = unit.queuedGatherStopAfterDeposit
+          ? '🏃 運送物資後執行佇列'
+          : '🏃 運送物資回基地';
       }
     }
   }
