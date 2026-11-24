@@ -309,6 +309,7 @@ import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNo
 import {
   findNearestRepairableWall,
   WallEndpointIndex,
+  WALL_ENDPOINT_INDEX_REFRESH_MS,
   isWallChainPointTooClose,
   planWallChainExtension,
   type WallEndpointSnap,
@@ -4937,7 +4938,7 @@ export class RtsEngine {
       this.wallEndpointIndexBuildingSource !== this.buildings ||
       this.wallEndpointIndexBuildingCount !== this.buildings.length ||
       this.wallEndpointIndexFaction !== this.humanPlayerId ||
-      now - this.wallEndpointIndexLastRefreshAt >= 100;
+      now - this.wallEndpointIndexLastRefreshAt >= WALL_ENDPOINT_INDEX_REFRESH_MS;
 
     if (shouldRefresh) {
       const walls = this.buildings.filter(
