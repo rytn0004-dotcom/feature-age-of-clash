@@ -3841,12 +3841,31 @@ export class RtsEngine {
       targetUnit.unitDefId === 'transport_boat' &&
       targetUnit.faction === playerUnits[0].faction
     ) {
-      this.boardTransport(targetUnit, playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege'));
+      const boarders = playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege');
+      if (queue) {
+        enqueueCommandsForUnits(boarders, () => ({ type: 'board', targetId: targetUnit!.id }));
+        this.onSelectionChange?.();
+      } else {
+        this.boardTransport(targetUnit, boarders);
+      }
       return;
     }
 
     sound.playAttackOrder();
     const target = targetUnit || this.buildings.find((b) => b.id === targetId);
+    if (queue) {
+      if (!target || target.hp <= 0 || !this.isHostile(playerUnits[0], target)) {
+        sound.playInvalid();
+        return;
+      }
+      const queuedCount = enqueueCommandsForUnits(playerUnits, () => ({ type: 'attack', targetId }));
+      if (queuedCount > 0) {
+        sound.playAttackOrder();
+        this.spawnCommandIndicator(target.x, target.z, 'attack');
+        this.onSelectionChange?.();
+      }
+      return;
+    }
     if (target) {
       this.spawnCommandIndicator(target.x, target.z, 'attack');
     }
