@@ -315,9 +315,9 @@ import {
   type WallEndpointSnap,
 } from './wallSnapping';
 import {
+  accumulateActiveConstructionWorkerCount,
   assignWorkersToConstructionTargets,
   getConstructionApproachPoint,
-  isActiveConstructionWorkerWithinReach,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -6615,9 +6615,7 @@ export class RtsEngine {
         repairingWall ? building.buildingDef.size : 0,
       );
       const buildReach = Math.max(2.2, buildingRadius + 1.55);
-      if (!isActiveConstructionWorkerWithinReach(worker, building, buildReach)) continue;
-
-      counts.set(building.id, (counts.get(building.id) ?? 0) + 1);
+      accumulateActiveConstructionWorkerCount(counts, worker, building, buildReach);
     }
   }
 
