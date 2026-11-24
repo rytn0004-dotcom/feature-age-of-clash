@@ -6,6 +6,8 @@ import {
   accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
   isActiveConstructionWorkerWithinReach,
+  shouldDeferBlockedWallConstructionTarget,
+  deferBlockedWallConstructionCommand,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
@@ -96,4 +98,121 @@ test('active construction worker counts accumulate once per target without alloc
   );
 
   assert.deepEqual([...counts.entries()], [['wall-2', 2]]);
+});
+
+
+test('blocked wall segments can be deferred behind the next unfinished segment in the same chain', () => {
+  const current = {
+    id: 'wall-2',
+    wallChainId: 'chain-a',
+    faction: 'blue',
+    hp: 1,
+    isWall: true,
+    isConstructed: false,
+  };
+  const next = {
+    ...current,
+    id: 'wall-3',
+  };
+
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      next,
+    ),
+    true,
+  );
+});
+
+test('blocked wall deferral never reorders unrelated or repair commands', () => {
+  const current = {
+    id: 'wall-2',
+    wallChainId: 'chain-a',
+    faction: 'blue',
+    hp: 1,
+    isWall: true,
+    isConstructed: false,
+  };
+  const sameChainNext = { ...current, id: 'wall-3' };
+
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'repair', buildingId: 'wall-3' },
+      sameChainNext,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, wallChainId: 'chain-b' },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, isConstructed: true },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, faction: 'red' },
+    ),
+    false,
+  );
+});
+
+
+test('blocked wall command moves behind its own chain but stays before unrelated queued orders', () => {
+  const queue = [
+    { type: 'build', buildingId: 'wall-3' },
+    { type: 'build', buildingId: 'wall-4' },
+    { type: 'move' },
+  ];
+  const chainById: Record<string, string> = {
+    'wall-3': 'chain-a',
+    'wall-4': 'chain-a',
+  };
+
+  assert.equal(
+    deferBlockedWallConstructionCommand(queue, 'wall-2', 'chain-a', (id) => chainById[id]),
+    true,
+  );
+  assert.deepEqual(queue, [
+    { type: 'build', buildingId: 'wall-3' },
+    { type: 'build', buildingId: 'wall-4' },
+    { type: 'build', buildingId: 'wall-2' },
+    { type: 'move' },
+  ]);
+});
+
+test('blocked wall command is not rotated across an unrelated command or another chain', () => {
+  const queue = [
+    { type: 'move' },
+    { type: 'build', buildingId: 'wall-other' },
+  ];
+  const original = queue.map((command) => ({ ...command }));
+
+  assert.equal(
+    deferBlockedWallConstructionCommand(queue, 'wall-2', 'chain-a', () => 'chain-a'),
+    false,
+  );
+  assert.deepEqual(queue, original);
+  assert.equal(
+    deferBlockedWallConstructionCommand(
+      [{ type: 'build', buildingId: 'wall-other' }],
+      'wall-2',
+      'chain-a',
+      () => 'chain-b',
+    ),
+    false,
+  );
 });
