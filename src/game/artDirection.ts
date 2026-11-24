@@ -852,6 +852,11 @@ export function createBuildingFacadeKit(
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = 'originalArchitectureFacadeKit';
+  // This coloured frame is a construction-stage visual overlay, not part of the
+  // finished building's silhouette. It is shared through geometry/material
+  // caches, so completion cleanup must detach it without disposing its assets.
+  group.userData.removeOnConstructionComplete = true;
+  group.userData.ownsGeometry = false;
   if (!FACADE_BUILDING_TYPES.has(type)) return group;
 
   const w = THREE.MathUtils.clamp(Number.isFinite(width) ? width : 3, 1.1, 12);

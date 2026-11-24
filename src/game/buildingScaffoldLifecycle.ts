@@ -1,13 +1,18 @@
 import type * as THREE from 'three';
 
-function disposeAndDetachScaffoldObject(scaffoldObject: THREE.Object3D): void {
+function disposeAndDetachScaffoldObject(
+  scaffoldObject: THREE.Object3D,
+  disposeGeometry = true,
+): void {
   scaffoldObject.visible = false;
-  const ownedGeometries = new Set<THREE.BufferGeometry>();
-  scaffoldObject.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (mesh.isMesh && mesh.geometry) ownedGeometries.add(mesh.geometry);
-  });
-  ownedGeometries.forEach((geometry) => geometry.dispose());
+  if (disposeGeometry) {
+    const ownedGeometries = new Set<THREE.BufferGeometry>();
+    scaffoldObject.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry) ownedGeometries.add(mesh.geometry);
+    });
+    ownedGeometries.forEach((geometry) => geometry.dispose());
+  }
 
   scaffoldObject.parent?.remove(scaffoldObject);
   scaffoldObject.clear();
@@ -23,7 +28,8 @@ export function removeCompletedBuildingScaffold(scaffoldGroup: THREE.Group): voi
 function isConstructionScaffoldObject(object: THREE.Object3D): boolean {
   return object.name === 'scaffoldGroup' ||
     object.name.startsWith('scaffold') ||
-    object.name.startsWith('instancedScaffold');
+    object.name.startsWith('instancedScaffold') ||
+    object.userData.removeOnConstructionComplete === true;
 }
 
 /**
@@ -48,6 +54,10 @@ export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void 
     return true;
   });
 
-  topLevelCandidates.forEach(disposeAndDetachScaffoldObject);
+  topLevelCandidates.forEach((object) => {
+    // Facade overlays reuse cached geometry across buildings. Detach their
+    // construction-only wrapper, but keep the shared cached buffers alive.
+    disposeAndDetachScaffoldObject(object, object.userData.ownsGeometry !== false);
+  });
   buildingRoot.userData.completedScaffoldRemoved = true;
 }

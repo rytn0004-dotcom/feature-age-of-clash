@@ -101,3 +101,21 @@ test('building scaffold lifecycle: completed roots without any scaffold remain s
   assert.doesNotThrow(() => removeBuildingScaffoldFromRoot(building));
   assert.equal(building.userData.completedScaffoldRemoved, true);
 });
+
+test('building scaffold lifecycle: removes the rising architecture facade frame after completion without disposing shared geometry', () => {
+  const building = new Group();
+  const facade = new Group();
+  facade.name = 'originalArchitectureFacadeKit';
+  facade.userData.removeOnConstructionComplete = true;
+  facade.userData.ownsGeometry = false;
+  const sharedGeometry = createTrackedGeometry();
+  facade.add(new Mesh(sharedGeometry.geometry, new MeshBasicMaterial()));
+  building.add(facade);
+
+  removeBuildingScaffoldFromRoot(building);
+
+  assert.equal(building.getObjectByName('originalArchitectureFacadeKit'), undefined);
+  assert.equal(facade.parent, null);
+  assert.equal(sharedGeometry.wasDisposed(), false, 'cached facade geometry must remain available to other buildings');
+  assert.equal(building.userData.completedScaffoldRemoved, true);
+});
