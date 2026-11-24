@@ -311,7 +311,6 @@ import {
   findNearestWallEndpoint,
   planWallChainExtension,
   type WallEndpointSnap,
-  type WallSnapBuilding,
 } from './wallSnapping';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
