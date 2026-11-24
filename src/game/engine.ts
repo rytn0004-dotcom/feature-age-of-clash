@@ -1380,6 +1380,14 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    // Release previous-match faction roster groups even when the next match has
+    // no AI and therefore will not ask the scheduler to rebuild them.
+    this.aiUnitGroupsSource = null;
+    this.aiUnitGroupsLength = -1;
+    this.aiUnitGroupsByFaction.clear();
+    this.aiBuildingGroupsSource = null;
+    this.aiBuildingGroupsLength = -1;
+    this.aiBuildingGroupsByFaction.clear();
     this.combatSpatialIndex = null;
     this.combatUnitLookupById.clear();
     this.combatBuildingLookupById.clear();
