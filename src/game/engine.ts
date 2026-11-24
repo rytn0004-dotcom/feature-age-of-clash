@@ -3455,7 +3455,7 @@ export class RtsEngine {
     this.onSelectionChange?.();
   }
 
-  public issueAttackMoveOrder(x: number, z: number) {
+  public issueAttackMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
@@ -3464,7 +3464,7 @@ export class RtsEngine {
     this.pendingCommandMode = 'normal';
     sound.playAttackOrder();
     this.spawnCommandIndicator(x, z, 'attack');
-    this.addFloatingText(x, 2.5, z, '⚔️ 攻擊推進指令', '#f87171');
+    this.addFloatingText(x, 2.5, z, queue ? '⚔️ 已加入攻擊推進佇列' : '⚔️ 攻擊推進指令', '#f87171');
 
     const count = playerUnits.length;
     const spacing = 1.6;
@@ -3476,6 +3476,12 @@ export class RtsEngine {
       const oz = (row - Math.floor((count - 1) / cols) / 2) * spacing;
       const gx = Math.max(-95, Math.min(95, x + ox));
       const gz = Math.max(-95, Math.min(95, z + oz));
+
+      if (queue) {
+        enqueueUnitCommand(unit, { type: 'attackMove', x: gx, z: gz });
+        unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
+        return;
+      }
 
       unit.targetX = gx;
       unit.targetZ = gz;
@@ -3493,7 +3499,6 @@ export class RtsEngine {
     });
     this.onSelectionChange?.();
   }
-
   public selectControlGroup(groupNum: number, centerCamera = false) {
     if (groupNum < 1 || groupNum > 9) return;
     const ids = (this.controlGroups[groupNum] || []).filter((uid) =>
