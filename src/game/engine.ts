@@ -3865,7 +3865,6 @@ export class RtsEngine {
       }
       const queuedCount = enqueueCommandsForUnits(playerUnits, () => ({ type: 'attack', targetId }));
       if (queuedCount > 0) {
-        sound.playAttackOrder();
         this.spawnCommandIndicator(target.x, target.z, 'attack');
         this.onSelectionChange?.();
       }
@@ -7153,8 +7152,10 @@ export class RtsEngine {
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
       this.clearFormationTacticalState(unit);
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -7212,6 +7213,7 @@ export class RtsEngine {
       this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
+      if (this.tryDequeueCommand(unit)) return;
       const followUp = this.selectNearbyCombatTarget(
         unit,
         Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
@@ -7557,8 +7559,10 @@ export class RtsEngine {
 
   private stepUnitGathering(unit: UnitEntity, dt: number) {
     if (!unit.targetResourceNodeId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -8259,8 +8263,10 @@ export class RtsEngine {
 
   private stepUnitBuilding(unit: UnitEntity, dt: number) {
     if (!unit.targetBuildingId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
