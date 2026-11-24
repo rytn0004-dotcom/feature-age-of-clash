@@ -8305,6 +8305,8 @@ export class RtsEngine {
     this.syncHumanResourcesAlias();
     this.fieldSiegeProjects.push(project);
     builders.forEach((unit) => {
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.state = 'assembling';
       unit.fieldAssemblyProjectId = project.id;
       unit.targetBuildingId = undefined;
