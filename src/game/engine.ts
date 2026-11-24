@@ -6824,7 +6824,7 @@ export class RtsEngine {
       if (shouldUnitRout({
         morale: ally.morale,
         isHumanControlled: this.isHumanControlled(ally.faction),
-        isWorker: ally.unitDef.category === 'worker',
+        isWorker: false,
         alreadyRouted: !!ally.moraleRoutGoal,
         cooldownReady: (ally.moraleRoutCooldownUntil ?? 0) <= this.simTime,
       })) {
@@ -6858,7 +6858,7 @@ export class RtsEngine {
     if (shouldUnitRout({
       morale: target.morale,
       isHumanControlled: this.isHumanControlled(target.faction),
-      isWorker: target.unitDef.category === 'worker',
+      isWorker: false,
       alreadyRouted: !!target.moraleRoutGoal,
       cooldownReady: (target.moraleRoutCooldownUntil ?? 0) <= this.simTime,
     })) {
