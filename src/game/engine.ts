@@ -72,6 +72,7 @@ import {
   getTrainingTimeMultiplier,
 } from './civilizations';
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
+import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -6044,6 +6045,7 @@ export class RtsEngine {
   }
 
   private clearFormationMovement(unit: UnitEntity): void {
+    unit.kitingRetreatGoal = undefined;
     unit.formationGroupId = undefined;
     unit.formationOrderOrigin = undefined;
     unit.formationOrderGoal = undefined;
@@ -6720,6 +6722,7 @@ export class RtsEngine {
         );
         if (nearbyThreat && nearbyThreat.id !== target.id && (shouldSwitchOffBuilding || nearbyThreat.hp < nearbyThreat.maxHp * 0.45)) {
           unit.targetEntityId = nearbyThreat.id;
+          unit.kitingRetreatGoal = undefined;
           unit.waypoints = undefined;
           target = nearbyThreat;
         }
@@ -6729,6 +6732,7 @@ export class RtsEngine {
     }
 
     if (!target || target.hp <= 0 || (target.type === 'unit' && (target as UnitEntity).garrisonedInBuildingId)) {
+      unit.kitingRetreatGoal = undefined;
       this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
@@ -6775,8 +6779,53 @@ export class RtsEngine {
         : getBuildingCollisionRadius(target as BuildingEntity);
     const effectiveDist = Math.max(0, dist - targetRadius);
     const tacticalSlot = this.resolveFormationTacticalSlot(unit, target, targetRadius);
+
+    // Mangudai use short, target-locked retreat paths against melee/cavalry threats.
+    // Coordinated formations retain their assigned tactical slots instead of kiting independently.
+    let kitingRetreating = false;
+    const kitingThreat =
+      unit.unitDefId === 'mongol_mangudai' &&
+      !unit.formationGroupId &&
+      target.type === 'unit' &&
+      ['melee', 'cavalry'].includes((target as UnitEntity).unitDef.category);
+    if (kitingThreat) {
+      const activeGoal = unit.kitingRetreatGoal;
+      if (activeGoal && activeGoal.targetId === target.id) {
+        if (getDistance(unit.x, unit.z, activeGoal.x, activeGoal.z) > 0.75) {
+          this.moveUnitAlongPath(unit, activeGoal.x, activeGoal.z, dt);
+          kitingRetreating = true;
+        } else {
+          unit.kitingRetreatGoal = undefined;
+        }
+      } else {
+        unit.kitingRetreatGoal = undefined;
+      }
+
+      if (!kitingRetreating && dist < 4.7) {
+        const retreatGoal = getMongolKitingRetreatGoal({
+          x: unit.x,
+          z: unit.z,
+          threatX: target.x,
+          threatZ: target.z,
+          triggerDistance: 4.7,
+          desiredDistance: Math.min(range - 0.35, 5.9),
+          worldLimit: 84,
+          isPositionClear: (x, z) => this.isLandPointClear(x, z, 0.65),
+        });
+        if (retreatGoal) {
+          unit.kitingRetreatGoal = { ...retreatGoal, targetId: target.id };
+          this.moveUnitAlongPath(unit, retreatGoal.x, retreatGoal.z, dt);
+          kitingRetreating = true;
+        }
+      }
+    } else {
+      unit.kitingRetreatGoal = undefined;
+    }
+    if (kitingRetreating) unit.currentActionText = '🏹 游擊後撤 · 保持射程';
+
     if (
       tacticalSlot &&
+      !kitingRetreating &&
       getDistance(unit.x, unit.z, tacticalSlot.x, tacticalSlot.z) > 0.9
     ) {
       this.moveUnitAlongPath(unit, tacticalSlot.x, tacticalSlot.z, dt);
@@ -6793,7 +6842,9 @@ export class RtsEngine {
     }
 
     if (effectiveDist > range) {
-      this.moveUnitAlongPath(unit, tacticalSlot?.x ?? target.x, tacticalSlot?.z ?? target.z, dt);
+      if (!kitingRetreating) {
+        this.moveUnitAlongPath(unit, tacticalSlot?.x ?? target.x, tacticalSlot?.z ?? target.z, dt);
+      }
     } else {
       // A unit already in weapon range is engaging, not movement-stalled.
       unit.stuckDuration = 0;

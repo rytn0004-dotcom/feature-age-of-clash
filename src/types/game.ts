@@ -314,6 +314,8 @@ export interface UnitEntity extends EntityCommon {
   slowUntil?: number;
   slowFactor?: number;
   attackMoveGoal?: { x: number; z: number } | null;
+  /** Target-locked short retreat waypoint used by Mongol Mangudai hit-and-run combat. */
+  kitingRetreatGoal?: { x: number; z: number; targetId: string };
   /** Shared order identity used to keep manually selected and AI squads moving cohesively. */
   formationGroupId?: string;
   /** Shared order vector; all living members of a squad use the same origin and destination. */
