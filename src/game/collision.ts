@@ -597,8 +597,22 @@ export function isWallChainPreviewObstructed(
   terrainRects: TerrainBlockedRect[] = [],
   terrainDiscs: TerrainBlockedDisc[] = [],
   bridges: TerrainPassableBridge[] = [],
+  pathPoints: readonly { x: number; z: number }[] = [],
 ): boolean {
   if (placements.length === 0) return false;
+
+  // Sample the continuous path so narrow rivers/cliffs cannot hide between pieces.
+  for (let index = 0; index < pathPoints.length - 1; index++) {
+    const start = pathPoints[index];
+    const end = pathPoints[index + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const sampleCount = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.65));
+    for (let sample = 0; sample <= sampleCount; sample++) {
+      const t = sample / sampleCount;
+      if (isPointInTerrainObstacle(start.x + dx * t, start.z + dz * t, terrainRects, terrainDiscs, bridges)) return true;
+    }
+  }
 
   const halfFootprint = footprintSize * 0.55;
   for (const placement of placements) {
