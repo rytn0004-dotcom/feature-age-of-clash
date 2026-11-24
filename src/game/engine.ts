@@ -73,6 +73,7 @@ import {
 } from './civilizations';
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
+import { getDirectionalAttackModifier } from './combatTactics';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -3309,6 +3310,7 @@ export class RtsEngine {
       u.targetResourceNodeId = undefined;
       u.targetBuildingId = undefined;
       u.attackMoveGoal = null;
+      u.kitingRetreatGoal = undefined;
       u.wallPatrolRoute = undefined;
       u.wallPatrolIndex = undefined;
       u.waypoints = undefined;
@@ -6674,6 +6676,42 @@ export class RtsEngine {
     }
   }
 
+  /** Calculates whether a unit is striking an enemy's exposed side or rear. */
+  private getUnitDirectionalAttack(
+    attacker: UnitEntity,
+    defender: UnitEntity,
+    attackerX = attacker.x,
+    attackerZ = attacker.z,
+  ) {
+    const velocityLength = Math.hypot(defender.velocity.x, defender.velocity.z);
+    let facingX = 0;
+    let facingZ = 0;
+
+    // A moving unit faces its travel vector; a stationary unit uses its combat-facing yaw.
+    if (velocityLength > 0.18) {
+      facingX = defender.velocity.x / velocityLength;
+      facingZ = defender.velocity.z / velocityLength;
+    } else {
+      const yaw = (defender as any)._desiredYaw;
+      if (!Number.isFinite(yaw)) {
+        return { zone: 'front' as const, multiplier: 1 };
+      }
+      facingX = Math.sin(yaw);
+      facingZ = Math.cos(yaw);
+    }
+
+    return getDirectionalAttackModifier({
+      attackerX,
+      attackerZ,
+      defenderX: defender.x,
+      defenderZ: defender.z,
+      defenderFacingX: facingX,
+      defenderFacingZ: facingZ,
+      attackerCategory: attacker.unitDef.category,
+      defenderCategory: defender.unitDef.category,
+    });
+  }
+
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
       this.clearFormationTacticalState(unit);
@@ -6877,6 +6915,7 @@ export class RtsEngine {
           }
         } else {
           let dmg: number;
+          let directionalZone: 'flank' | 'rear' | null = null;
           if (target.type === 'building') {
             const targetBldg = target as BuildingEntity;
             // Sustained sapping / torching on the same structure
@@ -6933,6 +6972,9 @@ export class RtsEngine {
               this.simTime,
               unit.unitDef.stats.bonusVsCategory
             );
+            const directional = this.getUnitDirectionalAttack(unit, target as UnitEntity);
+            dmg = Math.max(1, Math.round(dmg * directional.multiplier));
+            directionalZone = directional.zone === 'front' ? null : directional.zone;
             this.spawnParticleBurst(target.x, 0.9, target.z, 'hit', 5);
             this.spawnParticleBurst(target.x, 1.0, target.z, 'spark', 3);
           }
@@ -6954,7 +6996,15 @@ export class RtsEngine {
           if (this.isHumanControlled(target.faction)) {
             this.triggerUnderAttackAlert(target.x, target.z);
           }
-          this.addFloatingText(target.x, 2.2, target.z, `-${dmg}`, target.type === 'building' && unit.unitDef.category === 'siege' ? '#fb923c' : '#ef4444');
+          const directionalLabel = directionalZone === 'rear' ? '背襲 ' : directionalZone === 'flank' ? '側襲 ' : '';
+          const damageColor = directionalZone === 'rear'
+            ? '#fbbf24'
+            : directionalZone === 'flank'
+              ? '#c084fc'
+              : target.type === 'building' && unit.unitDef.category === 'siege'
+                ? '#fb923c'
+                : '#ef4444';
+          this.addFloatingText(target.x, 2.2, target.z, `${directionalLabel}-${dmg}`, damageColor);
           this.awardUnitXp(unit, 8);
 
           if (target.hp <= 0) {
@@ -9456,6 +9506,7 @@ export class RtsEngine {
         const attackerId = (proj as any).attackerId as string | undefined;
         const attacker = attackerId ? unitsById.get(attackerId) : undefined;
         let dmg: number;
+        let directionalZone: 'flank' | 'rear' | null = null;
         if (target.type === 'building') {
           const targetBldg = target as BuildingEntity;
           if (attacker) {
@@ -9496,6 +9547,16 @@ export class RtsEngine {
             this.simTime,
             attacker?.unitDef.stats.bonusVsCategory
           );
+          if (attacker) {
+            const directional = this.getUnitDirectionalAttack(
+              attacker,
+              target as UnitEntity,
+              proj.startX,
+              proj.startZ,
+            );
+            dmg = Math.max(1, Math.round(dmg * directional.multiplier));
+            directionalZone = directional.zone === 'front' ? null : directional.zone;
+          }
           this.spawnParticleBurst(
             target.x,
             1.1,
@@ -9516,12 +9577,20 @@ export class RtsEngine {
         if (this.isHumanControlled(target.faction)) {
           this.triggerUnderAttackAlert(target.x, target.z);
         }
+        const directionalLabel = directionalZone === 'rear' ? '背襲 ' : directionalZone === 'flank' ? '側襲 ' : '';
+        const damageColor = directionalZone === 'rear'
+          ? '#fbbf24'
+          : directionalZone === 'flank'
+            ? '#c084fc'
+            : target.type === 'building' && attacker?.unitDef.category === 'siege'
+              ? '#fb923c'
+              : '#f97316';
         this.addFloatingText(
           target.x,
           2.0,
           target.z,
-          `-${dmg}`,
-          target.type === 'building' && attacker?.unitDef.category === 'siege' ? '#fb923c' : '#f97316'
+          `${directionalLabel}-${dmg}`,
+          damageColor
         );
 
         if (attacker) {
