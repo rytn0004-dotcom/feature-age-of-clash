@@ -8914,16 +8914,13 @@ export class RtsEngine {
       return false;
     }
 
-    // Keep the chain's queued segments together and preserve later Shift orders.
-    let insertIndex = 0;
-    while (insertIndex < queue.length) {
-      const command = queue[insertIndex];
-      if (command.type !== 'build') break;
-      const queuedBuilding = this.buildings.find((candidate) => candidate.id === command.buildingId);
-      if (!queuedBuilding || queuedBuilding.wallChainId !== building.wallChainId || !queuedBuilding.buildingDef.isWall) break;
-      insertIndex++;
-    }
-    queue.splice(insertIndex, 0, { type: 'build', buildingId: building.id });
+    const deferred = deferBlockedWallConstructionCommand(
+      queue,
+      building.id,
+      building.wallChainId,
+      (buildingId) => this.buildings.find((candidate) => candidate.id === buildingId)?.wallChainId,
+    );
+    if (!deferred) return false;
 
     unit.targetBuildingId = undefined;
     unit.buildApproachBuildingId = undefined;
@@ -9012,12 +9009,13 @@ export class RtsEngine {
         unit.waypoints.length === 0 &&
         (!unit.pathCooldown || unit.pathCooldown <= 0);
       const recoveryCount = unit.pathRecoveryCount || 0;
-      const deferredToNextWallSegment =
-        recoveryCount > (unit.buildApproachRecoveryCount || 0)
-          ? (unit.buildApproachRecoveryCount = recoveryCount, advanceApproach())
-          : pathFailed
-            ? advanceApproach()
-            : false;
+      let deferredToNextWallSegment = false;
+      if (recoveryCount > (unit.buildApproachRecoveryCount || 0)) {
+        unit.buildApproachRecoveryCount = recoveryCount;
+        deferredToNextWallSegment = advanceApproach();
+      } else if (pathFailed) {
+        deferredToNextWallSegment = advanceApproach();
+      }
       if (deferredToNextWallSegment) return;
 
       if (unit.buildApproachRetryAt && this.simTime < unit.buildApproachRetryAt) {
