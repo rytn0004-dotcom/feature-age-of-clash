@@ -4035,11 +4035,17 @@ export class RtsEngine {
           unit.unitDef.category !== 'siege';
       } else if (next.type === 'build' || next.type === 'repair') {
         const building = this.buildings.find((entry) => entry.id === next.buildingId);
-        isValid = !!building && building.hp > 0 && (
-          next.type === 'build'
-            ? !building.isConstructed
-            : building.isConstructed && !!building.wallBreached && !!building.buildingDef.isWall
-        );
+        isValid = !!building &&
+          building.hp > 0 &&
+          building.faction === unit.faction &&
+          (
+            next.type === 'build'
+              ? !building.isConstructed
+              : building.isConstructed && (
+                  (!!building.wallBreached && !!building.buildingDef.isWall) ||
+                  building.hp < building.maxHp
+                )
+          );
       } else if (next.type === 'garrison') {
         const building = this.buildings.find((entry) => entry.id === next.buildingId);
         isValid = !!building &&
@@ -4073,7 +4079,8 @@ export class RtsEngine {
   public issueBuildOrder(buildingId: string, queue = false) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
-    if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
+    const isDamagedStructure = !!bldg && bldg.isConstructed && bldg.hp < bldg.maxHp;
+    if (!bldg || (bldg.isConstructed && !isWallRepair && !isDamagedStructure) || bldg.hp <= 0) return;
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
@@ -4098,7 +4105,7 @@ export class RtsEngine {
     const bName = bldg.buildingDef.name.split(' ')[0];
     if (queue) {
       const queuedCount = enqueueCommandsForUnits(workers, () => ({
-        type: isWallRepair ? 'repair' : 'build',
+        type: isWallRepair || isDamagedStructure ? 'repair' : 'build',
         buildingId,
       }));
       if (queuedCount > 0) {
@@ -4122,7 +4129,11 @@ export class RtsEngine {
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
       worker.state = 'building';
-      worker.currentActionText = isWallRepair ? '🧱 前往修復城牆' : `🔨 前往建造${bName}`;
+      worker.currentActionText = isWallRepair
+        ? '🧱 前往修復城牆'
+        : isDamagedStructure
+          ? `🔧 前往修復${bName}`
+          : `🔨 前往建造${bName}`;
     });
     this.onSelectionChange?.();
   }
