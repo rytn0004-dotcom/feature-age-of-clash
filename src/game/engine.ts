@@ -191,6 +191,7 @@ import {
   getUnitColliderRadius,
   isPlacementLocationValid,
   isPointInTerrainObstacle,
+  isWallChainPreviewObstructed,
   resolveUnitBuildingCollisions,
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
@@ -306,6 +307,7 @@ import {
   updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
+import { findNearestValidWallStartPoint, getAffordableWallSegmentCount } from './wallPlacement';
 import {
   findNearestRepairableWall,
   WallEndpointIndex,
@@ -601,6 +603,9 @@ export class RtsEngine {
   private wallPlacementPreviewMarkers: THREE.Mesh[] = [];
   private wallPlacementPreviewLine: THREE.Line | null = null;
   private wallPlacementPreviewIsValid = false;
+  private wallPlacementPreviewBlocked = false;
+  private wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
+  private wallPlacementPreviewTint = 0x22c55e;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
   private wallEndpointIndex = new WallEndpointIndex<BuildingEntity>();
@@ -4848,6 +4853,9 @@ export class RtsEngine {
       this.wallPlacementPoints = [];
       this.wallPlacementCursor = null;
       this.wallPlacementSnapTargetId = null;
+      this.wallPlacementPreviewBlocked = false;
+      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
+      this.wallPlacementPreviewTint = 0x22c55e;
       this.wallPlacementPointSnaps = [];
       this.wallPlacementGhostTemplate = this.createTranslucentBuildingPreview('wall', this.humanPlayerId, 0.42, 0x38bdf8);
       this.rebuildWallPlacementPreview();
@@ -5031,37 +5039,193 @@ export class RtsEngine {
     this.wallRepairPreviewTargetId = null;
   }
 
+  private buildWallPlacementPreviewPoints(): WallChainPoint[] {
+    const points = [...this.wallPlacementPoints];
+    if (this.wallPlacementCursor && points.length > 0) {
+      const last = points[points.length - 1];
+      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
+        points.push(this.wallPlacementCursor);
+      }
+    }
+    return points;
+  }
+
+  private applyWallPlacementPreviewTint(color: number): void {
+    this.wallPlacementPreviewTint = color;
+    if (this.wallPlacementPreviewLine) {
+      (this.wallPlacementPreviewLine.material as THREE.LineBasicMaterial).color.setHex(color);
+    }
+    for (const marker of this.wallPlacementPreviewMarkers) {
+      if (marker.userData.wallPreviewCursor && !marker.userData.wallPreviewSnappedCursor) {
+        (marker.material as THREE.MeshBasicMaterial).color.setHex(color);
+      }
+    }
+
+    // Ghost clones share the translucent template materials, so one traversal
+    // recolors every pooled segment without rebuilding or reloading any model.
+    this.wallPlacementGhostTemplate?.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        const colored = material as THREE.Material & { color?: THREE.Color };
+        colored.color?.setHex(color);
+      }
+    });
+  }
+
+  private refreshWallPlacementPreviewObstruction(
+    points: readonly WallChainPoint[],
+    placements: ReturnType<typeof layoutWallChain>,
+    force = false,
+  ): void {
+    const now = performance.now();
+    if (!force && now - this.wallPlacementPreviewCheckedAt < 100) return;
+
+    const obstacles = this.getTerrainNavObstacles();
+    this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
+      placements,
+      DEFAULT_BUILDINGS.wall.size,
+      this.buildings,
+      this.resourceNodes,
+      obstacles?.rects,
+      obstacles?.discs,
+      obstacles?.bridges,
+    );
+    this.wallPlacementPreviewCheckedAt = now;
+
+    const resources = this.getResourcesForFaction(this.humanPlayerId);
+    const affordable = getAffordableWallSegmentCount(
+      resources,
+      DEFAULT_BUILDINGS.wall.cost,
+      placements.length,
+    );
+    const withinLimit = placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS;
+    const hasAffordablePart = affordable > 0;
+    this.wallPlacementPreviewIsValid = withinLimit && !this.wallPlacementPreviewBlocked && hasAffordablePart;
+    this.applyWallPlacementPreviewTint(
+      this.wallPlacementPreviewBlocked || !hasAffordablePart
+        ? 0xef4444
+        : affordable < placements.length
+          ? 0xf59e0b
+          : 0x22c55e,
+    );
+  }
+
+  /** Formally validate one newly completed wall batch exactly once. */
+  private validateWallPlacementSection(points: readonly WallChainPoint[]): boolean {
+    const placements = layoutWallChain(points);
+    if (placements.length === 0 || placements.length > MAX_WALL_CHAIN_SEGMENTS) return false;
+
+    const obstacles = this.getTerrainNavObstacles();
+    if (this.findInvalidWallPathPoint(points, obstacles)) return false;
+
+    for (const placement of placements) {
+      if (!isPlacementLocationValid(
+        placement.x,
+        placement.z,
+        DEFAULT_BUILDINGS.wall.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obstacles?.rects,
+        obstacles?.discs,
+        obstacles?.bridges,
+        'wall',
+      )) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   public updateWallPlacementPreview(x: number, z: number) {
     if (this.placementBuildingType !== 'wall') return;
     const snap = this.findWallPlacementSnap({ x, z });
+    const nextCursor = snap?.point ?? { x, z };
     this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
-    this.wallPlacementCursor = snap?.point ?? { x, z };
+
+    const previous = this.wallPlacementCursor;
+    if (
+      previous &&
+      Math.abs(previous.x - nextCursor.x) < 0.035 &&
+      Math.abs(previous.z - nextCursor.z) < 0.035
+    ) {
+      return;
+    }
+
+    this.wallPlacementCursor = nextCursor;
     this.rebuildWallPlacementPreview();
   }
 
-  /** First left click starts a wall, Shift+left click adds a corner, plain left click finishes it. */
+  /** First click resolves a safe start; Shift clicks validate each batch; final click validates and commits the last batch. */
   public handleWallPlacementClick(x: number, z: number, addWaypoint = false): 'started' | 'waypoint' | 'committed' | 'invalid' {
     if (this.placementBuildingType !== 'wall') return 'invalid';
 
     const inputPoint = { x, z };
     const snap = this.findWallPlacementSnap(inputPoint, true);
-    const point = snap?.point ?? inputPoint;
-    this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
+    let point = snap?.point ?? inputPoint;
+
     if (this.wallPlacementPoints.length === 0) {
+      if (!snap) {
+        const startResolution = findNearestValidWallStartPoint(inputPoint, (candidate) => {
+          const obstacles = this.getTerrainNavObstacles();
+          return isPlacementLocationValid(
+            candidate.x,
+            candidate.z,
+            DEFAULT_BUILDINGS.wall.size,
+            this.buildings,
+            this.resourceNodes,
+            true,
+            obstacles?.rects,
+            obstacles?.discs,
+            obstacles?.bridges,
+            'wall',
+          );
+        });
+        if (!startResolution) {
+          this.addFloatingText(x, 2.5, z, '⚠️ 起點附近沒有可建造位置，請稍微移到空地', '#ef4444');
+          sound.playInvalid();
+          return 'invalid';
+        }
+        point = startResolution.point;
+        if (startResolution.offset >= 0.2) {
+          this.addFloatingText(point.x, 2.4, point.z, '🧭 起點已微調至可建造區域', '#67e8f9');
+        }
+      }
+
+      this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
       this.wallPlacementPoints = [point];
       this.wallPlacementPointSnaps = [snap];
       this.wallPlacementCursor = point;
+      this.wallPlacementPreviewBlocked = false;
+      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.rebuildWallPlacementPreview();
-      this.spawnCommandIndicator(x, z, 'build');
-      this.addFloatingText(x, 2.4, z, '📍 城牆起點已設定，移動滑鼠拉出牆線', '#67e8f9');
+      this.spawnCommandIndicator(point.x, point.z, 'build');
+      this.addFloatingText(point.x, 2.4, point.z, '📍 起點已設定，移動滑鼠預覽城牆', '#67e8f9');
       sound.playOrder();
       this.onSelectionChange?.();
       return 'started';
     }
 
+    this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
     const previous = this.wallPlacementPoints[this.wallPlacementPoints.length - 1];
     if (isWallChainPointTooClose(previous, point)) {
       this.addFloatingText(x, 2.4, z, '⚠️ 牆段太短，請拉開至少 0.75 單位', '#ef4444');
+      sound.playInvalid();
+      return 'invalid';
+    }
+
+    // A Shift-click validates only the newly drawn section and stores that
+    // verified waypoint. The final click validates only the last unverified
+    // section, never the complete polyline a second time.
+    if (!this.validateWallPlacementSection([previous, point])) {
+      this.wallPlacementCursor = point;
+      this.wallPlacementPreviewBlocked = true;
+      this.wallPlacementPreviewCheckedAt = performance.now();
+      this.applyWallPlacementPreviewTint(0xef4444);
+      this.rebuildWallPlacementPreview();
+      this.addFloatingText(x, 2.5, z, '⚠️ 這一段城牆碰到障礙物，請調整路線', '#ef4444');
       sound.playInvalid();
       return 'invalid';
     }
@@ -5070,9 +5234,11 @@ export class RtsEngine {
       this.wallPlacementPoints = [...this.wallPlacementPoints, point];
       this.wallPlacementPointSnaps = [...this.wallPlacementPointSnaps, snap];
       this.wallPlacementCursor = point;
+      this.wallPlacementPreviewBlocked = false;
+      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.rebuildWallPlacementPreview();
-      this.spawnCommandIndicator(x, z, 'build');
-      this.addFloatingText(x, 2.4, z, '↪️ 城牆轉折點已固定，繼續拉出下一段', '#67e8f9');
+      this.spawnCommandIndicator(point.x, point.z, 'build');
+      this.addFloatingText(point.x, 2.4, point.z, '↪️ 本段已驗證，轉折點固定，繼續規劃', '#67e8f9');
       sound.playOrder();
       this.onSelectionChange?.();
       return 'waypoint';
@@ -5080,7 +5246,7 @@ export class RtsEngine {
 
     const completedPoints = [...this.wallPlacementPoints, point];
     const completedSnaps = [...this.wallPlacementPointSnaps, snap];
-    const committed = this.commitWallChain(completedPoints, completedSnaps);
+    const committed = this.commitWallChain(completedPoints, completedSnaps, true);
     if (!committed) {
       this.wallPlacementCursor = point;
       this.rebuildWallPlacementPreview();
@@ -5093,62 +5259,34 @@ export class RtsEngine {
   }
 
   public getWallPlacementPreviewInfo() {
-    const points = [...this.wallPlacementPoints];
-    if (this.wallPlacementCursor && points.length > 0) {
-      const last = points[points.length - 1];
-      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
-        points.push(this.wallPlacementCursor);
-      }
-    }
-
-    const bDef = DEFAULT_BUILDINGS.wall;
+    const points = this.buildWallPlacementPreviewPoints();
     const placements = layoutWallChain(points);
-    const cost = calculateWallChainCost(placements.length, bDef.cost);
-    const obs = this.getTerrainNavObstacles();
-    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
-    const invalidCount = placements.reduce((count, segment) => {
-      const valid = isPlacementLocationValid(
-        segment.x,
-        segment.z,
-        bDef.size,
-        this.buildings,
-        this.resourceNodes,
-        true,
-        obs?.rects,
-        obs?.discs,
-        obs?.bridges,
-        'wall'
-      );
-      return count + (valid ? 0 : 1);
-    }, 0) + (invalidPathPoint ? 1 : 0);
-
-    const resourceState = this.getResourcesForFaction(this.humanPlayerId);
-    const canAffordCost = canAfford(resourceState, cost);
-    const isValid =
-      placements.length > 0 &&
-      placements.length <= MAX_WALL_CHAIN_SEGMENTS &&
-      invalidCount === 0 &&
-      canAffordCost;
-    this.wallPlacementPreviewIsValid = isValid;
-    if (this.wallPlacementPreviewLine) {
-      (this.wallPlacementPreviewLine.material as THREE.LineBasicMaterial).color.setHex(
-        isValid ? 0x22c55e : 0xef4444
-      );
-    }
-    this.wallPlacementPreviewMarkers.forEach((marker) => {
-      if (marker.userData.wallPreviewCursor && !marker.userData.wallPreviewSnappedCursor) {
-        (marker.material as THREE.MeshBasicMaterial).color.setHex(isValid ? 0x22c55e : 0xef4444);
-      }
-    });
+    this.refreshWallPlacementPreviewObstruction(points, placements);
+    const cost = calculateWallChainCost(placements.length, DEFAULT_BUILDINGS.wall.cost);
+    const resources = this.getResourcesForFaction(this.humanPlayerId);
+    const affordableSegmentCount = getAffordableWallSegmentCount(
+      resources,
+      DEFAULT_BUILDINGS.wall.cost,
+      placements.length,
+    );
 
     return {
       pointCount: this.wallPlacementPoints.length,
       segmentCount: placements.length,
-      distance: points.slice(1).reduce((sum, point, index) => sum + getDistance(points[index].x, points[index].z, point.x, point.z), 0),
+      distance: points.slice(1).reduce(
+        (sum, point, index) =>
+          sum + getDistance(points[index].x, points[index].z, point.x, point.z),
+        0,
+      ),
       cost,
-      canAfford: canAffordCost,
-      invalidCount,
-      isValid,
+      canAfford: affordableSegmentCount >= placements.length,
+      affordableSegmentCount,
+      blocked: this.wallPlacementPreviewBlocked,
+      isValid:
+        placements.length > 0 &&
+        placements.length <= MAX_WALL_CHAIN_SEGMENTS &&
+        !this.wallPlacementPreviewBlocked &&
+        affordableSegmentCount > 0,
       snapped: !!this.wallPlacementSnapTargetId,
       snapTargetId: this.wallPlacementSnapTargetId,
     };
@@ -5178,7 +5316,8 @@ export class RtsEngine {
 
   private commitWallChain(
     points: readonly WallChainPoint[],
-    pointSnaps: readonly (WallEndpointSnap<BuildingEntity> | null)[] = []
+    pointSnaps: readonly (WallEndpointSnap<BuildingEntity> | null)[] = [],
+    prevalidated = false,
   ): boolean {
     const placements = layoutWallChain(points);
     if (placements.length === 0) {
@@ -5196,41 +5335,58 @@ export class RtsEngine {
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     if (bDef.requiredAge && currentAge < bDef.requiredAge) return false;
 
-    const obs = this.getTerrainNavObstacles();
-    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
-    if (invalidPathPoint) {
-      this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
-      sound.playInvalid();
-      return false;
+    if (!prevalidated) {
+      const obs = this.getTerrainNavObstacles();
+      const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
+      if (invalidPathPoint) {
+        this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
+        sound.playInvalid();
+        return false;
+      }
+
+      const firstInvalid = placements.find((segment) =>
+        !isPlacementLocationValid(
+          segment.x,
+          segment.z,
+          bDef.size,
+          this.buildings,
+          this.resourceNodes,
+          true,
+          obs?.rects,
+          obs?.discs,
+          obs?.bridges,
+          'wall'
+        )
+      );
+      if (firstInvalid) {
+        this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
+        sound.playInvalid();
+        return false;
+      }
     }
 
-    const firstInvalid = placements.find((segment) =>
-      !isPlacementLocationValid(
-        segment.x,
-        segment.z,
-        bDef.size,
-        this.buildings,
-        this.resourceNodes,
-        true,
-        obs?.rects,
-        obs?.discs,
-        obs?.bridges,
-        'wall'
-      )
-    );
-    if (firstInvalid) {
-      this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
-      sound.playInvalid();
-      return false;
-    }
-
-    const cost = calculateWallChainCost(placements.length, bDef.cost);
     const humanRes = this.getResourcesForFaction(this.humanPlayerId);
-    if (!canAfford(humanRes, cost)) {
-      this.addFloatingText(this.cameraTarget.x, 2.8, this.cameraTarget.z, `⚠️ 城牆需要木材 ${cost.wood}、石料 ${cost.stone}，目前資源不足`, '#ef4444');
+    const requestedSegmentCount = placements.length;
+    const affordableSegmentCount = getAffordableWallSegmentCount(
+      humanRes,
+      bDef.cost,
+      requestedSegmentCount,
+    );
+    if (affordableSegmentCount <= 0) {
+      this.addFloatingText(
+        this.cameraTarget.x,
+        2.8,
+        this.cameraTarget.z,
+        `⚠️ 資源不足，至少需要木材 ${bDef.cost.wood || 0}、石料 ${bDef.cost.stone || 0} 才能建造第一段`,
+        '#ef4444',
+      );
       sound.playInvalid();
       return false;
     }
+
+    const partiallyAffordable = affordableSegmentCount < requestedSegmentCount;
+    if (partiallyAffordable) placements.splice(affordableSegmentCount);
+    const cost = calculateWallChainCost(placements.length, bDef.cost);
 
     this.resourcesByFaction[this.humanPlayerId] = deductCost(humanRes, cost);
     this.syncHumanResourcesAlias();
@@ -5238,7 +5394,7 @@ export class RtsEngine {
 
     const generatedChainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const startSnap = pointSnaps.length === points.length ? pointSnaps[0] : null;
-    const endSnap = pointSnaps.length === points.length ? pointSnaps[pointSnaps.length - 1] : null;
+    const endSnap = !partiallyAffordable && pointSnaps.length === points.length ? pointSnaps[pointSnaps.length - 1] : null;
     const hasIntermediateSnap = pointSnaps.slice(1, -1).some(Boolean);
     const canExtendAtSingleEndpoint =
       !hasIntermediateSnap &&
@@ -5326,12 +5482,15 @@ export class RtsEngine {
     sound.playConstruct();
     this.spawnCommandIndicator(points[0].x, points[0].z, 'build');
     this.spawnCommandIndicator(points[points.length - 1].x, points[points.length - 1].z, 'build');
+    const lastCommittedSegment = segments[segments.length - 1];
     this.addFloatingText(
-      points[points.length - 1].x,
+      lastCommittedSegment.x,
       3.0,
-      points[points.length - 1].z,
-      `🧱 已規劃 ${segments.length} 段城牆 · 木材 ${cost.wood} · 石料 ${cost.stone}`,
-      '#86efac'
+      lastCommittedSegment.z,
+      partiallyAffordable
+        ? `🧱 資源有限，已規劃可負擔的 ${segments.length}/${requestedSegmentCount} 段 · 木材 ${cost.wood} · 石料 ${cost.stone}`
+        : `🧱 已規劃 ${segments.length} 段城牆 · 木材 ${cost.wood} · 石料 ${cost.stone}`,
+      partiallyAffordable ? '#fbbf24' : '#86efac'
     );
     return true;
   }
@@ -5414,7 +5573,7 @@ export class RtsEngine {
       position.needsUpdate = true;
       geometry.setDrawRange(0, previewPoints.length);
       (line.material as THREE.LineBasicMaterial).color.setHex(
-        this.wallPlacementPreviewIsValid ? 0x22c55e : 0xef4444
+        this.wallPlacementPreviewTint
       );
     }
 
@@ -5452,7 +5611,7 @@ export class RtsEngine {
         isSnappedCursor
           ? 0x22d3ee
           : isCursor
-            ? this.wallPlacementPreviewIsValid ? 0x22c55e : 0xef4444
+            ? this.wallPlacementPreviewTint
             : index === 0 ? 0xfbbf24 : 0x38bdf8
       );
     }
@@ -5550,6 +5709,9 @@ export class RtsEngine {
     this.wallPlacementSnapTargetId = null;
     this.wallPlacementPointSnaps = [];
     this.wallPlacementPreviewIsValid = false;
+    this.wallPlacementPreviewBlocked = false;
+    this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
+    this.wallPlacementPreviewTint = 0x22c55e;
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
       for (const child of [...this.wallPlacementPreviewGroup.children]) {
