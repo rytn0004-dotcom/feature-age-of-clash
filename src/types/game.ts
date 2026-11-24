@@ -294,7 +294,7 @@ export interface EntityCommon {
 }
 
 export type UnitQueuedCommand =
-  | { type: 'move'; x: number; z: number }
+  | { type: 'move'; x: number; z: number; unload?: boolean }
   | { type: 'attackMove'; x: number; z: number }
   | { type: 'gather'; nodeId: string }
   | { type: 'attack'; targetId: string }
@@ -387,6 +387,8 @@ export interface UnitEntity extends EntityCommon {
   transportCargoIds?: string[];
   /** Per-unit Shift queue; each unit executes its own FIFO order sequence. */
   commandQueue?: UnitQueuedCommand[];
+  /** A queued gather task ends after its next delivery when more orders follow. */
+  queuedGatherStopAfterDeposit?: boolean;
 }
 
 export interface BuildingEntity extends EntityCommon {
