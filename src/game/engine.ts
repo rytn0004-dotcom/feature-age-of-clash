@@ -3310,7 +3310,7 @@ export class RtsEngine {
       u.targetResourceNodeId = undefined;
       u.targetBuildingId = undefined;
       u.attackMoveGoal = null;
-      u.kitingRetreatGoal = undefined;
+      this.clearFormationMovement(u);
       u.wallPatrolRoute = undefined;
       u.wallPatrolIndex = undefined;
       u.waypoints = undefined;
