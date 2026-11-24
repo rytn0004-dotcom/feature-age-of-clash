@@ -27,6 +27,16 @@ export interface WallEndpointSnap<T extends WallSnapBuilding = WallSnapBuilding>
 export const WALL_ENDPOINT_SNAP_RADIUS = 1.65;
 /** Workers can issue a repair order by right-clicking near a damaged wall segment. */
 export const WALL_REPAIR_SNAP_RADIUS = 2.35;
+/** Minimum distance between successive wall-chain waypoints after endpoint snapping. */
+export const MIN_WALL_CHAIN_POINT_SPACING = 0.75;
+
+export function isWallChainPointTooClose(
+  previous: { x: number; z: number },
+  next: { x: number; z: number },
+  minimumDistance = MIN_WALL_CHAIN_POINT_SPACING,
+): boolean {
+  return Math.hypot(next.x - previous.x, next.z - previous.z) < minimumDistance;
+}
 
 interface WallAnchor<T extends WallSnapBuilding> {
   point: { x: number; z: number };

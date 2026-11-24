@@ -309,6 +309,7 @@ import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNo
 import {
   findNearestRepairableWall,
   findNearestWallEndpoint,
+  isWallChainPointTooClose,
   planWallChainExtension,
   type WallEndpointSnap,
 } from './wallSnapping';
@@ -5023,7 +5024,7 @@ export class RtsEngine {
     }
 
     const previous = this.wallPlacementPoints[this.wallPlacementPoints.length - 1];
-    if (getDistance(previous.x, previous.z, x, z) < 0.75) {
+    if (isWallChainPointTooClose(previous, point)) {
       this.addFloatingText(x, 2.4, z, '⚠️ 牆段太短，請拉開至少 0.75 單位', '#ef4444');
       sound.playInvalid();
       return 'invalid';

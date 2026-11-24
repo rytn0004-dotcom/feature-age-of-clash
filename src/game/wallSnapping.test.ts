@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   findNearestRepairableWall,
   findNearestWallEndpoint,
+  isWallChainPointTooClose,
   planWallChainExtension,
   WALL_ENDPOINT_SNAP_RADIUS,
 } from './wallSnapping';
@@ -162,4 +163,19 @@ test('chain extension refuses to renumber chains with destroyed gaps', () => {
   const snap = findNearestWallEndpoint({ x: 6.75, z: 0 }, walls);
   assert.ok(snap);
   assert.equal(planWallChainExtension(walls, snap, 1, 'start', 'fallback'), null);
+});
+
+
+test('wall waypoint spacing is checked after endpoint snapping, not against the raw cursor', () => {
+  const previous = { x: 0, z: 0 };
+  const rawCursor = { x: 1.6, z: 0 };
+  const snappedEndpoint = { x: 0.1, z: 0 };
+
+  assert.equal(isWallChainPointTooClose(previous, rawCursor), false);
+  assert.equal(isWallChainPointTooClose(previous, snappedEndpoint), true);
+  assert.equal(
+    isWallChainPointTooClose(previous, { x: 0.75, z: 0 }),
+    false,
+    'the minimum spacing is inclusive',
+  );
 });
