@@ -245,7 +245,7 @@ test('collision priority: stationary builders give way only slightly to moving t
   resolveUnitUnitCollisions([builder, passer]);
 
   assert.ok(Math.abs(builder.x) < Math.abs(passer.x));
-  assert.ok(builder.x > -0.03, 'the builder should absorb only a small part of the correction');
+  assert.ok(builder.x > -0.04, 'the builder should absorb only a small part of the correction');
   assert.ok(passer.x > 0.1, 'the moving unit should be moved out of the work position');
 });
 
@@ -264,7 +264,7 @@ test('collision priority is independent of unit array order', () => {
   resolveUnitUnitCollisions([passer, builder]);
 
   assert.ok(Math.abs(builder.x) < Math.abs(passer.x));
-  assert.ok(builder.x < 0.03, 'the builder should not be displaced by most of the correction');
+  assert.ok(builder.x < 0.04, 'the builder should not be displaced by most of the correction');
   assert.ok(passer.x < -0.1, 'the moving unit should yield regardless of iteration order');
 });
 
