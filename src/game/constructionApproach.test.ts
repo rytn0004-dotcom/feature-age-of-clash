@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   CONSTRUCTION_APPROACH_DIRECTION_COUNT,
   assignWorkersToConstructionTargets,
+  accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
+  isActiveConstructionWorkerWithinReach,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
@@ -40,4 +42,58 @@ test('construction matching leaves excess targets unassigned without duplicating
   const targets = [{ x: 0, z: 0 }, { x: 10, z: 0 }];
 
   assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [0, -1]);
+});
+
+
+test('active construction worker counting matches target, faction, health, state and reach', () => {
+  const target = { id: 'wall-2', faction: 'blue', x: 10, z: 10 };
+  const base = {
+    x: 10,
+    z: 10,
+    hp: 100,
+    faction: 'blue',
+    state: 'building',
+    targetBuildingId: 'wall-2',
+  };
+
+  assert.equal(isActiveConstructionWorkerWithinReach(base, target, 2.5), true);
+  assert.equal(
+    isActiveConstructionWorkerWithinReach({ ...base, x: 12.5 }, target, 2.5),
+    true,
+    'the work-ring boundary is inclusive',
+  );
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, x: 12.51 }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, hp: 0 }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, faction: 'red' }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, state: 'moving' }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, targetBuildingId: 'wall-3' }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...base, garrisonedInBuildingId: 'keep-1' }, target, 2.5), false);
+  assert.equal(isActiveConstructionWorkerWithinReach(base, target, Number.NaN), false);
+});
+
+
+test('active construction worker counts accumulate once per target without allocating worker lists', () => {
+  const target = { id: 'wall-2', faction: 'blue', x: 0, z: 0 };
+  const makeWorker = (id: string, x: number) => ({
+    id,
+    x,
+    z: 0,
+    hp: 100,
+    faction: 'blue',
+    state: 'building',
+    targetBuildingId: 'wall-2',
+  });
+  const counts = new Map<string, number>();
+
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('a', 0), target, 2.5);
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('b', 1), target, 2.5);
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('outside', 3), target, 2.5);
+  accumulateActiveConstructionWorkerCount(
+    counts,
+    { ...makeWorker('wrong-target', 0), targetBuildingId: 'wall-3' },
+    target,
+    2.5,
+  );
+
+  assert.deepEqual([...counts.entries()], [['wall-2', 2]]);
 });

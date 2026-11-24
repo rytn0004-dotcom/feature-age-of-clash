@@ -86,3 +86,56 @@ export function assignWorkersToConstructionTargets(
 
   return assignments;
 }
+
+
+export interface ConstructionWorkerCountCandidate {
+  x: number;
+  z: number;
+  hp: number;
+  faction: string;
+  state?: string;
+  targetBuildingId?: string;
+  garrisonedInBuildingId?: string | null;
+}
+
+export interface ConstructionWorkerCountTarget {
+  id: string;
+  x: number;
+  z: number;
+  faction: string;
+}
+
+/** Preserve active-builder eligibility while avoiding a square-root distance calculation. */
+export function isActiveConstructionWorkerWithinReach(
+  worker: ConstructionWorkerCountCandidate,
+  target: ConstructionWorkerCountTarget,
+  buildReach: number,
+): boolean {
+  if (
+    !Number.isFinite(buildReach) ||
+    buildReach < 0 ||
+    worker.hp <= 0 ||
+    worker.faction !== target.faction ||
+    worker.state !== 'building' ||
+    worker.targetBuildingId !== target.id ||
+    !!worker.garrisonedInBuildingId
+  ) {
+    return false;
+  }
+
+  const dx = worker.x - target.x;
+  const dz = worker.z - target.z;
+  return dx * dx + dz * dz <= buildReach * buildReach;
+}
+
+
+/** Add one eligible worker to a reusable per-building count map. */
+export function accumulateActiveConstructionWorkerCount(
+  counts: Map<string, number>,
+  worker: ConstructionWorkerCountCandidate,
+  target: ConstructionWorkerCountTarget,
+  buildReach: number,
+): void {
+  if (!isActiveConstructionWorkerWithinReach(worker, target, buildReach)) return;
+  counts.set(target.id, (counts.get(target.id) ?? 0) + 1);
+}
