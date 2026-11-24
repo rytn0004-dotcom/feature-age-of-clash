@@ -38,7 +38,13 @@ function isConstructionScaffoldObject(object: THREE.Object3D): boolean {
  * reaches its completed state, so this expensive tree scan only needs to run once.
  */
 export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void {
-  if (buildingRoot.userData.completedScaffoldRemoved) return;
+  const completedChildCount = buildingRoot.userData.completedScaffoldChildCount;
+  if (
+    buildingRoot.userData.completedScaffoldRemoved &&
+    completedChildCount === buildingRoot.children.length
+  ) {
+    return;
+  }
 
   const candidates: THREE.Object3D[] = [];
   buildingRoot.traverse((object) => {
@@ -60,4 +66,5 @@ export function removeBuildingScaffoldFromRoot(buildingRoot: THREE.Group): void 
     disposeAndDetachScaffoldObject(object, object.userData.ownsGeometry !== false);
   });
   buildingRoot.userData.completedScaffoldRemoved = true;
+  buildingRoot.userData.completedScaffoldChildCount = buildingRoot.children.length;
 }
