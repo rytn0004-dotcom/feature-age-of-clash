@@ -97,6 +97,11 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
       unit.state = 'attacking';
       unit.currentActionText = '⚔️ 佇列攻擊';
       break;
+    case 'board':
+      unit.targetEntityId = next.targetId;
+      unit.state = 'moving';
+      unit.currentActionText = '🚢 佇列登船';
+      break;
     case 'build':
       unit.targetBuildingId = next.buildingId;
       unit.state = 'building';
