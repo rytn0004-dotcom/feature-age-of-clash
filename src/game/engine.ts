@@ -76,6 +76,7 @@ import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
 import { applySuppressionImpact, decaySuppression, getSuppressionCombatModifiers, getSuppressionImpact } from './combatSuppression';
+import { LeadershipRoster } from './leadershipRoster';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -199,7 +200,7 @@ import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import { updateAmbientTreeWind } from './ambientTreeWind';
 import { RoundRobinBatch } from './roundRobinBatch';
-import { advanceAiDecisionScheduler } from './aiDecisionScheduler';
+import { advanceAiDecisionScheduler, rebuildAiDecisionRoster, type AiDecisionSchedulerState } from './aiDecisionScheduler';
 import {
   formatPerformanceTelemetryCsv,
   getAverageAiDecisionMs,
@@ -400,8 +401,9 @@ export class RtsEngine {
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
-  /** Cached commander candidates; avoids an all-units search for every morale tick. */
-  private battlefieldLeadershipUnits: UnitEntity[] = [];
+  /** Reusable commander roster; avoids allocating a Map and array on every unit update. */
+  private battlefieldLeadershipRoster = new LeadershipRoster<UnitEntity>();
+  private battlefieldLeadershipUnits = this.battlefieldLeadershipRoster.units;
   private combatUnitLookupById = new Map<string, UnitEntity>();
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -612,8 +614,7 @@ export class RtsEngine {
   private aiBuildingGroupsLength = -1;
   private aiBuildingGroupsByFaction = new Map<string, BuildingEntity[]>();
   private aiDecisionFactionIds: FactionId[] = [];
-  private aiTickAccumulator = 0;
-  private aiDecisionFactionCursor = 0;
+  private aiDecisionSchedulerState: AiDecisionSchedulerState = { accumulatorSeconds: 0, cursor: 0 };
   private aiDecisionCount = 0;
   private aiDecisionTiming: AiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
   private aiPathRecoveryTotal = 0;
@@ -1381,6 +1382,7 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    this.battlefieldLeadershipRoster.clear();
     // Release previous-match faction roster groups even when the next match has
     // no AI and therefore will not ask the scheduler to rebuild them.
     this.aiUnitGroupsSource = null;
@@ -1447,13 +1449,11 @@ export class RtsEngine {
     this.ageByFaction = {};
     this.landmarksByFaction = {};
     this.researchedTechsByFaction = {};
-    this.aiDecisionFactionIds = this.participants
-      .filter((participant) => participant.controller === 'ai')
-      .map((participant) => participant.id);
-    this.aiTickAccumulator = this.aiDecisionFactionIds.length > 0
+    rebuildAiDecisionRoster(this.participants, this.aiDecisionFactionIds);
+    this.aiDecisionSchedulerState.accumulatorSeconds = this.aiDecisionFactionIds.length > 0
       ? 1.2 / this.aiDecisionFactionIds.length
       : 0;
-    this.aiDecisionFactionCursor = 0;
+    this.aiDecisionSchedulerState.cursor = 0;
     this.aiDecisionCount = 0;
     this.aiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
     this.aiPathRecoveryTotal = 0;
@@ -5302,7 +5302,7 @@ export class RtsEngine {
       aiQueuedUnits,
       aiResearchingBuildings,
       aiDecisionCount: this.aiDecisionCount,
-      aiDecisionAccumulatorSeconds: this.aiTickAccumulator,
+      aiDecisionAccumulatorSeconds: this.aiDecisionSchedulerState.accumulatorSeconds,
       aiDecisionTimingSamples: this.aiDecisionTiming.sampleCount,
       aiDecisionLastMs: this.aiDecisionTiming.lastMs,
       aiDecisionAverageMs,
@@ -5320,7 +5320,7 @@ export class RtsEngine {
       gameSpeed: this.gameSpeed,
       gameState: this.gameState,
       participantCount: this.participants.length,
-      aiParticipantCount: this.participants.filter((participant) => participant.controller === 'ai').length,
+      aiParticipantCount: this.aiDecisionFactionIds.length,
       viewportWidth: this.container.clientWidth,
       viewportHeight: this.container.clientHeight,
     };
@@ -5350,7 +5350,7 @@ export class RtsEngine {
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
-      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / ${(1.2 / Math.max(1, this.aiDecisionFactionIds.length)).toFixed(2)}s`,
+      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiDecisionSchedulerState.accumulatorSeconds.toFixed(2)} / ${(1.2 / Math.max(1, this.aiDecisionFactionIds.length)).toFixed(2)}s`,
       `AI Think ms       ${this.aiDecisionTiming.lastMs.toFixed(2)} last / ${aiDecisionAverageMs.toFixed(2)} avg / ${this.aiDecisionTiming.maxMs.toFixed(2)} max`,
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
@@ -5662,22 +5662,17 @@ export class RtsEngine {
     // Spread faction planning across the interval: each AI still receives one
     // strategic decision every ~1.2s, but several factions no longer spike the
     // same simulation frame with their full planning passes.
-    const aiDecision = advanceAiDecisionScheduler(
-      {
-        accumulatorSeconds: this.aiTickAccumulator,
-        cursor: this.aiDecisionFactionCursor,
-      },
+    const aiFactionId = advanceAiDecisionScheduler(
+      this.aiDecisionSchedulerState,
       this.aiDecisionFactionIds,
       dt,
     );
-    this.aiTickAccumulator = aiDecision.state.accumulatorSeconds;
-    this.aiDecisionFactionCursor = aiDecision.state.cursor;
-    if (aiDecision.factionId) {
+    if (aiFactionId) {
       this.aiDecisionCount += 1;
       const aiDecisionStartedAt = performance.now();
       this.rebuildCombatSpatialIndex();
       try {
-        this.evaluateAiLogic(aiDecision.factionId);
+        this.evaluateAiLogic(aiFactionId);
       } finally {
         this.aiDecisionTiming = recordAiDecisionTiming(
           this.aiDecisionTiming,
@@ -6211,24 +6206,7 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
-    const leaderByFaction = new Map<string, { unit: UnitEntity; score: number }>();
-    for (const unit of this.units) {
-      const aura = unit.unitDef.leadershipAura;
-      if (unit.hp <= 0 || unit.garrisonedInBuildingId || !aura) continue;
-      const score =
-        aura.moraleRecoveryPerSecond +
-        aura.moraleShockResistance * 4 +
-        aura.suppressionResistance * 3;
-      const current = leaderByFaction.get(unit.faction);
-      if (
-        !current ||
-        score > current.score ||
-        (score === current.score && unit.id.localeCompare(current.unit.id) < 0)
-      ) {
-        leaderByFaction.set(unit.faction, { unit, score });
-      }
-    }
-    this.battlefieldLeadershipUnits = Array.from(leaderByFaction.values(), (entry) => entry.unit);
+    this.battlefieldLeadershipRoster.rebuild(this.units);
     this.refreshFormationRegroupState();
     // Preserve the stable roster array on ordinary frames. Only allocate a
     // compacted array when the first dead unit is actually encountered.
@@ -12673,6 +12651,10 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.battlefieldLeadershipRoster.clear();
+    this.aiDecisionFactionIds.length = 0;
+    this.aiDecisionSchedulerState.accumulatorSeconds = 0;
+    this.aiDecisionSchedulerState.cursor = 0;
     this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];
