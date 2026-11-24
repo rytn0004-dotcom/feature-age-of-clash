@@ -1029,28 +1029,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none rounded-xl border border-cyan-300/40 bg-slate-950/90 px-4 py-3 text-center text-xs text-slate-100 shadow-2xl backdrop-blur-md"
         >
           <div className="mb-1 text-sm font-black text-cyan-200">🧱 城牆連續規劃</div>
-          <div>左鍵設定起點　·　Shift + 左鍵固定轉折點　·　靠近舊牆端點自動吸附　·　左鍵設定終點並完成</div>
+          <div>左鍵設定起點並預覽　·　Shift + 左鍵驗證並固定本段　·　左鍵驗證最後一段並建造</div>
           <div className="mt-1 text-slate-300">右鍵／Esc 取消規劃</div>
           {wallPlacementInfo && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-white/10 pt-2">
               <span>牆段 {wallPlacementInfo.segmentCount}</span>
               <span>長度 {wallPlacementInfo.distance.toFixed(1)}</span>
-              <span className={wallPlacementInfo.isValid ? 'text-emerald-300' : 'text-rose-300'}>
-                {wallPlacementInfo.isValid
-                  ? '路線可建造'
-                  : wallPlacementInfo.pointCount === 0
-                    ? '等待起點'
+              <span className={wallPlacementInfo.blocked ? 'text-rose-300' : wallPlacementInfo.affordableSegmentCount < wallPlacementInfo.segmentCount ? 'text-amber-300' : 'text-emerald-300'}>
+                {wallPlacementInfo.pointCount === 0
+                  ? '等待起點'
+                  : wallPlacementInfo.blocked
+                    ? '路線碰到障礙，紅色部分不可建造'
                     : wallPlacementInfo.segmentCount === 0
                       ? '移動滑鼠拉出牆線'
-                      : wallPlacementInfo.invalidCount > 0
-                        ? `無效位置 ${wallPlacementInfo.invalidCount}`
-                        : wallPlacementInfo.segmentCount > 120
-                          ? '超過單次牆段上限'
-                          : '資源不足'}
+                      : wallPlacementInfo.affordableSegmentCount === 0
+                        ? '資源不足，尚無可負擔牆段'
+                        : wallPlacementInfo.affordableSegmentCount < wallPlacementInfo.segmentCount
+                          ? `可負擔 ${wallPlacementInfo.affordableSegmentCount}/${wallPlacementInfo.segmentCount} 段，點擊可先建造這部分`
+                          : '路線可建造'}
               </span>
               {wallPlacementInfo.snapped && <span className="font-bold text-cyan-200">🔗 已吸附既有牆端</span>}
               <span>🪵 {wallPlacementInfo.cost.wood}</span>
               <span>🪨 {wallPlacementInfo.cost.stone}</span>
+              <span>可建 {wallPlacementInfo.affordableSegmentCount}/{wallPlacementInfo.segmentCount}</span>
             </div>
           )}
         </div>
