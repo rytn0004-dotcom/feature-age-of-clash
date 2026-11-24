@@ -75,6 +75,7 @@ import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
+import { applySuppressionImpact, decaySuppression, getSuppressionCombatModifiers, getSuppressionImpact } from './combatSuppression';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -398,6 +399,8 @@ export class RtsEngine {
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
+  /** Cached commander candidates; avoids an all-units search for every morale tick. */
+  private battlefieldLeadershipUnits: UnitEntity[] = [];
   private combatUnitLookupById = new Map<string, UnitEntity>();
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -2223,6 +2226,8 @@ export class RtsEngine {
       attackCooldown: 0,
       abilityCooldown: 0,
       velocity: { x: 0, z: 0 },
+      morale: 100,
+      suppression: 0,
       kills: 0,
       xp: xpEligible ? 0 : undefined,
       level: xpEligible ? 1 : undefined,
@@ -6172,6 +6177,9 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
+    this.battlefieldLeadershipUnits = this.units.filter(
+      (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId && !!unit.unitDef.leadershipAura,
+    );
     this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
     let anyDied = false;
@@ -6218,13 +6226,15 @@ export class RtsEngine {
 
       // Cooldowns, timers & passive regeneration
       this.refreshUnitMorale(unit, dt);
+      this.refreshUnitSuppression(unit, dt);
       const moraleModifiers = getMoraleCombatModifiers(unit.morale ?? 100);
+      const suppressionModifiers = getSuppressionCombatModifiers(unit.suppression ?? 0);
       const attackRateBuff = unit.buffAttackRateUntil && unit.buffAttackRateUntil > this.simTime ? 1.3 : 1;
       const attackRateSlow = unit.slowUntil && unit.slowUntil > this.simTime
         ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
         : 1;
       if (unit.attackCooldown > 0) {
-        unit.attackCooldown -= dt * attackRateBuff * attackRateSlow * moraleModifiers.attackRateMultiplier;
+        unit.attackCooldown -= dt * attackRateBuff * attackRateSlow * moraleModifiers.attackRateMultiplier * suppressionModifiers.attackRateMultiplier;
       }
       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
@@ -6575,8 +6585,11 @@ export class RtsEngine {
     const moraleSpeed = unit.moraleRoutGoal
       ? 1
       : getMoraleCombatModifiers(unit.morale ?? 100).movementSpeedMultiplier;
+    const suppressionSpeed = unit.moraleRoutGoal
+      ? 1
+      : getSuppressionCombatModifiers(unit.suppression ?? 0).movementSpeedMultiplier;
     const routSpeed = unit.moraleRoutGoal ? 1.12 : 1;
-    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow * moraleSpeed * routSpeed;
+    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow * moraleSpeed * suppressionSpeed * routSpeed;
     const regroupState = unit.formationGroupId
       ? this.formationRegroupByGroup.get(unit.formationGroupId)
       : undefined;
@@ -6803,23 +6816,79 @@ export class RtsEngine {
     unit.currentActionText = '🏃 士氣崩潰 · 潰退重整';
   }
 
+  private getNearbyLeadershipAura(
+    unit: UnitEntity,
+  ): { source: UnitEntity; aura: NonNullable<UnitDefinition['leadershipAura']> } | null {
+    let best: { source: UnitEntity; aura: NonNullable<UnitDefinition['leadershipAura']>; score: number } | null = null;
+    for (const leader of this.battlefieldLeadershipUnits) {
+      const aura = leader.unitDef.leadershipAura;
+      if (!aura || leader.hp <= 0 || leader.garrisonedInBuildingId || this.isHostile(unit, leader)) continue;
+      if (getDistance(unit.x, unit.z, leader.x, leader.z) > aura.radius) continue;
+      const score =
+        aura.moraleRecoveryPerSecond +
+        aura.moraleShockResistance * 4 +
+        aura.suppressionResistance * 3;
+      if (!best || score > best.score) best = { source: leader, aura, score };
+    }
+    return best ? { source: best.source, aura: best.aura } : null;
+  }
+
+  private applyUnitSuppression(
+    target: UnitEntity,
+    projectileType: Projectile['type'],
+    attacker?: UnitEntity,
+  ): void {
+    if (target.hp <= 0 || target.unitDef.category === 'worker') return;
+    const impact = getSuppressionImpact(projectileType, attacker?.unitDef.category);
+    if (impact <= 0) return;
+
+    const previousState = getSuppressionCombatModifiers(target.suppression ?? 0).state;
+    const leadership = this.getNearbyLeadershipAura(target);
+    target.suppression = applySuppressionImpact(
+      target.suppression ?? 0,
+      impact,
+      leadership?.aura.suppressionResistance ?? 0,
+    );
+    target.suppressionLastHitAt = this.simTime;
+    const nextState = getSuppressionCombatModifiers(target.suppression).state;
+    if (nextState !== previousState && nextState !== 'clear') {
+      const label = nextState === 'pinned' ? '⛨ 被火力釘制' : '⚑ 遭受壓制';
+      const color = nextState === 'pinned' ? '#fb7185' : '#fbbf24';
+      this.addFloatingText(target.x, 2.7, target.z, label, color);
+    }
+  }
+
+  private refreshUnitSuppression(unit: UnitEntity, dt: number): void {
+    if (!Number.isFinite(unit.suppression)) unit.suppression = 0;
+    if (this.simTime - (unit.suppressionLastHitAt ?? -Infinity) <= 1.2) return;
+    unit.suppression = decaySuppression(unit.suppression ?? 0, dt);
+    if ((unit.suppression ?? 0) < 0.5) unit.suppression = 0;
+  }
+
   private applyNearbyCasualtyMoraleShock(casualty: UnitEntity): void {
     if (casualty.unitDef.category === 'worker') return;
+    const isCommanderCasualty = !!casualty.unitDef.leadershipAura;
+    const shockRadius = isCommanderCasualty
+      ? Math.max(13, casualty.unitDef.leadershipAura?.radius ?? 0)
+      : 9;
     for (const ally of this.units) {
       if (
         ally.id === casualty.id ||
         ally.hp <= 0 ||
-        ally.faction !== casualty.faction ||
+        this.isHostile(casualty, ally) ||
         ally.garrisonedInBuildingId ||
         ally.unitDef.category === 'worker' ||
-        getDistance(casualty.x, casualty.z, ally.x, ally.z) > 9
+        getDistance(casualty.x, casualty.z, ally.x, ally.z) > shockRadius
       ) continue;
 
+      const leadership = this.getNearbyLeadershipAura(ally);
       ally.morale = applyMoraleImpact({
         morale: ally.morale ?? 100,
         damage: 0,
         maxHp: ally.maxHp,
         nearbyAllyCasualty: true,
+        leaderCasualty: isCommanderCasualty,
+        moraleShockResistance: leadership?.aura.moraleShockResistance ?? 0,
       });
       ally.moraleLastHitAt = this.simTime;
       if (shouldUnitRout({
@@ -6841,6 +6910,7 @@ export class RtsEngine {
     direction: 'flank' | 'rear' | null = null,
   ): void {
     if (target.unitDef.category === 'worker') return;
+    const leadership = this.getNearbyLeadershipAura(target);
     target.morale = applyMoraleImpact({
       morale: target.morale ?? 100,
       damage,
@@ -6848,6 +6918,7 @@ export class RtsEngine {
       attackerCategory: attacker?.unitDef.category,
       direction,
       wasKilled: target.hp <= 0,
+      moraleShockResistance: leadership?.aura.moraleShockResistance ?? 0,
     });
     target.moraleLastHitAt = this.simTime;
 
@@ -6869,12 +6940,15 @@ export class RtsEngine {
 
   private refreshUnitMorale(unit: UnitEntity, dt: number): void {
     if (!Number.isFinite(unit.morale)) unit.morale = 100;
+    const leadership = this.getNearbyLeadershipAura(unit);
+    unit.leadershipAuraSourceId = leadership?.source.id;
     if (unit.moraleRoutGoal) return;
     const secondsSinceShock = this.simTime - (unit.moraleLastHitAt ?? 0);
     if (secondsSinceShock < 4.5) return;
 
     const isEngaged = unit.state === 'attacking' && !!unit.targetEntityId;
-    const recoveryRate = isEngaged ? 0.7 : unit.state === 'idle' ? 4.2 : 2.8;
+    const baseRecoveryRate = isEngaged ? 0.7 : unit.state === 'idle' ? 4.2 : 2.8;
+    const recoveryRate = baseRecoveryRate + (leadership?.aura.moraleRecoveryPerSecond ?? 0);
     unit.morale = Math.min(100, (unit.morale ?? 100) + recoveryRate * dt);
   }
 
@@ -9738,6 +9812,7 @@ export class RtsEngine {
         target.hp -= dmg;
         if (target.type === 'unit') {
           this.applyUnitMoraleImpact(target as UnitEntity, dmg, attacker, directionalZone);
+          this.applyUnitSuppression(target as UnitEntity, proj.type, attacker);
         }
         this.creditMongolRaidTribute(attacker, target.type === 'building' ? 'building' : 'unit', target.hp <= 0);
         if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, attacker?.unitDef.category === 'siege' || proj.damage >= 20);

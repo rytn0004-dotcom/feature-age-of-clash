@@ -617,6 +617,12 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
       potency: 24,
       description: '衝鋒瞬間對周圍敵軍造成震盪打擊。',
     },
+    leadershipAura: {
+      radius: 10,
+      moraleRecoveryPerSecond: 1.4,
+      moraleShockResistance: 0.15,
+      suppressionResistance: 0.1,
+    },
     requiredAge: 2,
   },
   {
@@ -805,6 +811,12 @@ export const ANIME_UNITS: UnitDefinition[] = [
       potency: 38,
       description: '集氣釋放藍金光束，毀滅直線路徑上的所有敵人。',
     },
+    leadershipAura: {
+      radius: 11,
+      moraleRecoveryPerSecond: 1.8,
+      moraleShockResistance: 0.18,
+      suppressionResistance: 0.16,
+    },
     requiredAge: 2,
   },
   {
@@ -922,6 +934,12 @@ export const FANTASY_UNITS: UnitDefinition[] = [
       cooldown: 12,
       potency: 28,
       description: '治療友軍，並以藤蔓纏住附近敵軍雙足、短暫大幅緩速。',
+    },
+    leadershipAura: {
+      radius: 12,
+      moraleRecoveryPerSecond: 2.2,
+      moraleShockResistance: 0.24,
+      suppressionResistance: 0.2,
     },
     requiredAge: 2,
   },
@@ -1061,6 +1079,12 @@ export const MONGOL_UNITS: UnitDefinition[] = [
     visual: { color: '#b45309', modelType: 'keshik', scale: 1.18, weaponColor: '#fbbf24' },
     specialAbility: { name: '鐵蹄衝鋒踐踏', type: 'trample_charge', cooldown: 13, potency: 24,
       description: '高速前衝突入敵陣，震退並緩速周遭敵軍，同時依命中數回復生命。' },
+    leadershipAura: {
+      radius: 10,
+      moraleRecoveryPerSecond: 1.7,
+      moraleShockResistance: 0.2,
+      suppressionResistance: 0.16,
+    },
     requiredAge: 2,
   },
   {

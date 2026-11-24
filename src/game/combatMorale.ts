@@ -11,6 +11,8 @@ export interface MoraleImpactInput {
   direction?: MoraleAttackDirection;
   nearbyAllyCasualty?: boolean;
   wasKilled?: boolean;
+  moraleShockResistance?: number;
+  leaderCasualty?: boolean;
 }
 
 export interface MoraleCombatModifiers {
@@ -45,8 +47,12 @@ export function applyMoraleImpact(input: MoraleImpactInput): number {
   const current = clampMorale(input.morale);
   const damage = Number.isFinite(input.damage) ? Math.max(0, input.damage) : 0;
   const maxHp = Number.isFinite(input.maxHp) && input.maxHp > 0 ? input.maxHp : 1;
+  const resistance = Number.isFinite(input.moraleShockResistance)
+    ? Math.max(0, Math.min(0.5, input.moraleShockResistance as number))
+    : 0;
   if (input.nearbyAllyCasualty) {
-    return clampMorale(current - 7.5 - (input.wasKilled ? 2.5 : 0));
+    const casualtyShock = 7.5 + (input.wasKilled ? 2.5 : 0) + (input.leaderCasualty ? 5 : 0);
+    return clampMorale(current - casualtyShock * (1 - resistance));
   }
 
   if (damage <= 0) return current;
@@ -60,7 +66,7 @@ export function applyMoraleImpact(input: MoraleImpactInput): number {
   else if (input.direction === 'rear') loss += 9;
   if (input.wasKilled) loss += 8;
 
-  return clampMorale(current - loss);
+  return clampMorale(current - loss * (1 - resistance));
 }
 
 /** Low morale gradually damages combat tempo without changing unit base statistics. */

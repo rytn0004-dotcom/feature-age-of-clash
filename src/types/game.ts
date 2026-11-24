@@ -71,6 +71,17 @@ export interface UnitStats {
   hpRegenPerSec?: number;
 }
 
+export interface LeadershipAuraDefinition {
+  /** Friendly units within this radius receive morale support. */
+  radius: number;
+  /** Extra morale recovered per simulated second while in range. */
+  moraleRecoveryPerSecond: number;
+  /** Fraction of morale shock absorbed, clamped to 0-0.5 at runtime. */
+  moraleShockResistance: number;
+  /** Fraction of incoming suppression absorbed, clamped to 0-0.5 at runtime. */
+  suppressionResistance: number;
+}
+
 export interface UnitDefinition {
   id: string;
   name: string;
@@ -103,6 +114,7 @@ export interface UnitDefinition {
     weaponColor?: string;
   };
   isNaval?: boolean;
+  leadershipAura?: LeadershipAuraDefinition;
   specialAbility?: {
     name: string;
     type: 'whirlwind' | 'ki_burst' | 'heal' | 'haste' | 'kiting_volley' | 'trample_charge' | 'sky_storm';
@@ -324,6 +336,11 @@ export interface UnitEntity extends EntityCommon {
   moraleRoutCooldownUntil?: number;
   /** Temporary forced retreat order for AI troops whose morale has collapsed. */
   moraleRoutGoal?: { x: number; z: number; until: number };
+  /** Current suppressive-fire pressure, decays after incoming fire stops. */
+  suppression?: number;
+  suppressionLastHitAt?: number;
+  /** Nearby allied commander currently supporting this unit's morale. */
+  leadershipAuraSourceId?: string;
   /** Shared order identity used to keep manually selected and AI squads moving cohesively. */
   formationGroupId?: string;
   /** Shared order vector; all living members of a squad use the same origin and destination. */

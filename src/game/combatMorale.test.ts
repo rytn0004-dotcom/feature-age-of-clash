@@ -112,3 +112,44 @@ test('morale rout safely rejects invalid, overlapping and fully blocked position
     x: 0, z: 0, threatX: -4, threatZ: 0, isPositionClear: () => false,
   }), null);
 });
+
+test('leadership resistance softens direct morale shocks', () => {
+  const exposed = applyMoraleImpact({ morale: 100, damage: 24, maxHp: 100 });
+  const supported = applyMoraleImpact({
+    morale: 100,
+    damage: 24,
+    maxHp: 100,
+    moraleShockResistance: 0.25,
+  });
+  assert.ok(supported > exposed);
+});
+
+test('a commander casualty causes a larger nearby morale shock', () => {
+  const normal = applyMoraleImpact({
+    morale: 80, damage: 0, maxHp: 100, nearbyAllyCasualty: true,
+  });
+  const commander = applyMoraleImpact({
+    morale: 80,
+    damage: 0,
+    maxHp: 100,
+    nearbyAllyCasualty: true,
+    leaderCasualty: true,
+  });
+  assert.equal(normal, 72.5);
+  assert.equal(commander, 67.5);
+});
+
+test('leadership resistance also reduces the shock of a commander casualty', () => {
+  const unsupported = applyMoraleImpact({
+    morale: 80, damage: 0, maxHp: 100, nearbyAllyCasualty: true, leaderCasualty: true,
+  });
+  const supported = applyMoraleImpact({
+    morale: 80,
+    damage: 0,
+    maxHp: 100,
+    nearbyAllyCasualty: true,
+    leaderCasualty: true,
+    moraleShockResistance: 0.4,
+  });
+  assert.ok(supported > unsupported);
+});

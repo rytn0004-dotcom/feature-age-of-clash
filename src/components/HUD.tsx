@@ -33,6 +33,7 @@ import { formatCompactResourceCount, formatResourceCount } from '../game/resourc
 import { calculateAgeResourceShortfall, calculateEconomyNetRates, getResourceHealthStatus } from '../game/economyInsights';
 import { getAgeResourceProgress } from '../game/ageProgress';
 import { getMoraleCombatModifiers } from '../game/combatMorale';
+import { getSuppressionCombatModifiers } from '../game/combatSuppression';
 import type { EconomyNetRates, EconomyResourceSnapshot } from '../game/economyInsights';
 import {
   canAfford,
@@ -1865,6 +1866,25 @@ export const HUD: React.FC<HUDProps> = ({
                 ? moraleUnits.reduce((total, unit) => total + (unit.morale ?? 100), 0) / moraleUnits.length
                 : 100;
               const moraleModifiers = getMoraleCombatModifiers(averageMorale);
+              const averageSuppression = moraleUnits.length > 0
+                ? moraleUnits.reduce((total, unit) => total + (unit.suppression ?? 0), 0) / moraleUnits.length
+                : 0;
+              const suppressionModifiers = getSuppressionCombatModifiers(averageSuppression);
+              const suppressionLabel = suppressionModifiers.state === 'pinned'
+                ? '火力釘制'
+                : suppressionModifiers.state === 'suppressed'
+                  ? '受壓制'
+                  : '壓力累積';
+              const suppressionTone = suppressionModifiers.state === 'pinned'
+                ? 'text-rose-300'
+                : suppressionModifiers.state === 'suppressed'
+                  ? 'text-amber-300'
+                  : 'text-slate-300';
+              const suppressionBarTone = suppressionModifiers.state === 'pinned'
+                ? 'bg-rose-500'
+                : suppressionModifiers.state === 'suppressed'
+                  ? 'bg-amber-400'
+                  : 'bg-slate-400';
               const moraleLabel = moraleModifiers.state === 'steady'
                 ? '穩定'
                 : moraleModifiers.state === 'shaken'
@@ -1914,6 +1934,16 @@ export const HUD: React.FC<HUDProps> = ({
                           {hasAuraBuff && (
                             <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded font-bold">
                               ⚡ 光環強化中
+                            </span>
+                          )}
+                          {primary.unitDef.leadershipAura && (
+                            <span data-leadership-commander="true" className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold">
+                              📯 指揮官光環
+                            </span>
+                          )}
+                          {primary.leadershipAuraSourceId && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded font-bold">
+                              ✨ 受指揮鼓舞
                             </span>
                           )}
                         </div>
@@ -2042,6 +2072,26 @@ export const HUD: React.FC<HUDProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {moraleUnits.length > 0 && averageSuppression >= 1 && (
+                    <div data-squad-suppression="true" className="space-y-0.5 pt-0.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-300">🏹 火力壓制</span>
+                        <span className={`font-bold tabular-nums ${suppressionTone}`}>
+                          {suppressionLabel} · {Math.round(averageSuppression)} / 100
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className={`h-full rounded-full transition-all ${suppressionBarTone}`}
+                          style={{ width: `${Math.max(0, Math.min(100, averageSuppression))}%` }}
+                        />
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        持續遭受遠程／攻城火力會累積壓制，停止受擊後逐漸恢復
+                      </div>
+                    </div>
+                  )}
 
                   {moraleUnits.length > 0 && (
                     <div data-squad-morale="true" className="space-y-0.5 pt-0.5">
