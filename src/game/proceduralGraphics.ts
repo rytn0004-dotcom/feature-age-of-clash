@@ -720,8 +720,13 @@ const shadowMat = new THREE.MeshBasicMaterial({
   depthWrite: false,
 });
 
+// Buildings use a separate shared contact shadow so unit shadows retain their
+// established contrast while oversized dark halos under structures are softened.
+const buildingShadowMat = shadowMat.clone();
+buildingShadowMat.opacity = 0.3;
+
 export function addContactShadow(group: THREE.Group, radius: number): THREE.Mesh {
-  const mesh = new THREE.Mesh(shadowGeo, shadowMat);
+  const mesh = new THREE.Mesh(shadowGeo, buildingShadowMat);
   mesh.name = 'contactShadow';
   mesh.scale.set(radius * 1.15, radius * 1.15, radius * 1.15);
   mesh.position.y = 0.018;
@@ -5033,7 +5038,7 @@ const buildingGroundMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   vertexColors: true,
   transparent: true,
-  opacity: 0.84,
+  opacity: 0.28,
   depthWrite: false,
   side: THREE.DoubleSide,
   toneMapped: false,
@@ -5054,7 +5059,7 @@ function createBuildingGroundGeometry(profile: BuildingGroundProfile): THREE.Buf
   // Feathered, slightly irregular earth apron around the building foundation.
   const segments = 32;
   const ringScales = [0.56, 0.74, 0.9, 1.0];
-  const ringColors = [0x806547, 0x88734f, 0x7d7953, 0x617044];
+  const ringColors = [0x928168, 0x958765, 0x888666, 0x71805f];
   const center = addVertex(0, 0.025, 0, color.setHex(ringColors[0]));
   const rings: number[][] = [];
   ringScales.forEach((scale, ringIndex) => {
