@@ -6911,10 +6911,14 @@ export class RtsEngine {
     unit.currentActionText = '🏃 士氣崩潰 · 潰退重整';
   }
 
-  private getNearbyLeadershipAura(
-    unit: UnitEntity,
-  ): { source: UnitEntity; aura: NonNullable<UnitDefinition['leadershipAura']> } | null {
-    let best: { source: UnitEntity; aura: NonNullable<UnitDefinition['leadershipAura']>; score: number } | null = null;
+  /**
+   * Return the strongest nearby allied commander directly. Keeping this as a
+   * unit reference avoids allocating a wrapper object for every unit on every
+   * simulation step.
+   */
+  private getNearbyLeadershipAura(unit: UnitEntity): UnitEntity | null {
+    let best: UnitEntity | null = null;
+    let bestScore = -Infinity;
     for (const leader of this.battlefieldLeadershipUnits) {
       const aura = leader.unitDef.leadershipAura;
       if (!aura || leader.hp <= 0 || leader.garrisonedInBuildingId || this.isHostile(unit, leader)) continue;
@@ -6923,9 +6927,12 @@ export class RtsEngine {
         aura.moraleRecoveryPerSecond +
         aura.moraleShockResistance * 4 +
         aura.suppressionResistance * 3;
-      if (!best || score > best.score) best = { source: leader, aura, score };
+      if (!best || score > bestScore) {
+        best = leader;
+        bestScore = score;
+      }
     }
-    return best ? { source: best.source, aura: best.aura } : null;
+    return best;
   }
 
   private applyUnitSuppression(
@@ -6942,7 +6949,7 @@ export class RtsEngine {
     target.suppression = applySuppressionImpact(
       target.suppression ?? 0,
       impact,
-      leadership?.aura.suppressionResistance ?? 0,
+      leadership?.unitDef.leadershipAura?.suppressionResistance ?? 0,
     );
     target.suppressionLastHitAt = this.simTime;
     const nextState = getSuppressionCombatModifiers(target.suppression).state;
@@ -6983,7 +6990,7 @@ export class RtsEngine {
         maxHp: ally.maxHp,
         nearbyAllyCasualty: true,
         leaderCasualty: isCommanderCasualty,
-        moraleShockResistance: leadership?.aura.moraleShockResistance ?? 0,
+        moraleShockResistance: leadership?.unitDef.leadershipAura?.moraleShockResistance ?? 0,
       });
       ally.moraleLastHitAt = this.simTime;
       if (shouldUnitRout({
@@ -7013,7 +7020,7 @@ export class RtsEngine {
       attackerCategory: attacker?.unitDef.category,
       direction,
       wasKilled: target.hp <= 0,
-      moraleShockResistance: leadership?.aura.moraleShockResistance ?? 0,
+      moraleShockResistance: leadership?.unitDef.leadershipAura?.moraleShockResistance ?? 0,
     });
     target.moraleLastHitAt = this.simTime;
 
@@ -7036,14 +7043,14 @@ export class RtsEngine {
   private refreshUnitMorale(unit: UnitEntity, dt: number): void {
     if (!Number.isFinite(unit.morale)) unit.morale = 100;
     const leadership = this.getNearbyLeadershipAura(unit);
-    unit.leadershipAuraSourceId = leadership?.source.id;
+    unit.leadershipAuraSourceId = leadership?.id;
     if (unit.moraleRoutGoal) return;
     const secondsSinceShock = this.simTime - (unit.moraleLastHitAt ?? 0);
     if (secondsSinceShock < 4.5) return;
 
     const isEngaged = unit.state === 'attacking' && !!unit.targetEntityId;
     const baseRecoveryRate = isEngaged ? 0.7 : unit.state === 'idle' ? 4.2 : 2.8;
-    const recoveryRate = baseRecoveryRate + (leadership?.aura.moraleRecoveryPerSecond ?? 0);
+    const recoveryRate = baseRecoveryRate + (leadership?.unitDef.leadershipAura?.moraleRecoveryPerSecond ?? 0);
     unit.morale = Math.min(100, (unit.morale ?? 100) + recoveryRate * dt);
   }
 
