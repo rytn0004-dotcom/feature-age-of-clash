@@ -3702,16 +3702,25 @@ export class RtsEngine {
     if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
       if (queue) {
         enqueueCommandsForUnits(transports, () => ({ type: 'move', x: goal.x, z: goal.z, unload: true }));
+        transports.forEach((boat) => {
+          boat.currentActionText = (boat.currentActionText || '') + ' ⋯佇列卸載';
+        });
         this.onSelectionChange?.();
         return;
       }
       const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
       if (nearSelf) {
-        transports.forEach((boat) => this.unloadTransport(boat));
+        transports.forEach((boat) => {
+          boat.commandQueue = undefined;
+          boat.queuedGatherStopAfterDeposit = false;
+          this.unloadTransport(boat);
+        });
         return;
       }
       transports.forEach((boat) => {
         this.clearFormationMovement(boat);
+        boat.commandQueue = undefined;
+        boat.queuedGatherStopAfterDeposit = false;
         boat.targetX = goal.x;
         boat.targetZ = goal.z;
         boat.attackMoveGoal = null;
@@ -3853,6 +3862,9 @@ export class RtsEngine {
       const boarders = playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege');
       if (queue) {
         enqueueCommandsForUnits(boarders, () => ({ type: 'board', targetId: targetUnit!.id }));
+        boarders.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列登船';
+        });
         this.onSelectionChange?.();
       } else {
         boarders.forEach((unit) => {
@@ -3873,6 +3885,9 @@ export class RtsEngine {
       }
       const queuedCount = enqueueCommandsForUnits(playerUnits, () => ({ type: 'attack', targetId }));
       if (queuedCount > 0) {
+        playerUnits.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列攻擊';
+        });
         this.spawnCommandIndicator(target.x, target.z, 'attack');
         this.onSelectionChange?.();
       }
@@ -4417,6 +4432,9 @@ export class RtsEngine {
     if (queue) {
       const queuedCount = enqueueCommandsForUnits(chosen, () => ({ type: 'garrison', buildingId: bldg.id }));
       if (queuedCount > 0) {
+        chosen.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列進駐';
+        });
         sound.playOrder();
         this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
         this.onSelectionChange?.();
