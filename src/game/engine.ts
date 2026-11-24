@@ -4421,6 +4421,8 @@ export class RtsEngine {
     }
 
     chosen.forEach((u) => {
+      u.commandQueue = undefined;
+      u.queuedGatherStopAfterDeposit = false;
       u.targetGarrisonBuildingId = bldg.id;
       u.targetEntityId = undefined;
       u.targetResourceNodeId = undefined;
@@ -6411,7 +6413,7 @@ export class RtsEngine {
 
       remainingUnits?.push(unit);
 
-      if (unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
+      if (!unit.garrisonedInBuildingId && unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
         this.tryDequeueCommand(unit);
       }
 
@@ -8504,8 +8506,10 @@ export class RtsEngine {
 
   private stepUnitGarrisoning(unit: UnitEntity, dt: number) {
     if (!unit.targetGarrisonBuildingId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -8515,8 +8519,10 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -8533,8 +8539,10 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
-      unit.state = 'idle';
-      unit.currentActionText = '🛡️ 駐防已滿待命';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '🛡️ 駐防已滿待命';
+      }
       return;
     }
 
