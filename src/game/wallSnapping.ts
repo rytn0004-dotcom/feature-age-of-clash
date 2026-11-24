@@ -7,6 +7,7 @@ export interface WallSnapBuilding {
   rotationY?: number;
   wallChainId?: string;
   wallChainIndex?: number;
+  wallChainSize?: number;
   hp: number;
   maxHp: number;
   isConstructed: boolean;
@@ -141,4 +142,67 @@ export function findNearestRepairableWall<T extends WallSnapBuilding>(
     }
   }
   return nearest;
+}
+
+
+export interface WallChainExtensionPlan<T extends WallSnapBuilding = WallSnapBuilding> {
+  chainId: string;
+  totalSize: number;
+  existingAssignments: Array<{ wall: T; index: number }>;
+  newIndices: number[];
+}
+
+/**
+ * Builds a stable index plan when a newly drawn wall joins exactly one complete
+ * existing chain endpoint. The order of existing pieces is reversed when the
+ * selected endpoint is the chain's start, so patrol order remains continuous.
+ *
+ * Incomplete chains (for example, chains with destroyed gaps) are deliberately
+ * not renumbered: callers should keep those as separate runs rather than
+ * accidentally turning a broken defensive line into one logical route.
+ */
+export function planWallChainExtension<T extends WallSnapBuilding>(
+  walls: readonly T[],
+  snap: WallEndpointSnap<T>,
+  newSegmentCount: number,
+  attachAt: 'start' | 'end',
+  fallbackChainId: string
+): WallChainExtensionPlan<T> | null {
+  if (!Number.isInteger(newSegmentCount) || newSegmentCount <= 0 || !fallbackChainId) return null;
+
+  const chainId = snap.wall.wallChainId;
+  const members = walls.filter((wall) =>
+    wall.buildingDef.isWall &&
+    wall.hp > 0 &&
+    wall.isConstructed &&
+    (chainId ? wall.wallChainId === chainId : wall.id === snap.wall.id)
+  );
+  if (!members.includes(snap.wall)) return null;
+
+  const expectedSize = snap.wall.wallChainSize ?? members.length;
+  if (members.length !== expectedSize) return null;
+
+  const ordered = [...members].sort((a, b) => (a.wallChainIndex ?? 0) - (b.wallChainIndex ?? 0));
+  if (ordered.some((wall, index) => {
+    const current = wall.wallChainIndex ?? 0;
+    const previous = ordered[index - 1]?.wallChainIndex;
+    return index > 0 && (previous === undefined || current !== previous + 1);
+  })) {
+    return null;
+  }
+
+  const reverseExisting =
+    (attachAt === 'start' && snap.side === 'start') ||
+    (attachAt === 'end' && snap.side === 'end');
+  const oriented = reverseExisting ? ordered.reverse() : ordered;
+  const totalSize = members.length + newSegmentCount;
+  const existingOffset = attachAt === 'start' ? 0 : newSegmentCount;
+  const newOffset = attachAt === 'start' ? members.length : 0;
+
+  return {
+    chainId: chainId || fallbackChainId,
+    totalSize,
+    existingAssignments: oriented.map((wall, index) => ({ wall, index: existingOffset + index })),
+    newIndices: Array.from({ length: newSegmentCount }, (_, index) => newOffset + index),
+  };
 }
