@@ -8347,7 +8347,8 @@ export class RtsEngine {
 
     const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
     const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
-    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall)) {
+    const repairingStructure = !!bldg && bldg.isConstructed && !repairingWall && bldg.hp < bldg.maxHp;
+    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall && !repairingStructure)) {
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
       if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
@@ -8355,7 +8356,11 @@ export class RtsEngine {
     }
 
     const pct = Math.round((bldg.hp / Math.max(1, bldg.maxHp)) * 100);
-    unit.currentActionText = repairingWall ? `🧱 修復城牆 (${pct}%)` : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
+    unit.currentActionText = repairingWall
+      ? `🧱 修復城牆 (${pct}%)`
+      : repairingStructure
+        ? `🔧 修復${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`
+        : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
 
     // A breached wall is passable, so use its footprint to define the carpenter's work ring.
     const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
@@ -8389,7 +8394,7 @@ export class RtsEngine {
       const builderCount = Math.max(1, activeBuilderCount);
       const perBuilderWorkShare =
         getConstructionWorkerMultiplier(builderCount) / builderCount;
-      if (repairingWall) {
+      if (repairingWall || repairingStructure) {
         const repairSpeed =
           (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
           (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
@@ -8441,7 +8446,19 @@ export class RtsEngine {
         return;
       }
 
-      if (!repairingWall && bldg.buildProgress >= 1) {
+      if (repairingStructure && bldg.hp >= bldg.maxHp) {
+        bldg.hp = bldg.maxHp;
+        bldg.hitFlashTimer = 0;
+        unit.targetBuildingId = undefined;
+        this.addFloatingText(bldg.x, 2.6, bldg.z, `🔧 ${bldg.buildingDef.name.split(' ')[0]}修復完成`, '#86efac');
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 修復完成';
+        }
+        return;
+      }
+
+      if (!repairingWall && !repairingStructure && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
