@@ -381,6 +381,12 @@ export interface UnitEntity extends EntityCommon {
   pathRecoveryCooldown?: number;
   /** Lifetime count of forced path refreshes triggered by movement-stall detection. */
   pathRecoveryCount?: number;
+  /** Stable, retryable approach slot for a unit assigned to construct or repair a building. */
+  buildApproachBuildingId?: string;
+  buildApproachIndex?: number;
+  buildApproachAngle?: number;
+  buildApproachRetryAt?: number;
+  buildApproachRecoveryCount?: number;
   /** Continuous assault on the same building (sapping / sustained torching) */
   siegeTargetId?: string;
   siegeChannelTime?: number;
