@@ -607,7 +607,7 @@ export function isWallChainPreviewObstructed(
     const end = pathPoints[index + 1];
     const dx = end.x - start.x;
     const dz = end.z - start.z;
-    const sampleCount = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.65));
+    const sampleCount = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.25));
     for (let sample = 0; sample <= sampleCount; sample++) {
       const t = sample / sampleCount;
       if (isPointInTerrainObstacle(start.x + dx * t, start.z + dz * t, terrainRects, terrainDiscs, bridges)) return true;
