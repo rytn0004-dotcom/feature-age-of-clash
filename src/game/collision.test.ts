@@ -160,6 +160,20 @@ test('wall preview broad-phase detects terrain, building and resource blockers',
   assert.equal(isWallChainPreviewObstructed(placements, 1.48, [], []), false);
   assert.equal(
     isWallChainPreviewObstructed(
+      [{ x: 0, z: 0 }, { x: 2.7, z: 0 }],
+      1.48,
+      [],
+      [],
+      [],
+      [{ x: 1.35, z: 0, radius: 0.2, kind: 'cliff' } as any],
+      [],
+      [{ x: 0, z: 0 }, { x: 2.7, z: 0 }],
+    ),
+    true,
+    'terrain blockers between projected wall centres should turn the preview red',
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(
       placements,
       1.48,
       [],
