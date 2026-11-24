@@ -1421,6 +1421,13 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    // Drop cached wall endpoint references from the previous match immediately.
+    this.wallEndpointIndex.clear();
+    this.wallEndpointIndexDirty = true;
+    this.wallEndpointIndexLastRefreshAt = Number.NEGATIVE_INFINITY;
+    this.wallEndpointIndexBuildingSource = null;
+    this.wallEndpointIndexBuildingCount = -1;
+    this.wallEndpointIndexFaction = null;
     // Release previous-match faction roster groups even when the next match has
     // no AI and therefore will not ask the scheduler to rebuild them.
     this.aiUnitGroupsSource = null;
