@@ -179,3 +179,40 @@ export function shouldDeferBlockedWallConstructionTarget(
     !current.isConstructed &&
     !next.isConstructed;
 }
+
+
+/**
+ * Move a blocked wall command behind the remaining consecutive commands for
+ * its chain, without moving it past later unrelated Shift-queued orders.
+ */
+export function deferBlockedWallConstructionCommand(
+  queue: QueuedWallConstructionCommand[],
+  currentBuildingId: string,
+  wallChainId: string | undefined,
+  resolveWallChainId: (buildingId: string) => string | undefined,
+): boolean {
+  if (!wallChainId || !currentBuildingId) return false;
+  const first = queue[0];
+  if (
+    first?.type !== 'build' ||
+    !first.buildingId ||
+    resolveWallChainId(first.buildingId) !== wallChainId
+  ) {
+    return false;
+  }
+
+  let insertIndex = 0;
+  while (insertIndex < queue.length) {
+    const command = queue[insertIndex];
+    if (
+      command.type !== 'build' ||
+      !command.buildingId ||
+      resolveWallChainId(command.buildingId) !== wallChainId
+    ) {
+      break;
+    }
+    insertIndex++;
+  }
+  queue.splice(insertIndex, 0, { type: 'build', buildingId: currentBuildingId });
+  return true;
+}
