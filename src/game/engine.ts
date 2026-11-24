@@ -8882,11 +8882,6 @@ export class RtsEngine {
   }
 
   /**
-   * If the active wall segment has exhausted every approach direction, rotate
-   * it behind the remaining segments of the same chain. The worker can keep
-   * building reachable sections and will revisit this segment later.
-   */
-  /**
    * Work positions for other builders on this structure or adjacent pieces of
    * the same wall chain. Their reserved approach slots act as soft occupancy,
    * preventing workers from converging on one corner of a long wall.
@@ -8943,6 +8938,11 @@ export class RtsEngine {
     return occupied;
   }
 
+  /**
+   * If the active wall segment has exhausted every approach direction, rotate
+   * it behind the remaining segments of the same chain. The worker can keep
+   * building reachable sections and will revisit this segment later.
+   */
   private deferBlockedWallChainSegment(unit: UnitEntity, building: BuildingEntity): boolean {
     const queue = unit.commandQueue;
     const nextCommand = queue?.[0];
