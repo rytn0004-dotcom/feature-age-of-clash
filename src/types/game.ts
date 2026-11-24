@@ -293,6 +293,16 @@ export interface EntityCommon {
   maxHp: number;
 }
 
+export type UnitQueuedCommand =
+  | { type: 'move'; x: number; z: number; unload?: boolean }
+  | { type: 'attackMove'; x: number; z: number }
+  | { type: 'gather'; nodeId: string }
+  | { type: 'attack'; targetId: string }
+  | { type: 'board'; targetId: string }
+  | { type: 'build'; buildingId: string }
+  | { type: 'repair'; buildingId: string }
+  | { type: 'garrison'; buildingId: string };
+
 export interface UnitEntity extends EntityCommon {
   type: 'unit';
   unitDefId: string;
@@ -376,13 +386,10 @@ export interface UnitEntity extends EntityCommon {
   siegeChannelTime?: number;
   /** Naval transport cargo (unit ids loaded onto a transport boat) */
   transportCargoIds?: string[];
-  /** Shift-queue: pending orders after current action finishes */
-  commandQueue?: Array<
-    | { type: 'move'; x: number; z: number }
-    | { type: 'gather'; nodeId: string }
-    | { type: 'attack'; targetId: string }
-    | { type: 'build'; buildingId: string }
-  >;
+  /** Per-unit Shift queue; each unit executes its own FIFO order sequence. */
+  commandQueue?: UnitQueuedCommand[];
+  /** A queued gather task ends after its next delivery when more orders follow. */
+  queuedGatherStopAfterDeposit?: boolean;
 }
 
 export interface BuildingEntity extends EntityCommon {

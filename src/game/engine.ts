@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
+import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, takeNextUnitCommand } from './commandQueue';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
@@ -2397,6 +2398,7 @@ export class RtsEngine {
       unit.wallPatrolRoute = route;
       unit.wallPatrolIndex = nearestIndex;
       unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
@@ -3454,7 +3456,7 @@ export class RtsEngine {
     this.onSelectionChange?.();
   }
 
-  public issueAttackMoveOrder(x: number, z: number) {
+  public issueAttackMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
@@ -3463,7 +3465,7 @@ export class RtsEngine {
     this.pendingCommandMode = 'normal';
     sound.playAttackOrder();
     this.spawnCommandIndicator(x, z, 'attack');
-    this.addFloatingText(x, 2.5, z, '⚔️ 攻擊推進指令', '#f87171');
+    this.addFloatingText(x, 2.5, z, queue ? '⚔️ 已加入攻擊推進佇列' : '⚔️ 攻擊推進指令', '#f87171');
 
     const count = playerUnits.length;
     const spacing = 1.6;
@@ -3476,6 +3478,14 @@ export class RtsEngine {
       const gx = Math.max(-95, Math.min(95, x + ox));
       const gz = Math.max(-95, Math.min(95, z + oz));
 
+      if (queue) {
+        enqueueUnitCommand(unit, { type: 'attackMove', x: gx, z: gz });
+        unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
+        return;
+      }
+
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.targetX = gx;
       unit.targetZ = gz;
       unit.attackMoveGoal = { x: gx, z: gz };
@@ -3492,7 +3502,6 @@ export class RtsEngine {
     });
     this.onSelectionChange?.();
   }
-
   public selectControlGroup(groupNum: number, centerCamera = false) {
     if (groupNum < 1 || groupNum > 9) return;
     const ids = (this.controlGroups[groupNum] || []).filter((uid) =>
@@ -3691,13 +3700,27 @@ export class RtsEngine {
     // Transport with cargo: move then unload near destination.
     const transports = playerUnits.filter((u) => u.unitDefId === 'transport_boat');
     if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
+      if (queue) {
+        enqueueCommandsForUnits(transports, () => ({ type: 'move', x: goal.x, z: goal.z, unload: true }));
+        transports.forEach((boat) => {
+          boat.currentActionText = (boat.currentActionText || '') + ' ⋯佇列卸載';
+        });
+        this.onSelectionChange?.();
+        return;
+      }
       const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
       if (nearSelf) {
-        transports.forEach((boat) => this.unloadTransport(boat));
+        transports.forEach((boat) => {
+          boat.commandQueue = undefined;
+          boat.queuedGatherStopAfterDeposit = false;
+          this.unloadTransport(boat);
+        });
         return;
       }
       transports.forEach((boat) => {
         this.clearFormationMovement(boat);
+        boat.commandQueue = undefined;
+        boat.queuedGatherStopAfterDeposit = false;
         boat.targetX = goal.x;
         boat.targetZ = goal.z;
         boat.attackMoveGoal = null;
@@ -3794,13 +3817,13 @@ export class RtsEngine {
             };
 
       if (queue) {
-        if (!unit.commandQueue) unit.commandQueue = [];
-        unit.commandQueue.push({ type: 'move', x: target.x, z: target.z });
+        enqueueUnitCommand(unit, { type: 'move', x: target.x, z: target.z });
         unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
 
       unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.moraleRoutGoal = undefined;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
@@ -3825,7 +3848,7 @@ export class RtsEngine {
   public issueAttackOrder(targetId: string, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
 
@@ -3836,12 +3859,40 @@ export class RtsEngine {
       targetUnit.unitDefId === 'transport_boat' &&
       targetUnit.faction === playerUnits[0].faction
     ) {
-      this.boardTransport(targetUnit, playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege'));
+      const boarders = playerUnits.filter((u) => !u.unitDef.isNaval && u.unitDef.category !== 'siege');
+      if (queue) {
+        enqueueCommandsForUnits(boarders, () => ({ type: 'board', targetId: targetUnit!.id }));
+        boarders.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列登船';
+        });
+        this.onSelectionChange?.();
+      } else {
+        boarders.forEach((unit) => {
+          unit.commandQueue = undefined;
+          unit.queuedGatherStopAfterDeposit = false;
+        });
+        this.boardTransport(targetUnit, boarders);
+      }
       return;
     }
 
     sound.playAttackOrder();
     const target = targetUnit || this.buildings.find((b) => b.id === targetId);
+    if (queue) {
+      if (!target || target.hp <= 0 || !this.isHostile(playerUnits[0], target)) {
+        sound.playInvalid();
+        return;
+      }
+      const queuedCount = enqueueCommandsForUnits(playerUnits, () => ({ type: 'attack', targetId }));
+      if (queuedCount > 0) {
+        playerUnits.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列攻擊';
+        });
+        this.spawnCommandIndicator(target.x, target.z, 'attack');
+        this.onSelectionChange?.();
+      }
+      return;
+    }
     if (target) {
       this.spawnCommandIndicator(target.x, target.z, 'attack');
     }
@@ -3857,6 +3908,8 @@ export class RtsEngine {
 
     playerUnits.forEach((unit) => {
       this.clearFormationMovement(unit);
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.moraleRoutGoal = undefined;
       unit.attackMoveGoal = null;
       unit.wallPatrolRoute = undefined;
@@ -3944,6 +3997,7 @@ export class RtsEngine {
         return;
       }
       worker.commandQueue = undefined;
+      worker.queuedGatherStopAfterDeposit = false;
       worker.targetResourceNodeId = nodeId;
       worker.targetEntityId = undefined;
       worker.targetBuildingId = undefined;
@@ -3957,63 +4011,79 @@ export class RtsEngine {
 
   /** Consume next Shift-queued order when a unit finishes its current task. */
   private tryDequeueCommand(unit: UnitEntity): boolean {
-    if (!unit.commandQueue || unit.commandQueue.length === 0) return false;
-    const next = unit.commandQueue.shift()!;
-    if (unit.commandQueue.length === 0) unit.commandQueue = undefined;
-    if (next.type === 'move') {
-      unit.targetX = next.x;
-      unit.targetZ = next.z;
-      unit.targetEntityId = undefined;
-      unit.targetResourceNodeId = undefined;
-      unit.targetBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'moving';
-      unit.currentActionText = '👣 佇列行軍';
+    while (unit.commandQueue?.length) {
+      const next = unit.commandQueue[0];
+      let isValid = true;
+
+      if (next.type === 'move' || next.type === 'attackMove') {
+        isValid = Number.isFinite(next.x) && Number.isFinite(next.z);
+      } else if (next.type === 'gather') {
+        const node = this.resourceNodes.find((entry) => entry.id === next.nodeId);
+        isValid = !!node && node.amount > 0 && canUnitGatherNode(unit.unitDef, node);
+      } else if (next.type === 'attack') {
+        const targetUnit = this.units.find((entry) => entry.id === next.targetId);
+        const targetBuilding = this.buildings.find((entry) => entry.id === next.targetId);
+        const target = targetUnit || targetBuilding;
+        isValid = !!target && target.hp > 0 && this.isHostile(unit, target);
+      } else if (next.type === 'board') {
+        const boat = this.units.find((entry) => entry.id === next.targetId);
+        isValid = !!boat &&
+          boat.hp > 0 &&
+          boat.unitDefId === 'transport_boat' &&
+          boat.faction === unit.faction &&
+          !unit.unitDef.isNaval &&
+          unit.unitDef.category !== 'siege';
+      } else if (next.type === 'build' || next.type === 'repair') {
+        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        isValid = !!building &&
+          building.hp > 0 &&
+          building.faction === unit.faction &&
+          (
+            next.type === 'build'
+              ? !building.isConstructed
+              : building.isConstructed && (
+                  (!!building.wallBreached && !!building.buildingDef.isWall) ||
+                  building.hp < building.maxHp
+                )
+          );
+      } else if (next.type === 'garrison') {
+        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        isValid = !!building &&
+          building.hp > 0 &&
+          building.isConstructed &&
+          building.faction === unit.faction &&
+          getBuildingMaxGarrison(building) > 0 &&
+          unit.unitDef.category !== 'siege' &&
+          !unit.garrisonedInBuildingId;
+      }
+
+      if (!isValid) {
+        // Drop stale commands without activating their side effects, then inspect the next entry.
+        takeNextUnitCommand(unit);
+        continue;
+      }
+
+      this.clearFormationMovement(unit);
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
+      unit.moraleRoutGoal = undefined;
+      const activated = activateNextUnitCommand(unit);
+      if (!activated) return false;
+      (unit as any)._unloadOnArrive = activated.type === 'move' && !!activated.unload;
       return true;
     }
-    if (next.type === 'gather') {
-      unit.targetResourceNodeId = next.nodeId;
-      unit.targetEntityId = undefined;
-      unit.targetBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'gathering';
-      unit.currentActionText = '⋯佇列採集';
-      return true;
-    }
-    if (next.type === 'attack') {
-      unit.targetEntityId = next.targetId;
-      unit.targetResourceNodeId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'attacking';
-      unit.currentActionText = '⚔️ 佇列攻擊';
-      return true;
-    }
-    if (next.type === 'build') {
-      unit.targetBuildingId = next.buildingId;
-      unit.targetResourceNodeId = undefined;
-      unit.targetEntityId = undefined;
-      unit.targetGarrisonBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.pathGoal = undefined;
-      unit.pathCooldown = 0;
-      unit.state = 'building';
-      unit.currentActionText = '🔨 佇列建造';
-      return true;
-    }
+    unit.commandQueue = undefined;
     return false;
   }
 
-  public issueBuildOrder(buildingId: string) {
+  public issueBuildOrder(buildingId: string, queue = false) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
-    if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
+    const isDamagedStructure = !!bldg && bldg.isConstructed && bldg.hp < bldg.maxHp;
+    if (!bldg || (bldg.isConstructed && !isWallRepair && !isDamagedStructure) || bldg.hp <= 0) return;
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
 
     if (workers.length === 0) return;
 
@@ -4033,6 +4103,20 @@ export class RtsEngine {
     this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
 
     const bName = bldg.buildingDef.name.split(' ')[0];
+    if (queue) {
+      const queuedCount = enqueueCommandsForUnits(workers, () => ({
+        type: isWallRepair || isDamagedStructure ? 'repair' : 'build',
+        buildingId,
+      }));
+      if (queuedCount > 0) {
+        workers.forEach((worker) => {
+          if (worker.commandQueue?.length) worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+        });
+        this.onSelectionChange?.();
+      }
+      return;
+    }
+
     workers.forEach((worker) => {
       worker.wallPatrolRoute = undefined;
       worker.wallPatrolIndex = undefined;
@@ -4040,11 +4124,16 @@ export class RtsEngine {
       worker.targetResourceNodeId = undefined;
       worker.targetEntityId = undefined;
       worker.commandQueue = undefined;
+      worker.queuedGatherStopAfterDeposit = false;
       worker.waypoints = undefined;
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
       worker.state = 'building';
-      worker.currentActionText = isWallRepair ? '🧱 前往修復城牆' : `🔨 前往建造${bName}`;
+      worker.currentActionText = isWallRepair
+        ? '🧱 前往修復城牆'
+        : isDamagedStructure
+          ? `🔧 前往修復${bName}`
+          : `🔨 前往建造${bName}`;
     });
     this.onSelectionChange?.();
   }
@@ -4308,7 +4397,7 @@ export class RtsEngine {
     return getAvailableGarrisonSlots(maxCap, bldg.garrisonedUnitIds?.length || 0, incoming) > 0;
   }
 
-  public issueGarrisonOrder(buildingId: string): boolean {
+  public issueGarrisonOrder(buildingId: string, queue = false): boolean {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     if (!bldg || !bldg.isConstructed || bldg.hp <= 0) return false;
     const maxCap = getBuildingMaxGarrison(bldg);
@@ -4351,7 +4440,22 @@ export class RtsEngine {
       .slice(0, availableSlots);
 
     const bName = bldg.buildingDef.name.split(' ')[0];
+    if (queue) {
+      const queuedCount = enqueueCommandsForUnits(chosen, () => ({ type: 'garrison', buildingId: bldg.id }));
+      if (queuedCount > 0) {
+        chosen.forEach((unit) => {
+          unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列進駐';
+        });
+        sound.playOrder();
+        this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
+        this.onSelectionChange?.();
+      }
+      return queuedCount > 0;
+    }
+
     chosen.forEach((u) => {
+      u.commandQueue = undefined;
+      u.queuedGatherStopAfterDeposit = false;
       u.targetGarrisonBuildingId = bldg.id;
       u.targetEntityId = undefined;
       u.targetResourceNodeId = undefined;
@@ -5022,7 +5126,7 @@ export class RtsEngine {
     this.scene.add(group);
   }
 
-  public confirmPlacement(x: number, z: number): boolean {
+  public confirmPlacement(x: number, z: number, queueWorkers = false): boolean {
     if (!this.placementBuildingType) return false;
     if (this.placementBuildingType === 'wall') {
       return this.handleWallPlacementClick(x, z, false) === 'committed';
@@ -5078,21 +5182,30 @@ export class RtsEngine {
     sound.playConstruct();
     this.spawnCommandIndicator(x, z, 'build');
 
-    // Assign currently selected workers to construct it
+    // Assign or Shift-queue the newly placed foundation for each selected worker.
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction));
 
-    workers.forEach((w) => {
-      w.targetBuildingId = bldg.id;
-      w.targetResourceNodeId = undefined;
-      w.targetEntityId = undefined;
-      w.waypoints = undefined;
-      w.pathGoal = undefined;
-      w.pathCooldown = 0;
-      w.state = 'building';
-      w.currentActionText = `🔨 前往建造${bDef.name.split(' ')[0]}`;
-    });
+    if (queueWorkers) {
+      enqueueCommandsForUnits(workers, () => ({ type: 'build', buildingId: bldg.id }));
+      workers.forEach((worker) => {
+        if (worker.commandQueue?.length) worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+      });
+    } else {
+      workers.forEach((w) => {
+        w.commandQueue = undefined;
+        w.queuedGatherStopAfterDeposit = false;
+        w.targetBuildingId = bldg.id;
+        w.targetResourceNodeId = undefined;
+        w.targetEntityId = undefined;
+        w.waypoints = undefined;
+        w.pathGoal = undefined;
+        w.pathCooldown = 0;
+        w.state = 'building';
+        w.currentActionText = `🔨 前往建造${bDef.name.split(' ')[0]}`;
+      });
+    }
 
     this.cancelPlacement();
     return true;
@@ -6333,7 +6446,7 @@ export class RtsEngine {
 
       remainingUnits?.push(unit);
 
-      if (unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
+      if (!unit.garrisonedInBuildingId && unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
         this.tryDequeueCommand(unit);
       }
 
@@ -7081,8 +7194,10 @@ export class RtsEngine {
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
       this.clearFormationTacticalState(unit);
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -7140,6 +7255,7 @@ export class RtsEngine {
       this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
       unit.waypoints = undefined;
+      if (this.tryDequeueCommand(unit)) return;
       const followUp = this.selectNearbyCombatTarget(
         unit,
         Math.max(unit.attackMoveGoal ? 15 : 12, Math.min(24, unit.unitDef.stats.range + 2)),
@@ -7485,14 +7601,33 @@ export class RtsEngine {
 
   private stepUnitGathering(unit: UnitEntity, dt: number) {
     if (!unit.targetResourceNodeId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
+      if (hasQueuedFollowUp) {
+        unit.targetResourceNodeId = undefined;
+        unit.waypoints = undefined;
+        if (unit.carryingResource && unit.carryingResource.amount >= 1) {
+          unit.state = 'returning_resource';
+          unit.currentActionText = '🏃 送回剩餘資源後執行佇列';
+        } else {
+          unit.queuedGatherStopAfterDeposit = false;
+          if (!this.tryDequeueCommand(unit)) {
+            unit.state = 'idle';
+            unit.currentActionText = '💤 附近資源已採盡';
+          }
+        }
+        return;
+      }
+
       const carriedType = unit.carryingResource?.type;
       const fallbackType = node?.resourceType ?? carriedType;
       const nextNode = isBoat
@@ -7830,16 +7965,24 @@ export class RtsEngine {
 
       if (unit.carryingResource.amount >= unit.unitDef.stats.carryCapacity) {
         unit.waypoints = undefined;
+        if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
+          unit.targetResourceNodeId = undefined;
+          unit.queuedGatherStopAfterDeposit = true;
+        }
         unit.state = 'returning_resource';
-        unit.currentActionText = `🏃 運送物資回基地`;
+        unit.currentActionText = unit.queuedGatherStopAfterDeposit
+          ? '🏃 運送物資後執行佇列'
+          : '🏃 運送物資回基地';
       }
     }
   }
 
   private stepUnitReturning(unit: UnitEntity, dt: number) {
     if (!unit.carryingResource || unit.carryingResource.amount <= 0) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -7899,7 +8042,15 @@ export class RtsEngine {
         this.addFloatingText(unit.x, 2.0, unit.z, `+${amount} ${resType.toUpperCase()}`, '#4ade80');
       }
 
-      if (unit.targetResourceNodeId) {
+      const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
+      if (hasQueuedFollowUp) {
+        unit.targetResourceNodeId = undefined;
+        unit.queuedGatherStopAfterDeposit = false;
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 待命中 (閒置)';
+        }
+      } else if (unit.targetResourceNodeId) {
         unit.state = 'gathering';
       } else {
         unit.state = 'idle';
@@ -8154,6 +8305,8 @@ export class RtsEngine {
     this.syncHumanResourcesAlias();
     this.fieldSiegeProjects.push(project);
     builders.forEach((unit) => {
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.state = 'assembling';
       unit.fieldAssemblyProjectId = project.id;
       unit.targetBuildingId = undefined;
@@ -8187,14 +8340,17 @@ export class RtsEngine {
 
   private stepUnitBuilding(unit: UnitEntity, dt: number) {
     if (!unit.targetBuildingId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
     const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
     const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
-    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall)) {
+    const repairingStructure = !!bldg && bldg.isConstructed && !repairingWall && bldg.hp < bldg.maxHp;
+    if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall && !repairingStructure)) {
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
       if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
@@ -8202,7 +8358,11 @@ export class RtsEngine {
     }
 
     const pct = Math.round((bldg.hp / Math.max(1, bldg.maxHp)) * 100);
-    unit.currentActionText = repairingWall ? `🧱 修復城牆 (${pct}%)` : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
+    unit.currentActionText = repairingWall
+      ? `🧱 修復城牆 (${pct}%)`
+      : repairingStructure
+        ? `🔧 修復${bldg.buildingDef.name.split(' ')[0]} (${pct}%)`
+        : `🔨 建造${bldg.buildingDef.name.split(' ')[0]} (${Math.round(bldg.buildProgress * 100)}%)`;
 
     // A breached wall is passable, so use its footprint to define the carpenter's work ring.
     const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
@@ -8236,7 +8396,7 @@ export class RtsEngine {
       const builderCount = Math.max(1, activeBuilderCount);
       const perBuilderWorkShare =
         getConstructionWorkerMultiplier(builderCount) / builderCount;
-      if (repairingWall) {
+      if (repairingWall || repairingStructure) {
         const repairSpeed =
           (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
           (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
@@ -8288,7 +8448,19 @@ export class RtsEngine {
         return;
       }
 
-      if (!repairingWall && bldg.buildProgress >= 1) {
+      if (repairingStructure && bldg.hp >= bldg.maxHp) {
+        bldg.hp = bldg.maxHp;
+        bldg.hitFlashTimer = 0;
+        unit.targetBuildingId = undefined;
+        this.addFloatingText(bldg.x, 2.6, bldg.z, `🔧 ${bldg.buildingDef.name.split(' ')[0]}修復完成`, '#86efac');
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 修復完成';
+        }
+        return;
+      }
+
+      if (!repairingWall && !repairingStructure && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
@@ -8386,8 +8558,10 @@ export class RtsEngine {
 
   private stepUnitGarrisoning(unit: UnitEntity, dt: number) {
     if (!unit.targetGarrisonBuildingId) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -8397,8 +8571,10 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -8415,8 +8591,10 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
-      unit.state = 'idle';
-      unit.currentActionText = '🛡️ 駐防已滿待命';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '🛡️ 駐防已滿待命';
+      }
       return;
     }
 

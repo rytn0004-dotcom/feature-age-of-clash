@@ -1004,6 +1004,17 @@ export function isBuildingBuildableForCiv(
   const civ = getCivilizationConfig(civId);
   const building = DEFAULT_BUILDINGS[buildingType];
   if (!building || !Number.isFinite(currentAge)) return false;
+
+  // Landmarks are a shared age-up path, not ordinary civilization build-menu entries.
+  // The age modal issues their placement directly, so allow exactly the landmark that
+  // advances this faction from its current age to the next one.
+  if (building.landmarkAgeAdvance !== undefined) {
+    return (
+      building.landmarkAgeAdvance === currentAge + 1 &&
+      currentAge >= (building.requiredAge ?? 1)
+    );
+  }
+
   return civ.buildableBuildings.includes(buildingType) &&
     currentAge >= (building.requiredAge ?? 1);
 }

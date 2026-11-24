@@ -380,15 +380,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         return;
       }
 
-      // 4. Resume / join construction if workers right-click an incomplete friendly building
+      // 4. Join construction or repair a damaged friendly structure.
       if (
         hasWorkersSelected &&
         hit.hitType === 'building' &&
         hit.building &&
-        (!hit.building.isConstructed || hit.building.wallBreached) &&
+        (!hit.building.isConstructed || hit.building.wallBreached || hit.building.hp < hit.building.maxHp) &&
+        hit.building.hp > 0 &&
         !engine.isHostileToPlayer(hit.building)
       ) {
-        engine.issueBuildOrder(hit.building.id);
+        engine.issueBuildOrder(hit.building.id, e.shiftKey);
         return;
       }
 
@@ -421,7 +422,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           return !!u && u.hp > 0 && u.unitDef.category !== 'siege' && engine.isHumanControlled(u.faction);
         });
         if (hasGarrisonableSelected) {
-          engine.issueGarrisonOrder(hit.building.id);
+          engine.issueGarrisonOrder(hit.building.id, e.shiftKey);
           return;
         }
       }
@@ -450,7 +451,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
             if (result === 'committed') setWallPlacementInfo(null);
           } else {
-            engine.confirmPlacement(worldPoint.x, worldPoint.z);
+            engine.confirmPlacement(worldPoint.x, worldPoint.z, e.shiftKey);
           }
         }
         return;
@@ -469,7 +470,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         }
         const worldPoint = hit.point || engine.screenToWorld(e.clientX, e.clientY);
         if (worldPoint) {
-          engine.issueAttackMoveOrder(worldPoint.x, worldPoint.z);
+          engine.issueAttackMoveOrder(worldPoint.x, worldPoint.z, e.shiftKey);
         } else {
           engine.pendingCommandMode = 'normal';
           engine.onSelectionChange?.();
