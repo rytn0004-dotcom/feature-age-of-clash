@@ -23,9 +23,7 @@ export function advanceAiDecisionScheduler(
   deltaSeconds: number,
   baseIntervalSeconds = 1.2,
 ): AiDecisionScheduleStep {
-  // The engine passes a stable, match-scoped roster; reuse it directly so
-  // scheduling does not allocate a filtered array on every simulation frame.
-  const factions = factionIds;
+  const factions = factionIds.filter((id) => typeof id === 'string' && id.length > 0);
   if (factions.length === 0) {
     return {
       state: { accumulatorSeconds: 0, cursor: 0 },

@@ -605,6 +605,12 @@ export class RtsEngine {
   public gameSpeed = 1.0;
 
   // AI Timer
+  private aiUnitGroupsSource: UnitEntity[] | null = null;
+  private aiUnitGroupsLength = -1;
+  private aiUnitGroupsByFaction = new Map<string, UnitEntity[]>();
+  private aiBuildingGroupsSource: BuildingEntity[] | null = null;
+  private aiBuildingGroupsLength = -1;
+  private aiBuildingGroupsByFaction = new Map<string, BuildingEntity[]>();
   private aiTickAccumulator = 0;
   private aiDecisionFactionCursor = 0;
   private aiDecisionCount = 0;
@@ -6213,12 +6219,15 @@ export class RtsEngine {
     }
     this.battlefieldLeadershipUnits = Array.from(leaderByFaction.values(), (entry) => entry.unit);
     this.refreshFormationRegroupState();
-    const remainingUnits: UnitEntity[] = [];
-    let anyDied = false;
+    // Preserve the stable roster array on ordinary frames. Only allocate a
+    // compacted array when the first dead unit is actually encountered.
+    const currentUnits = this.units;
+    let remainingUnits: UnitEntity[] | null = null;
 
-    for (const unit of this.units) {
+    for (let unitIndex = 0; unitIndex < currentUnits.length; unitIndex++) {
+      const unit = currentUnits[unitIndex];
       if (unit.hp <= 0) {
-        anyDied = true;
+        if (!remainingUnits) remainingUnits = currentUnits.slice(0, unitIndex);
         if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
           this.unloadTransport(unit);
         }
@@ -6243,7 +6252,7 @@ export class RtsEngine {
         continue;
       }
 
-      remainingUnits.push(unit);
+      remainingUnits?.push(unit);
 
       if (unit.state === 'idle' && unit.commandQueue && unit.commandQueue.length > 0) {
         this.tryDequeueCommand(unit);
@@ -6521,9 +6530,8 @@ export class RtsEngine {
       }
     }
 
-    this.units = remainingUnits;
-
-    if (anyDied) {
+    if (remainingUnits) {
+      this.units = remainingUnits;
       const aliveSet = new Set(remainingUnits.map((u) => u.id));
       this.selectedUnitIds = this.selectedUnitIds.filter((id) => aliveSet.has(id));
       this.controlGroups = pruneControlGroups(this.controlGroups, aliveSet);
@@ -9190,12 +9198,15 @@ export class RtsEngine {
   }
 
   private updateBuildings(dt: number) {
-    const remainingBuildings: BuildingEntity[] = [];
+    const currentBuildings = this.buildings;
+    let remainingBuildings: BuildingEntity[] | null = null;
     let selectedDestroyed = false;
     let settlementEnvironmentDirty = false;
 
-    for (const bldg of this.buildings) {
+    for (let buildingIndex = 0; buildingIndex < currentBuildings.length; buildingIndex++) {
+      const bldg = currentBuildings[buildingIndex];
       if (bldg.hp <= 0) {
+        if (!remainingBuildings) remainingBuildings = currentBuildings.slice(0, buildingIndex);
         settlementEnvironmentDirty = true;
         this.navGridDirty = true;
         this.waterNavGridDirty = true;
@@ -9265,7 +9276,7 @@ export class RtsEngine {
         continue;
       }
 
-      remainingBuildings.push(bldg);
+      remainingBuildings?.push(bldg);
 
 
       if ((bldg as any).hitFlashTimer && (bldg as any).hitFlashTimer > 0) {
@@ -9706,7 +9717,7 @@ export class RtsEngine {
       }
     }
 
-    this.buildings = remainingBuildings;
+    if (remainingBuildings) this.buildings = remainingBuildings;
     if (settlementEnvironmentDirty) {
       this.refreshSettlementEnvironment();
       this.refreshWallTowerConnections();
@@ -10509,9 +10520,27 @@ export class RtsEngine {
     return false;
   }
 
+  private getAiUnitGroupsByFaction(): Map<string, UnitEntity[]> {
+    if (this.aiUnitGroupsSource !== this.units || this.aiUnitGroupsLength !== this.units.length) {
+      this.aiUnitGroupsByFaction = groupEntitiesByFaction(this.units);
+      this.aiUnitGroupsSource = this.units;
+      this.aiUnitGroupsLength = this.units.length;
+    }
+    return this.aiUnitGroupsByFaction;
+  }
+
+  private getAiBuildingGroupsByFaction(): Map<string, BuildingEntity[]> {
+    if (this.aiBuildingGroupsSource !== this.buildings || this.aiBuildingGroupsLength !== this.buildings.length) {
+      this.aiBuildingGroupsByFaction = groupEntitiesByFaction(this.buildings);
+      this.aiBuildingGroupsSource = this.buildings;
+      this.aiBuildingGroupsLength = this.buildings.length;
+    }
+    return this.aiBuildingGroupsByFaction;
+  }
+
   private evaluateAiLogic(onlyFactionId?: FactionId) {
-    const unitsByFaction = groupEntitiesByFaction(this.units);
-    const buildingsByFaction = groupEntitiesByFaction(this.buildings);
+    const unitsByFaction = this.getAiUnitGroupsByFaction();
+    const buildingsByFaction = this.getAiBuildingGroupsByFaction();
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
