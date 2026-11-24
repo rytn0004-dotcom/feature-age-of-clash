@@ -5354,6 +5354,7 @@ export class RtsEngine {
       });
       this.wallPlacementPreviewLine = new THREE.Line(geometry, material);
       this.wallPlacementPreviewLine.name = 'wallPlacementLine';
+      this.wallPlacementPreviewLine.frustumCulled = false;
       group.add(this.wallPlacementPreviewLine);
     }
     const line = this.wallPlacementPreviewLine;
@@ -8669,6 +8670,7 @@ export class RtsEngine {
       unit.buildApproachIndex = undefined;
       unit.buildApproachRetryAt = undefined;
       unit.buildApproachRecoveryCount = undefined;
+        unit.buildApproachAngle = undefined;
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
       if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
@@ -8756,6 +8758,7 @@ export class RtsEngine {
     unit.buildApproachIndex = undefined;
     unit.buildApproachRetryAt = undefined;
     unit.buildApproachRecoveryCount = undefined;
+        unit.buildApproachAngle = undefined;
     {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
@@ -8826,6 +8829,7 @@ export class RtsEngine {
         unit.buildApproachIndex = undefined;
         unit.buildApproachRetryAt = undefined;
         unit.buildApproachRecoveryCount = undefined;
+        unit.buildApproachAngle = undefined;
         if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 修復完成'; }
         return;
       }
@@ -8838,6 +8842,7 @@ export class RtsEngine {
         unit.buildApproachIndex = undefined;
         unit.buildApproachRetryAt = undefined;
         unit.buildApproachRecoveryCount = undefined;
+        unit.buildApproachAngle = undefined;
         this.addFloatingText(bldg.x, 2.6, bldg.z, `🔧 ${bldg.buildingDef.name.split(' ')[0]}修復完成`, '#86efac');
         if (!this.tryDequeueCommand(unit)) {
           unit.state = 'idle';
@@ -8875,6 +8880,7 @@ export class RtsEngine {
         unit.buildApproachIndex = undefined;
         unit.buildApproachRetryAt = undefined;
         unit.buildApproachRecoveryCount = undefined;
+        unit.buildApproachAngle = undefined;
 
         const factionCiv = getCivilizationConfig(this.getCivilizationForFaction(bldg.faction));
         if (bldg.buildingType === factionCiv.uniqueBuildingType) {
