@@ -60,7 +60,8 @@ test('a destroyed gap exposes the adjacent chain-run endpoints for reconnection'
   assert.ok(snap);
   assert.equal(snap.wall.id, 'wall-2');
   assert.equal(snap.side, 'start');
-  assert.deepEqual(snap.point, { x: 4.05, z: 0 });
+  assert.ok(Math.abs(snap.point.x - 4.05) < 1e-9);
+  assert.equal(snap.point.z, 0);
 });
 
 test('repair snapping finds a nearby breached wall and ignores healthy or unfinished pieces', () => {
