@@ -8,6 +8,7 @@ import {
   isActiveConstructionWorkerWithinReach,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
+  selectConstructionApproachCandidateIndex,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
@@ -259,8 +260,22 @@ test('construction work-ring selection is deterministic and tolerates invalid sl
     [{ x: 2.4, z: 0 }],
     0,
   ] as const;
-  const first = selectConstructionApproachCandidateIndex(...input);
-  const second = selectConstructionApproachCandidateIndex(...input);
+  const first = selectConstructionApproachCandidateIndex(
+    input[0],
+    input[1],
+    input[2],
+    input[3],
+    input[4],
+    input[5],
+  );
+  const second = selectConstructionApproachCandidateIndex(
+    input[0],
+    input[1],
+    input[2],
+    input[3],
+    input[4],
+    input[5],
+  );
 
   assert.equal(first, second);
   assert.ok(first >= 0 && first < CONSTRUCTION_APPROACH_DIRECTION_COUNT);
