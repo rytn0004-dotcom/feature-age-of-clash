@@ -322,6 +322,7 @@ import {
   getConstructionApproachPoint,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
+  selectConstructionApproachCandidateIndex,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -8881,6 +8882,63 @@ export class RtsEngine {
   }
 
   /**
+   * Work positions for other builders on this structure or adjacent pieces of
+   * the same wall chain. Their reserved approach slots act as soft occupancy,
+   * preventing workers from converging on one corner of a long wall.
+   */
+  private getOccupiedConstructionApproachPoints(
+    unit: UnitEntity,
+    building: BuildingEntity,
+  ): Array<{ x: number; z: number }> {
+    const occupied: Array<{ x: number; z: number }> = [];
+    for (const other of this.units) {
+      if (
+        other.id === unit.id ||
+        other.hp <= 0 ||
+        other.unitDef.category !== 'worker' ||
+        other.state !== 'building' ||
+        other.faction !== building.faction ||
+        !other.targetBuildingId ||
+        other.garrisonedInBuildingId
+      ) {
+        continue;
+      }
+
+      const otherBuilding = this.buildings.find((candidate) => candidate.id === other.targetBuildingId);
+      if (!otherBuilding) continue;
+      const sameStructure = otherBuilding.id === building.id;
+      const sameWallChain = !!building.wallChainId &&
+        otherBuilding.wallChainId === building.wallChainId &&
+        !!otherBuilding.buildingDef.isWall;
+      if (!sameStructure && !sameWallChain) continue;
+
+      if (
+        other.buildApproachBuildingId === otherBuilding.id &&
+        Number.isFinite(other.buildApproachAngle) &&
+        Number.isFinite(other.buildApproachIndex)
+      ) {
+        const otherBuildingRadius = Math.max(
+          getBuildingCollisionRadius(otherBuilding),
+          otherBuilding.wallBreached && otherBuilding.buildingDef.isWall ? otherBuilding.buildingDef.size : 0,
+        );
+        const otherReach = Math.max(2.2, otherBuildingRadius + 1.55);
+        const otherWorkRadius = Math.min(otherBuildingRadius + 0.95, otherReach - 0.25);
+        occupied.push(getConstructionApproachPoint(
+          { x: otherBuilding.x, z: otherBuilding.z },
+          otherWorkRadius,
+          other.buildApproachAngle!,
+          other.buildApproachIndex!,
+        ));
+      } else {
+        // A builder already inside its work ring has no reservation fields;
+        // its live position is the most accurate occupancy hint.
+        occupied.push({ x: other.x, z: other.z });
+      }
+    }
+    return occupied;
+  }
+
+  /**
    * If the active wall segment has exhausted every approach direction, rotate
    * it behind the remaining segments of the same chain. The worker can keep
    * building reachable sections and will revisit this segment later.
@@ -8980,8 +9038,16 @@ export class RtsEngine {
     if (distToCenter > buildReach) {
       if (unit.buildApproachBuildingId !== bldg.id) {
         unit.buildApproachBuildingId = bldg.id;
-        unit.buildApproachIndex = 0;
         unit.buildApproachAngle = Math.atan2(unit.z - bldg.z, unit.x - bldg.x);
+        const initialApproachRadius = Math.min(workRingRad, buildReach - 0.25);
+        unit.buildApproachIndex = selectConstructionApproachCandidateIndex(
+          { x: unit.x, z: unit.z },
+          { x: bldg.x, z: bldg.z },
+          initialApproachRadius,
+          unit.buildApproachAngle,
+          this.getOccupiedConstructionApproachPoints(unit, bldg),
+          BUILD_APPROACH_CANDIDATE_COUNT,
+        );
         unit.buildApproachRetryAt = undefined;
         unit.buildApproachRecoveryCount = unit.pathRecoveryCount || 0;
         unit.waypoints = undefined;

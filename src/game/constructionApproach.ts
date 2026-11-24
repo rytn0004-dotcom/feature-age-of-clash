@@ -217,3 +217,48 @@ export function deferBlockedWallConstructionCommand(
   queue.splice(insertIndex, 0, { type: 'build', buildingId: currentBuildingId });
   return true;
 }
+
+
+/**
+ * Choose the least-congested construction work-ring slot while keeping the
+ * worker close to its natural approach side. This is evaluated only when a
+ * worker changes construction targets, not on every simulation frame.
+ */
+export function selectConstructionApproachCandidateIndex(
+  worker: ConstructionWorkerPosition,
+  center: ConstructionApproachPoint,
+  radius: number,
+  preferredAngle: number,
+  occupiedPoints: readonly ConstructionApproachPoint[],
+  candidateCount = CONSTRUCTION_APPROACH_DIRECTION_COUNT,
+  preferredSpacing = 1.35,
+): number {
+  const safeCount = Number.isInteger(candidateCount) && candidateCount > 0
+    ? candidateCount
+    : CONSTRUCTION_APPROACH_DIRECTION_COUNT;
+  const safeSpacing = Number.isFinite(preferredSpacing) ? Math.max(0, preferredSpacing) : 0;
+  let bestIndex = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < safeCount; index++) {
+    const candidate = getConstructionApproachPoint(center, radius, preferredAngle, index, safeCount);
+    const travelDistance = Math.hypot(worker.x - candidate.x, worker.z - candidate.z);
+    let congestionPenalty = 0;
+
+    for (const occupied of occupiedPoints) {
+      const separation = Math.hypot(candidate.x - occupied.x, candidate.z - occupied.z);
+      if (separation < safeSpacing) {
+        const overlap = safeSpacing - separation;
+        congestionPenalty += overlap * overlap * 5;
+      }
+    }
+
+    const score = travelDistance + congestionPenalty;
+    if (score < bestScore - 1e-9) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}

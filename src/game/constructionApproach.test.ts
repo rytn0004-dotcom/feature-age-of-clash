@@ -8,6 +8,7 @@ import {
   isActiveConstructionWorkerWithinReach,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
+  selectConstructionApproachCandidateIndex,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
@@ -215,4 +216,67 @@ test('blocked wall command is not rotated across an unrelated command or another
     ),
     false,
   );
+});
+
+
+test('construction work-ring selection avoids an occupied slot when another slot is similarly reachable', () => {
+  const center = { x: 0, z: 0 };
+  const worker = { x: 2.4, z: 0 };
+  const radius = 2.4;
+  const preferredAngle = 0;
+  const occupied = [getConstructionApproachPoint(center, radius, preferredAngle, 0)];
+
+  const selected = selectConstructionApproachCandidateIndex(
+    worker,
+    center,
+    radius,
+    preferredAngle,
+    occupied,
+  );
+
+  assert.notEqual(selected, 0);
+  const selectedPoint = getConstructionApproachPoint(center, radius, preferredAngle, selected);
+  assert.ok(Math.hypot(selectedPoint.x - occupied[0].x, selectedPoint.z - occupied[0].z) >= 1.35);
+});
+
+test('construction work-ring selection keeps the nearest slot when no worker occupies the ring', () => {
+  const selected = selectConstructionApproachCandidateIndex(
+    { x: 2.3, z: 0.1 },
+    { x: 0, z: 0 },
+    2.4,
+    0,
+    [],
+  );
+
+  assert.equal(selected, 0);
+});
+
+test('construction work-ring selection is deterministic and tolerates invalid slot counts', () => {
+  const input = [
+    { x: 1, z: 0 },
+    { x: 0, z: 0 },
+    2,
+    0,
+    [{ x: 2.4, z: 0 }],
+    0,
+  ] as const;
+  const first = selectConstructionApproachCandidateIndex(
+    input[0],
+    input[1],
+    input[2],
+    input[3],
+    input[4],
+    input[5],
+  );
+  const second = selectConstructionApproachCandidateIndex(
+    input[0],
+    input[1],
+    input[2],
+    input[3],
+    input[4],
+    input[5],
+  );
+
+  assert.equal(first, second);
+  assert.ok(first >= 0 && first < CONSTRUCTION_APPROACH_DIRECTION_COUNT);
 });
