@@ -6177,9 +6177,24 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
-    this.battlefieldLeadershipUnits = this.units.filter(
-      (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId && !!unit.unitDef.leadershipAura,
-    );
+    const leaderByFaction = new Map<string, { unit: UnitEntity; score: number }>();
+    for (const unit of this.units) {
+      const aura = unit.unitDef.leadershipAura;
+      if (unit.hp <= 0 || unit.garrisonedInBuildingId || !aura) continue;
+      const score =
+        aura.moraleRecoveryPerSecond +
+        aura.moraleShockResistance * 4 +
+        aura.suppressionResistance * 3;
+      const current = leaderByFaction.get(unit.faction);
+      if (
+        !current ||
+        score > current.score ||
+        (score === current.score && unit.id.localeCompare(current.unit.id) < 0)
+      ) {
+        leaderByFaction.set(unit.faction, { unit, score });
+      }
+    }
+    this.battlefieldLeadershipUnits = Array.from(leaderByFaction.values(), (entry) => entry.unit);
     this.refreshFormationRegroupState();
     const remainingUnits: UnitEntity[] = [];
     let anyDied = false;
