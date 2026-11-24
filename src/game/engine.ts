@@ -5091,7 +5091,8 @@ export class RtsEngine {
       obstacles?.rects,
       obstacles?.discs,
       obstacles?.bridges,
-    );
+      points,
+    ) || !!this.findInvalidWallPathPoint(points, obstacles);
     this.wallPlacementPreviewCheckedAt = now;
 
     const resources = this.getResourcesForFaction(this.humanPlayerId);
@@ -5104,9 +5105,9 @@ export class RtsEngine {
     const hasAffordablePart = affordable > 0;
     this.wallPlacementPreviewIsValid = withinLimit && !this.wallPlacementPreviewBlocked && hasAffordablePart;
     this.applyWallPlacementPreviewTint(
-      this.wallPlacementPreviewBlocked || !hasAffordablePart
+      this.wallPlacementPreviewBlocked || placements.length > MAX_WALL_CHAIN_SEGMENTS
         ? 0xef4444
-        : affordable < placements.length
+        : !hasAffordablePart || affordable < placements.length
           ? 0xf59e0b
           : 0x22c55e,
     );
@@ -5168,21 +5169,21 @@ export class RtsEngine {
 
     if (this.wallPlacementPoints.length === 0) {
       if (!snap) {
-        const startResolution = findNearestValidWallStartPoint(inputPoint, (candidate) => {
-          const obstacles = this.getTerrainNavObstacles();
-          return isPlacementLocationValid(
+        const startObstacles = this.getTerrainNavObstacles();
+        const startResolution = findNearestValidWallStartPoint(inputPoint, (candidate) =>
+          isPlacementLocationValid(
             candidate.x,
             candidate.z,
             DEFAULT_BUILDINGS.wall.size,
             this.buildings,
             this.resourceNodes,
             true,
-            obstacles?.rects,
-            obstacles?.discs,
-            obstacles?.bridges,
+            startObstacles?.rects,
+            startObstacles?.discs,
+            startObstacles?.bridges,
             'wall',
-          );
-        });
+          ),
+        );
         if (!startResolution) {
           this.addFloatingText(x, 2.5, z, '⚠️ 起點附近沒有可建造位置，請稍微移到空地', '#ef4444');
           sound.playInvalid();
