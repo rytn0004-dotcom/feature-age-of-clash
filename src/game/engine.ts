@@ -3986,53 +3986,63 @@ export class RtsEngine {
 
   /** Consume next Shift-queued order when a unit finishes its current task. */
   private tryDequeueCommand(unit: UnitEntity): boolean {
-    if (!unit.commandQueue || unit.commandQueue.length === 0) return false;
-    const next = unit.commandQueue.shift()!;
-    if (unit.commandQueue.length === 0) unit.commandQueue = undefined;
-    if (next.type === 'move') {
-      unit.targetX = next.x;
-      unit.targetZ = next.z;
-      unit.targetEntityId = undefined;
-      unit.targetResourceNodeId = undefined;
-      unit.targetBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'moving';
-      unit.currentActionText = '👣 佇列行軍';
+    while (unit.commandQueue?.length) {
+      const next = unit.commandQueue[0];
+      let isValid = true;
+
+      if (next.type === 'move' || next.type === 'attackMove') {
+        isValid = Number.isFinite(next.x) && Number.isFinite(next.z);
+      } else if (next.type === 'gather') {
+        const node = this.resourceNodes.find((entry) => entry.id === next.nodeId);
+        isValid = !!node && node.amount > 0 && canUnitGatherNode(unit.unitDef, node);
+      } else if (next.type === 'attack') {
+        const targetUnit = this.units.find((entry) => entry.id === next.targetId);
+        const targetBuilding = this.buildings.find((entry) => entry.id === next.targetId);
+        const target = targetUnit || targetBuilding;
+        isValid = !!target && target.hp > 0 && this.isHostile(unit, target);
+      } else if (next.type === 'board') {
+        const boat = this.units.find((entry) => entry.id === next.targetId);
+        isValid = !!boat &&
+          boat.hp > 0 &&
+          boat.unitDefId === 'transport_boat' &&
+          boat.faction === unit.faction &&
+          !unit.unitDef.isNaval &&
+          unit.unitDef.category !== 'siege';
+      } else if (next.type === 'build' || next.type === 'repair') {
+        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        isValid = !!building && building.hp > 0 && (
+          next.type === 'build'
+            ? !building.isConstructed
+            : building.isConstructed && !!building.wallBreached && !!building.buildingDef.isWall
+        );
+      } else if (next.type === 'garrison') {
+        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        isValid = !!building &&
+          building.hp > 0 &&
+          building.isConstructed &&
+          building.faction === unit.faction &&
+          getBuildingMaxGarrison(building) > 0 &&
+          unit.unitDef.category !== 'siege' &&
+          !unit.garrisonedInBuildingId;
+      }
+
+      if (!isValid) {
+        // Drop stale commands (destroyed targets, depleted nodes, completed foundations)
+        // and continue to the next entry instead of leaving the unit stuck.
+        activateNextUnitCommand(unit);
+        continue;
+      }
+
+      this.clearFormationMovement(unit);
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
+      unit.moraleRoutGoal = undefined;
+      const activated = activateNextUnitCommand(unit);
+      if (!activated) return false;
+      (unit as any)._unloadOnArrive = activated.type === 'move' && !!activated.unload;
       return true;
     }
-    if (next.type === 'gather') {
-      unit.targetResourceNodeId = next.nodeId;
-      unit.targetEntityId = undefined;
-      unit.targetBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'gathering';
-      unit.currentActionText = '⋯佇列採集';
-      return true;
-    }
-    if (next.type === 'attack') {
-      unit.targetEntityId = next.targetId;
-      unit.targetResourceNodeId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.state = 'attacking';
-      unit.currentActionText = '⚔️ 佇列攻擊';
-      return true;
-    }
-    if (next.type === 'build') {
-      unit.targetBuildingId = next.buildingId;
-      unit.targetResourceNodeId = undefined;
-      unit.targetEntityId = undefined;
-      unit.targetGarrisonBuildingId = undefined;
-      unit.attackMoveGoal = null;
-      unit.waypoints = undefined;
-      unit.pathGoal = undefined;
-      unit.pathCooldown = 0;
-      unit.state = 'building';
-      unit.currentActionText = '🔨 佇列建造';
-      return true;
-    }
+    unit.commandQueue = undefined;
     return false;
   }
 
