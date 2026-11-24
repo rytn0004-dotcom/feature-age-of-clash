@@ -4906,11 +4906,11 @@ export class RtsEngine {
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();
     root.traverse((object) => {
-      const renderable = object as THREE.Mesh | THREE.Line;
-      if (!renderable.isMesh && !(renderable as THREE.Line).isLine) return;
-      if (renderable.geometry) geometries.add(renderable.geometry);
-      if (Array.isArray(renderable.material)) renderable.material.forEach((material) => materials.add(material));
-      else if (renderable.material) materials.add(renderable.material);
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh && !(object as THREE.Line).isLine) return;
+      if (mesh.geometry) geometries.add(mesh.geometry);
+      if (Array.isArray(mesh.material)) mesh.material.forEach((material) => materials.add(material));
+      else if (mesh.material) materials.add(mesh.material);
     });
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
@@ -5354,6 +5354,7 @@ export class RtsEngine {
       });
       this.wallPlacementPreviewLine = new THREE.Line(geometry, material);
       this.wallPlacementPreviewLine.name = 'wallPlacementLine';
+      this.wallPlacementPreviewLine.frustumCulled = false;
       this.wallPlacementPreviewLine.frustumCulled = false;
       group.add(this.wallPlacementPreviewLine);
     }
