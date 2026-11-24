@@ -306,7 +306,13 @@ import {
   updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
-import { findNearestRepairableWall, findNearestWallEndpoint, type WallSnapBuilding } from './wallSnapping';
+import {
+  findNearestRepairableWall,
+  findNearestWallEndpoint,
+  planWallChainExtension,
+  type WallEndpointSnap,
+  type WallSnapBuilding,
+} from './wallSnapping';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
@@ -586,6 +592,7 @@ export class RtsEngine {
   private wallPlacementPreviewGroup: THREE.Group | null = null;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
+  private wallPlacementPointSnaps: Array<WallEndpointSnap<BuildingEntity> | null> = [];
   private wallRepairPreviewMesh: THREE.Group | null = null;
   private wallRepairPreviewTargetId: string | null = null;
   private wallRepairPreviewRing: THREE.Mesh | null = null;
@@ -4817,6 +4824,7 @@ export class RtsEngine {
       this.wallPlacementPoints = [];
       this.wallPlacementCursor = null;
       this.wallPlacementSnapTargetId = null;
+      this.wallPlacementPointSnaps = [];
       this.wallPlacementGhostTemplate = this.createTranslucentBuildingPreview('wall', this.humanPlayerId, 0.42, 0x38bdf8);
       this.rebuildWallPlacementPreview();
       this.onSelectionChange?.();
@@ -4902,14 +4910,14 @@ export class RtsEngine {
     materials.forEach((material) => material.dispose());
   }
 
-  private findWallPlacementSnap(point: WallChainPoint) {
+  private findWallPlacementSnap(point: WallChainPoint): WallEndpointSnap<BuildingEntity> | null {
     const walls = this.buildings.filter(
       (building) =>
         building.faction === this.humanPlayerId &&
         building.buildingDef.isWall &&
         building.hp > 0 &&
         building.isConstructed
-    ) as WallSnapBuilding[];
+    );
     return findNearestWallEndpoint(point, walls);
   }
 
@@ -4996,6 +5004,7 @@ export class RtsEngine {
     this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
     if (this.wallPlacementPoints.length === 0) {
       this.wallPlacementPoints = [point];
+      this.wallPlacementPointSnaps = [snap];
       this.wallPlacementCursor = point;
       this.rebuildWallPlacementPreview();
       this.spawnCommandIndicator(x, z, 'build');
@@ -5014,6 +5023,7 @@ export class RtsEngine {
 
     if (addWaypoint) {
       this.wallPlacementPoints = [...this.wallPlacementPoints, point];
+      this.wallPlacementPointSnaps = [...this.wallPlacementPointSnaps, snap];
       this.wallPlacementCursor = point;
       this.rebuildWallPlacementPreview();
       this.spawnCommandIndicator(x, z, 'build');
@@ -5024,7 +5034,8 @@ export class RtsEngine {
     }
 
     const completedPoints = [...this.wallPlacementPoints, point];
-    const committed = this.commitWallChain(completedPoints);
+    const completedSnaps = [...this.wallPlacementPointSnaps, snap];
+    const committed = this.commitWallChain(completedPoints, completedSnaps);
     if (!committed) {
       this.wallPlacementCursor = point;
       this.rebuildWallPlacementPreview();
@@ -5101,7 +5112,10 @@ export class RtsEngine {
     return null;
   }
 
-  private commitWallChain(points: readonly WallChainPoint[]): boolean {
+  private commitWallChain(
+    points: readonly WallChainPoint[],
+    pointSnaps: readonly (WallEndpointSnap<BuildingEntity> | null)[] = []
+  ): boolean {
     const placements = layoutWallChain(points);
     if (placements.length === 0) {
       this.addFloatingText(this.cameraTarget.x, 2.5, this.cameraTarget.z, '⚠️ 請先設定起點，再設定足夠長度的終點', '#ef4444');
@@ -5158,12 +5172,45 @@ export class RtsEngine {
     this.syncHumanResourcesAlias();
     this.onResourcesChange?.(this.playerResources);
 
-    const chainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const generatedChainId = `wall_chain_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const startSnap = pointSnaps.length === points.length ? pointSnaps[0] : null;
+    const endSnap = pointSnaps.length === points.length ? pointSnaps[pointSnaps.length - 1] : null;
+    const hasIntermediateSnap = pointSnaps.slice(1, -1).some(Boolean);
+    const canExtendAtSingleEndpoint =
+      !hasIntermediateSnap &&
+      (!!startSnap !== !!endSnap) &&
+      (startSnap || endSnap);
+    const extensionSnap = canExtendAtSingleEndpoint ? (startSnap || endSnap) : null;
+    const extensionPlan = extensionSnap
+      ? planWallChainExtension(
+          this.buildings.filter(
+            (building) =>
+              building.faction === this.humanPlayerId &&
+              building.buildingDef.isWall &&
+              building.hp > 0 &&
+              building.isConstructed
+          ),
+          extensionSnap,
+          placements.length,
+          startSnap ? 'start' : 'end',
+          generatedChainId
+        )
+      : null;
+    const chainId = extensionPlan?.chainId ?? generatedChainId;
+
+    if (extensionPlan) {
+      for (const assignment of extensionPlan.existingAssignments) {
+        assignment.wall.wallChainId = extensionPlan.chainId;
+        assignment.wall.wallChainIndex = assignment.index;
+        assignment.wall.wallChainSize = extensionPlan.totalSize;
+      }
+    }
+
     const segments = placements.map((placement, index) => {
       const building = this.addBuilding('wall', this.humanPlayerId, placement.x, placement.z, false, placement.rotationY, false);
       building.wallChainId = chainId;
-      building.wallChainIndex = index;
-      building.wallChainSize = placements.length;
+      building.wallChainIndex = extensionPlan?.newIndices[index] ?? index;
+      building.wallChainSize = extensionPlan?.totalSize ?? placements.length;
       return building;
     });
     this.refreshSettlementEnvironment();
@@ -5375,6 +5422,7 @@ export class RtsEngine {
     this.wallPlacementPoints = [];
     this.wallPlacementCursor = null;
     this.wallPlacementSnapTargetId = null;
+    this.wallPlacementPointSnaps = [];
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
       for (const child of [...this.wallPlacementPreviewGroup.children]) {
