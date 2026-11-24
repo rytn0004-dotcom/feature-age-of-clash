@@ -97,3 +97,73 @@ test('active construction worker counts accumulate once per target without alloc
 
   assert.deepEqual([...counts.entries()], [['wall-2', 2]]);
 });
+
+
+test('blocked wall segments can be deferred behind the next unfinished segment in the same chain', () => {
+  const current = {
+    id: 'wall-2',
+    wallChainId: 'chain-a',
+    faction: 'blue',
+    hp: 1,
+    isWall: true,
+    isConstructed: false,
+  };
+  const next = {
+    ...current,
+    id: 'wall-3',
+  };
+
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      next,
+    ),
+    true,
+  );
+});
+
+test('blocked wall deferral never reorders unrelated or repair commands', () => {
+  const current = {
+    id: 'wall-2',
+    wallChainId: 'chain-a',
+    faction: 'blue',
+    hp: 1,
+    isWall: true,
+    isConstructed: false,
+  };
+  const sameChainNext = { ...current, id: 'wall-3' };
+
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'repair', buildingId: 'wall-3' },
+      sameChainNext,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, wallChainId: 'chain-b' },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, isConstructed: true },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeferBlockedWallConstructionTarget(
+      current,
+      { type: 'build', buildingId: 'wall-3' },
+      { ...sameChainNext, faction: 'red' },
+    ),
+    false,
+  );
+});
