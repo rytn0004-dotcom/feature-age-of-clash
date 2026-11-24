@@ -298,6 +298,7 @@ export type UnitQueuedCommand =
   | { type: 'attackMove'; x: number; z: number }
   | { type: 'gather'; nodeId: string }
   | { type: 'attack'; targetId: string }
+  | { type: 'board'; targetId: string }
   | { type: 'build'; buildingId: string }
   | { type: 'repair'; buildingId: string }
   | { type: 'garrison'; buildingId: string };
