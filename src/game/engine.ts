@@ -409,7 +409,11 @@ export class RtsEngine {
   private battlefieldLeadershipUnits: UnitEntity[] = [];
   private formationRegroupRefreshAccumulator = 0.15;
   private combatUnitLookupById = new Map<string, UnitEntity>();
+  private combatUnitLookupSource: UnitEntity[] | null = null;
+  private combatUnitLookupLength = -1;
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
+  private combatBuildingLookupSource: BuildingEntity[] | null = null;
+  private combatBuildingLookupLength = -1;
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
   private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -1404,7 +1408,11 @@ export class RtsEngine {
     this.aiBuildingGroupsByFaction.clear();
     this.combatSpatialIndex = null;
     this.combatUnitLookupById.clear();
+    this.combatUnitLookupSource = null;
+    this.combatUnitLookupLength = -1;
     this.combatBuildingLookupById.clear();
+    this.combatBuildingLookupSource = null;
+    this.combatBuildingLookupLength = -1;
     this.combatTargetQueryScratch.units.length = 0;
     this.combatTargetQueryScratch.buildings.length = 0;
     this.cavalryRetreatQueryScratch.units.length = 0;
@@ -6126,8 +6134,24 @@ export class RtsEngine {
   }
 
   private rebuildCombatEntityLookups(): void {
-    rebuildEntityIdIndex(this.combatUnitLookupById, this.units);
-    rebuildEntityIdIndex(this.combatBuildingLookupById, this.buildings);
+    // Entity IDs are stable while an entity is alive. Rebuild only when roster
+    // membership changes; unit/building position updates do not invalidate maps.
+    if (
+      this.combatUnitLookupSource !== this.units ||
+      this.combatUnitLookupLength !== this.units.length
+    ) {
+      rebuildEntityIdIndex(this.combatUnitLookupById, this.units);
+      this.combatUnitLookupSource = this.units;
+      this.combatUnitLookupLength = this.units.length;
+    }
+    if (
+      this.combatBuildingLookupSource !== this.buildings ||
+      this.combatBuildingLookupLength !== this.buildings.length
+    ) {
+      rebuildEntityIdIndex(this.combatBuildingLookupById, this.buildings);
+      this.combatBuildingLookupSource = this.buildings;
+      this.combatBuildingLookupLength = this.buildings.length;
+    }
   }
 
   /**
