@@ -127,3 +127,15 @@ export function isActiveConstructionWorkerWithinReach(
   const dz = worker.z - target.z;
   return dx * dx + dz * dz <= buildReach * buildReach;
 }
+
+
+/** Add one eligible worker to a reusable per-building count map. */
+export function accumulateActiveConstructionWorkerCount(
+  counts: Map<string, number>,
+  worker: ConstructionWorkerCountCandidate,
+  target: ConstructionWorkerCountTarget,
+  buildReach: number,
+): void {
+  if (!isActiveConstructionWorkerWithinReach(worker, target, buildReach)) return;
+  counts.set(target.id, (counts.get(target.id) ?? 0) + 1);
+}
