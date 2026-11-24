@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   CONSTRUCTION_APPROACH_DIRECTION_COUNT,
   assignWorkersToConstructionTargets,
+  accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
   isActiveConstructionWorkerWithinReach,
 } from './constructionApproach';
@@ -68,4 +69,31 @@ test('active construction worker counting matches target, faction, health, state
   assert.equal(isActiveConstructionWorkerWithinReach({ ...base, targetBuildingId: 'wall-3' }, target, 2.5), false);
   assert.equal(isActiveConstructionWorkerWithinReach({ ...base, garrisonedInBuildingId: 'keep-1' }, target, 2.5), false);
   assert.equal(isActiveConstructionWorkerWithinReach(base, target, Number.NaN), false);
+});
+
+
+test('active construction worker counts accumulate once per target without allocating worker lists', () => {
+  const target = { id: 'wall-2', faction: 'blue', x: 0, z: 0 };
+  const makeWorker = (id: string, x: number) => ({
+    id,
+    x,
+    z: 0,
+    hp: 100,
+    faction: 'blue',
+    state: 'building',
+    targetBuildingId: 'wall-2',
+  });
+  const counts = new Map<string, number>();
+
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('a', 0), target, 2.5);
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('b', 1), target, 2.5);
+  accumulateActiveConstructionWorkerCount(counts, makeWorker('outside', 3), target, 2.5);
+  accumulateActiveConstructionWorkerCount(
+    counts,
+    { ...makeWorker('wrong-target', 0), targetBuildingId: 'wall-3' },
+    target,
+    2.5,
+  );
+
+  assert.deepEqual([...counts.entries()], [['wall-2', 2]]);
 });
