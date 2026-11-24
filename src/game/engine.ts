@@ -312,7 +312,10 @@ import {
   planWallChainExtension,
   type WallEndpointSnap,
 } from './wallSnapping';
-import { getConstructionApproachPoint } from './constructionApproach';
+import {
+  assignWorkersToConstructionTargets,
+  getConstructionApproachPoint,
+} from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
@@ -5253,23 +5256,20 @@ export class RtsEngine {
 
     const builderCount = Math.min(workers.length, segments.length);
     if (builderCount > 0) {
-      const availableWorkers = [...workers];
-      for (let index = 0; index < builderCount; index++) {
+      const workChunks = Array.from({ length: builderCount }, (_, index) => {
         const startIndex = Math.floor((index * segments.length) / builderCount);
         const endIndex = Math.floor(((index + 1) * segments.length) / builderCount);
         const assignedSegments = segments.slice(startIndex, endIndex);
-        const first = assignedSegments[0];
-        let nearestWorkerIndex = 0;
-        let nearestWorkerDistance = Infinity;
-        for (let candidateIndex = 0; candidateIndex < availableWorkers.length; candidateIndex++) {
-          const candidate = availableWorkers[candidateIndex];
-          const distance = getDistance(candidate.x, candidate.z, first.x, first.z);
-          if (distance < nearestWorkerDistance) {
-            nearestWorkerDistance = distance;
-            nearestWorkerIndex = candidateIndex;
-          }
-        }
-        const worker = availableWorkers.splice(nearestWorkerIndex, 1)[0];
+        return { startIndex, assignedSegments, first: assignedSegments[0] };
+      });
+      const workerAssignments = assignWorkersToConstructionTargets(
+        workers,
+        workChunks.map((chunk) => chunk.first),
+      );
+      for (let index = 0; index < workChunks.length; index++) {
+        const { startIndex, assignedSegments, first } = workChunks[index];
+        const worker = workers[workerAssignments[index]];
+        if (!worker) continue;
         worker.buildApproachBuildingId = undefined;
         worker.buildApproachIndex = undefined;
         worker.buildApproachRetryAt = undefined;
