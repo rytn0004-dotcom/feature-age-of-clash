@@ -6,7 +6,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
   getUnitColliderRadius,
-  getUnitCollisionDisplacementShares,
+  getUnitCollisionFirstDisplacementShare,
 } from './collision';
 
 function makeUnit(
@@ -281,10 +281,11 @@ test('collision priority: two stationary builders and ordinary units still share
     targetBuildingId: 'wall-b',
     velocity: { x: 0, z: 0 },
   });
-  const shares = getUnitCollisionDisplacementShares(firstBuilder, secondBuilder);
-  assert.deepEqual(shares, { first: 0.5, second: 0.5 });
+  assert.equal(getUnitCollisionFirstDisplacementShare(firstBuilder, secondBuilder), 0.5);
 
   const movingA = makeUnit('moving-a', 0, 0, { state: 'moving', velocity: { x: 1, z: 0 } });
   const movingB = makeUnit('moving-b', 0.2, 0, { state: 'moving', velocity: { x: -1, z: 0 } });
-  assert.deepEqual(getUnitCollisionDisplacementShares(movingA, movingB), { first: 0.5, second: 0.5 });
+  assert.equal(getUnitCollisionFirstDisplacementShare(movingA, movingB), 0.5);
+  assert.equal(getUnitCollisionFirstDisplacementShare(firstBuilder, movingB), 0.12);
+  assert.equal(getUnitCollisionFirstDisplacementShare(movingA, secondBuilder), 0.88);
 });
