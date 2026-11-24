@@ -204,6 +204,37 @@ function nearbyCollisionEntries<T extends { x: number; z: number }>(
   return found;
 }
 
+export interface UnitCollisionMotionState {
+  state?: string;
+  targetBuildingId?: string;
+  velocity?: { x: number; z: number };
+}
+
+/**
+ * Stationary builders should hold their work position when traffic passes.
+ * The incoming/moving unit absorbs most of the overlap correction; two
+ * stationary builders or two moving units still share it evenly.
+ */
+function isStationaryConstructionBuilder(unit: UnitCollisionMotionState): boolean {
+  return unit.state === 'building' &&
+    !!unit.targetBuildingId &&
+    Number.isFinite(unit.velocity?.x) &&
+    Number.isFinite(unit.velocity?.z) &&
+    Math.hypot(unit.velocity!.x, unit.velocity!.z) < 0.08;
+}
+
+/** Returns only the first unit's share; the second share is its complement. */
+export function getUnitCollisionFirstDisplacementShare(
+  first: UnitCollisionMotionState,
+  second: UnitCollisionMotionState,
+): number {
+  const firstIsAnchor = isStationaryConstructionBuilder(first);
+  const secondIsAnchor = isStationaryConstructionBuilder(second);
+  if (firstIsAnchor && !secondIsAnchor) return 0.12;
+  if (!firstIsAnchor && secondIsAnchor) return 0.88;
+  return 0.5;
+}
+
 /** Resolves soft unit collisions using a spatial broad phase and exact circle tests. */
 export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.52): void {
   const index = createCollisionIndex(
@@ -259,11 +290,13 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
         nx = (i % 2 === 0 ? 1 : -1) * 0.7071;
         nz = 0.7071;
       }
-      const push = (minDist - dist) * 0.5 * pushStrength;
-      u1.x -= nx * push;
-      u1.z -= nz * push;
-      u2.x += nx * push;
-      u2.z += nz * push;
+      const push = (minDist - dist) * pushStrength;
+      const firstDisplacementShare = getUnitCollisionFirstDisplacementShare(u1, u2);
+      const secondDisplacementShare = 1 - firstDisplacementShare;
+      u1.x -= nx * push * firstDisplacementShare;
+      u1.z -= nz * push * firstDisplacementShare;
+      u2.x += nx * push * secondDisplacementShare;
+      u2.z += nz * push * secondDisplacementShare;
       const firstChangedCell = moveCollisionEntry(index, first);
       const secondChangedCell = moveCollisionEntry(index, next);
       if (firstChangedCell || secondChangedCell) {

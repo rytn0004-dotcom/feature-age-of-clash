@@ -6,6 +6,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
   getUnitColliderRadius,
+  getUnitCollisionFirstDisplacementShare,
 } from './collision';
 
 function makeUnit(
@@ -18,6 +19,8 @@ function makeUnit(
     garrisonedInBuildingId?: string;
     state?: string;
     targetResourceNodeId?: string;
+    targetBuildingId?: string;
+    velocity?: { x: number; z: number };
   } = {},
 ): UnitEntity {
   return {
@@ -29,6 +32,8 @@ function makeUnit(
     garrisonedInBuildingId: options.garrisonedInBuildingId,
     state: options.state ?? 'idle',
     targetResourceNodeId: options.targetResourceNodeId,
+    targetBuildingId: options.targetBuildingId,
+    velocity: options.velocity ?? { x: 0, z: 0 },
     unitDef: {
       category: options.category ?? 'melee',
       visual: { scale: 1 },
@@ -222,4 +227,65 @@ test('wall preview broad-phase ignores destroyed buildings and depleted resource
   } as unknown as ResourceNode;
 
   assert.equal(isWallChainPreviewObstructed(placement, 1.48, [destroyed], [depleted]), false);
+});
+
+
+test('collision priority: stationary builders give way only slightly to moving traffic', () => {
+  const builder = makeUnit('builder', 0, 0, {
+    category: 'worker',
+    state: 'building',
+    targetBuildingId: 'wall-segment',
+    velocity: { x: 0, z: 0 },
+  });
+  const passer = makeUnit('passer', 0.2, 0, {
+    state: 'moving',
+    velocity: { x: -1, z: 0 },
+  });
+
+  resolveUnitUnitCollisions([builder, passer]);
+
+  assert.ok(Math.abs(builder.x) < Math.abs(passer.x));
+  assert.ok(builder.x > -0.04, 'the builder should absorb only a small part of the correction');
+  assert.ok(passer.x > 0.1, 'the moving unit should be moved out of the work position');
+});
+
+test('collision priority is independent of unit array order', () => {
+  const passer = makeUnit('passer', -0.2, 0, {
+    state: 'moving',
+    velocity: { x: 1, z: 0 },
+  });
+  const builder = makeUnit('builder', 0, 0, {
+    category: 'worker',
+    state: 'building',
+    targetBuildingId: 'wall-segment',
+    velocity: { x: 0, z: 0 },
+  });
+
+  resolveUnitUnitCollisions([passer, builder]);
+
+  assert.ok(Math.abs(builder.x) < Math.abs(passer.x));
+  assert.ok(builder.x < 0.04, 'the builder should not be displaced by most of the correction');
+  assert.ok(passer.x < -0.1, 'the moving unit should yield regardless of iteration order');
+});
+
+test('collision priority: two stationary builders and ordinary units still share correction evenly', () => {
+  const firstBuilder = makeUnit('builder-a', 0, 0, {
+    category: 'worker',
+    state: 'building',
+    targetBuildingId: 'wall-a',
+    velocity: { x: 0, z: 0 },
+  });
+  const secondBuilder = makeUnit('builder-b', 0.2, 0, {
+    category: 'worker',
+    state: 'building',
+    targetBuildingId: 'wall-b',
+    velocity: { x: 0, z: 0 },
+  });
+  assert.equal(getUnitCollisionFirstDisplacementShare(firstBuilder, secondBuilder), 0.5);
+
+  const movingA = makeUnit('moving-a', 0, 0, { state: 'moving', velocity: { x: 1, z: 0 } });
+  const movingB = makeUnit('moving-b', 0.2, 0, { state: 'moving', velocity: { x: -1, z: 0 } });
+  assert.equal(getUnitCollisionFirstDisplacementShare(movingA, movingB), 0.5);
+  assert.equal(getUnitCollisionFirstDisplacementShare(firstBuilder, movingB), 0.12);
+  assert.equal(getUnitCollisionFirstDisplacementShare(movingA, secondBuilder), 0.88);
 });
