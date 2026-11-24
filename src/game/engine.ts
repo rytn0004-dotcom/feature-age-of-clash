@@ -8670,7 +8670,7 @@ export class RtsEngine {
       unit.buildApproachIndex = undefined;
       unit.buildApproachRetryAt = undefined;
       unit.buildApproachRecoveryCount = undefined;
-        unit.buildApproachAngle = undefined;
+      unit.buildApproachAngle = undefined;
       unit.targetBuildingId = undefined;
       unit.waypoints = undefined;
       if (!this.tryDequeueCommand(unit)) { unit.state = 'idle'; unit.currentActionText = '💤 待命中 (閒置)'; }
@@ -8758,7 +8758,7 @@ export class RtsEngine {
     unit.buildApproachIndex = undefined;
     unit.buildApproachRetryAt = undefined;
     unit.buildApproachRecoveryCount = undefined;
-        unit.buildApproachAngle = undefined;
+    unit.buildApproachAngle = undefined;
     {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(bldg.x - unit.x, bldg.z - unit.z);
