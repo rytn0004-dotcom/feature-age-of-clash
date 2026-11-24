@@ -21,7 +21,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
   const dragStartRef = useRef<{ x: number; y: number; shiftKey: boolean } | null>(null);
   const lastClickedUnitRef = useRef<{ id: string; defId: string; time: number } | null>(null);
   const lastHoverCheckRef = useRef(0);
-  const wallPreviewPointRef = useRef<{ x: number; z: number } | null>(null);
+  const wallPreviewPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const wallPreviewRafRef = useRef<number | null>(null);
   const lastWallInfoRefreshRef = useRef(0);
   const [marqueeBox, setMarqueeBox] = useState<{
@@ -49,7 +49,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         cancelAnimationFrame(wallPreviewRafRef.current);
         wallPreviewRafRef.current = null;
       }
-      wallPreviewPointRef.current = null;
+      wallPreviewPointerRef.current = null;
     };
   }, []);
 
@@ -521,27 +521,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     // Wall mode uses a live polyline preview; other buildings keep the single-footprint ghost.
     if (engine.placementBuildingType === 'wall') {
       if (hoverHint) setHoverHint(null);
-      const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
-      if (worldPoint) {
-        wallPreviewPointRef.current = { x: worldPoint.x, z: worldPoint.z };
-        // Coalesce high-frequency pointer events into one scene update per display frame.
-        if (wallPreviewRafRef.current === null) {
-          wallPreviewRafRef.current = requestAnimationFrame(() => {
-            wallPreviewRafRef.current = null;
-            const activeEngine = engineRef.current;
-            const latestPoint = wallPreviewPointRef.current;
-            if (!activeEngine || activeEngine.placementBuildingType !== 'wall' || !latestPoint) return;
-            activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
+      wallPreviewPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
+      // Defer both terrain raycasting and scene updates to one display frame.
+      if (wallPreviewRafRef.current === null) {
+        wallPreviewRafRef.current = requestAnimationFrame(() => {
+          wallPreviewRafRef.current = null;
+          const activeEngine = engineRef.current;
+          const latestPointer = wallPreviewPointerRef.current;
+          if (!activeEngine || activeEngine.placementBuildingType !== 'wall' || !latestPointer) return;
+          const latestPoint = activeEngine.screenToWorld(latestPointer.clientX, latestPointer.clientY);
+          if (!latestPoint) return;
+          activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
 
-            // Terrain/overlap validation is substantially heavier than moving the ghost.
-            // Refresh the HUD at 10 Hz instead of once for every pointer event.
-            const now = performance.now();
-            if (now - lastWallInfoRefreshRef.current >= 100) {
-              setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
-              lastWallInfoRefreshRef.current = now;
-            }
-          });
-        }
+          // Terrain/overlap validation is substantially heavier than moving the ghost.
+          // Refresh the HUD at 10 Hz instead of once for every pointer event.
+          const now = performance.now();
+          if (now - lastWallInfoRefreshRef.current >= 100) {
+            setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
+            lastWallInfoRefreshRef.current = now;
+          }
+        });
       }
       return;
     }
