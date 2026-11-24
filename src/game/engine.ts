@@ -4036,13 +4036,13 @@ export class RtsEngine {
     return false;
   }
 
-  public issueBuildOrder(buildingId: string) {
+  public issueBuildOrder(buildingId: string, queue = false) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     if (!bldg || (bldg.isConstructed && !isWallRepair) || bldg.hp <= 0) return;
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
 
     if (workers.length === 0) return;
 
@@ -4062,6 +4062,20 @@ export class RtsEngine {
     this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
 
     const bName = bldg.buildingDef.name.split(' ')[0];
+    if (queue) {
+      const queuedCount = enqueueCommandsForUnits(workers, () => ({
+        type: isWallRepair ? 'repair' : 'build',
+        buildingId,
+      }));
+      if (queuedCount > 0) {
+        workers.forEach((worker) => {
+          if (worker.commandQueue?.length) worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+        });
+        this.onSelectionChange?.();
+      }
+      return;
+    }
+
     workers.forEach((worker) => {
       worker.wallPatrolRoute = undefined;
       worker.wallPatrolIndex = undefined;
@@ -4337,7 +4351,7 @@ export class RtsEngine {
     return getAvailableGarrisonSlots(maxCap, bldg.garrisonedUnitIds?.length || 0, incoming) > 0;
   }
 
-  public issueGarrisonOrder(buildingId: string): boolean {
+  public issueGarrisonOrder(buildingId: string, queue = false): boolean {
     const bldg = this.buildings.find((b) => b.id === buildingId);
     if (!bldg || !bldg.isConstructed || bldg.hp <= 0) return false;
     const maxCap = getBuildingMaxGarrison(bldg);
@@ -4380,6 +4394,16 @@ export class RtsEngine {
       .slice(0, availableSlots);
 
     const bName = bldg.buildingDef.name.split(' ')[0];
+    if (queue) {
+      const queuedCount = enqueueCommandsForUnits(chosen, () => ({ type: 'garrison', buildingId: bldg.id }));
+      if (queuedCount > 0) {
+        sound.playOrder();
+        this.spawnCommandIndicator(bldg.x, bldg.z, 'build');
+        this.onSelectionChange?.();
+      }
+      return queuedCount > 0;
+    }
+
     chosen.forEach((u) => {
       u.targetGarrisonBuildingId = bldg.id;
       u.targetEntityId = undefined;
@@ -5051,7 +5075,7 @@ export class RtsEngine {
     this.scene.add(group);
   }
 
-  public confirmPlacement(x: number, z: number): boolean {
+  public confirmPlacement(x: number, z: number, queueWorkers = false): boolean {
     if (!this.placementBuildingType) return false;
     if (this.placementBuildingType === 'wall') {
       return this.handleWallPlacementClick(x, z, false) === 'committed';
@@ -5107,21 +5131,30 @@ export class RtsEngine {
     sound.playConstruct();
     this.spawnCommandIndicator(x, z, 'build');
 
-    // Assign currently selected workers to construct it
+    // Assign or Shift-queue the newly placed foundation for each selected worker.
     const workers = this.selectedUnitIds
       .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction));
 
-    workers.forEach((w) => {
-      w.targetBuildingId = bldg.id;
-      w.targetResourceNodeId = undefined;
-      w.targetEntityId = undefined;
-      w.waypoints = undefined;
-      w.pathGoal = undefined;
-      w.pathCooldown = 0;
-      w.state = 'building';
-      w.currentActionText = `🔨 前往建造${bDef.name.split(' ')[0]}`;
-    });
+    if (queueWorkers) {
+      enqueueCommandsForUnits(workers, () => ({ type: 'build', buildingId: bldg.id }));
+      workers.forEach((worker) => {
+        if (worker.commandQueue?.length) worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+      });
+    } else {
+      workers.forEach((w) => {
+        w.commandQueue = undefined;
+        w.queuedGatherStopAfterDeposit = false;
+        w.targetBuildingId = bldg.id;
+        w.targetResourceNodeId = undefined;
+        w.targetEntityId = undefined;
+        w.waypoints = undefined;
+        w.pathGoal = undefined;
+        w.pathCooldown = 0;
+        w.state = 'building';
+        w.currentActionText = `🔨 前往建造${bDef.name.split(' ')[0]}`;
+      });
+    }
 
     this.cancelPlacement();
     return true;
