@@ -167,3 +167,50 @@ test('blocked wall deferral never reorders unrelated or repair commands', () => 
     false,
   );
 });
+
+
+test('blocked wall command moves behind its own chain but stays before unrelated queued orders', () => {
+  const queue = [
+    { type: 'build', buildingId: 'wall-3' },
+    { type: 'build', buildingId: 'wall-4' },
+    { type: 'move' },
+  ];
+  const chainById: Record<string, string> = {
+    'wall-3': 'chain-a',
+    'wall-4': 'chain-a',
+  };
+
+  assert.equal(
+    deferBlockedWallConstructionCommand(queue, 'wall-2', 'chain-a', (id) => chainById[id]),
+    true,
+  );
+  assert.deepEqual(queue, [
+    { type: 'build', buildingId: 'wall-3' },
+    { type: 'build', buildingId: 'wall-4' },
+    { type: 'build', buildingId: 'wall-2' },
+    { type: 'move' },
+  ]);
+});
+
+test('blocked wall command is not rotated across an unrelated command or another chain', () => {
+  const queue = [
+    { type: 'move' },
+    { type: 'build', buildingId: 'wall-other' },
+  ];
+  const original = queue.map((command) => ({ ...command }));
+
+  assert.equal(
+    deferBlockedWallConstructionCommand(queue, 'wall-2', 'chain-a', () => 'chain-a'),
+    false,
+  );
+  assert.deepEqual(queue, original);
+  assert.equal(
+    deferBlockedWallConstructionCommand(
+      [{ type: 'build', buildingId: 'wall-other' }],
+      'wall-2',
+      'chain-a',
+      () => 'chain-b',
+    ),
+    false,
+  );
+});
