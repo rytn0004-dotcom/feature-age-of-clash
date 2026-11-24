@@ -316,6 +316,14 @@ export interface UnitEntity extends EntityCommon {
   attackMoveGoal?: { x: number; z: number } | null;
   /** Target-locked short retreat waypoint used by Mongol Mangudai hit-and-run combat. */
   kitingRetreatGoal?: { x: number; z: number; targetId: string };
+  /** Current battlefield morale; lazily initialized to 100 for legacy saves. */
+  morale?: number;
+  /** Simulation time of the latest direct morale shock. */
+  moraleLastHitAt?: number;
+  /** Cooldown that prevents repeated rout loops after a unit rallies. */
+  moraleRoutCooldownUntil?: number;
+  /** Temporary forced retreat order for AI troops whose morale has collapsed. */
+  moraleRoutGoal?: { x: number; z: number; until: number };
   /** Shared order identity used to keep manually selected and AI squads moving cohesively. */
   formationGroupId?: string;
   /** Shared order vector; all living members of a squad use the same origin and destination. */

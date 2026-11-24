@@ -74,6 +74,7 @@ import {
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
+import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
 import {
   AGE_ADVANCE_HOTKEY,
   FIELD_ENGINEERING_HOTKEY,
@@ -3751,6 +3752,7 @@ export class RtsEngine {
       }
 
       unit.commandQueue = undefined;
+      unit.moraleRoutGoal = undefined;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
       unit.targetX = target.x;
@@ -3806,6 +3808,7 @@ export class RtsEngine {
 
     playerUnits.forEach((unit) => {
       this.clearFormationMovement(unit);
+      unit.moraleRoutGoal = undefined;
       unit.attackMoveGoal = null;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
@@ -6214,11 +6217,15 @@ export class RtsEngine {
       }
 
       // Cooldowns, timers & passive regeneration
+      this.refreshUnitMorale(unit, dt);
+      const moraleModifiers = getMoraleCombatModifiers(unit.morale ?? 100);
       const attackRateBuff = unit.buffAttackRateUntil && unit.buffAttackRateUntil > this.simTime ? 1.3 : 1;
       const attackRateSlow = unit.slowUntil && unit.slowUntil > this.simTime
         ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
         : 1;
-      if (unit.attackCooldown > 0) unit.attackCooldown -= dt * attackRateBuff * attackRateSlow;
+      if (unit.attackCooldown > 0) {
+        unit.attackCooldown -= dt * attackRateBuff * attackRateSlow * moraleModifiers.attackRateMultiplier;
+      }
       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
       if (unit.hitFlashTimer && unit.hitFlashTimer > 0) unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - dt);
@@ -6278,6 +6285,31 @@ export class RtsEngine {
           const mesh = this.unitMeshes.get(unit.id);
           if (mesh) mesh.visible = false;
           continue;
+        }
+      }
+
+      // A routed AI soldier runs to a nearby clear position, then rallies at shaken morale.
+      if (unit.moraleRoutGoal) {
+        const goal = unit.moraleRoutGoal;
+        const reached = getDistance(unit.x, unit.z, goal.x, goal.z) <= 1.15;
+        if (reached || this.simTime >= goal.until) {
+          unit.moraleRoutGoal = undefined;
+          unit.morale = Math.max(unit.morale ?? 0, 38);
+          unit.moraleLastHitAt = this.simTime;
+          unit.targetX = undefined;
+          unit.targetZ = undefined;
+          unit.targetEntityId = undefined;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          unit.state = 'idle';
+          unit.currentActionText = '🛡️ 潰兵重整 · 恢復陣線';
+        } else {
+          unit.targetEntityId = undefined;
+          unit.attackMoveGoal = null;
+          unit.targetX = goal.x;
+          unit.targetZ = goal.z;
+          unit.state = 'moving';
+          unit.currentActionText = '🏃 士氣崩潰 · 潰退重整';
         }
       }
 
@@ -6540,7 +6572,9 @@ export class RtsEngine {
     const mongolSlow = unit.slowUntil && unit.slowUntil > this.simTime
       ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
       : 1;
-    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow;
+    const moraleSpeed = getMoraleCombatModifiers(unit.morale ?? 100).movementSpeedMultiplier;
+    const routSpeed = unit.moraleRoutGoal ? 1.08 : 1;
+    let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow * moraleSpeed * routSpeed;
     const regroupState = unit.formationGroupId
       ? this.formationRegroupByGroup.get(unit.formationGroupId)
       : undefined;
@@ -6710,6 +6744,135 @@ export class RtsEngine {
       attackerCategory: attacker.unitDef.category,
       defenderCategory: defender.unitDef.category,
     });
+  }
+
+  private startUnitMoraleRout(unit: UnitEntity, attacker?: UnitEntity): void {
+    if (unit.moraleRoutGoal || unit.unitDef.category === 'worker' || this.isHumanControlled(unit.faction)) return;
+
+    let threat = attacker && attacker.hp > 0 && this.isHostile(unit, attacker) ? attacker : undefined;
+    if (!threat) {
+      let nearestDistance = 24;
+      for (const candidate of this.units) {
+        if (
+          candidate.hp <= 0 ||
+          candidate.garrisonedInBuildingId ||
+          candidate.id === unit.id ||
+          !this.isHostile(unit, candidate)
+        ) continue;
+        const distance = getDistance(unit.x, unit.z, candidate.x, candidate.z);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          threat = candidate;
+        }
+      }
+    }
+    if (!threat) return;
+
+    const goal = getMoraleRoutGoal({
+      x: unit.x,
+      z: unit.z,
+      threatX: threat.x,
+      threatZ: threat.z,
+      worldLimit: 84,
+      retreatDistance: 10.5,
+      isPositionClear: (x, z) => this.isLandPointClear(x, z, 0.72),
+    });
+    if (!goal) return;
+
+    unit.moraleRoutGoal = { ...goal, until: this.simTime + 5.5 };
+    unit.moraleRoutCooldownUntil = this.simTime + 22;
+    unit.targetEntityId = undefined;
+    unit.targetResourceNodeId = undefined;
+    unit.targetBuildingId = undefined;
+    unit.attackMoveGoal = null;
+    unit.commandQueue = undefined;
+    unit.wallPatrolRoute = undefined;
+    unit.wallPatrolIndex = undefined;
+    unit.kitingRetreatGoal = undefined;
+    unit.waypoints = undefined;
+    unit.pathGoal = undefined;
+    unit.pathCooldown = 0;
+    unit.velocity = { x: 0, z: 0 };
+    this.clearFormationMovement(unit);
+    unit.targetX = goal.x;
+    unit.targetZ = goal.z;
+    unit.state = 'moving';
+    unit.currentActionText = '🏃 士氣崩潰 · 潰退重整';
+  }
+
+  private applyNearbyCasualtyMoraleShock(casualty: UnitEntity): void {
+    if (casualty.unitDef.category === 'worker') return;
+    for (const ally of this.units) {
+      if (
+        ally.id === casualty.id ||
+        ally.hp <= 0 ||
+        ally.faction !== casualty.faction ||
+        ally.garrisonedInBuildingId ||
+        ally.unitDef.category === 'worker' ||
+        getDistance(casualty.x, casualty.z, ally.x, ally.z) > 9
+      ) continue;
+
+      ally.morale = applyMoraleImpact({
+        morale: ally.morale ?? 100,
+        damage: 0,
+        maxHp: ally.maxHp,
+        nearbyAllyCasualty: true,
+      });
+      ally.moraleLastHitAt = this.simTime;
+      if (shouldUnitRout({
+        morale: ally.morale,
+        isHumanControlled: this.isHumanControlled(ally.faction),
+        isWorker: ally.unitDef.category === 'worker',
+        alreadyRouted: !!ally.moraleRoutGoal,
+        cooldownReady: (ally.moraleRoutCooldownUntil ?? 0) <= this.simTime,
+      })) {
+        this.startUnitMoraleRout(ally);
+      }
+    }
+  }
+
+  private applyUnitMoraleImpact(
+    target: UnitEntity,
+    damage: number,
+    attacker?: UnitEntity,
+    direction: 'flank' | 'rear' | null = null,
+  ): void {
+    if (target.unitDef.category === 'worker' || target.hp <= 0) return;
+    target.morale = applyMoraleImpact({
+      morale: target.morale ?? 100,
+      damage,
+      maxHp: target.maxHp,
+      attackerCategory: attacker?.unitDef.category,
+      direction,
+      wasKilled: target.hp <= 0,
+    });
+    target.moraleLastHitAt = this.simTime;
+
+    if (target.hp <= 0) {
+      this.applyNearbyCasualtyMoraleShock(target);
+      return;
+    }
+
+    if (shouldUnitRout({
+      morale: target.morale,
+      isHumanControlled: this.isHumanControlled(target.faction),
+      isWorker: target.unitDef.category === 'worker',
+      alreadyRouted: !!target.moraleRoutGoal,
+      cooldownReady: (target.moraleRoutCooldownUntil ?? 0) <= this.simTime,
+    })) {
+      this.startUnitMoraleRout(target, attacker);
+    }
+  }
+
+  private refreshUnitMorale(unit: UnitEntity, dt: number): void {
+    if (!Number.isFinite(unit.morale)) unit.morale = 100;
+    if (unit.moraleRoutGoal) return;
+    const secondsSinceShock = this.simTime - (unit.moraleLastHitAt ?? 0);
+    if (secondsSinceShock < 4.5) return;
+
+    const isEngaged = unit.state === 'attacking' && !!unit.targetEntityId;
+    const recoveryRate = isEngaged ? 0.7 : unit.state === 'idle' ? 4.2 : 2.8;
+    unit.morale = Math.min(100, (unit.morale ?? 100) + recoveryRate * dt);
   }
 
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
@@ -6980,6 +7143,9 @@ export class RtsEngine {
           }
 
           target.hp -= dmg;
+          if (target.type === 'unit') {
+            this.applyUnitMoraleImpact(target as UnitEntity, dmg, unit, directionalZone);
+          }
           this.creditMongolRaidTribute(unit, target.type === 'building' ? 'building' : 'unit', target.hp <= 0);
           if (
             target.type === 'unit' &&
@@ -9567,6 +9733,9 @@ export class RtsEngine {
         }
 
         target.hp -= dmg;
+        if (target.type === 'unit') {
+          this.applyUnitMoraleImpact(target as UnitEntity, dmg, attacker, directionalZone);
+        }
         this.creditMongolRaidTribute(attacker, target.type === 'building' ? 'building' : 'unit', target.hp <= 0);
         if (target.type === 'building') this.applyWallBreachIfNeeded(target as BuildingEntity, attacker?.unitDef.category === 'siege' || proj.damage >= 20);
         (target as any).lastDamagedTime = performance.now();
