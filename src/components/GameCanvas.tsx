@@ -435,6 +435,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         }
       }
 
+      // 6.5 Workers can snap a right-click near a damaged wall onto its repair target.
+      if (hasWorkersSelected) {
+        const nearbyRepairTarget = engine.getNearestRepairableWallAt(worldPoint.x, worldPoint.z);
+        if (nearbyRepairTarget) {
+          engine.clearWallRepairPreview();
+          engine.issueBuildOrder(nearbyRepairTarget.id, e.shiftKey);
+          return;
+        }
+      }
+
       // 7. Default: Move order to clicked terrain location
       engine.issueMoveOrder(worldPoint.x, worldPoint.z, e.shiftKey);
       return;
@@ -537,6 +547,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         });
       }
       return;
+    }
+
+    // Hovering near a damaged friendly wall previews the restored piece and snaps
+    // the subsequent worker right-click to that exact wall segment.
+    const hasRepairWorkers = engine.selectedUnitIds.some((uid) => {
+      const unit = engine.units.find((entry) => entry.id === uid);
+      return !!unit && unit.hp > 0 && unit.unitDef.category === 'worker' && engine.isHumanControlled(unit.faction);
+    });
+    const repairHoverPoint = engine.screenToWorld(e.clientX, e.clientY);
+    if (
+      hasRepairWorkers &&
+      repairHoverPoint &&
+      engine.pendingCommandMode === 'normal' &&
+      !isMouseDownRef.current
+    ) {
+      engine.updateWallRepairPreview(repairHoverPoint.x, repairHoverPoint.z);
+    } else {
+      engine.clearWallRepairPreview();
     }
 
     // Update drag marquee box
@@ -951,7 +979,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={() => setHoverHint(null)}
+      onPointerLeave={() => {
+        setHoverHint(null);
+        engineRef.current?.clearWallRepairPreview();
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div ref={mountRef} className="w-full h-full" />
@@ -968,7 +999,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none rounded-xl border border-cyan-300/40 bg-slate-950/90 px-4 py-3 text-center text-xs text-slate-100 shadow-2xl backdrop-blur-md"
         >
           <div className="mb-1 text-sm font-black text-cyan-200">🧱 城牆連續規劃</div>
-          <div>左鍵設定起點　·　Shift + 左鍵固定轉折點　·　左鍵設定終點並完成</div>
+          <div>左鍵設定起點　·　Shift + 左鍵固定轉折點　·　靠近舊牆端點自動吸附　·　左鍵設定終點並完成</div>
           <div className="mt-1 text-slate-300">右鍵／Esc 取消規劃</div>
           {wallPlacementInfo && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-white/10 pt-2">
@@ -987,6 +1018,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
                           ? '超過單次牆段上限'
                           : '資源不足'}
               </span>
+              {wallPlacementInfo.snapped && <span className="font-bold text-cyan-200">🔗 已吸附既有牆端</span>}
               <span>🪵 {wallPlacementInfo.cost.wood}</span>
               <span>🪨 {wallPlacementInfo.cost.stone}</span>
             </div>

@@ -306,6 +306,7 @@ import {
   updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
+import { findNearestRepairableWall, findNearestWallEndpoint, type WallSnapBuilding } from './wallSnapping';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
 
@@ -583,6 +584,11 @@ export class RtsEngine {
   public wallPlacementPoints: WallChainPoint[] = [];
   private wallPlacementCursor: WallChainPoint | null = null;
   private wallPlacementPreviewGroup: THREE.Group | null = null;
+  private wallPlacementGhostTemplate: THREE.Group | null = null;
+  private wallPlacementSnapTargetId: string | null = null;
+  private wallRepairPreviewMesh: THREE.Group | null = null;
+  private wallRepairPreviewTargetId: string | null = null;
+  private wallRepairPreviewRing: THREE.Mesh | null = null;
 
   // Camera navigation (zoom + keyboard + screen edge panning)
   public cameraTarget = new THREE.Vector3(0, 0, 0);
@@ -4810,6 +4816,8 @@ export class RtsEngine {
     if (type === 'wall') {
       this.wallPlacementPoints = [];
       this.wallPlacementCursor = null;
+      this.wallPlacementSnapTargetId = null;
+      this.wallPlacementGhostTemplate = this.createTranslucentBuildingPreview('wall', this.humanPlayerId, 0.42, 0x38bdf8);
       this.rebuildWallPlacementPreview();
       this.onSelectionChange?.();
       return;
@@ -4839,9 +4847,142 @@ export class RtsEngine {
     this.onSelectionChange?.();
   }
 
+  private createTranslucentBuildingPreview(
+    type: BuildingType,
+    faction: FactionId,
+    opacity: number,
+    tintColor: number
+  ): THREE.Group {
+    const preview = createBuildingMesh(type, faction, this.getCivilizationForFaction(faction), this.ageByFaction[faction] || 1);
+    const materialClones = new Map<THREE.Material, THREE.Material>();
+    const tint = new THREE.Color(tintColor);
+    preview.traverse((child) => {
+      if (child.name === 'bldgBadge' || child.name === 'scaffoldGroup') {
+        child.visible = false;
+        return;
+      }
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const cloneMaterial = (source: THREE.Material): THREE.Material => {
+        let cloned = materialClones.get(source);
+        if (!cloned) {
+          cloned = source.clone();
+          cloned.transparent = true;
+          cloned.opacity = opacity;
+          cloned.depthWrite = false;
+          cloned.polygonOffset = true;
+          cloned.polygonOffsetFactor = -1;
+          const colored = cloned as THREE.Material & { color?: THREE.Color };
+          if (colored.color) colored.color.lerp(tint, 0.16);
+          materialClones.set(source, cloned);
+        }
+        return cloned;
+      };
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map((material) => cloneMaterial(material))
+        : cloneMaterial(mesh.material);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.renderOrder = 5;
+    });
+    return preview;
+  }
+
+  private disposeWallPreviewObject(root: THREE.Object3D): void {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (mesh.geometry) geometries.add(mesh.geometry);
+      if (Array.isArray(mesh.material)) mesh.material.forEach((material) => materials.add(material));
+      else if (mesh.material) materials.add(mesh.material);
+    });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+  }
+
+  private findWallPlacementSnap(point: WallChainPoint) {
+    const walls = this.buildings.filter(
+      (building) =>
+        building.faction === this.humanPlayerId &&
+        building.buildingDef.isWall &&
+        building.hp > 0 &&
+        building.isConstructed
+    ) as WallSnapBuilding[];
+    return findNearestWallEndpoint(point, walls);
+  }
+
+  public getNearestRepairableWallAt(x: number, z: number): BuildingEntity | null {
+    const walls = this.buildings.filter(
+      (building) =>
+        building.faction === this.humanPlayerId &&
+        building.buildingDef.isWall
+    );
+    return findNearestRepairableWall({ x, z }, walls) as BuildingEntity | null;
+  }
+
+  public updateWallRepairPreview(x: number, z: number, enabled = true): BuildingEntity | null {
+    const target = enabled ? this.getNearestRepairableWallAt(x, z) : null;
+    if (!target) {
+      this.clearWallRepairPreview();
+      return null;
+    }
+
+    if (this.wallRepairPreviewTargetId !== target.id || !this.wallRepairPreviewMesh) {
+      this.clearWallRepairPreview();
+      this.wallRepairPreviewMesh = this.createTranslucentBuildingPreview(
+        target.buildingType,
+        target.faction,
+        0.48,
+        0x4ade80
+      );
+      this.wallRepairPreviewTargetId = target.id;
+      this.scene.add(this.wallRepairPreviewMesh);
+      this.wallRepairPreviewRing = new THREE.Mesh(
+        new THREE.RingGeometry(1.5, 1.72, 36),
+        new THREE.MeshBasicMaterial({
+          color: 0x4ade80,
+          transparent: true,
+          opacity: 0.88,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      );
+      this.wallRepairPreviewRing.rotation.x = -Math.PI / 2;
+      this.scene.add(this.wallRepairPreviewRing);
+    }
+
+    this.wallRepairPreviewMesh.position.set(target.x, 0.02, target.z);
+    this.wallRepairPreviewMesh.rotation.y = target.rotationY ?? 0;
+    if (this.wallRepairPreviewRing) {
+      this.wallRepairPreviewRing.position.set(target.x, 0.18, target.z);
+    }
+    return target;
+  }
+
+  public clearWallRepairPreview(): void {
+    if (this.wallRepairPreviewMesh) {
+      this.scene.remove(this.wallRepairPreviewMesh);
+      this.disposeWallPreviewObject(this.wallRepairPreviewMesh);
+      this.wallRepairPreviewMesh = null;
+    }
+    if (this.wallRepairPreviewRing) {
+      this.scene.remove(this.wallRepairPreviewRing);
+      this.wallRepairPreviewRing.geometry.dispose();
+      const material = this.wallRepairPreviewRing.material;
+      if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+      else material.dispose();
+      this.wallRepairPreviewRing = null;
+    }
+    this.wallRepairPreviewTargetId = null;
+  }
+
   public updateWallPlacementPreview(x: number, z: number) {
     if (this.placementBuildingType !== 'wall') return;
-    this.wallPlacementCursor = { x, z };
+    const snap = this.findWallPlacementSnap({ x, z });
+    this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
+    this.wallPlacementCursor = snap?.point ?? { x, z };
     this.rebuildWallPlacementPreview();
   }
 
@@ -4849,7 +4990,10 @@ export class RtsEngine {
   public handleWallPlacementClick(x: number, z: number, addWaypoint = false): 'started' | 'waypoint' | 'committed' | 'invalid' {
     if (this.placementBuildingType !== 'wall') return 'invalid';
 
-    const point = { x, z };
+    const inputPoint = { x, z };
+    const snap = this.findWallPlacementSnap(inputPoint);
+    const point = snap?.point ?? inputPoint;
+    this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
     if (this.wallPlacementPoints.length === 0) {
       this.wallPlacementPoints = [point];
       this.wallPlacementCursor = point;
@@ -4930,6 +5074,8 @@ export class RtsEngine {
       canAfford: canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
       invalidCount,
       isValid: placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS && invalidCount === 0 && canAfford(this.getResourcesForFaction(this.humanPlayerId), cost),
+      snapped: !!this.wallPlacementSnapTargetId,
+      snapTargetId: this.wallPlacementSnapTargetId,
     };
   }
 
@@ -5070,13 +5216,10 @@ export class RtsEngine {
   private rebuildWallPlacementPreview() {
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
-      this.wallPlacementPreviewGroup.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        const material = (object as THREE.Line).material;
-        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
-        else if (material?.dispose) material.dispose();
-      });
+      for (const child of [...this.wallPlacementPreviewGroup.children]) {
+        // Wall-model clones share the cached ghost template's GPU resources.
+        if (!child.userData.wallPreviewSharedAssets) this.disposeWallPreviewObject(child);
+      }
       this.wallPlacementPreviewGroup = null;
     }
     if (this.placementBuildingType !== 'wall') return;
@@ -5088,6 +5231,21 @@ export class RtsEngine {
       const last = previewPoints[previewPoints.length - 1];
       if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
         previewPoints.push(this.wallPlacementCursor);
+      }
+    }
+
+    // Render translucent 3D wall modules, not just a flat route line. Geometry/materials
+    // are cloned from one cached template so pointer movement does not rebuild each model.
+    if (this.wallPlacementGhostTemplate && previewPoints.length >= 2) {
+      const placements = layoutWallChain(previewPoints);
+      const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
+      for (let index = 0; index < previewLimit; index++) {
+        const placement = placements[index];
+        const ghost = this.wallPlacementGhostTemplate.clone(true);
+        ghost.position.set(placement.x, 0, placement.z);
+        ghost.rotation.y = placement.rotationY;
+        ghost.userData.wallPreviewSharedAssets = true;
+        group.add(ghost);
       }
     }
 
@@ -5108,9 +5266,10 @@ export class RtsEngine {
 
     previewPoints.forEach((point, index) => {
       const isCursor = index === previewPoints.length - 1 && this.wallPlacementCursor !== null && previewPoints.length > this.wallPlacementPoints.length;
-      const geometry = new THREE.CircleGeometry(isCursor ? 0.28 : 0.42, 20);
+      const isSnappedCursor = isCursor && !!this.wallPlacementSnapTargetId;
+      const geometry = new THREE.CircleGeometry(isCursor ? 0.32 : 0.42, 20);
       const material = new THREE.MeshBasicMaterial({
-        color: isCursor ? (info.isValid ? 0x22c55e : 0xef4444) : index === 0 ? 0xfbbf24 : 0x38bdf8,
+        color: isSnappedCursor ? 0x22d3ee : isCursor ? (info.isValid ? 0x22c55e : 0xef4444) : index === 0 ? 0xfbbf24 : 0x38bdf8,
         transparent: true,
         opacity: 0.92,
         side: THREE.DoubleSide,
@@ -5215,17 +5374,19 @@ export class RtsEngine {
     this.placementBuildingType = null;
     this.wallPlacementPoints = [];
     this.wallPlacementCursor = null;
+    this.wallPlacementSnapTargetId = null;
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
-      this.wallPlacementPreviewGroup.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        const material = (object as THREE.Line).material;
-        if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
-        else if (material?.dispose) material.dispose();
-      });
+      for (const child of [...this.wallPlacementPreviewGroup.children]) {
+        if (!child.userData.wallPreviewSharedAssets) this.disposeWallPreviewObject(child);
+      }
       this.wallPlacementPreviewGroup = null;
     }
+    if (this.wallPlacementGhostTemplate) {
+      this.disposeWallPreviewObject(this.wallPlacementGhostTemplate);
+      this.wallPlacementGhostTemplate = null;
+    }
+    this.clearWallRepairPreview();
     if (this.placementGhostMesh) {
       this.scene.remove(this.placementGhostMesh);
       this.placementGhostMesh = null;
