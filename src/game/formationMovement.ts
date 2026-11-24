@@ -66,7 +66,14 @@ export function getFormationMoveProgress(
   origin: { x: number; z: number },
   goal: { x: number; z: number },
 ): number {
-  if (![x, z, origin.x, origin.z, goal.x, goal.z].every(Number.isFinite)) return 0;
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(z) ||
+    !Number.isFinite(origin.x) ||
+    !Number.isFinite(origin.z) ||
+    !Number.isFinite(goal.x) ||
+    !Number.isFinite(goal.z)
+  ) return 0;
   const dx = goal.x - origin.x;
   const dz = goal.z - origin.z;
   const lengthSquared = dx * dx + dz * dz;
@@ -86,38 +93,50 @@ export function measureFormationRegroup(
 ): FormationRegroupState | null {
   if (members.length < 2) return null;
 
-  const active = members.filter(
-    (member) =>
-      Number.isFinite(member.x) &&
-      Number.isFinite(member.z) &&
-      Number.isFinite(member.formationOrderOrigin.x) &&
-      Number.isFinite(member.formationOrderOrigin.z) &&
-      Number.isFinite(member.formationOrderGoal.x) &&
-      Number.isFinite(member.formationOrderGoal.z) &&
-      (!Number.isFinite(member.stuckDuration) ||
-        (member.stuckDuration as number) < FORMATION_REGROUP_ABANDON_STALL_SECONDS),
-  );
-  if (active.length < 2) return null;
+  let activeMemberCount = 0;
+  let stalledMemberCount = 0;
+  let slowestProgress = 1;
 
-  const stalledMemberCount = active.filter(
-    (member) =>
-      Number.isFinite(member.stuckDuration) &&
-      (member.stuckDuration as number) >= FORMATION_REGROUP_STALL_SECONDS,
-  ).length;
-  if (stalledMemberCount === 0) return null;
+  // Keep this hot-path reducer allocation-free; it runs during group refreshes
+  // and can be called for many squads in large battles.
+  for (const member of members) {
+    if (
+      !Number.isFinite(member.x) ||
+      !Number.isFinite(member.z) ||
+      !Number.isFinite(member.formationOrderOrigin.x) ||
+      !Number.isFinite(member.formationOrderOrigin.z) ||
+      !Number.isFinite(member.formationOrderGoal.x) ||
+      !Number.isFinite(member.formationOrderGoal.z)
+    ) continue;
 
-  const progress = active.map((member) =>
-    getFormationMoveProgress(
+    const stuckDuration = member.stuckDuration;
+    if (
+      Number.isFinite(stuckDuration) &&
+      (stuckDuration as number) >= FORMATION_REGROUP_ABANDON_STALL_SECONDS
+    ) continue;
+
+    activeMemberCount++;
+    if (
+      Number.isFinite(stuckDuration) &&
+      (stuckDuration as number) >= FORMATION_REGROUP_STALL_SECONDS
+    ) {
+      stalledMemberCount++;
+    }
+
+    const progress = getFormationMoveProgress(
       member.x,
       member.z,
       member.formationOrderOrigin,
       member.formationOrderGoal,
-    ),
-  );
+    );
+    if (progress < slowestProgress) slowestProgress = progress;
+  }
+
+  if (activeMemberCount < 2 || stalledMemberCount === 0) return null;
 
   return {
-    slowestProgress: Math.min(...progress),
-    activeMemberCount: active.length,
+    slowestProgress,
+    activeMemberCount,
     stalledMemberCount,
   };
 }

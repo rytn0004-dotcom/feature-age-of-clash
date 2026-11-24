@@ -400,8 +400,14 @@ export class RtsEngine {
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
-  /** Cached commander candidates; avoids an all-units search for every morale tick. */
+  /** Cached commander candidates; roster changes rebuild this small list only once. */
+  private battlefieldLeadershipRosterSource: UnitEntity[] | null = null;
+  private battlefieldLeadershipRosterLength = -1;
+  private battlefieldLeadershipCandidates: UnitEntity[] = [];
+  private battlefieldLeadershipUnitByFaction = new Map<string, UnitEntity>();
+  private battlefieldLeadershipScoreByFaction = new Map<string, number>();
   private battlefieldLeadershipUnits: UnitEntity[] = [];
+  private formationRegroupRefreshAccumulator = 0.15;
   private combatUnitLookupById = new Map<string, UnitEntity>();
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -1386,6 +1392,13 @@ export class RtsEngine {
     this.aiUnitGroupsSource = null;
     this.aiUnitGroupsLength = -1;
     this.aiUnitGroupsByFaction.clear();
+    this.battlefieldLeadershipRosterSource = null;
+    this.battlefieldLeadershipRosterLength = -1;
+    this.battlefieldLeadershipCandidates.length = 0;
+    this.battlefieldLeadershipUnitByFaction.clear();
+    this.battlefieldLeadershipScoreByFaction.clear();
+    this.battlefieldLeadershipUnits.length = 0;
+    this.formationRegroupRefreshAccumulator = 0.15;
     this.aiBuildingGroupsSource = null;
     this.aiBuildingGroupsLength = -1;
     this.aiBuildingGroupsByFaction.clear();
@@ -6211,25 +6224,56 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
-    const leaderByFaction = new Map<string, { unit: UnitEntity; score: number }>();
-    for (const unit of this.units) {
+    if (
+      this.battlefieldLeadershipRosterSource !== this.units ||
+      this.battlefieldLeadershipRosterLength !== this.units.length
+    ) {
+      this.battlefieldLeadershipCandidates.length = 0;
+      for (const unit of this.units) {
+        if (unit.unitDef.leadershipAura) this.battlefieldLeadershipCandidates.push(unit);
+      }
+      this.battlefieldLeadershipRosterSource = this.units;
+      this.battlefieldLeadershipRosterLength = this.units.length;
+    }
+
+    const leadershipUnitsByFaction = this.battlefieldLeadershipUnitByFaction;
+    const leadershipScoresByFaction = this.battlefieldLeadershipScoreByFaction;
+    leadershipUnitsByFaction.clear();
+    leadershipScoresByFaction.clear();
+    for (const unit of this.battlefieldLeadershipCandidates) {
       const aura = unit.unitDef.leadershipAura;
-      if (unit.hp <= 0 || unit.garrisonedInBuildingId || !aura) continue;
+      if (!aura || unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
       const score =
         aura.moraleRecoveryPerSecond +
         aura.moraleShockResistance * 4 +
         aura.suppressionResistance * 3;
-      const current = leaderByFaction.get(unit.faction);
+      const current = leadershipUnitsByFaction.get(unit.faction);
+      const currentScore = leadershipScoresByFaction.get(unit.faction) ?? -Infinity;
       if (
         !current ||
-        score > current.score ||
-        (score === current.score && unit.id.localeCompare(current.unit.id) < 0)
+        score > currentScore ||
+        (score === currentScore && unit.id.localeCompare(current.id) < 0)
       ) {
-        leaderByFaction.set(unit.faction, { unit, score });
+        leadershipUnitsByFaction.set(unit.faction, unit);
+        leadershipScoresByFaction.set(unit.faction, score);
       }
     }
-    this.battlefieldLeadershipUnits = Array.from(leaderByFaction.values(), (entry) => entry.unit);
-    this.refreshFormationRegroupState();
+    this.battlefieldLeadershipUnits.length = 0;
+    for (const leader of leadershipUnitsByFaction.values()) {
+      this.battlefieldLeadershipUnits.push(leader);
+    }
+
+    // Cohesion and narrow-passage recovery do not need a full-entity scan every
+    // simulation substep. Refresh at ~6.7 Hz while tactical slots reuse the last
+    // coherent group snapshot between refreshes.
+    this.formationRegroupRefreshAccumulator += dt;
+    if (this.formationRegroupRefreshAccumulator >= 0.15) {
+      this.formationRegroupRefreshAccumulator = Math.min(
+        Math.max(0, this.formationRegroupRefreshAccumulator - 0.15),
+        0.075,
+      );
+      this.refreshFormationRegroupState();
+    }
     // Preserve the stable roster array on ordinary frames. Only allocate a
     // compacted array when the first dead unit is actually encountered.
     const currentUnits = this.units;
