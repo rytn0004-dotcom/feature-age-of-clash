@@ -3665,6 +3665,7 @@ export const HUD: React.FC<HUDProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {nextInfo.landmarks.map((lmId) => {
                   const lmDef = DEFAULT_BUILDINGS[lmId];
+                  const lmName = humanCiv.buildingNames[lmId] || lmDef.name;
                   const hasBuilt = engine.playerLandmarks.includes(lmId);
 
                   return (
@@ -3674,7 +3675,7 @@ export const HUD: React.FC<HUDProps> = ({
                     >
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <h3 className="font-black text-amber-300 text-sm">{lmDef.name}</h3>
+                          <h3 className="font-black text-amber-300 text-sm">{lmName}</h3>
                           <span className="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded font-mono font-bold">
                             地標
                           </span>
@@ -3694,7 +3695,7 @@ export const HUD: React.FC<HUDProps> = ({
                             setShowAgeModal(false);
                             engine.startPlacement(lmId);
                           }}
-                          title={`${lmDef.name} · 單村民建造約 ${Math.ceil(engine.getBuildingConstructionDuration(lmId, engine.humanPlayerId))} 秒`}
+                          title={`${lmName} · 單村民建造約 ${Math.ceil(engine.getBuildingConstructionDuration(lmId, engine.humanPlayerId))} 秒`}
                           disabled={!affordable || hasBuilt}
                           className={`px-4 py-1.5 rounded-lg text-xs font-black shadow transition-all cursor-pointer ${
                             hasBuilt
