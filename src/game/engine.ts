@@ -317,6 +317,7 @@ import {
 import {
   assignWorkersToConstructionTargets,
   getConstructionApproachPoint,
+  isActiveConstructionWorkerWithinReach,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -429,6 +430,8 @@ export class RtsEngine {
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
   private combatBuildingLookupSource: BuildingEntity[] | null = null;
   private combatBuildingLookupLength = -1;
+  /** Rebuilt once per simulation step; avoids one full unit scan per active builder. */
+  private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
   private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -1421,6 +1424,7 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    this.activeConstructionWorkerCountByBuilding.clear();
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
@@ -6580,6 +6584,43 @@ export class RtsEngine {
     this.combatSpatialIndex = createCombatSpatialIndex(this.units, this.buildings);
   }
 
+  /**
+   * Count all builders in one roster pass before individual units are updated.
+   * The previous per-builder filter rescanned every unit for each wall segment,
+   * turning cooperative construction into O(builders × units) work per step.
+   */
+  private rebuildActiveConstructionWorkerCounts(): void {
+    const counts = this.activeConstructionWorkerCountByBuilding;
+    counts.clear();
+
+    for (const worker of this.units) {
+      if (
+        worker.hp <= 0 ||
+        worker.state !== 'building' ||
+        !worker.targetBuildingId ||
+        worker.garrisonedInBuildingId
+      ) {
+        continue;
+      }
+
+      const building = this.combatBuildingLookupById.get(worker.targetBuildingId);
+      if (!building || building.hp <= 0 || building.faction !== worker.faction) continue;
+
+      const repairingWall =
+        !!building.wallBreached &&
+        !!building.buildingDef.isWall &&
+        building.isConstructed;
+      const buildingRadius = Math.max(
+        getBuildingCollisionRadius(building),
+        repairingWall ? building.buildingDef.size : 0,
+      );
+      const buildReach = Math.max(2.2, buildingRadius + 1.55);
+      if (!isActiveConstructionWorkerWithinReach(worker, building, buildReach)) continue;
+
+      counts.set(building.id, (counts.get(building.id) ?? 0) + 1);
+    }
+  }
+
   private rebuildCombatEntityLookups(): void {
     // Entity IDs are stable while an entity is alive. Rebuild only when roster
     // membership changes; unit/building position updates do not invalidate maps.
@@ -6695,6 +6736,7 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildCombatSpatialIndex();
+    this.rebuildActiveConstructionWorkerCounts();
     if (
       this.battlefieldLeadershipRosterSource !== this.units ||
       this.battlefieldLeadershipRosterLength !== this.units.length
@@ -8796,15 +8838,7 @@ export class RtsEngine {
       const constructionSpeedMultiplier = getCappedProductionSpeedMultiplier(
         getCivilizationBuildSpeedMultiplier(this.getCivilizationForFaction(bldg.faction), this.activeMods)
       );
-      const activeBuilderCount = this.units.filter(
-        (worker) =>
-          worker.hp > 0 &&
-          worker.faction === bldg.faction &&
-          worker.state === 'building' &&
-          worker.targetBuildingId === bldg.id &&
-          !worker.garrisonedInBuildingId &&
-          getDistance(worker.x, worker.z, bldg.x, bldg.z) <= buildReach
-      ).length;
+      const activeBuilderCount = this.activeConstructionWorkerCountByBuilding.get(bldg.id) ?? 0;
       const builderCount = Math.max(1, activeBuilderCount);
       const perBuilderWorkShare =
         getConstructionWorkerMultiplier(builderCount) / builderCount;
@@ -13354,6 +13388,7 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.activeConstructionWorkerCountByBuilding.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
