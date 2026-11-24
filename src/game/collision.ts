@@ -582,3 +582,61 @@ export function isPlacementLocationValid(
 
   return true;
 }
+
+
+/**
+ * Low-cost visual broad-phase for wall-chain previews. It checks the projected
+ * modular segment centres in one pass and is intentionally not the authoritative
+ * placement validator; the exact validator runs once when a click commits a batch.
+ */
+export function isWallChainPreviewObstructed(
+  placements: readonly { x: number; z: number }[],
+  footprintSize: number,
+  buildings: readonly BuildingEntity[],
+  nodes: readonly ResourceNode[],
+  terrainRects: TerrainBlockedRect[] = [],
+  terrainDiscs: TerrainBlockedDisc[] = [],
+  bridges: TerrainPassableBridge[] = [],
+): boolean {
+  if (placements.length === 0) return false;
+
+  const halfFootprint = footprintSize * 0.55;
+  for (const placement of placements) {
+    if (Math.abs(placement.x) > 90 || Math.abs(placement.z) > 90) return true;
+    if (
+      isPointInTerrainObstacle(placement.x, placement.z, terrainRects, terrainDiscs, bridges) ||
+      isPointInTerrainObstacle(placement.x + halfFootprint, placement.z, terrainRects, terrainDiscs, bridges) ||
+      isPointInTerrainObstacle(placement.x - halfFootprint, placement.z, terrainRects, terrainDiscs, bridges) ||
+      isPointInTerrainObstacle(placement.x, placement.z + halfFootprint, terrainRects, terrainDiscs, bridges) ||
+      isPointInTerrainObstacle(placement.x, placement.z - halfFootprint, terrainRects, terrainDiscs, bridges)
+    ) {
+      return true;
+    }
+  }
+
+  for (const building of buildings) {
+    if (building.hp <= 0) continue;
+    const minDistance = building.buildingDef.isWall
+      ? Math.max(2.15, (footprintSize + building.buildingDef.size) * 0.72)
+      : footprintSize + building.buildingDef.size;
+    const minDistanceSq = minDistance * minDistance;
+    for (const placement of placements) {
+      const dx = placement.x - building.x;
+      const dz = placement.z - building.z;
+      if (dx * dx + dz * dz < minDistanceSq) return true;
+    }
+  }
+
+  for (const node of nodes) {
+    if (node.amount <= 0) continue;
+    const minDistance = footprintSize + getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
+    const minDistanceSq = minDistance * minDistance;
+    for (const placement of placements) {
+      const dx = placement.x - node.x;
+      const dz = placement.z - node.z;
+      if (dx * dx + dz * dz < minDistanceSq) return true;
+    }
+  }
+
+  return false;
+}
