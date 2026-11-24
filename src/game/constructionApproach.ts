@@ -139,3 +139,43 @@ export function accumulateActiveConstructionWorkerCount(
   if (!isActiveConstructionWorkerWithinReach(worker, target, buildReach)) return;
   counts.set(target.id, (counts.get(target.id) ?? 0) + 1);
 }
+
+
+export interface BlockedWallConstructionTarget {
+  id: string;
+  wallChainId?: string;
+  faction: string;
+  hp: number;
+  isWall: boolean;
+  isConstructed: boolean;
+}
+
+export interface QueuedWallConstructionCommand {
+  type: string;
+  buildingId?: string;
+}
+
+/**
+ * A worker may defer an unreachable wall segment only when its next queued
+ * command is another unfinished segment in the same wall chain. This keeps
+ * normal build/repair orders and unrelated player commands in FIFO order.
+ */
+export function shouldDeferBlockedWallConstructionTarget(
+  current: BlockedWallConstructionTarget,
+  nextCommand: QueuedWallConstructionCommand | undefined,
+  next: BlockedWallConstructionTarget | undefined,
+): boolean {
+  return !!nextCommand &&
+    nextCommand.type === 'build' &&
+    nextCommand.buildingId === next?.id &&
+    !!current.wallChainId &&
+    current.id !== next.id &&
+    current.isWall &&
+    next.isWall &&
+    current.wallChainId === next.wallChainId &&
+    current.faction === next.faction &&
+    current.hp > 0 &&
+    next.hp > 0 &&
+    !current.isConstructed &&
+    !next.isConstructed;
+}
