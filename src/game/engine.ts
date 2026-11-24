@@ -3692,6 +3692,11 @@ export class RtsEngine {
     // Transport with cargo: move then unload near destination.
     const transports = playerUnits.filter((u) => u.unitDefId === 'transport_boat');
     if (transports.length > 0 && transports.every((t) => (t.transportCargoIds?.length || 0) > 0)) {
+      if (queue) {
+        enqueueCommandsForUnits(transports, () => ({ type: 'move', x: goal.x, z: goal.z, unload: true }));
+        this.onSelectionChange?.();
+        return;
+      }
       const nearSelf = transports.every((boat) => getDistance(boat.x, boat.z, x, z) < 5);
       if (nearSelf) {
         transports.forEach((boat) => this.unloadTransport(boat));
@@ -3795,8 +3800,7 @@ export class RtsEngine {
             };
 
       if (queue) {
-        if (!unit.commandQueue) unit.commandQueue = [];
-        unit.commandQueue.push({ type: 'move', x: target.x, z: target.z });
+        enqueueUnitCommand(unit, { type: 'move', x: target.x, z: target.z });
         unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
