@@ -321,6 +321,7 @@ import {
   assignWorkersToConstructionTargets,
   getConstructionApproachPoint,
   shouldDeferBlockedWallConstructionTarget,
+  deferBlockedWallConstructionCommand,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
