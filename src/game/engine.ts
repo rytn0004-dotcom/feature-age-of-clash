@@ -607,6 +607,8 @@ export class RtsEngine {
   // AI Timer
   private aiTickAccumulator = 0;
   private aiDecisionFactionCursor = 0;
+  /** Stable match roster: avoids filtering/allocating the AI participant list every frame. */
+  private aiDecisionFactionIds: FactionId[] = [];
   private aiDecisionCount = 0;
   private aiDecisionTiming: AiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
   private aiPathRecoveryTotal = 0;
@@ -1432,7 +1434,12 @@ export class RtsEngine {
     this.ageByFaction = {};
     this.landmarksByFaction = {};
     this.researchedTechsByFaction = {};
-    this.aiTickAccumulator = 1.2;
+    this.aiDecisionFactionIds = this.participants
+      .filter((participant) => participant.controller === 'ai')
+      .map((participant) => participant.id);
+    this.aiTickAccumulator = this.aiDecisionFactionIds.length > 0
+      ? 1.2 / this.aiDecisionFactionIds.length
+      : 0;
     this.aiDecisionFactionCursor = 0;
     this.aiDecisionCount = 0;
     this.aiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
@@ -5330,7 +5337,7 @@ export class RtsEngine {
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
-      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / ${(1.2 / Math.max(1, this.participants.filter((p) => p.controller === 'ai').length)).toFixed(2)}s`,
+      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / ${(1.2 / Math.max(1, this.aiDecisionFactionIds.length)).toFixed(2)}s`,
       `AI Think ms       ${this.aiDecisionTiming.lastMs.toFixed(2)} last / ${aiDecisionAverageMs.toFixed(2)} avg / ${this.aiDecisionTiming.maxMs.toFixed(2)} max`,
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
@@ -5642,15 +5649,12 @@ export class RtsEngine {
     // Spread faction planning across the interval: each AI still receives one
     // strategic decision every ~1.2s, but several factions no longer spike the
     // same simulation frame with their full planning passes.
-    const aiFactionIds = this.participants
-      .filter((participant) => participant.controller === 'ai')
-      .map((participant) => participant.id);
     const aiDecision = advanceAiDecisionScheduler(
       {
         accumulatorSeconds: this.aiTickAccumulator,
         cursor: this.aiDecisionFactionCursor,
       },
-      aiFactionIds,
+      this.aiDecisionFactionIds,
       dt,
     );
     this.aiTickAccumulator = aiDecision.state.accumulatorSeconds;
