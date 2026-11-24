@@ -52,7 +52,7 @@ test('killing blows carry additional morale shock', () => {
   const killed = applyMoraleImpact({
     morale: 80, damage: 30, maxHp: 100, wasKilled: true,
   });
-  assert.equal(survived - killed, 8);
+  assert.ok(Math.abs((survived - killed) - 8) < 0.000001);
 });
 
 test('shaken and broken morale slows movement and attack tempo', () => {
