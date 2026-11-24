@@ -3,42 +3,46 @@ export interface AiDecisionSchedulerState {
   cursor: number;
 }
 
-export interface AiDecisionScheduleStep {
-  state: AiDecisionSchedulerState;
-  factionId: string | null;
-  intervalSeconds: number;
-}
-
 /**
  * Advances a bounded round-robin schedule for AI faction planning.
  *
  * The total strategic cadence remains baseIntervalSeconds per faction. With
- * multiple AI factions, their turns are staggered so their expensive planning
- * passes do not all run in the same simulation frame. After a long hitch, at
- * most one faction is emitted per call and excess backlog is capped.
+ * multiple AI factions, their turns are staggered so expensive planning passes
+ * do not all run in the same simulation frame. After a long hitch, at most one
+ * faction is emitted and excess backlog is capped.
+ *
+ * The caller owns and reuses state, so this function creates no per-frame
+ * result/state objects.
  */
-export function advanceAiDecisionScheduler(
+export function advanceAiDecisionScheduler<TId extends string>(
   state: AiDecisionSchedulerState,
-  factionIds: readonly string[],
+  factionIds: readonly TId[],
   deltaSeconds: number,
   baseIntervalSeconds = 1.2,
-): AiDecisionScheduleStep {
-  // The engine passes a stable, match-scoped roster; reuse it directly so
-  // scheduling does not allocate a filtered array on every simulation frame.
-  const factions = factionIds;
-  if (factions.length === 0) {
-    return {
-      state: { accumulatorSeconds: 0, cursor: 0 },
-      factionId: null,
-      intervalSeconds: baseIntervalSeconds > 0 && Number.isFinite(baseIntervalSeconds) ? baseIntervalSeconds : 1.2,
-    };
-  }
-
+): TId | null {
   const baseInterval =
     Number.isFinite(baseIntervalSeconds) && baseIntervalSeconds > 0 ? baseIntervalSeconds : 1.2;
-  const intervalSeconds = baseInterval / factions.length;
+  const factionCount = factionIds.length;
+  if (factionCount === 0) {
+    state.accumulatorSeconds = 0;
+    state.cursor = 0;
+    return null;
+  }
+
+  let validFactionCount = 0;
+  for (let i = 0; i < factionCount; i++) {
+    const id = factionIds[i];
+    if (typeof id === 'string' && id.length > 0) validFactionCount++;
+  }
+  if (validFactionCount === 0) {
+    state.accumulatorSeconds = 0;
+    state.cursor = 0;
+    return null;
+  }
+
+  const intervalSeconds = baseInterval / validFactionCount;
   const safeCursor = Number.isFinite(state.cursor)
-    ? ((Math.trunc(state.cursor) % factions.length) + factions.length) % factions.length
+    ? ((Math.trunc(state.cursor) % factionCount) + factionCount) % factionCount
     : 0;
   const currentAccumulator =
     Number.isFinite(state.accumulatorSeconds) && state.accumulatorSeconds > 0
@@ -48,19 +52,32 @@ export function advanceAiDecisionScheduler(
   const accumulated = currentAccumulator + elapsed;
 
   if (accumulated < intervalSeconds) {
-    return {
-      state: { accumulatorSeconds: accumulated, cursor: safeCursor },
-      factionId: null,
-      intervalSeconds,
-    };
+    state.accumulatorSeconds = accumulated;
+    state.cursor = safeCursor;
+    return null;
   }
 
-  return {
-    state: {
-      accumulatorSeconds: Math.min(Math.max(0, accumulated - intervalSeconds), intervalSeconds * 0.5),
-      cursor: (safeCursor + 1) % factions.length,
-    },
-    factionId: factions[safeCursor],
-    intervalSeconds,
-  };
+  let selectedIndex = safeCursor;
+  let factionId: TId | null = null;
+  for (let checked = 0; checked < factionCount; checked++) {
+    const candidate = factionIds[selectedIndex];
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      factionId = candidate;
+      break;
+    }
+    selectedIndex = (selectedIndex + 1) % factionCount;
+  }
+
+  if (factionId === null) {
+    state.accumulatorSeconds = 0;
+    state.cursor = 0;
+    return null;
+  }
+
+  state.accumulatorSeconds = Math.min(
+    Math.max(0, accumulated - intervalSeconds),
+    intervalSeconds * 0.5,
+  );
+  state.cursor = (selectedIndex + 1) % factionCount;
+  return factionId;
 }
