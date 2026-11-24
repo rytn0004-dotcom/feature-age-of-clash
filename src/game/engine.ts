@@ -6749,7 +6749,7 @@ export class RtsEngine {
   }
 
   private startUnitMoraleRout(unit: UnitEntity, attacker?: UnitEntity): void {
-    if (unit.moraleRoutGoal || unit.unitDef.category === 'worker' || this.isHumanControlled(unit.faction)) return;
+    if (unit.moraleRoutGoal || unit.unitDef.category === 'worker' || unit.unitDef.isNaval || this.isHumanControlled(unit.faction)) return;
 
     let threat = attacker && attacker.hp > 0 && this.isHostile(unit, attacker) ? attacker : undefined;
     if (!threat) {
@@ -6786,6 +6786,7 @@ export class RtsEngine {
     unit.targetEntityId = undefined;
     unit.targetResourceNodeId = undefined;
     unit.targetBuildingId = undefined;
+    unit.targetGarrisonBuildingId = undefined;
     unit.attackMoveGoal = null;
     unit.commandQueue = undefined;
     unit.wallPatrolRoute = undefined;
