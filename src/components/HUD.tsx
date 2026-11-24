@@ -32,6 +32,7 @@ import { UnitPortrait } from './UnitPortrait';
 import { formatCompactResourceCount, formatResourceCount } from '../game/resourceFormatting';
 import { calculateAgeResourceShortfall, calculateEconomyNetRates, getResourceHealthStatus } from '../game/economyInsights';
 import { getAgeResourceProgress } from '../game/ageProgress';
+import { getMoraleCombatModifiers } from '../game/combatMorale';
 import type { EconomyNetRates, EconomyResourceSnapshot } from '../game/economyInsights';
 import {
   canAfford,
@@ -188,12 +189,12 @@ export const HUD: React.FC<HUDProps> = ({
 
   const [, setBuildingTimingRefresh] = useState(0);
   useEffect(() => {
-    if (!selectedBuilding || engine.gameState !== 'playing') return;
+    if ((!selectedBuilding && selectedUnits.length === 0) || engine.gameState !== 'playing') return;
     const interval = window.setInterval(() => {
       setBuildingTimingRefresh((value) => value + 1);
     }, 500);
     return () => window.clearInterval(interval);
-  }, [engine, selectedBuilding?.id, engine.gameState]);
+  }, [engine, selectedBuilding?.id, selectedUnits.length, engine.gameState]);
 
   const selectedNode = engine.selectedNodeId
     ? engine.resourceNodes.find((n) => n.id === engine.selectedNodeId)
@@ -1700,6 +1701,17 @@ export const HUD: React.FC<HUDProps> = ({
                       <div className="h-full bg-emerald-500" style={{ width: `${Math.max(0, (selectedUnits[0].hp / selectedUnits[0].maxHp) * 100)}%` }} />
                     </div>
                     <span className="text-[11px] text-slate-300 font-mono shrink-0">{Math.round(selectedUnits[0].hp)}/{selectedUnits[0].maxHp}</span>
+                    {selectedUnits[0].unitDef.category !== 'worker' && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold shrink-0 ${
+                        (selectedUnits[0].morale ?? 100) >= 70
+                          ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60'
+                          : (selectedUnits[0].morale ?? 100) >= 35
+                            ? 'bg-amber-950/70 text-amber-300 border-amber-700/60'
+                            : 'bg-rose-950/70 text-rose-300 border-rose-700/60'
+                      }`}>
+                        士氣 {Math.round(selectedUnits[0].morale ?? 100)}
+                      </span>
+                    )}
                     <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 truncate font-semibold border border-slate-700 max-w-[180px]">
                       {selectedUnits[0].currentActionText || (selectedUnits[0].state === 'idle' ? '💤 待命' : '行動中')}
                     </span>
@@ -1848,6 +1860,26 @@ export const HUD: React.FC<HUDProps> = ({
               const nextCap = getXpThresholdForLevel(Math.min(5, lvl + 1));
               const xpPct = lvl >= 5 ? 100 : Math.min(100, Math.max(0, ((xp - curFloor) / Math.max(1, nextCap - curFloor)) * 100));
               const hasAuraBuff = !!(primary.buffSpeedUntil && primary.buffSpeedUntil > (engine as any).simTime);
+              const moraleUnits = selectedUnits.filter((unit) => unit.unitDef.category !== 'worker');
+              const averageMorale = moraleUnits.length > 0
+                ? moraleUnits.reduce((total, unit) => total + (unit.morale ?? 100), 0) / moraleUnits.length
+                : 100;
+              const moraleModifiers = getMoraleCombatModifiers(averageMorale);
+              const moraleLabel = moraleModifiers.state === 'steady'
+                ? '穩定'
+                : moraleModifiers.state === 'shaken'
+                  ? '動搖'
+                  : '士氣低落';
+              const moraleBarTone = moraleModifiers.state === 'steady'
+                ? 'bg-emerald-400'
+                : moraleModifiers.state === 'shaken'
+                  ? 'bg-amber-400'
+                  : 'bg-rose-500';
+              const moraleTextTone = moraleModifiers.state === 'steady'
+                ? 'text-emerald-300'
+                : moraleModifiers.state === 'shaken'
+                  ? 'text-amber-300'
+                  : 'text-rose-300';
 
               return (
               <div className="flex flex-col md:flex-row gap-3 h-full">
@@ -2010,6 +2042,32 @@ export const HUD: React.FC<HUDProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {moraleUnits.length > 0 && (
+                    <div data-squad-morale="true" className="space-y-0.5 pt-0.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-300">
+                          🛡️ {selectedUnits.length > 1 ? '部隊平均士氣' : '戰場士氣'}
+                        </span>
+                        <span className={`font-bold tabular-nums ${moraleTextTone}`}>
+                          {moraleLabel} · {Math.round(averageMorale)} / 100
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className={`h-full rounded-full transition-all ${moraleBarTone}`}
+                          style={{ width: `${Math.max(0, Math.min(100, averageMorale))}%` }}
+                        />
+                      </div>
+                      {moraleModifiers.state !== 'steady' && (
+                        <div className="text-[10px] text-slate-400">
+                          {moraleModifiers.state === 'shaken'
+                            ? '部隊受到戰場壓力，移動與攻擊節奏下降'
+                            : '部隊士氣嚴重受挫，戰鬥效率大幅下降'}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Combat Stats Grid */}
                   <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-xs pt-0.5">

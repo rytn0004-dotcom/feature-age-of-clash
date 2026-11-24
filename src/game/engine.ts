@@ -6572,8 +6572,10 @@ export class RtsEngine {
     const mongolSlow = unit.slowUntil && unit.slowUntil > this.simTime
       ? Math.max(0.35, Math.min(1, unit.slowFactor ?? 0.65))
       : 1;
-    const moraleSpeed = getMoraleCombatModifiers(unit.morale ?? 100).movementSpeedMultiplier;
-    const routSpeed = unit.moraleRoutGoal ? 1.08 : 1;
+    const moraleSpeed = unit.moraleRoutGoal
+      ? 1
+      : getMoraleCombatModifiers(unit.morale ?? 100).movementSpeedMultiplier;
+    const routSpeed = unit.moraleRoutGoal ? 1.12 : 1;
     let speed = unit.unitDef.stats.speed * hasteMult * rootSlow * relicSlow * mongolSlow * moraleSpeed * routSpeed;
     const regroupState = unit.formationGroupId
       ? this.formationRegroupByGroup.get(unit.formationGroupId)
@@ -6837,7 +6839,7 @@ export class RtsEngine {
     attacker?: UnitEntity,
     direction: 'flank' | 'rear' | null = null,
   ): void {
-    if (target.unitDef.category === 'worker' || target.hp <= 0) return;
+    if (target.unitDef.category === 'worker') return;
     target.morale = applyMoraleImpact({
       morale: target.morale ?? 100,
       damage,
