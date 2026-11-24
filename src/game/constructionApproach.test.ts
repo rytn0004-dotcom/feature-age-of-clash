@@ -6,6 +6,8 @@ import {
   accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
   isActiveConstructionWorkerWithinReach,
+  shouldDeferBlockedWallConstructionTarget,
+  deferBlockedWallConstructionCommand,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
