@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
-import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand } from './commandQueue';
+import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, takeNextUnitCommand } from './commandQueue';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
@@ -3814,6 +3814,7 @@ export class RtsEngine {
       }
 
       unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.moraleRoutGoal = undefined;
       unit.wallPatrolRoute = undefined;
       unit.wallPatrolIndex = undefined;
@@ -3838,7 +3839,7 @@ export class RtsEngine {
   public issueAttackOrder(targetId: string, queue = false) {
     const playerUnits = this.selectedUnitIds
       .map((uid) => this.units.find((u) => u.id === uid))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction));
+      .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
 
@@ -3854,6 +3855,10 @@ export class RtsEngine {
         enqueueCommandsForUnits(boarders, () => ({ type: 'board', targetId: targetUnit!.id }));
         this.onSelectionChange?.();
       } else {
+        boarders.forEach((unit) => {
+          unit.commandQueue = undefined;
+          unit.queuedGatherStopAfterDeposit = false;
+        });
         this.boardTransport(targetUnit, boarders);
       }
       return;
@@ -4032,9 +4037,8 @@ export class RtsEngine {
       }
 
       if (!isValid) {
-        // Drop stale commands (destroyed targets, depleted nodes, completed foundations)
-        // and continue to the next entry instead of leaving the unit stuck.
-        activateNextUnitCommand(unit);
+        // Drop stale commands without activating their side effects, then inspect the next entry.
+        takeNextUnitCommand(unit);
         continue;
       }
 
