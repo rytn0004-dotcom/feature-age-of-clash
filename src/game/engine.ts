@@ -199,6 +199,7 @@ import { generateMapLayout, MapLayoutResult } from './mapGenerator';
 import { BattleStressRole, BattleStressUnitCount, createBattleStressPlan } from './battleStress';
 import { updateAmbientTreeWind } from './ambientTreeWind';
 import { RoundRobinBatch } from './roundRobinBatch';
+import { advanceAiDecisionScheduler } from './aiDecisionScheduler';
 import {
   formatPerformanceTelemetryCsv,
   getAverageAiDecisionMs,
@@ -605,6 +606,7 @@ export class RtsEngine {
 
   // AI Timer
   private aiTickAccumulator = 0;
+  private aiDecisionFactionCursor = 0;
   private aiDecisionCount = 0;
   private aiDecisionTiming: AiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
   private aiPathRecoveryTotal = 0;
@@ -1431,6 +1433,7 @@ export class RtsEngine {
     this.landmarksByFaction = {};
     this.researchedTechsByFaction = {};
     this.aiTickAccumulator = 1.2;
+    this.aiDecisionFactionCursor = 0;
     this.aiDecisionCount = 0;
     this.aiDecisionTiming = { ...EMPTY_AI_DECISION_TIMING };
     this.aiPathRecoveryTotal = 0;
@@ -5327,7 +5330,7 @@ export class RtsEngine {
       `AI Gather/Return  ${aiStateCounts.gathering}/${aiStateCounts.returning_resource}`,
       `AI Build/Asm/Gar  ${aiStateCounts.building}/${aiStateCounts.assembling}/${aiStateCounts.garrisoning}`,
       `AI Queue/Research ${aiQueuedUnits}/${aiResearchingBuildings}`,
-      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / 1.20s`,
+      `AI Heartbeat      ${this.aiDecisionCount} · ${this.aiTickAccumulator.toFixed(2)} / ${(1.2 / Math.max(1, this.participants.filter((p) => p.controller === 'ai').length)).toFixed(2)}s`,
       `AI Think ms       ${this.aiDecisionTiming.lastMs.toFixed(2)} last / ${aiDecisionAverageMs.toFixed(2)} avg / ${this.aiDecisionTiming.maxMs.toFixed(2)} max`,
       `Particles        ${activeParticles} / ${this.particlePool.length}`,
       `Pixel Ratio      ${this.renderer.getPixelRatio().toFixed(2)}`,
@@ -5636,14 +5639,28 @@ export class RtsEngine {
     }
 
     // 6. AI Logic Evaluator
-    this.aiTickAccumulator += dt;
-    if (this.aiTickAccumulator >= 1.2) {
-      this.aiTickAccumulator = 0;
+    // Spread faction planning across the interval: each AI still receives one
+    // strategic decision every ~1.2s, but several factions no longer spike the
+    // same simulation frame with their full planning passes.
+    const aiFactionIds = this.participants
+      .filter((participant) => participant.controller === 'ai')
+      .map((participant) => participant.id);
+    const aiDecision = advanceAiDecisionScheduler(
+      {
+        accumulatorSeconds: this.aiTickAccumulator,
+        cursor: this.aiDecisionFactionCursor,
+      },
+      aiFactionIds,
+      dt,
+    );
+    this.aiTickAccumulator = aiDecision.state.accumulatorSeconds;
+    this.aiDecisionFactionCursor = aiDecision.state.cursor;
+    if (aiDecision.factionId) {
       this.aiDecisionCount += 1;
       const aiDecisionStartedAt = performance.now();
       this.rebuildCombatSpatialIndex();
       try {
-        this.evaluateAiLogic();
+        this.evaluateAiLogic(aiDecision.factionId);
       } finally {
         this.aiDecisionTiming = recordAiDecisionTiming(
           this.aiDecisionTiming,
@@ -10492,14 +10509,14 @@ export class RtsEngine {
     return false;
   }
 
-  private evaluateAiLogic() {
+  private evaluateAiLogic(onlyFactionId?: FactionId) {
     const unitsByFaction = groupEntitiesByFaction(this.units);
     const buildingsByFaction = groupEntitiesByFaction(this.buildings);
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
 
     for (const participant of this.participants) {
-      if (participant.controller !== 'ai') continue;
+      if (participant.controller !== 'ai' || (onlyFactionId && participant.id !== onlyFactionId)) continue;
 
       const personality = participant.aiPersonality || 'standard';
       const activeRules =
@@ -10811,11 +10828,18 @@ export class RtsEngine {
           const targets = this.contestedPoints
             .map((cp) => {
               const mine = cp.ownerFaction === aiId;
-              const threat = aiHostileUnits.some(
+              const nearbyUnits = queryCombatSpatialIndex(
+                this.combatSpatialIndex!,
+                cp.x,
+                cp.z,
+                cp.radius + 8,
+                this.combatTargetQueryScratch,
+              ).units;
+              const threat = nearbyUnits.some(
                 (unit) =>
                   unit.hp > 0 &&
                   !unit.garrisonedInBuildingId &&
-                  getDistance(unit.x, unit.z, cp.x, cp.z) <= cp.radius + 8,
+                  this.isHostile(aiReference, unit),
               );
               let score = 0;
               if (cp.ownerFaction === 'neutral') score = 65;
