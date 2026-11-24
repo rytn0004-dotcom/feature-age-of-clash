@@ -461,7 +461,9 @@ export function findPath(
   }
 
   if (!found) {
-    return [goalPoint];
+    // An unreachable target is not a direct-movement fallback. Callers can retry
+    // after a cooldown or choose another approach point without walking into walls.
+    return [];
   }
 
   // Reconstruct raw cell path
