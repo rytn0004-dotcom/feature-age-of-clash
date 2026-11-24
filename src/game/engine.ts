@@ -2398,6 +2398,7 @@ export class RtsEngine {
       unit.wallPatrolRoute = route;
       unit.wallPatrolIndex = nearestIndex;
       unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.targetEntityId = undefined;
       unit.targetResourceNodeId = undefined;
       unit.targetBuildingId = undefined;
@@ -3483,6 +3484,8 @@ export class RtsEngine {
         return;
       }
 
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.targetX = gx;
       unit.targetZ = gz;
       unit.attackMoveGoal = { x: gx, z: gz };
@@ -3885,6 +3888,8 @@ export class RtsEngine {
 
     playerUnits.forEach((unit) => {
       this.clearFormationMovement(unit);
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
       unit.moraleRoutGoal = undefined;
       unit.attackMoveGoal = null;
       unit.wallPatrolRoute = undefined;
@@ -3972,6 +3977,7 @@ export class RtsEngine {
         return;
       }
       worker.commandQueue = undefined;
+      worker.queuedGatherStopAfterDeposit = false;
       worker.targetResourceNodeId = nodeId;
       worker.targetEntityId = undefined;
       worker.targetBuildingId = undefined;
@@ -4092,6 +4098,7 @@ export class RtsEngine {
       worker.targetResourceNodeId = undefined;
       worker.targetEntityId = undefined;
       worker.commandQueue = undefined;
+      worker.queuedGatherStopAfterDeposit = false;
       worker.waypoints = undefined;
       worker.pathGoal = undefined;
       worker.pathCooldown = 0;
