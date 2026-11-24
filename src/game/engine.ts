@@ -7937,8 +7937,10 @@ export class RtsEngine {
 
   private stepUnitReturning(unit: UnitEntity, dt: number) {
     if (!unit.carryingResource || unit.carryingResource.amount <= 0) {
-      unit.state = 'idle';
-      unit.currentActionText = '💤 待命中 (閒置)';
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '💤 待命中 (閒置)';
+      }
       return;
     }
 
@@ -7998,7 +8000,15 @@ export class RtsEngine {
         this.addFloatingText(unit.x, 2.0, unit.z, `+${amount} ${resType.toUpperCase()}`, '#4ade80');
       }
 
-      if (unit.targetResourceNodeId) {
+      const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
+      if (hasQueuedFollowUp) {
+        unit.targetResourceNodeId = undefined;
+        unit.queuedGatherStopAfterDeposit = false;
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 待命中 (閒置)';
+        }
+      } else if (unit.targetResourceNodeId) {
         unit.state = 'gathering';
       } else {
         unit.state = 'idle';
