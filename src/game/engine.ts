@@ -308,7 +308,8 @@ import {
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
 import {
   findNearestRepairableWall,
-  findNearestWallEndpoint,
+  WallEndpointIndex,
+  WALL_ENDPOINT_INDEX_REFRESH_MS,
   isWallChainPointTooClose,
   planWallChainExtension,
   type WallEndpointSnap,
@@ -602,6 +603,12 @@ export class RtsEngine {
   private wallPlacementPreviewIsValid = false;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
+  private wallEndpointIndex = new WallEndpointIndex<BuildingEntity>();
+  private wallEndpointIndexDirty = true;
+  private wallEndpointIndexLastRefreshAt = Number.NEGATIVE_INFINITY;
+  private wallEndpointIndexBuildingSource: BuildingEntity[] | null = null;
+  private wallEndpointIndexBuildingCount = -1;
+  private wallEndpointIndexFaction: FactionId | null = null;
   private wallPlacementPointSnaps: Array<WallEndpointSnap<BuildingEntity> | null> = [];
   private wallRepairPreviewMesh: THREE.Group | null = null;
   private wallRepairPreviewTargetId: string | null = null;
@@ -1414,6 +1421,13 @@ export class RtsEngine {
     this.projectileMeshes.clear();
     this.units = [];
     this.buildings = [];
+    // Drop cached wall endpoint references from the previous match immediately.
+    this.wallEndpointIndex.clear();
+    this.wallEndpointIndexDirty = true;
+    this.wallEndpointIndexLastRefreshAt = Number.NEGATIVE_INFINITY;
+    this.wallEndpointIndexBuildingSource = null;
+    this.wallEndpointIndexBuildingCount = -1;
+    this.wallEndpointIndexFaction = null;
     // Release previous-match faction roster groups even when the next match has
     // no AI and therefore will not ask the scheduler to rebuild them.
     this.aiUnitGroupsSource = null;
@@ -2495,6 +2509,7 @@ export class RtsEngine {
       ovooHornCooldown: type === 'ovoo_relay' ? 0 : undefined,
     };
     this.buildings.push(building);
+    if (type === 'wall') this.wallEndpointIndexDirty = true;
     this.navGridDirty = true;
     this.waterNavGridDirty = true;
 
@@ -4919,15 +4934,36 @@ export class RtsEngine {
     materials.forEach((material) => material.dispose());
   }
 
-  private findWallPlacementSnap(point: WallChainPoint): WallEndpointSnap<BuildingEntity> | null {
-    const walls = this.buildings.filter(
-      (building) =>
-        building.faction === this.humanPlayerId &&
-        building.buildingDef.isWall &&
-        building.hp > 0 &&
-        building.isConstructed
-    );
-    return findNearestWallEndpoint(point, walls);
+  private findWallPlacementSnap(
+    point: WallChainPoint,
+    forceRefresh = false,
+  ): WallEndpointSnap<BuildingEntity> | null {
+    const now = performance.now();
+    const shouldRefresh =
+      forceRefresh ||
+      this.wallEndpointIndexDirty ||
+      this.wallEndpointIndexBuildingSource !== this.buildings ||
+      this.wallEndpointIndexBuildingCount !== this.buildings.length ||
+      this.wallEndpointIndexFaction !== this.humanPlayerId ||
+      now - this.wallEndpointIndexLastRefreshAt >= WALL_ENDPOINT_INDEX_REFRESH_MS;
+
+    if (shouldRefresh) {
+      const walls = this.buildings.filter(
+        (building) =>
+          building.faction === this.humanPlayerId &&
+          building.buildingDef.isWall &&
+          building.hp > 0 &&
+          building.isConstructed
+      );
+      this.wallEndpointIndex.rebuild(walls);
+      this.wallEndpointIndexDirty = false;
+      this.wallEndpointIndexLastRefreshAt = now;
+      this.wallEndpointIndexBuildingSource = this.buildings;
+      this.wallEndpointIndexBuildingCount = this.buildings.length;
+      this.wallEndpointIndexFaction = this.humanPlayerId;
+    }
+
+    return this.wallEndpointIndex.findNearest(point);
   }
 
   public getNearestRepairableWallAt(x: number, z: number): BuildingEntity | null {
@@ -5008,7 +5044,7 @@ export class RtsEngine {
     if (this.placementBuildingType !== 'wall') return 'invalid';
 
     const inputPoint = { x, z };
-    const snap = this.findWallPlacementSnap(inputPoint);
+    const snap = this.findWallPlacementSnap(inputPoint, true);
     const point = snap?.point ?? inputPoint;
     this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
     if (this.wallPlacementPoints.length === 0) {
@@ -8848,6 +8884,7 @@ export class RtsEngine {
 
       if (!repairingWall && !repairingStructure && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
+        if (bldg.buildingDef.isWall) this.wallEndpointIndexDirty = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
         (bldg as any)._constructImpulse = 1.35;
@@ -13317,6 +13354,11 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.wallEndpointIndex.clear();
+    this.wallEndpointIndexDirty = true;
+    this.wallEndpointIndexBuildingSource = null;
+    this.wallEndpointIndexBuildingCount = -1;
+    this.wallEndpointIndexFaction = null;
     this.aiDecisionFactionIds.length = 0;
     this.aiDecisionSchedulerState.accumulatorSeconds = 0;
     this.aiDecisionSchedulerState.cursor = 0;

@@ -23,6 +23,8 @@ export interface WallEndpointSnap<T extends WallSnapBuilding = WallSnapBuilding>
   side: 'start' | 'end';
 }
 
+/** Rebuild the cached endpoint topology at most every 100ms while a player is drawing a wall. */
+export const WALL_ENDPOINT_INDEX_REFRESH_MS = 100;
 /** Distance at which a new wall endpoint magnetically joins an existing chain. */
 export const WALL_ENDPOINT_SNAP_RADIUS = 1.65;
 /** Workers can issue a repair order by right-clicking near a damaged wall segment. */
@@ -106,23 +108,63 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
   return anchors;
 }
 
+/**
+ * Reusable endpoint snapshot for pointer-move snapping. Rebuild only when the
+ * wall roster/chain topology changes; nearest-point queries then scan a compact
+ * anchor list without filtering, grouping, sorting, or allocating arrays.
+ */
+export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
+  private anchors: WallAnchor<T>[] = [];
+  private rebuilds = 0;
+
+  public rebuild(walls: readonly T[]): void {
+    this.anchors = collectWallAnchors(walls);
+    this.rebuilds += 1;
+  }
+
+  public clear(): void {
+    this.anchors = [];
+  }
+
+  public findNearest(
+    point: { x: number; z: number },
+    snapRadius = WALL_ENDPOINT_SNAP_RADIUS,
+  ): WallEndpointSnap<T> | null {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.z) || !Number.isFinite(snapRadius) || snapRadius < 0) {
+      return null;
+    }
+
+    let nearest: WallEndpointSnap<T> | null = null;
+    for (const anchor of this.anchors) {
+      // Health/construction can change between scheduled topology rebuilds.
+      if (anchor.wall.hp <= 0 || !anchor.wall.isConstructed) continue;
+      const distance = Math.hypot(point.x - anchor.point.x, point.z - anchor.point.z);
+      if (distance <= snapRadius && (!nearest || distance < nearest.distance)) {
+        nearest = { point: anchor.point, wall: anchor.wall, distance, side: anchor.side };
+      }
+    }
+    return nearest;
+  }
+
+  /** Exposed for deterministic regression tests and lightweight diagnostics. */
+  public get rebuildCount(): number {
+    return this.rebuilds;
+  }
+
+  public get endpointCount(): number {
+    return this.anchors.length;
+  }
+}
+
+/** One-shot convenience helper for callers that do not need a persistent index. */
 export function findNearestWallEndpoint<T extends WallSnapBuilding>(
   point: { x: number; z: number },
   walls: readonly T[],
   snapRadius = WALL_ENDPOINT_SNAP_RADIUS
 ): WallEndpointSnap<T> | null {
-  if (!Number.isFinite(point.x) || !Number.isFinite(point.z) || !Number.isFinite(snapRadius) || snapRadius < 0) {
-    return null;
-  }
-
-  let nearest: WallEndpointSnap<T> | null = null;
-  for (const anchor of collectWallAnchors(walls)) {
-    const distance = Math.hypot(point.x - anchor.point.x, point.z - anchor.point.z);
-    if (distance <= snapRadius && (!nearest || distance < nearest.distance)) {
-      nearest = { point: anchor.point, wall: anchor.wall, distance, side: anchor.side };
-    }
-  }
-  return nearest;
+  const index = new WallEndpointIndex<T>();
+  index.rebuild(walls);
+  return index.findNearest(point, snapRadius);
 }
 
 export function findNearestRepairableWall<T extends WallSnapBuilding>(

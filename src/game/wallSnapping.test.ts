@@ -5,6 +5,7 @@ import {
   findNearestWallEndpoint,
   isWallChainPointTooClose,
   planWallChainExtension,
+  WallEndpointIndex,
   WALL_ENDPOINT_SNAP_RADIUS,
 } from './wallSnapping';
 import type { WallSnapBuilding } from './wallSnapping';
@@ -178,4 +179,55 @@ test('wall waypoint spacing is checked after endpoint snapping, not against the 
     false,
     'the minimum spacing is inclusive',
   );
+});
+
+
+test('wall endpoint index reuses its built anchors across repeated cursor queries', () => {
+  const walls = [
+    makeWall('wall-0', 0, { wallChainIndex: 0 }),
+    makeWall('wall-1', 2.7, { wallChainIndex: 1 }),
+    makeWall('wall-2', 5.4, { wallChainIndex: 2 }),
+  ];
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild(walls);
+
+  const first = index.findNearest({ x: 6.7, z: 0 });
+  const second = index.findNearest({ x: 6.8, z: 0 });
+
+  assert.equal(first?.wall.id, 'wall-2');
+  assert.equal(second?.wall.id, 'wall-2');
+  assert.equal(index.rebuildCount, 1, 'cursor queries must not rebuild grouping/sorting data');
+  assert.equal(index.endpointCount, 2, 'a continuous chain exposes only its two outer endpoints');
+});
+
+test('wall endpoint index rebuild exposes both sides of a newly destroyed chain gap', () => {
+  const walls = [
+    makeWall('wall-0', 0, { wallChainIndex: 0, wallChainSize: 3 }),
+    makeWall('wall-1', 2.7, { wallChainIndex: 1, wallChainSize: 3 }),
+    makeWall('wall-2', 5.4, { wallChainIndex: 2, wallChainSize: 3 }),
+  ];
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild(walls);
+  assert.equal(index.endpointCount, 2);
+
+  walls[1].hp = 0;
+  index.rebuild([walls[0], walls[2]]);
+
+  const leftGap = index.findNearest({ x: 1.4, z: 0 });
+  const rightGap = index.findNearest({ x: 4.1, z: 0 });
+  assert.equal(leftGap?.wall.id, 'wall-0');
+  assert.equal(leftGap?.side, 'end');
+  assert.equal(rightGap?.wall.id, 'wall-2');
+  assert.equal(rightGap?.side, 'start');
+  assert.equal(index.endpointCount, 4);
+});
+
+test('wall endpoint index ignores an endpoint wall that becomes dead between rebuilds', () => {
+  const wall = makeWall('wall-0', 0);
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild([wall]);
+
+  wall.hp = 0;
+  assert.equal(index.findNearest({ x: 1.35, z: 0 }), null);
+  assert.equal(index.rebuildCount, 1, 'health checks do not force a full index rebuild');
 });
