@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
+import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand } from './commandQueue';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
