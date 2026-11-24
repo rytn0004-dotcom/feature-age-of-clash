@@ -5355,7 +5355,6 @@ export class RtsEngine {
       this.wallPlacementPreviewLine = new THREE.Line(geometry, material);
       this.wallPlacementPreviewLine.name = 'wallPlacementLine';
       this.wallPlacementPreviewLine.frustumCulled = false;
-      this.wallPlacementPreviewLine.frustumCulled = false;
       group.add(this.wallPlacementPreviewLine);
     }
     const line = this.wallPlacementPreviewLine;
