@@ -5092,7 +5092,7 @@ export class RtsEngine {
       obstacles?.discs,
       obstacles?.bridges,
       points,
-    ) || !!this.findInvalidWallPathPoint(points, obstacles);
+    );
     this.wallPlacementPreviewCheckedAt = now;
 
     const resources = this.getResourcesForFaction(this.humanPlayerId);
@@ -5119,25 +5119,16 @@ export class RtsEngine {
     if (placements.length === 0 || placements.length > MAX_WALL_CHAIN_SEGMENTS) return false;
 
     const obstacles = this.getTerrainNavObstacles();
-    if (this.findInvalidWallPathPoint(points, obstacles)) return false;
-
-    for (const placement of placements) {
-      if (!isPlacementLocationValid(
-        placement.x,
-        placement.z,
-        DEFAULT_BUILDINGS.wall.size,
-        this.buildings,
-        this.resourceNodes,
-        true,
-        obstacles?.rects,
-        obstacles?.discs,
-        obstacles?.bridges,
-        'wall',
-      )) {
-        return false;
-      }
-    }
-    return true;
+    return !isWallChainPreviewObstructed(
+      placements,
+      DEFAULT_BUILDINGS.wall.size,
+      this.buildings,
+      this.resourceNodes,
+      obstacles?.rects,
+      obstacles?.discs,
+      obstacles?.bridges,
+      points,
+    );
   }
 
   public updateWallPlacementPreview(x: number, z: number) {
