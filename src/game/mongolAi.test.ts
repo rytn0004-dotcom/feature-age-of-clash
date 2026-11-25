@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   evaluateMongolOvooPolicy,
   hasNearbyHostileUnit,
+  shouldTrainMongolShaman,
   type MongolNearbyUnit,
 } from './mongolAi';
 
@@ -106,4 +107,14 @@ test('Ovoo retains its current mode when no strategic condition applies', () => 
   assert.equal(policy.desiredMode, 'yam_relay');
   assert.equal(policy.shouldChangeMode, false);
   assert.equal(policy.shouldTriggerWarHorn, false);
+});
+
+
+test('Mongol AI keeps a capped shaman support ratio in ranged formations', () => {
+  assert.equal(shouldTrainMongolShaman(5, 0), false);
+  assert.equal(shouldTrainMongolShaman(6, 0), true);
+  assert.equal(shouldTrainMongolShaman(12, 1), true);
+  assert.equal(shouldTrainMongolShaman(18, 2), false);
+  assert.equal(shouldTrainMongolShaman(Number.NaN, 0), false);
+  assert.equal(shouldTrainMongolShaman(12, Number.NaN), true);
 });

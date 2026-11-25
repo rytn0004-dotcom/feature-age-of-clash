@@ -79,3 +79,15 @@ export function evaluateMongolOvooPolicy(input: MongolOvooPolicyInput): MongolOv
       input.hasNearbyHostiles && input.hasNearbyFriendlyArmy && cooldownReady,
   };
 }
+
+
+/**
+ * Mongol ranged formations use a small shaman support core rather than training only Mangudai.
+ * One shaman per six ranged troops, capped at two, keeps area control useful without flooding the queue.
+ */
+export function shouldTrainMongolShaman(rangedUnitCount: number, currentShamanCount: number): boolean {
+  const ranged = Math.max(0, Math.floor(Number.isFinite(rangedUnitCount) ? rangedUnitCount : 0));
+  const shamans = Math.max(0, Math.floor(Number.isFinite(currentShamanCount) ? currentShamanCount : 0));
+  const desiredShamans = Math.min(2, Math.floor(ranged / 6));
+  return shamans < desiredShamans;
+}

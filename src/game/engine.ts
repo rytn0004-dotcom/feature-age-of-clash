@@ -72,7 +72,7 @@ import {
   getTrainableUnitsForBuilding,
   getTrainingTimeMultiplier,
 } from './civilizations';
-import { evaluateMongolOvooPolicy, hasNearbyHostileUnit } from './mongolAi';
+import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, shouldTrainMongolShaman } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
@@ -11497,7 +11497,26 @@ export class RtsEngine {
     } else if (rawTargetId === 'swordsman') {
       unitDefId = aiCiv.starterMeleeUnitId;
     } else if (rawTargetId === 'longbowman') {
-      unitDefId = aiCiv.starterRangedUnitId;
+      if (aiCiv.id === 'mongol') {
+        let rangedCount = this.units.filter(
+          (unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDef.category === 'ranged'
+        ).length;
+        let shamanCount = this.units.filter(
+          (unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_shaman'
+        ).length;
+        for (const building of aiBuildings) {
+          for (const queuedUnitId of building.queue) {
+            const queuedDef = this.findUnitDef(queuedUnitId, aiId);
+            if (queuedDef?.category === 'ranged') rangedCount++;
+            if (queuedUnitId === 'mongol_shaman') shamanCount++;
+          }
+        }
+        unitDefId = shouldTrainMongolShaman(rangedCount, shamanCount)
+          ? 'mongol_shaman'
+          : aiCiv.starterRangedUnitId;
+      } else {
+        unitDefId = aiCiv.starterRangedUnitId;
+      }
     } else if (rawTargetId === 'knight') {
       unitDefId = resolveAiKnightUnitId(aiCiv.id);
     } else if (rawTargetId === 'battering_ram') {
