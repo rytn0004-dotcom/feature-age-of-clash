@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
   DELETE_HOLD_DURATION_MS,
   getDeleteHoldProgress,
@@ -50,4 +51,11 @@ test('delete hold progress reaches completion only after three seconds', () => {
   assert.equal(getDeleteHoldProgress(1000, 4000), 1);
   assert.equal(getDeleteHoldProgress(1000, 5000), 1);
   assert.equal(getDeleteHoldProgress(Number.NaN, 5000), 0);
+});
+
+test('construction work adds new health without restoring damage already taken', () => {
+  assert.equal(applyConstructionWorkToHealth(30, 100, 0.2), 50);
+  assert.equal(applyConstructionWorkToHealth(80, 100, 0.5), 100);
+  assert.equal(applyConstructionWorkToHealth(20, 100, -0.4), 20);
+  assert.equal(applyConstructionWorkToHealth(20, 0, 0.4), 0);
 });
