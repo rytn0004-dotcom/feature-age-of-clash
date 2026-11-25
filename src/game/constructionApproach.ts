@@ -40,6 +40,81 @@ export interface ConstructionWorkTarget {
   z: number;
 }
 
+export interface ConstructionHandoffCandidate extends ConstructionWorkerPosition {
+  id: string;
+  hp: number;
+  faction: string;
+  category: string;
+  state: string;
+  targetBuildingId?: string;
+  targetResourceNodeId?: string;
+  targetEntityId?: string;
+  targetGarrisonBuildingId?: string;
+  garrisonedInBuildingId?: string | null;
+  fieldAssemblyProjectId?: string;
+  queuedCommandCount?: number;
+  hasCarriedResource?: boolean;
+}
+
+export interface ConstructionHandoffTarget extends ConstructionWorkTarget {
+  faction: string;
+}
+
+/**
+ * Select the nearest genuinely idle worker for a blocked construction target.
+ * Workers with active orders, cargo, garrison reservations, or a previous
+ * failed attempt are excluded so handoffs cannot steal another task or loop.
+ * Returns the original candidate index, or -1 when no safe replacement exists.
+ */
+export function selectConstructionHandoffWorker(
+  candidates: readonly ConstructionHandoffCandidate[],
+  target: ConstructionHandoffTarget,
+  excludedWorkerIds: ReadonlySet<string> = new Set<string>(),
+): number {
+  if (!Number.isFinite(target.x) || !Number.isFinite(target.z)) return -1;
+
+  let selectedIndex = -1;
+  let selectedDistanceSquared = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index];
+    if (
+      !candidate.id ||
+      excludedWorkerIds.has(candidate.id) ||
+      candidate.hp <= 0 ||
+      candidate.faction !== target.faction ||
+      candidate.category !== 'worker' ||
+      candidate.state !== 'idle' ||
+      !!candidate.targetBuildingId ||
+      !!candidate.targetResourceNodeId ||
+      !!candidate.targetEntityId ||
+      !!candidate.targetGarrisonBuildingId ||
+      !!candidate.garrisonedInBuildingId ||
+      !!candidate.fieldAssemblyProjectId ||
+      !!candidate.hasCarriedResource ||
+      (candidate.queuedCommandCount ?? 0) > 0 ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z)
+    ) {
+      continue;
+    }
+
+    const dx = candidate.x - target.x;
+    const dz = candidate.z - target.z;
+    const distanceSquared = dx * dx + dz * dz;
+    if (
+      Number.isFinite(distanceSquared) &&
+      (distanceSquared < selectedDistanceSquared - 1e-9 ||
+        (Math.abs(distanceSquared - selectedDistanceSquared) <= 1e-9 && selectedIndex < 0))
+    ) {
+      selectedIndex = index;
+      selectedDistanceSquared = distanceSquared;
+    }
+  }
+
+  return selectedIndex;
+}
+
 /**
  * Solve a rectangular minimum-cost assignment matrix where rows <= columns.
  * The Hungarian algorithm gives a globally optimal one-to-one matching in O(n^2 m).
