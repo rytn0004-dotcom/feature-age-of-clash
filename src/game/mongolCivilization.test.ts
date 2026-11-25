@@ -104,6 +104,6 @@ test('Mongol civilization: all six age landmarks have dedicated names', () => {
 
 test('Mongol civilization: steppe lancer has a dedicated portrait fallback', () => {
   const portrait = getUnitPortraitSpec(undefined, 'mongol_lancer');
-  assert.equal(portrait.key, 'fallback_mongol_lancer');
+  assert.equal(portrait.key, 'mongol_lancer');
   assert.equal(portrait.label, '草原長槍騎兵');
 });
