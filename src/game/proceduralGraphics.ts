@@ -2092,8 +2092,10 @@ function createMongolWallMesh(faction: FactionId, profile: MongolBuildingModelPr
   topRail.name = 'wallWalkway';
   topRail.position.y = 2.02;
   const lowerBrace = new THREE.Mesh(sharedMongolPalisadeBraceGeo, materials.rope);
+  lowerBrace.name = 'wallMongolLowerBrace';
   lowerBrace.position.set(0, 0.72, 0.57);
   const upperBrace = new THREE.Mesh(sharedMongolPalisadeBraceGeo, materials.rope);
+  upperBrace.name = 'wallMongolUpperBrace';
   upperBrace.position.set(0, 1.58, 0.57);
   group.add(topRail, lowerBrace, upperBrace);
   const stakeTransforms: VisualInstanceTransform[] = [];
@@ -3367,6 +3369,9 @@ export function applyWallBreachVisuals(group: THREE.Group, breached: boolean): v
   const hiddenWhenBreached = [
     'wallCurtain',
     'wallWalkway',
+    'instancedMongolPalisadeLogs',
+    'wallMongolLowerBrace',
+    'wallMongolUpperBrace',
     'instancedWallMerlons',
     'instancedWallPalisadeStakes',
   ];
