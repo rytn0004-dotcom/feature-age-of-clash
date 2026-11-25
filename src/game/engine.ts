@@ -308,7 +308,7 @@ import {
   updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
-import { findNearestValidWallStartPoint, getAffordableWallSegmentCount } from './wallPlacement';
+import { findNearestValidWallStartPoint, getAffordableWallSegmentCount, getWallSegmentPreviewStatus } from './wallPlacement';
 import {
   findNearestRepairableWall,
   WallEndpointIndex,
@@ -613,6 +613,7 @@ export class RtsEngine {
   private wallPlacementPreviewBlocked = false;
   private wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
   private wallPlacementPreviewTint = 0x22c55e;
+  private wallPlacementPreviewAffordableSegmentCount = 0;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
   private wallEndpointIndex = new WallEndpointIndex<BuildingEntity>();
@@ -4864,6 +4865,7 @@ export class RtsEngine {
       this.wallPlacementPreviewBlocked = false;
       this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.wallPlacementPreviewTint = 0x22c55e;
+      this.wallPlacementPreviewAffordableSegmentCount = 0;
       this.wallPlacementPointSnaps = [];
       this.wallPlacementGhostTemplate = this.createTranslucentBuildingPreview('wall', this.humanPlayerId, 0.42, 0x38bdf8);
       this.rebuildWallPlacementPreview();
@@ -5111,6 +5113,7 @@ export class RtsEngine {
     );
     const withinLimit = placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS;
     const hasAffordablePart = affordable > 0;
+    this.wallPlacementPreviewAffordableSegmentCount = affordable;
     this.wallPlacementPreviewIsValid = withinLimit && !this.wallPlacementPreviewBlocked && hasAffordablePart;
     this.applyWallPlacementPreviewTint(
       this.wallPlacementPreviewBlocked || placements.length > MAX_WALL_CHAIN_SEGMENTS
@@ -5269,6 +5272,8 @@ export class RtsEngine {
       DEFAULT_BUILDINGS.wall.cost,
       placements.length,
     );
+    this.wallPlacementPreviewAffordableSegmentCount = affordableSegmentCount;
+    this.refreshWallPlacementPreviewGhostTints(placements.length);
 
     return {
       pointCount: this.wallPlacementPoints.length,
@@ -5495,6 +5500,57 @@ export class RtsEngine {
     return true;
   }
 
+  private cloneWallPlacementPreviewMaterials(ghost: THREE.Group): void {
+    const clones = new Map<THREE.Material, THREE.Material>();
+    const ownedMaterials: THREE.Material[] = [];
+    ghost.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const cloneMaterial = (source: THREE.Material): THREE.Material => {
+        let cloned = clones.get(source);
+        if (!cloned) {
+          cloned = source.clone();
+          clones.set(source, cloned);
+          ownedMaterials.push(cloned);
+        }
+        return cloned;
+      };
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(cloneMaterial)
+        : cloneMaterial(mesh.material);
+    });
+    // Geometry remains shared with the single template; only these cheap
+    // material instances belong to this segment and need separate tinting.
+    ghost.userData.wallPreviewOwnedMaterials = ownedMaterials;
+  }
+
+  private setWallPlacementPreviewGhostTint(ghost: THREE.Group, color: number): void {
+    const materials = ghost.userData.wallPreviewOwnedMaterials as THREE.Material[] | undefined;
+    if (!materials) return;
+    for (const material of materials) {
+      const colored = material as THREE.Material & { color?: THREE.Color };
+      colored.color?.setHex(color);
+    }
+  }
+
+  private refreshWallPlacementPreviewGhostTints(segmentCount: number): void {
+    const overflow = segmentCount > MAX_WALL_CHAIN_SEGMENTS;
+    for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
+      const status = getWallSegmentPreviewStatus(
+        index,
+        segmentCount,
+        this.wallPlacementPreviewAffordableSegmentCount,
+        this.wallPlacementPreviewBlocked || overflow,
+      );
+      const color = status === 'buildable'
+        ? 0x22c55e
+        : status === 'unaffordable'
+          ? 0xf59e0b
+          : 0xef4444;
+      this.setWallPlacementPreviewGhostTint(this.wallPlacementPreviewGhosts[index], color);
+    }
+  }
+
   private rebuildWallPlacementPreview() {
     if (this.placementBuildingType !== 'wall') {
       if (this.wallPlacementPreviewGroup) this.wallPlacementPreviewGroup.visible = false;
@@ -5517,6 +5573,7 @@ export class RtsEngine {
     }
 
     const placements = previewPoints.length >= 2 ? layoutWallChain(previewPoints) : [];
+    this.refreshWallPlacementPreviewObstruction(previewPoints, placements);
     const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
 
     // Keep one reusable 3D ghost per maximum segment count reached. Pointer movement
@@ -5524,6 +5581,7 @@ export class RtsEngine {
     while (this.wallPlacementPreviewGhosts.length < previewLimit && this.wallPlacementGhostTemplate) {
       const ghost = this.wallPlacementGhostTemplate.clone(true);
       ghost.userData.wallPreviewSharedAssets = true;
+      this.cloneWallPlacementPreviewMaterials(ghost);
       this.wallPlacementPreviewGhosts.push(ghost);
       group.add(ghost);
     }
@@ -5535,6 +5593,7 @@ export class RtsEngine {
       ghost.position.set(placement.x, 0, placement.z);
       ghost.rotation.y = placement.rotationY;
     }
+    this.refreshWallPlacementPreviewGhostTints(placements.length);
 
     if (!this.wallPlacementPreviewLine) {
       const geometry = new THREE.BufferGeometry();
@@ -5712,10 +5771,17 @@ export class RtsEngine {
     this.wallPlacementPreviewBlocked = false;
     this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
     this.wallPlacementPreviewTint = 0x22c55e;
+    this.wallPlacementPreviewAffordableSegmentCount = 0;
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
       for (const child of [...this.wallPlacementPreviewGroup.children]) {
-        if (!child.userData.wallPreviewSharedAssets) this.disposeWallPreviewObject(child);
+        if (child.userData.wallPreviewSharedAssets) {
+          const ownedMaterials = child.userData.wallPreviewOwnedMaterials as THREE.Material[] | undefined;
+          ownedMaterials?.forEach((material) => material.dispose());
+          child.userData.wallPreviewOwnedMaterials = [];
+        } else {
+          this.disposeWallPreviewObject(child);
+        }
       }
       this.wallPlacementPreviewGroup = null;
     }

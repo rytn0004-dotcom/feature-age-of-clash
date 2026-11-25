@@ -1031,6 +1031,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           <div className="mb-1 text-sm font-black text-cyan-200">🧱 城牆連續規劃</div>
           <div>左鍵設定起點並預覽　·　Shift + 左鍵驗證並固定本段　·　左鍵驗證最後一段並建造</div>
           <div className="mt-1 text-slate-300">右鍵／Esc 取消規劃</div>
+          <div className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px]">
+            <span className="font-bold text-emerald-300">● 綠色：資源足夠，點擊會建造</span>
+            <span className="font-bold text-amber-300">● 橘色：超出預算，不會建造</span>
+            <span className="font-bold text-rose-300">● 紅色：路線受阻，需調整</span>
+          </div>
           {wallPlacementInfo && (
             <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-white/10 pt-2">
               <span>牆段 {wallPlacementInfo.segmentCount}</span>
@@ -1045,7 +1050,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
                       : wallPlacementInfo.affordableSegmentCount === 0
                         ? '資源不足，尚無可負擔牆段'
                         : wallPlacementInfo.affordableSegmentCount < wallPlacementInfo.segmentCount
-                          ? `可負擔 ${wallPlacementInfo.affordableSegmentCount}/${wallPlacementInfo.segmentCount} 段，點擊可先建造這部分`
+                          ? `可負擔 ${wallPlacementInfo.affordableSegmentCount}/${wallPlacementInfo.segmentCount} 段，點擊只會建造綠色部分`
                           : '路線可建造'}
               </span>
               {wallPlacementInfo.snapped && <span className="font-bold text-cyan-200">🔗 已吸附既有牆端</span>}

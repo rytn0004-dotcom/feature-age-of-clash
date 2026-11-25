@@ -67,3 +67,24 @@ export function getAffordableWallSegmentCount(
 
   return Math.max(0, Math.min(proposed, affordable));
 }
+
+
+export type WallSegmentPreviewStatus = 'buildable' | 'unaffordable' | 'blocked';
+
+/** Resolve the visual/commit state of one modular wall segment in the current preview. */
+export function getWallSegmentPreviewStatus(
+  segmentIndex: number,
+  segmentCount: number,
+  affordableSegmentCount: number,
+  blocked = false,
+): WallSegmentPreviewStatus | null {
+  const safeCount = Math.max(0, Math.floor(Number.isFinite(segmentCount) ? segmentCount : 0));
+  if (!Number.isInteger(segmentIndex) || segmentIndex < 0 || segmentIndex >= safeCount) return null;
+  if (blocked) return 'blocked';
+
+  const safeAffordable = Math.max(
+    0,
+    Math.min(safeCount, Math.floor(Number.isFinite(affordableSegmentCount) ? affordableSegmentCount : 0)),
+  );
+  return segmentIndex < safeAffordable ? 'buildable' : 'unaffordable';
+}
