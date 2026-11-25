@@ -5068,6 +5068,7 @@ export class RtsEngine {
       building.buildingDef.cost,
       building.hp,
       building.maxHp,
+      building.buildProgress,
     );
     if (!this.removeBuildingEntity(building)) return false;
 
