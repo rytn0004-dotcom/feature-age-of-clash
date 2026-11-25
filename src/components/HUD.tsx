@@ -2458,6 +2458,7 @@ export const HUD: React.FC<HUDProps> = ({
                     selectedBuilding.buildingDef.cost,
                     selectedBuilding.hp,
                     selectedBuilding.maxHp,
+                    selectedBuilding.buildProgress,
                   )
                 : null;
               const bCombatStats = getBuildingCombatStats(
@@ -2516,7 +2517,7 @@ export const HUD: React.FC<HUDProps> = ({
                       data-cancel-construction="true"
                       disabled={isSpectator}
                       onClick={() => engine.cancelBuildingConstruction(selectedBuilding.id)}
-                      title="取消施工；退款依目前耐久比例計算，遭受攻擊造成的血量損失不會退還"
+                      title="取消施工；僅按目前 HP 低於該施工進度應有 HP 的比例扣除退款，未受損時全額退款"
                       className="flex w-full flex-wrap items-center justify-between gap-1 rounded-md border border-rose-500/40 bg-rose-950/30 px-2 py-1.5 text-[10px] font-bold text-rose-200 transition-colors hover:border-rose-400 hover:bg-rose-950/70 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span>✕ 取消施工並拆除地基</span>
