@@ -5,6 +5,11 @@ import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, t
 import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
+import {
+  calculateConstructionCancellationRefund,
+  DELETE_HOLD_DURATION_MS,
+  getDeleteHoldProgress,
+} from './entityActions';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
@@ -598,6 +603,10 @@ export class RtsEngine {
   // Selection & Inspection (Player can command only human units; others are inspect-only)
   public selectedUnitIds: string[] = [];
   public selectedBuildingId: string | null = null;
+  public deleteHoldProgress = 0;
+  private deleteHoldIntervalId: number | null = null;
+  private deleteHoldStartedAt = 0;
+  private deleteHoldSelectionKey: string | null = null;
   public selectedNodeId: string | null = null;
   public selectedContestedPointId: string | null = null;
   public inspectedEntity: { type: 'unit' | 'building'; id: string; faction: FactionId } | null = null;
@@ -4843,6 +4852,320 @@ export class RtsEngine {
       sound.playOrder();
       this.addFloatingText(bldg.x, 2.8, bldg.z, '↩️ 已取消訓練並全額退還資源', '#cbd5e1');
     }
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  private getDeletableSelectionKey(): string | null {
+    if (this.selectedUnitIds.length === 0 && this.selectedBuildingId) {
+      const building = this.buildings.find(
+        (candidate) =>
+          candidate.id === this.selectedBuildingId &&
+          candidate.hp > 0 &&
+          this.isHumanControlled(candidate.faction),
+      );
+      return building ? `building:${building.id}` : null;
+    }
+
+    if (this.selectedUnitIds.length > 0 && !this.selectedBuildingId) {
+      const selected = this.selectedUnitIds
+        .map((id) => this.units.find((unit) => unit.id === id))
+        .filter(
+          (unit): unit is UnitEntity =>
+            !!unit && unit.hp > 0 && this.isHumanControlled(unit.faction),
+        );
+      if (selected.length === 0) return null;
+      return `units:${selected.map((unit) => unit.id).sort().join(',')}`;
+    }
+    return null;
+  }
+
+  private cancelDeleteHold(notify = true): void {
+    const hadHold = this.deleteHoldIntervalId !== null || this.deleteHoldProgress > 0;
+    if (this.deleteHoldIntervalId !== null) {
+      window.clearInterval(this.deleteHoldIntervalId);
+      this.deleteHoldIntervalId = null;
+    }
+    this.deleteHoldStartedAt = 0;
+    this.deleteHoldSelectionKey = null;
+    this.deleteHoldProgress = 0;
+    if (hadHold && notify && !this.isDestroyed) this.onSelectionChange?.();
+  }
+
+  private beginDeleteHold(): void {
+    if (this.deleteHoldIntervalId !== null) return;
+    const selectionKey = this.getDeletableSelectionKey();
+    if (!selectionKey) return;
+
+    this.deleteHoldStartedAt = performance.now();
+    this.deleteHoldSelectionKey = selectionKey;
+    this.deleteHoldProgress = 0;
+    this.onSelectionChange?.();
+
+    this.deleteHoldIntervalId = window.setInterval(() => {
+      if (
+        this.isDestroyed ||
+        this.gameState !== 'playing' ||
+        !this.keysHeld.has('Delete') ||
+        this.getDeletableSelectionKey() !== selectionKey
+      ) {
+        this.cancelDeleteHold();
+        return;
+      }
+
+      this.deleteHoldProgress = getDeleteHoldProgress(this.deleteHoldStartedAt, performance.now());
+      this.onSelectionChange?.();
+      if (this.deleteHoldProgress < 1) return;
+
+      this.cancelDeleteHold(false);
+      this.deleteSelectedEntities(selectionKey);
+      this.onSelectionChange?.();
+    }, 50);
+  }
+
+  private removeBuildingEntity(building: BuildingEntity): boolean {
+    if (!this.buildings.some((candidate) => candidate.id === building.id)) return false;
+
+    // Demolition must not strand garrisoned units inside the removed building.
+    const garrisonIds = new Set(building.garrisonedUnitIds || []);
+    for (const unit of this.units) {
+      if (unit.garrisonedInBuildingId === building.id) garrisonIds.add(unit.id);
+    }
+    let ejectIndex = 0;
+    for (const unitId of garrisonIds) {
+      const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
+      if (!unit) continue;
+      unit.garrisonedInBuildingId = undefined;
+      unit.targetGarrisonBuildingId = undefined;
+      const radius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
+      const spot = this.findSafeExteriorSpot(
+        building.x,
+        building.z,
+        getBuildingCollisionRadius(building),
+        radius,
+        ejectIndex++,
+        building.id,
+      );
+      unit.x = spot.x;
+      unit.z = spot.z;
+      unit.velocity = { x: 0, z: 0 };
+      unit.state = 'idle';
+      unit.currentActionText = '🚪 建築拆除，已撤出';
+      const unitMesh = this.unitMeshes.get(unit.id);
+      if (unitMesh) {
+        unitMesh.position.set(unit.x, 0, unit.z);
+        unitMesh.visible = true;
+      }
+    }
+    building.garrisonedUnitIds = [];
+
+    this.buildings = this.buildings.filter((candidate) => candidate.id !== building.id);
+    this.activeConstructionWorkerCountByBuilding.delete(building.id);
+    this.constructionApproachFailedWorkersByBuilding.delete(building.id);
+    if (building.buildingDef.isWall) this.wallEndpointIndexDirty = true;
+
+    for (const unit of this.units) {
+      if (unit.targetBuildingId === building.id) {
+        unit.targetBuildingId = undefined;
+        unit.buildApproachBuildingId = undefined;
+        unit.buildApproachIndex = undefined;
+        unit.buildApproachAngle = undefined;
+        unit.buildApproachRetryAt = undefined;
+        unit.buildApproachRecoveryCount = undefined;
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.pathCooldown = 0;
+        unit.commandQueue = unit.commandQueue?.filter(
+          (command) => command.type !== 'build' || command.buildingId !== building.id,
+        );
+        if (!this.tryDequeueCommand(unit)) {
+          unit.state = 'idle';
+          unit.currentActionText = '💤 建造目標已移除';
+        }
+      }
+      if (unit.targetGarrisonBuildingId === building.id) {
+        unit.targetGarrisonBuildingId = undefined;
+      }
+      if (unit.commandQueue?.some(
+        (command) => command.type === 'build' && command.buildingId === building.id,
+      )) {
+        unit.commandQueue = unit.commandQueue.filter(
+          (command) => command.type !== 'build' || command.buildingId !== building.id,
+        );
+      }
+    }
+
+    for (const otherBuilding of this.buildings) {
+      if (otherBuilding.rallyPoint?.targetBuildingId === building.id) {
+        otherBuilding.rallyPoint.targetBuildingId = undefined;
+      }
+    }
+
+    // Remove only this farm's own crop node; nearby farms may share visual proximity.
+    const farmNodeId = building.buildingType === 'farm' ? `food_${building.id}` : null;
+    if (farmNodeId) {
+      const farmNode = this.resourceNodes.find((node) => node.id === farmNodeId);
+      if (farmNode) {
+        this.resourceNodes = this.resourceNodes.filter((node) => node.id !== farmNodeId);
+        const nodeMesh = this.nodeMeshes.get(farmNodeId);
+        if (nodeMesh) {
+          this.scene.remove(nodeMesh);
+          this.nodeMeshes.delete(farmNodeId);
+          this.windAnimatedNodeMeshes.delete(nodeMesh);
+          this.fishAnimatedNodeMeshes.delete(nodeMesh);
+        }
+        for (const unit of this.units) {
+          if (unit.targetResourceNodeId !== farmNodeId) continue;
+          unit.targetResourceNodeId = undefined;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          if (!this.tryDequeueCommand(unit)) {
+            unit.state = 'idle';
+            unit.currentActionText = '💤 農田已移除';
+          }
+        }
+        if (this.selectedNodeId === farmNodeId) this.selectedNodeId = null;
+      }
+    }
+
+    if (this.selectedBuildingId === building.id) this.selectedBuildingId = null;
+    const mesh = this.buildingMeshes.get(building.id);
+    if (mesh) {
+      this.scene.remove(mesh);
+      this.buildingMeshes.delete(building.id);
+      this.animatedBuildingMeshes.delete(mesh);
+    }
+
+    this.navGridDirty = true;
+    this.waterNavGridDirty = true;
+    this.refreshSettlementEnvironment();
+    this.refreshWallTowerConnections();
+
+    const civ = getCivilizationConfig(this.getCivilizationForFaction(building.faction));
+    if (building.buildingType === civ.uniqueBuildingType) {
+      this.refreshFactionUnitStats(building.faction);
+    }
+    return true;
+  }
+
+  /** Cancel an unfinished owned building and refund only its remaining HP value. */
+  public cancelBuildingConstruction(buildingId: string): boolean {
+    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    if (
+      !building ||
+      building.hp <= 0 ||
+      building.isConstructed ||
+      !this.isHumanControlled(building.faction)
+    ) {
+      return false;
+    }
+
+    const refund = calculateConstructionCancellationRefund(
+      building.buildingDef.cost,
+      building.hp,
+      building.maxHp,
+    );
+    const current = this.getResourcesForFaction(building.faction);
+    this.resourcesByFaction[building.faction] = {
+      food: current.food + refund.food,
+      wood: current.wood + refund.wood,
+      gold: current.gold + refund.gold,
+      stone: current.stone + refund.stone,
+    };
+    this.syncHumanResourcesAlias();
+
+    if (!this.removeBuildingEntity(building)) return false;
+    this.onResourcesChange?.(this.playerResources);
+    this.addFloatingText(
+      building.x,
+      2.8,
+      building.z,
+      `↩️ 已取消施工 · 退還木材 ${refund.wood}、石料 ${refund.stone}`,
+      '#86efac',
+    );
+    sound.playOrder();
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  /** Delete the current owned selection without refund; Delete must be held for three seconds. */
+  public deleteSelectedEntities(expectedSelectionKey?: string): boolean {
+    const selectionKey = this.getDeletableSelectionKey();
+    if (!selectionKey || (expectedSelectionKey && selectionKey !== expectedSelectionKey)) return false;
+
+    if (selectionKey.startsWith('building:')) {
+      const buildingId = selectionKey.slice('building:'.length);
+      const building = this.buildings.find((candidate) => candidate.id === buildingId);
+      if (!building || !this.isHumanControlled(building.faction)) return false;
+      const x = building.x;
+      const z = building.z;
+      const name = building.buildingDef.name.split(' ')[0];
+      if (!this.removeBuildingEntity(building)) return false;
+      this.spawnParticleBurst(x, 0.9, z, 'dust', 8);
+      this.addFloatingText(x, 2.6, z, `🗑️ 已拆除${name}（不退還資源）`, '#cbd5e1');
+    } else {
+      const ids = new Set(selectionKey.slice('units:'.length).split(',').filter(Boolean));
+      const selected = this.units.filter(
+        (unit) => ids.has(unit.id) && unit.hp > 0 && this.isHumanControlled(unit.faction),
+      );
+      if (selected.length === 0) return false;
+
+      // Passengers are safely unloaded before a selected transport is removed.
+      for (const unit of selected) {
+        if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
+          this.unloadTransport(unit);
+        }
+      }
+
+      for (const unit of selected) {
+        if (unit.garrisonedInBuildingId && !unit.garrisonedInBuildingId.startsWith('transport:')) {
+          const host = this.buildings.find((building) => building.id === unit.garrisonedInBuildingId);
+          if (host) {
+            host.garrisonedUnitIds = (host.garrisonedUnitIds || []).filter((id) => id !== unit.id);
+          }
+        }
+        if (unit.garrisonedInBuildingId?.startsWith('transport:')) {
+          const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
+          const boat = this.units.find((candidate) => candidate.id === boatId);
+          if (boat?.transportCargoIds) {
+            boat.transportCargoIds = boat.transportCargoIds.filter((id) => id !== unit.id);
+          }
+        }
+      }
+
+      const removedIds = new Set(selected.map((unit) => unit.id));
+      for (const unit of selected) {
+        const mesh = this.unitMeshes.get(unit.id);
+        if (mesh) {
+          this.scene.remove(mesh);
+          this.unitMeshes.delete(unit.id);
+        }
+      }
+      this.units = this.units.filter((unit) => !removedIds.has(unit.id));
+      for (const unit of this.units) {
+        if (unit.targetEntityId && removedIds.has(unit.targetEntityId)) {
+          unit.targetEntityId = undefined;
+        }
+      }
+      const aliveIds = new Set(this.units.filter((unit) => unit.hp > 0).map((unit) => unit.id));
+      this.controlGroups = pruneControlGroups(this.controlGroups, aliveIds);
+      this.selectedUnitIds = [];
+      const first = selected[0];
+      this.spawnParticleBurst(first.x, 0.8, first.z, 'dust', Math.min(12, selected.length * 2));
+      this.addFloatingText(
+        first.x,
+        2.4,
+        first.z,
+        `🗑️ 已解散 ${selected.length} 名單位（不退還資源）`,
+        '#cbd5e1',
+      );
+    }
+
+    this.selectedBuildingId = null;
+    this.selectedNodeId = null;
+    this.selectedContestedPointId = null;
+    this.inspectedEntity = null;
+    sound.playOrder();
     this.onSelectionChange?.();
     return true;
   }
@@ -13452,7 +13775,16 @@ export class RtsEngine {
         return;
       }
 
+      if (!isTyping && e.code === 'Delete' && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        if (this.gameState === 'playing' && !this.isSpectatorMode && !e.repeat) {
+          this.beginDeleteHold();
+        }
+        return;
+      }
+
       if (!isTyping && (e.code === 'Escape' || e.code === 'KeyP')) {
+        this.cancelDeleteHold();
         if (this.gameState === 'playing') {
           if (this.placementBuildingType) {
             this.cancelPlacement();
@@ -13575,9 +13907,11 @@ export class RtsEngine {
 
     const onKeyUp = (e: KeyboardEvent) => {
       this.keysHeld.delete(e.code);
+      if (e.code === 'Delete') this.cancelDeleteHold();
     };
 
     const onBlur = () => {
+      this.cancelDeleteHold();
       this.keysHeld.clear();
       this.clearEdgeScroll();
     };
@@ -13901,6 +14235,7 @@ export class RtsEngine {
     this.aiDecisionFactionIds.length = 0;
     this.aiDecisionSchedulerState.accumulatorSeconds = 0;
     this.aiDecisionSchedulerState.cursor = 0;
+    this.cancelDeleteHold(false);
     this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];
