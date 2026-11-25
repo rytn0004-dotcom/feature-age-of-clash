@@ -5220,8 +5220,9 @@ export class RtsEngine {
     }
 
     // A Shift-click validates only the newly drawn section and stores that
-    // verified waypoint. The final click validates only the last unverified
-    // section, never the complete polyline a second time.
+    // verified waypoint. The final commit validates the complete chain again,
+    // because AI or other construction may have occupied an earlier section
+    // while the player was still planning the route.
     if (!this.validateWallPlacementSection([previous, point])) {
       this.wallPlacementCursor = point;
       this.wallPlacementPreviewBlocked = true;
@@ -5249,7 +5250,7 @@ export class RtsEngine {
 
     const completedPoints = [...this.wallPlacementPoints, point];
     const completedSnaps = [...this.wallPlacementPointSnaps, snap];
-    const committed = this.commitWallChain(completedPoints, completedSnaps, true);
+    const committed = this.commitWallChain(completedPoints, completedSnaps);
     if (!committed) {
       this.wallPlacementCursor = point;
       this.rebuildWallPlacementPreview();
@@ -5322,7 +5323,6 @@ export class RtsEngine {
   private commitWallChain(
     points: readonly WallChainPoint[],
     pointSnaps: readonly (WallEndpointSnap<BuildingEntity> | null)[] = [],
-    prevalidated = false,
   ): boolean {
     const placements = layoutWallChain(points);
     if (placements.length === 0) {
@@ -5340,34 +5340,35 @@ export class RtsEngine {
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
     if (bDef.requiredAge && currentAge < bDef.requiredAge) return false;
 
-    if (!prevalidated) {
-      const obs = this.getTerrainNavObstacles();
-      const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
-      if (invalidPathPoint) {
-        this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
-        sound.playInvalid();
-        return false;
-      }
+    // Revalidate every segment at commit time. Shift-click validation is a
+    // planning-time check; the world may have changed before the route is
+    // committed (for example, AI construction can occupy an earlier waypoint).
+    const obs = this.getTerrainNavObstacles();
+    const invalidPathPoint = this.findInvalidWallPathPoint(points, obs);
+    if (invalidPathPoint) {
+      this.addFloatingText(invalidPathPoint.x, 2.5, invalidPathPoint.z, '⚠️ 城牆路線穿過水域或山崖，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
+    }
 
-      const firstInvalid = placements.find((segment) =>
-        !isPlacementLocationValid(
-          segment.x,
-          segment.z,
-          bDef.size,
-          this.buildings,
-          this.resourceNodes,
-          true,
-          obs?.rects,
-          obs?.discs,
-          obs?.bridges,
-          'wall'
-        )
-      );
-      if (firstInvalid) {
-        this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
-        sound.playInvalid();
-        return false;
-      }
+    const firstInvalid = placements.find((segment) =>
+      !isPlacementLocationValid(
+        segment.x,
+        segment.z,
+        bDef.size,
+        this.buildings,
+        this.resourceNodes,
+        true,
+        obs?.rects,
+        obs?.discs,
+        obs?.bridges,
+        'wall'
+      )
+    );
+    if (firstInvalid) {
+      this.addFloatingText(firstInvalid.x, 2.5, firstInvalid.z, '⚠️ 城牆路線穿過水域、山崖、礦點或既有建築，請調整轉折點', '#ef4444');
+      sound.playInvalid();
+      return false;
     }
 
     const humanRes = this.getResourcesForFaction(this.humanPlayerId);
