@@ -26,6 +26,10 @@ import {
   Activity,
 } from 'lucide-react';
 import { RtsEngine } from '../game/engine';
+import {
+  calculateConstructionCancellationRefund,
+  DELETE_HOLD_DURATION_MS,
+} from '../game/entityActions';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { BuildingType, LandmarkType, TechDefinition } from '../types/game';
 import { UnitPortrait } from './UnitPortrait';
@@ -1678,6 +1682,31 @@ export const HUD: React.FC<HUDProps> = ({
 
           <div className="relative w-full bg-slate-900/95 border border-slate-800 rounded-lg p-2.5 shadow-xl flex flex-col justify-between pointer-events-auto min-h-[92px] transition-all">
 
+            {(selectedUnits.length > 0 || !!selectedBuilding) && (
+              <div
+                data-delete-hold-progress="true"
+                className="mb-2 rounded-md border border-slate-700/80 bg-slate-950/80 px-2 py-1.5"
+                title={`長按 Delete ${DELETE_HOLD_DURATION_MS / 1000} 秒，拆除選取建築或解散選取單位；放開按鍵即可取消`}
+              >
+                <div className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="font-semibold text-slate-300">
+                    {engine.deleteHoldProgress > 0
+                      ? `🗑️ 正在確認刪除 · ${Math.max(0, Math.ceil((1 - engine.deleteHoldProgress) * DELETE_HOLD_DURATION_MS / 1000))} 秒`
+                      : `長按 Delete ${DELETE_HOLD_DURATION_MS / 1000} 秒可拆除建築／解散單位`}
+                  </span>
+                  {engine.deleteHoldProgress > 0 && (
+                    <span className="font-mono text-amber-300">{Math.round(engine.deleteHoldProgress * 100)}%</span>
+                  )}
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-amber-400 transition-[width] duration-75"
+                    style={{ width: `${Math.round(engine.deleteHoldProgress * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             {isHudCompact ? (
               <div className="flex items-center justify-between gap-3 h-full pr-14 py-1">
                 {selectedUnits.length > 0 && (
@@ -2424,6 +2453,13 @@ export const HUD: React.FC<HUDProps> = ({
               const buildingTiming = engine.getBuildingTimingEstimate(selectedBuilding.id);
               const bFactionAge = engine.ageByFaction[selectedBuilding.faction] || observedAge;
               const bArmor = getEffectiveBuildingArmor(selectedBuilding, bFactionAge, bldgResearched);
+              const constructionRefund = !selectedBuilding.isConstructed
+                ? calculateConstructionCancellationRefund(
+                    selectedBuilding.buildingDef.cost,
+                    selectedBuilding.hp,
+                    selectedBuilding.maxHp,
+                  )
+                : null;
               const bCombatStats = getBuildingCombatStats(
                 selectedBuilding,
                 engine.units,
@@ -2474,6 +2510,20 @@ export const HUD: React.FC<HUDProps> = ({
                           : `預估剩餘 ${formatTime(Math.ceil(buildingTiming.constructionRemainingSeconds))}（遊戲時間）`}
                       </span>
                     </div>
+                  )}
+                  {!selectedBuilding.isConstructed && constructionRefund && engine.isHumanControlled(selectedBuilding.faction) && (
+                    <button
+                      data-cancel-construction="true"
+                      disabled={isSpectator}
+                      onClick={() => engine.cancelBuildingConstruction(selectedBuilding.id)}
+                      title="取消施工；退款依目前耐久比例計算，遭受攻擊造成的血量損失不會退還"
+                      className="flex w-full flex-wrap items-center justify-between gap-1 rounded-md border border-rose-500/40 bg-rose-950/30 px-2 py-1.5 text-[10px] font-bold text-rose-200 transition-colors hover:border-rose-400 hover:bg-rose-950/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <span>✕ 取消施工並拆除地基</span>
+                      <span className="font-mono text-emerald-300">
+                        退款 木 {constructionRefund.wood} · 石 {constructionRefund.stone}
+                      </span>
+                    </button>
                   )}
 
                   {/* Building Combat & Defense Stats Inspection */}
