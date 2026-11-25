@@ -17,6 +17,8 @@ import {
   collectWildlifeUnitInteractions,
   getWildlifeInteractionQueryRadius,
   tryConsumeWildlifeHunterAttack,
+  rebuildWildlifeGathererIndex,
+  type WildlifeGatheringUnit,
   type WildlifeUnitInteractionScratch,
 } from './wildlifeQueries';
 import {
@@ -476,6 +478,10 @@ export class RtsEngine {
     nearestThreat: null,
     attackers: [],
   };
+  /** Per-node gatherer candidates avoid scanning the whole army for every angry boar. */
+  private wildlifeGatherersByNode = new Map<string, UnitEntity[]>();
+  private reusableWildlifeGathererBuckets: UnitEntity[][] = [];
+  private emptyWildlifeGathererCandidates: UnitEntity[] = [];
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
   private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
@@ -10083,6 +10089,7 @@ export class RtsEngine {
   private updateWildAnimals(dt: number) {
     const DETECT = 18;
     let deerIdx = 0;
+    let wildlifeGatherersIndexed = false;
     const wildlifeInteractionQueryRadius = getWildlifeInteractionQueryRadius(this.units, DETECT);
 
     let maxBuildingCollisionRadius = 0;
@@ -10180,10 +10187,18 @@ export class RtsEngine {
       if (isBoar) {
         // All deliberate hunters (workers and military) deal damage through
         // stepUnitGathering after receiving this node's explicit gather order.
-        // Do not let unrelated attack-move units wound wildlife just by passing nearby.
-
+        // Build the node -> gatherers index once, lazily, only when the map has boars.
+        if (!wildlifeGatherersIndexed) {
+          rebuildWildlifeGathererIndex(
+            this.units,
+            this.wildlifeGatherersByNode,
+            this.reusableWildlifeGathererBuckets,
+          );
+          wildlifeGatherersIndexed = true;
+        }
+        const boarHunters = this.wildlifeGatherersByNode.get(node.id) ?? this.emptyWildlifeGathererCandidates;
         const target = (node.animalAggroUntil || 0) > this.simTime
-          ? selectWildBoarAggroTarget(node.animalAggroTargetId, node.x, node.z, this.units, node.id)
+          ? selectWildBoarAggroTarget(node.animalAggroTargetId, node.x, node.z, boarHunters, node.id)
           : null;
         if (!target) {
           node.animalAggroTargetId = undefined;

@@ -132,3 +132,49 @@ export function tryConsumeWildlifeHunterAttack(
   unit.wildlifeHuntReadyAt = simTime + Math.max(0.5, 1 / safeRate);
   return true;
 }
+
+
+export interface WildlifeGatheringUnit extends CombatSpatialUnit {
+  state: string;
+  targetResourceNodeId?: string;
+  unitDef: {
+    isNaval?: boolean;
+  };
+}
+
+/**
+ * Rebuilds a reusable node -> active gatherers index in one unit pass.
+ * Bucket arrays are recycled between frames so the map adds no per-frame array churn.
+ */
+export function rebuildWildlifeGathererIndex<Unit extends WildlifeGatheringUnit>(
+  units: readonly Unit[],
+  output: Map<string, Unit[]>,
+  reusableBuckets: Unit[][],
+): Map<string, Unit[]> {
+  for (const bucket of output.values()) {
+    bucket.length = 0;
+    reusableBuckets.push(bucket);
+  }
+  output.clear();
+
+  for (const unit of units) {
+    const nodeId = unit.targetResourceNodeId;
+    if (
+      !nodeId ||
+      unit.hp <= 0 ||
+      unit.garrisonedInBuildingId ||
+      unit.unitDef.isNaval ||
+      unit.state !== 'gathering' ||
+      !Number.isFinite(unit.x) ||
+      !Number.isFinite(unit.z)
+    ) continue;
+
+    let bucket = output.get(nodeId);
+    if (!bucket) {
+      bucket = reusableBuckets.pop() ?? [];
+      output.set(nodeId, bucket);
+    }
+    bucket.push(unit);
+  }
+  return output;
+}
