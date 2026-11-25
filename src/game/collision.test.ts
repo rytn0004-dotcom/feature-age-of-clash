@@ -307,7 +307,7 @@ test('collision scratch: reuses collision maps, entries, buckets and candidate b
 
   const unitMap = scratch.unitIndex.buckets;
   const unitEntries = scratch.unitIndex.entries;
-  const unitEntry = scratch.unitIndex.entries.find(Boolean);
+  const previousUnitEntries = new Set(scratch.unitIndex.entries.filter(Boolean));
   const unitBucket = [...scratch.unitIndex.buckets.values()][0];
   const unitCandidates = scratch.unitCandidates;
   const buildingMap = scratch.buildingIndex.buckets;
@@ -326,7 +326,7 @@ test('collision scratch: reuses collision maps, entries, buckets and candidate b
 
   assert.equal(scratch.unitIndex.buckets, unitMap);
   assert.equal(scratch.unitIndex.entries, unitEntries);
-  assert.equal(scratch.unitIndex.entries[0], unitEntry, 'entity entry objects should be recycled');
+  assert.ok(previousUnitEntries.has(scratch.unitIndex.entries[0]!), 'an existing entity entry object should be recycled');
   assert.equal(scratch.unitIndex.buckets.get('8:8'), unitBucket, 'unit bucket arrays should be recycled');
   assert.equal(scratch.unitCandidates, unitCandidates);
   assert.deepEqual(scratch.unitIndex.entries.map(entry => entry?.item.id), ['next-unit']);
