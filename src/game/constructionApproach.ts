@@ -210,16 +210,16 @@ export function assignWorkersToConstructionTargets(
     .map(({ index }) => index);
   if (validWorkerIndices.length === 0 || validTargetIndices.length === 0) return assignments;
 
-  const distanceSquared = (workerIndex: number, targetIndex: number): number => {
+  const travelDistance = (workerIndex: number, targetIndex: number): number => {
     const dx = workers[workerIndex].x - targets[targetIndex].x;
     const dz = workers[workerIndex].z - targets[targetIndex].z;
-    const distance = dx * dx + dz * dz;
+    const distance = Math.hypot(dx, dz);
     return Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER;
   };
 
   if (validWorkerIndices.length <= validTargetIndices.length) {
     const costs = validWorkerIndices.map((workerIndex) =>
-      validTargetIndices.map((targetIndex) => distanceSquared(workerIndex, targetIndex))
+      validTargetIndices.map((targetIndex) => travelDistance(workerIndex, targetIndex))
     );
     const workerToTarget = solveMinimumCostAssignment(costs);
     workerToTarget.forEach((targetColumn, workerRow) => {
@@ -228,7 +228,7 @@ export function assignWorkersToConstructionTargets(
     });
   } else {
     const costs = validTargetIndices.map((targetIndex) =>
-      validWorkerIndices.map((workerIndex) => distanceSquared(workerIndex, targetIndex))
+      validWorkerIndices.map((workerIndex) => travelDistance(workerIndex, targetIndex))
     );
     const targetToWorker = solveMinimumCostAssignment(costs);
     targetToWorker.forEach((workerColumn, targetRow) => {
