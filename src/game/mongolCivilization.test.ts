@@ -11,6 +11,7 @@ import {
   isTechLockedByExclusion,
 } from './civilizations';
 import { getLandmarkName } from './landmarkIdentity';
+import { getUnitPortraitSpec } from './unitPortraits';
 
 test('Mongol civilization: is the fourth selectable civilization with its own progression identity', () => {
   assert.equal(CIVILIZATION_LIST.length, 4);
@@ -99,4 +100,10 @@ test('Mongol civilization: all six age landmarks have dedicated names', () => {
   assert.equal(getLandmarkName('mongol', 'landmark_citadel'), '大汗鐵騎牙帳城');
   assert.equal(getLandmarkName('mongol', 'landmark_observatory'), '蒼狼天穹觀星台');
   assert.equal(getLandmarkName('mongol', 'landmark_arsenal'), '汗國重炮軍械營');
+});
+
+test('Mongol civilization: steppe lancer has a dedicated portrait fallback', () => {
+  const portrait = getUnitPortraitSpec(undefined, 'mongol_lancer');
+  assert.equal(portrait.key, 'fallback_mongol_lancer');
+  assert.equal(portrait.label, '草原長槍騎兵');
 });

@@ -306,6 +306,7 @@ const MODEL_FALLBACK_SPECS: Record<
     bgTo: '#0f172a',
   },
   horse_archer: { key: 'fallback_horse_archer', label: '草原騎射兵', accentHex: '#f59e0b', bgFrom: '#78350f', bgTo: '#0f172a' },
+  mongol_lancer: { key: 'fallback_mongol_lancer', label: '草原長槍騎兵', accentHex: '#0f766e', bgFrom: '#134e4a', bgTo: '#0f172a' },
   keshik: { key: 'fallback_keshik', label: '重裝怯薛騎兵', accentHex: '#fbbf24', bgFrom: '#78350f', bgTo: '#0f172a' },
   shaman: { key: 'fallback_shaman', label: '薩滿祭司', accentHex: '#38bdf8', bgFrom: '#0c4a6e', bgTo: '#0f172a' },
   boat: {
