@@ -8781,6 +8781,7 @@ export function createUnitMesh(
     villager: '⛏️',
     horse_archer: '🏹',
     keshik: '🛡️',
+    mongol_lancer: '🗡️',
     shaman: '🌩️',
     boat: '⛵',
     swordsman: '⚔️',
@@ -8955,6 +8956,7 @@ export function createUnitMesh(
   if (mType === 'villager') {
     const isSpiritHarvester = unitId === 'anime_spirit_harvester';
     const isGoblinSapper = unitId === 'fantasy_goblin_sapper';
+    const isMongolHerder = unitId === 'mongol_herder';
     const skinMat = isGoblinSapper
       ? new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.72 })
       : fleshMat;
@@ -8963,7 +8965,7 @@ export function createUnitMesh(
     addBipedLegs(darkMat, isSpiritHarvester ? darkMat : leatherMat);
 
     const tunicMat = new THREE.MeshStandardMaterial({
-      color: isSpiritHarvester ? 0xf472b6 : isGoblinSapper ? 0x3f6212 : unitDef.visual.color,
+      color: isSpiritHarvester ? 0xf472b6 : isGoblinSapper ? 0x3f6212 : isMongolHerder ? 0x8b5e34 : unitDef.visual.color,
       map: unitClothMaps.map,
       normalMap: unitClothMaps.normalMap,
       normalScale: new THREE.Vector2(0.75, 0.75),
@@ -9035,6 +9037,28 @@ export function createUnitMesh(
       const hoop2 = hoop1.clone();
       hoop2.position.y = 0.26;
       bodyPivot.add(keg, hoop1, hoop2);
+    } else if (isMongolHerder) {
+      // Steppe herder: fur-edged felt cap, wool collar, travel roll and pack.
+      const furMat = new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.98 });
+      const feltMat = new THREE.MeshStandardMaterial({ color: 0x9a5b2c, map: unitClothMaps.map, roughness: 0.9 });
+      animParts.hitMaterials.push(furMat, feltMat);
+      const furCollar = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.055, 8, 16), furMat);
+      furCollar.rotation.x = Math.PI / 2;
+      furCollar.position.set(0, 0.64, 0.015);
+      const capBand = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.035, 8, 16), furMat);
+      capBand.rotation.x = Math.PI / 2;
+      capBand.position.y = 0.83;
+      const feltCap = new THREE.Mesh(new THREE.SphereGeometry(0.205, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.56), feltMat);
+      feltCap.scale.set(1.04, 0.72, 1);
+      feltCap.position.y = 0.86;
+      const capKnot = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), goldTrimMat);
+      capKnot.position.set(0, 1.0, 0.015);
+      const travelPack = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.34, 0.18, 3, 0.035), leatherMat);
+      travelPack.position.set(0, 0.38, -0.28);
+      const rolledBlanket = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.42, 10), feltMat);
+      rolledBlanket.rotation.z = Math.PI / 2;
+      rolledBlanket.position.set(0, 0.57, -0.34);
+      bodyPivot.add(furCollar, capBand, feltCap, capKnot, travelPack, rolledBlanket);
     } else {
       // Classic Medieval Craftsman Villager
       const hat = new THREE.Mesh(
@@ -9079,6 +9103,18 @@ export function createUnitMesh(
       sickle.rotation.y = Math.PI / 2;
       sickle.position.set(0.02, 0.02, 0.56);
       rightArmPivot.add(sickle);
+    } else if (isMongolHerder) {
+      // A hooked herding staff replaces the generic axe.
+      const crookCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.02, 0.12, 0.48),
+        new THREE.Vector3(0.02, 0.38, 0.49),
+        new THREE.Vector3(0.08, 0.49, 0.47),
+        new THREE.Vector3(0.18, 0.46, 0.46),
+        new THREE.Vector3(0.2, 0.34, 0.46),
+      ]);
+      const crook = new THREE.Mesh(new THREE.TubeGeometry(crookCurve, 12, 0.025, 7, false), hullOakMat);
+      crook.name = 'steppeHerdingCrook';
+      rightArmPivot.add(crook);
     } else {
       const axeBlade = new THREE.Mesh(new THREE.ConeGeometry(0.115, 0.25, 4), damascusBladeMat);
       axeBlade.rotation.x = Math.PI / 2;
@@ -9401,15 +9437,16 @@ export function createUnitMesh(
     const rHand = new THREE.Mesh(unitHandGeo, fleshMat);
     rHand.position.set(0, -0.25, 0.1);
     rightArmPivot.add(rArm, rHand);
-  } else if (mType === 'knight' || mType === 'horse_archer' || mType === 'keshik') {
+  } else if (mType === 'knight' || mType === 'horse_archer' || mType === 'keshik' || mType === 'mongol_lancer') {
     const isScout = unitId === 'scout_rider';
     const isPaladin = unitId === 'fantasy_paladin';
     const isHorseArcher = mType === 'horse_archer';
     const isKeshik = mType === 'keshik';
+    const isMongolLancer = mType === 'mongol_lancer' || unitId === 'mongol_lancer';
     bodyPivot.position.y = 0.0;
 
     const horseMat = new THREE.MeshStandardMaterial({
-      color: isPaladin ? 0xf8fafc : isHorseArcher ? 0xa16207 : isKeshik ? 0x3b2314 : isScout ? 0x8b5a2b : 0x5c2b10,
+      color: isPaladin ? 0xf8fafc : isHorseArcher ? 0xa16207 : isKeshik ? 0x3b2314 : isMongolLancer ? 0x70452a : isScout ? 0x8b5a2b : 0x5c2b10,
       map: resFurMaps.map,
       normalMap: resFurMaps.normalMap,
       normalScale: new THREE.Vector2(0.65, 0.65),
@@ -9417,7 +9454,7 @@ export function createUnitMesh(
       roughness: 0.6,
     });
     const maneMat = new THREE.MeshStandardMaterial({
-      color: isPaladin ? 0xfef3c7 : isHorseArcher ? 0x1c1917 : isKeshik ? 0x0f172a : isScout ? 0x292524 : 0x1e1b18,
+      color: isPaladin ? 0xfef3c7 : isHorseArcher ? 0x1c1917 : isKeshik ? 0x0f172a : isMongolLancer ? 0x292019 : isScout ? 0x292524 : 0x1e1b18,
       roughness: 0.86,
     });
     animParts.hitMaterials.push(horseMat);
@@ -9437,7 +9474,7 @@ export function createUnitMesh(
       peytral.rotation.x = Math.PI / 2;
       peytral.position.set(0, 0.88, 0.44);
       bodyPivot.add(barding, peytral);
-    } else if (!isScout && !isHorseArcher) {
+    } else if (!isScout && !isHorseArcher && !isMongolLancer) {
       const caparisonMat = isPaladin ? goldTrimMat : armorMat;
       const barding = new THREE.Mesh(new THREE.CylinderGeometry(0.355, 0.41, 0.72, 14), caparisonMat);
       barding.rotation.x = Math.PI / 2;
@@ -9507,7 +9544,7 @@ export function createUnitMesh(
     mane.position.set(0, 0.26, 0.02);
     mane.rotation.x = 0.48;
     horseHeadPivot.add(hNeck, hHead, mane);
-    if (!isScout && !isHorseArcher) {
+    if (!isScout && !isHorseArcher && !isMongolLancer) {
       const chamfron = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.09, 0.3), isPaladin || isKeshik ? goldTrimMat : steelMat);
       chamfron.position.set(0, 0.51, 0.3);
       chamfron.rotation.x = 0.48;
@@ -9689,6 +9726,61 @@ export function createUnitMesh(
       yakTuft.rotation.x = Math.PI / 2.25;
       yakTuft.position.set(0.05, 0.11, 1.38);
       rightArmPivot.add(lanceShaft, lanceTip, yakTuft);
+    } else if (isMongolLancer) {
+      // Steppe lancer: light lamellar rider, fur-edged cap, compact saddle cloth and long pennoned lance.
+      const deelMat = new THREE.MeshStandardMaterial({ color: 0x8b5e34, map: unitClothMaps.map, normalMap: unitClothMaps.normalMap, roughness: 0.78 });
+      const lamellarMat = new THREE.MeshStandardMaterial({ color: 0x9a6b3c, map: resLeatherMaps.map, normalMap: resLeatherMaps.normalMap, roughness: 0.7, metalness: 0.18 });
+      const furMat = new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.98 });
+      animParts.hitMaterials.push(deelMat, lamellarMat, furMat);
+      const rider = new THREE.Mesh(unitTunicGeo, deelMat);
+      rider.position.set(0, 1.18, -0.04);
+      rider.castShadow = true;
+      const lamellarVest = new THREE.Mesh(unitBreastplateGeo, lamellarMat);
+      lamellarVest.position.set(0, 1.2, 0.045);
+      lamellarVest.scale.set(0.88, 0.92, 0.82);
+      const sash = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.032, 8, 16), goldTrimMat);
+      sash.rotation.x = Math.PI / 2;
+      sash.position.set(0, 1.42, -0.04);
+      const cape = new THREE.Mesh(unitCapeGeo, new THREE.MeshStandardMaterial({ color: 0x78350f, map: unitClothMaps.map, roughness: 0.88 }));
+      cape.position.set(0, 1.43, -0.25);
+      cape.rotation.x = 0.25;
+      markSecondaryMotion(cape, 'x', 0.12, 4.2, 0.45);
+      const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+      head.position.set(0, 1.88, -0.02);
+      const furBand = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.045, 8, 16), furMat);
+      furBand.rotation.x = Math.PI / 2;
+      furBand.position.set(0, 1.98, -0.02);
+      const feltCap = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.31, 9), deelMat);
+      feltCap.position.set(0, 2.12, -0.02);
+      const capNoseGuard = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.19, 0.045), goldTrimMat);
+      capNoseGuard.position.set(0, 1.83, 0.16);
+      bodyPivot.add(rider, lamellarVest, sash, cape, head, furBand, feltCap, capNoseGuard);
+
+      leftArmPivot.position.set(-0.28, 1.64, 0.05);
+      bodyPivot.add(leftArmPivot);
+      const armL = new THREE.Mesh(unitArmSegmentGeo, deelMat);
+      armL.position.set(0, -0.13, 0.06);
+      const roundShield = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.055, 16), leatherMat);
+      roundShield.rotation.z = Math.PI / 2;
+      roundShield.position.set(-0.04, -0.05, 0.14);
+      const shieldBoss = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), goldTrimMat);
+      shieldBoss.position.set(-0.04, -0.05, 0.19);
+      leftArmPivot.add(armL, roundShield, shieldBoss);
+
+      rightArmPivot.position.set(0.3, 1.64, 0.05);
+      bodyPivot.add(rightArmPivot);
+      const armR = new THREE.Mesh(unitArmSegmentGeo, deelMat);
+      armR.position.set(0, -0.13, 0.06);
+      const lanceShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.04, 2.0, 9), hullOakMat);
+      lanceShaft.rotation.x = Math.PI / 2.3;
+      lanceShaft.position.set(0.035, 0.04, 0.66);
+      const lanceTip = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.3, 8), steelMat);
+      lanceTip.rotation.x = Math.PI / 2.3;
+      lanceTip.position.set(0.035, 0.2, 1.49);
+      const pennon = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.22, 0.34), new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.78, side: THREE.DoubleSide }));
+      pennon.position.set(0.035, 0.14, 1.24);
+      pennon.rotation.y = -0.18;
+      rightArmPivot.add(armR, lanceShaft, lanceTip, pennon);
     } else {
       // Heavy Armored Royal Knight with Great-Helm, Plume, Vamplate Lance & Heater Shield
       const rider = new THREE.Mesh(unitBreastplateGeo, armorMat);
@@ -9948,6 +10040,72 @@ export function createUnitMesh(
     orb.position.set(0.06, 0.85, 0.16);
     rightArmPivot.add(staff, cradle, orb);
     animParts.auraMesh = orb;
+  } else if (mType === 'shaman') {
+    // Steppe shaman: layered indigo ritual robe, fur mantle, feathered felt crown and storm-bound staff.
+    addBipedLegs(darkMat, leatherMat, false);
+    bodyPivot.position.y = 0.24;
+    const robeMat = new THREE.MeshStandardMaterial({ color: 0x164e63, map: unitClothMaps.map, normalMap: unitClothMaps.normalMap, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: unitClothMaps.roughnessMap || null, roughness: 0.78 });
+    const furMat = new THREE.MeshStandardMaterial({ color: 0x292524, map: resFurMaps.map, roughness: 0.94 });
+    const ritualMat = new THREE.MeshStandardMaterial({ color: 0x0e7490, roughness: 0.38, metalness: 0.34, emissive: 0x082f49, emissiveIntensity: 0.22 });
+    animParts.hitMaterials.push(robeMat, furMat, ritualMat);
+    const robe = new THREE.Mesh(unitMageRobeGeo, robeMat);
+    robe.position.y = 0.02;
+    robe.scale.set(1.02, 0.98, 1.02);
+    robe.castShadow = true;
+    bodyPivot.add(robe);
+    animParts.robeSkirt = robe;
+    const furMantle = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.075, 8, 18), furMat);
+    furMantle.rotation.x = Math.PI / 2;
+    furMantle.position.set(0, 0.98, -0.035);
+    const chestPlate = new THREE.Mesh(new RoundedBoxGeometry(0.28, 0.42, 0.055, 3, 0.035), ritualMat);
+    chestPlate.position.set(0, 0.61, 0.22);
+    const chestEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.095, 1), goldTrimMat);
+    chestEmblem.position.set(0, 0.79, 0.27);
+    const head = new THREE.Mesh(unitHeadGeo, fleshMat);
+    head.position.y = 1.09;
+    const furBand = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.045, 8, 16), furMat);
+    furBand.rotation.x = Math.PI / 2;
+    furBand.position.y = 1.19;
+    const feltCrown = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.34, 9), robeMat);
+    feltCrown.position.y = 1.31;
+    const crownBand = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 6, 14), goldTrimMat);
+    crownBand.rotation.x = Math.PI / 2;
+    crownBand.position.y = 1.25;
+    bodyPivot.add(furMantle, chestPlate, chestEmblem, head, furBand, feltCrown, crownBand);
+    [-1, 1].forEach((side) => {
+      const feather = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.3, 6), side < 0 ? ritualMat : goldTrimMat);
+      feather.position.set(side * 0.17, 1.44, -0.08);
+      feather.rotation.z = side * -0.32;
+      markSecondaryMotion(feather, 'z', 0.08, 3.1, side * 0.5);
+      bodyPivot.add(feather);
+    });
+    const hangingCharm = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.2, 0.025), goldTrimMat);
+    hangingCharm.position.set(0.18, 0.58, 0.22);
+    hangingCharm.rotation.z = -0.16;
+    bodyPivot.add(hangingCharm);
+
+    leftArmPivot.position.set(-0.3, 0.76, 0.06);
+    bodyPivot.add(leftArmPivot);
+    const leftSleeve = new THREE.Mesh(unitArmSegmentGeo, robeMat);
+    leftSleeve.position.set(0, -0.14, 0.05);
+    const leftHand = new THREE.Mesh(unitHandGeo, fleshMat);
+    leftHand.position.set(0, -0.26, 0.1);
+    leftArmPivot.add(leftSleeve, leftHand);
+
+    rightArmPivot.position.set(0.32, 0.78, 0.08);
+    bodyPivot.add(rightArmPivot);
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.85, 9), hullOakMat);
+    staff.position.set(0.02, 0.02, 0.12);
+    const staffRing = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.025, 7, 14), goldTrimMat);
+    staffRing.position.set(0.02, 0.83, 0.12);
+    const stormOrb = new THREE.Mesh(new THREE.OctahedronGeometry(0.15, 1), new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.1, roughness: 0.24, metalness: 0.25 }));
+    stormOrb.name = 'steppeStormFocus';
+    stormOrb.position.set(0.02, 0.88, 0.12);
+    const stormOrbit = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.012, 5, 18), ritualMat);
+    stormOrbit.position.copy(stormOrb.position);
+    stormOrbit.rotation.x = Math.PI / 2.8;
+    rightArmPivot.add(staff, staffRing, stormOrb, stormOrbit);
+    animParts.auraMesh = stormOrb;
   } else if (mType === 'ram') {
     // Era II Armored Timber & Boiled-Hide Battering Ram on 4 Heavy Spoked Wheels
     bodyPivot.position.y = 0.0;
@@ -10680,9 +10838,11 @@ export function createUnitMesh(
     mType === 'swordsman' ||
     mType === 'archer' ||
     mType === 'knight' ||
+    mType === 'mongol_lancer' ||
     mType === 'ninja' ||
     mType === 'saiyan' ||
     mType === 'mage' ||
+    mType === 'shaman' ||
     mType === 'guardian' ||
     mType === 'oracle' ||
     mType === 'artificer';
@@ -10731,9 +10891,11 @@ export function createUnitMesh(
     mType === 'swordsman' ||
     mType === 'archer' ||
     mType === 'knight' ||
+    mType === 'mongol_lancer' ||
     mType === 'ninja' ||
     mType === 'saiyan' ||
     mType === 'mage' ||
+    mType === 'shaman' ||
     mType === 'guardian' ||
     mType === 'oracle' ||
     mType === 'artificer';
@@ -10765,6 +10927,7 @@ export function createUnitMesh(
     mType === 'ninja' ||
     mType === 'saiyan' ||
     mType === 'mage' ||
+    mType === 'shaman' ||
     mType === 'oracle' ||
     mType === 'artificer'
   ) {
@@ -10773,7 +10936,7 @@ export function createUnitMesh(
       modelType: mType,
       unitId: artSeed,
     });
-    faceDetails.position.y = mType === 'mage' || mType === 'oracle' ? 1.09 : 0.76;
+    faceDetails.position.y = mType === 'mage' || mType === 'shaman' || mType === 'oracle' ? 1.09 : 0.76;
     bodyPivot.add(faceDetails);
   }
 

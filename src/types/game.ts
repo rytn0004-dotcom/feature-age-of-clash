@@ -107,6 +107,7 @@ export interface UnitDefinition {
       | 'cannon'
       | 'boat'
       | 'horse_archer'
+      | 'mongol_lancer'
       | 'keshik'
       | 'shaman';
     scale?: number;

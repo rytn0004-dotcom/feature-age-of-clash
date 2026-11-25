@@ -1056,7 +1056,7 @@ export const MONGOL_UNITS: UnitDefinition[] = [
     stats: { maxHp: 94, attack: 10, buildingAttack: 9, defense: 1, range: 1.75, speed: 4.65, attackRate: 0.9,
       cost: { food: 75, wood: 15, gold: 30, stone: 0 }, trainTime: 12, gatherSpeed: 0, carryCapacity: 0,
       bonusVsCategory: { ranged: 2 } },
-    visual: { color: '#0f766e', modelType: 'knight', scale: 1.04, weaponColor: '#cbd5e1' },
+    visual: { color: '#0f766e', modelType: 'mongol_lancer', scale: 1.04, weaponColor: '#cbd5e1' },
     requiredAge: 2,
   },
   {

@@ -37,6 +37,7 @@ test('Mongol civilization: includes six units with correct age gates and model t
     assert.equal(MONGOL_UNITS.find((unit) => unit.id === id)?.requiredAge, 2);
   }
   assert.equal(MONGOL_UNITS.find((unit) => unit.id === 'mongol_mangudai')?.visual.modelType, 'horse_archer');
+  assert.equal(MONGOL_UNITS.find((unit) => unit.id === 'mongol_lancer')?.visual.modelType, 'mongol_lancer');
   assert.equal(MONGOL_UNITS.find((unit) => unit.id === 'mongol_keshik')?.visual.modelType, 'keshik');
   assert.equal(MONGOL_UNITS.find((unit) => unit.id === 'mongol_shaman')?.visual.modelType, 'shaman');
 });
@@ -48,6 +49,7 @@ test('Mongol civilization: training and build menus include current main buildin
   assert.ok(getBuildableTypesForCiv('mongol', 3).includes('siege_workshop'));
   assert.deepEqual(getTrainableUnitsForBuilding('town_center', 'mongol'), ['mongol_herder']);
   assert.deepEqual(getTrainableUnitsForBuilding('barracks', 'mongol'), ['mongol_foot_guard']);
+  assert.deepEqual(getTrainableUnitsForBuilding('archery_range', 'mongol'), ['mongol_mangudai', 'mongol_shaman']);
   assert.deepEqual(getTrainableUnitsForBuilding('stable', 'mongol'), ['mongol_lancer', 'mongol_keshik', 'scout_rider']);
   assert.equal(mongol.buildableBuildings.includes('siege_workshop'), true);
 });
@@ -79,6 +81,8 @@ test('Mongol civilization: has eight unique technologies and two mutually-exclus
   assert.equal(doctrines.length, 2);
   assert.equal(isTechLockedByExclusion(doctrines[1], [doctrines[0].id])?.id, doctrines[0].id);
   assert.equal(getAvailableTechsForBuilding('ovoo_relay', 'mongol', [], 2).some((tech) => tech.id === 'mon_yam_post'), true);
+  assert.equal(getAvailableTechsForBuilding('castle', 'mongol', [], 2).some((tech) => tech.id === 'mon_sulde_banner'), false);
+  assert.equal(getAvailableTechsForBuilding('castle', 'mongol', [], 3).some((tech) => tech.id === 'mon_sulde_banner'), true);
 });
 
 test('Mongol civilization: enabled in the startup mod registry', () => {

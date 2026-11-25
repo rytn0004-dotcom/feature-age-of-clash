@@ -108,7 +108,7 @@ function resolveArtRole(category: UnitCategory, modelType: string): ArtRole | nu
   if (modelType === 'artificer') return 'artificer';
   if (category === 'worker') return 'laborer';
   if (category === 'cavalry' || modelType === 'knight') return 'mounted';
-  if (modelType === 'mage' || modelType === 'oracle') return 'arcanist';
+  if (modelType === 'mage' || modelType === 'oracle' || modelType === 'shaman') return 'arcanist';
   if (modelType === 'guardian') return 'frontline';
   if (modelType === 'ninja') return 'skirmisher';
   if (modelType === 'saiyan') return 'champion';
@@ -475,7 +475,7 @@ function createFaceGeometry(
 
   // Hairline and side locks vary by civilization and deterministic unit identity.
   // Hooded / helmed archetypes keep their bespoke authored headwear unobstructed.
-  const hasDedicatedHeadwear = ['archer', 'mage', 'ninja', 'saiyan'].includes(modelType);
+  const hasDedicatedHeadwear = ['archer', 'mage', 'shaman', 'ninja', 'saiyan'].includes(modelType);
   if (!hasDedicatedHeadwear) {
     add(
       new THREE.SphereGeometry(0.178, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58),

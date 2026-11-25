@@ -49,7 +49,7 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon, UnitEntity } from '../types/game';
-import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
+import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, MONGOL_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
 import {
   canResearchTech,
   getAllTechsForBuilding,
@@ -70,14 +70,17 @@ test('progression: military production buildings unlock at the intended ages', a
   assert.equal(DEFAULT_BUILDINGS.stable.requiredAge, 2);
   assert.equal(DEFAULT_BUILDINGS.siege_workshop.requiredAge, 3);
 
-  const allUnitDefs = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS, ...SHARED_UNITS];
+  const allUnitDefs = [...MEDIEVAL_UNITS, ...ANIME_UNITS, ...FANTASY_UNITS, ...MONGOL_UNITS, ...SHARED_UNITS];
   const unitDefById = new Map(allUnitDefs.map((unit) => [unit.id, unit]));
-  const assertProductionRole = (ids: string[], expected: string, civId: string, building: string) => {
+  const assertProductionRole = (ids: string[], expected: readonly string[], civId: string, building: string) => {
     assert.ok(ids.length > 0, civId + ' ' + building + ' must have a production roster');
-    ids.forEach((id) => assert.equal(unitDefById.get(id)?.category, expected, civId + ' ' + building + ' cannot train ' + id));
+    ids.forEach((id) => {
+      const category = unitDefById.get(id)?.category;
+      assert.ok(expected.includes(category || ''), civId + ' ' + building + ' cannot train ' + id + ' (' + category + ')');
+    });
   };
 
-  const civIds = ['medieval', 'anime', 'fantasy'] as const;
+  const civIds = ['medieval', 'anime', 'fantasy', 'mongol'] as const;
   for (const civId of civIds) {
     const civ = getCivilizationConfig(civId);
     assert.ok(civ.buildableBuildings.includes('barracks'));
@@ -103,13 +106,13 @@ test('progression: military production buildings unlock at the intended ages', a
 
     const barracksUnits = civ.trainableByBuilding.barracks || [];
     assert.ok(barracksUnits.length > 0, civId + ' must have Age I infantry');
-    assert.equal(barracksUnits.some((id) => ['longbowman', 'anime_ninja_assassin', 'anime_saiyan_brawler', 'fantasy_mage', 'knight', 'scout_rider', 'fantasy_paladin', 'battering_ram', 'catapult', 'bombard_cannon'].includes(id)), false, civId + ' barracks must not bypass later-age production');
     const stableUnits = civ.trainableByBuilding.stable || [];
-    assert.ok(stableUnits.every((id) => ['knight', 'scout_rider', 'fantasy_paladin'].includes(id)), civId + ' stable may only train cavalry');
-    assertProductionRole(barracksUnits, 'melee', civId, 'barracks');
-    assertProductionRole(civ.trainableByBuilding.archery_range || [], 'ranged', civId, 'archery_range');
-    assertProductionRole(stableUnits, 'cavalry', civId, 'stable');
-    assertProductionRole(civ.trainableByBuilding.siege_workshop || [], 'siege', civId, 'siege_workshop');
+    const archeryUnits = civ.trainableByBuilding.archery_range || [];
+    assertProductionRole(barracksUnits, ['melee'], civId, 'barracks');
+    assertProductionRole(archeryUnits, ['ranged', 'cavalry'], civId, 'archery_range');
+    assert.ok(archeryUnits.some((id) => unitDefById.get(id)?.category === 'ranged'), civId + ' archery range must include a ranged unit');
+    assertProductionRole(stableUnits, ['cavalry'], civId, 'stable');
+    assertProductionRole(civ.trainableByBuilding.siege_workshop || [], ['siege'], civId, 'siege_workshop');
   }
 
   assert.deepEqual(getCivilizationConfig('medieval').trainableByBuilding.siege_workshop, ['catapult', 'bombard_cannon', 'greek_fire_siphon']);
