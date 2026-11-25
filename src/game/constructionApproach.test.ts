@@ -9,6 +9,7 @@ import {
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
+  selectConstructionHandoffWorker,
 } from './constructionApproach';
 
 test('construction approach candidates stay on one stable work ring', () => {
@@ -266,6 +267,47 @@ test('construction work-ring selection avoids an occupied slot when another slot
   assert.notEqual(selected, 0);
   const selectedPoint = getConstructionApproachPoint(center, radius, preferredAngle, selected);
   assert.ok(Math.hypot(selectedPoint.x - occupied[0].x, selectedPoint.z - occupied[0].z) >= 1.35);
+});
+
+test('blocked construction hands off only to the nearest unassigned idle worker', () => {
+  const candidates = [
+    { id: 'assigned', x: 1, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'building', targetBuildingId: 'other-site' },
+    { id: 'busy', x: 2, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', queuedCommandCount: 1 },
+    { id: 'far-idle', x: 9, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+    { id: 'near-idle', x: 3, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+    { id: 'wrong-faction', x: 1, z: 0, hp: 100, faction: 'red', category: 'worker', state: 'idle' },
+    { id: 'soldier', x: 0.5, z: 0, hp: 100, faction: 'blue', category: 'melee', state: 'idle' },
+    { id: 'carrying', x: 1, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', hasCarriedResource: true },
+  ];
+  assert.equal(
+    selectConstructionHandoffWorker(candidates, { x: 0, z: 0, faction: 'blue' }),
+    3,
+  );
+  assert.equal(
+    selectConstructionHandoffWorker(
+      candidates,
+      { x: 0, z: 0, faction: 'blue' },
+      new Set(['near-idle']),
+    ),
+    2,
+  );
+});
+
+test('blocked construction handoff safely declines when all idle workers are excluded or invalid', () => {
+  const candidates = [
+    { id: 'dead', x: 1, z: 0, hp: 0, faction: 'blue', category: 'worker', state: 'idle' },
+    { id: 'garrisoned', x: 2, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', garrisonedInBuildingId: 'tc' },
+    { id: 'reserved', x: 3, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', fieldAssemblyProjectId: 'ram' },
+    { id: 'retrying', x: 4, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+  ];
+  assert.equal(
+    selectConstructionHandoffWorker(
+      candidates,
+      { x: 0, z: 0, faction: 'blue' },
+      new Set(['retrying']),
+    ),
+    -1,
+  );
 });
 
 test('construction work-ring selection keeps the nearest slot when no worker occupies the ring', () => {
