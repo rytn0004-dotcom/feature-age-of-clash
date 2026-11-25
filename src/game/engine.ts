@@ -5626,7 +5626,7 @@ export class RtsEngine {
       initialPositions.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute('position', initialPositions);
       const material = new THREE.LineBasicMaterial({
-        color: this.wallPlacementPreviewIsValid ? 0x22c55e : 0xef4444,
+        color: this.wallPlacementPreviewTint,
         transparent: true,
         opacity: 0.95,
         depthWrite: false,
