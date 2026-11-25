@@ -3,21 +3,37 @@ import type { Resources } from '../types/game';
 export const DELETE_HOLD_DURATION_MS = 3_000;
 
 /**
- * Cancellation refund follows the foundation's live HP ratio. Construction HP
- * rises with build progress, so the ratio includes work already invested and
- * automatically subtracts damage sustained before cancellation.
+ * Refund construction cost according to damage, not completion progress.
+ * An undamaged foundation receives a full refund even at 10% construction.
+ * Only HP missing relative to the current build progress reduces the refund.
  */
 export function calculateConstructionCancellationRefund(
   cost: Resources,
   currentHp: number,
   maxHp: number,
+  buildProgress: number,
 ): Resources {
-  const ratio = Number.isFinite(currentHp) && Number.isFinite(maxHp) && maxHp > 0
-    ? Math.max(0, Math.min(1, currentHp / maxHp))
-    : 0;
+  const validHealth =
+    Number.isFinite(currentHp) &&
+    Number.isFinite(maxHp) &&
+    maxHp > 0 &&
+    Number.isFinite(buildProgress);
+  const progress = validHealth ? Math.max(0, Math.min(1, buildProgress)) : 0;
+  const expectedHp = validHealth ? maxHp * progress : 0;
+  const actualHp = validHealth ? Math.max(0, Math.min(maxHp, currentHp)) : 0;
+  const damage = Math.max(0, expectedHp - actualHp);
+
+  // Ignore sub-HP rounding noise so pristine foundations always refund fully.
+  const undamagedTolerance = 0.5;
+  const refundRatio =
+    !validHealth || expectedHp <= 0
+      ? 0
+      : damage <= undamagedTolerance
+        ? 1
+        : Math.max(0, Math.min(1, actualHp / expectedHp));
 
   const refund = (value: number): number =>
-    Number.isFinite(value) && value > 0 ? Math.floor(value * ratio) : 0;
+    Number.isFinite(value) && value > 0 ? Math.floor(value * refundRatio) : 0;
 
   return {
     food: refund(cost.food || 0),
