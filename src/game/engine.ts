@@ -7561,7 +7561,7 @@ export class RtsEngine {
         unit.z,
         24,
         (candidate) => this.isHostile(unit, candidate),
-      );
+      ) ?? undefined;
     }
     if (!threat) return;
 
