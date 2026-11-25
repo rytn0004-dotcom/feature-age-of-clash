@@ -272,6 +272,46 @@ export interface WallSegmentPlacement extends WallChainPoint {
 }
 
 /**
+ * Converts one fixed wall section into oriented modular wall pieces.
+ * Keeping this operation section-local lets the live preview cache completed
+ * sections and only recalculate the endpoint section while the pointer moves.
+ */
+export function layoutWallChainSection(
+  start: WallChainPoint,
+  end: WallChainPoint,
+  sectionIndex = 0,
+  maxSpacing = WALL_SEGMENT_SPACING,
+): WallSegmentPlacement[] {
+  if (
+    !Number.isFinite(start.x) ||
+    !Number.isFinite(start.z) ||
+    !Number.isFinite(end.x) ||
+    !Number.isFinite(end.z) ||
+    !Number.isFinite(maxSpacing) ||
+    maxSpacing <= 0
+  ) return [];
+
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const length = Math.hypot(dx, dz);
+  if (!Number.isFinite(length) || length < 0.75) return [];
+
+  const count = Math.max(1, Math.ceil(length / maxSpacing));
+  const rotationY = -Math.atan2(dz, dx);
+  const placements: WallSegmentPlacement[] = [];
+  for (let index = 0; index < count; index++) {
+    const t = (index + 0.5) / count;
+    placements.push({
+      x: start.x + dx * t,
+      z: start.z + dz * t,
+      rotationY,
+      sectionIndex,
+    });
+  }
+  return placements;
+}
+
+/**
  * Converts clicked wall corners into oriented modular wall pieces.
  * Each section is evenly subdivided so the 2.85-unit wall mesh slightly overlaps its neighbours.
  */
@@ -283,24 +323,9 @@ export function layoutWallChain(
 
   const placements: WallSegmentPlacement[] = [];
   for (let sectionIndex = 0; sectionIndex < points.length - 1; sectionIndex++) {
-    const start = points[sectionIndex];
-    const end = points[sectionIndex + 1];
-    const dx = end.x - start.x;
-    const dz = end.z - start.z;
-    const length = Math.hypot(dx, dz);
-    if (!Number.isFinite(length) || length < 0.75) continue;
-
-    const count = Math.max(1, Math.ceil(length / maxSpacing));
-    const rotationY = -Math.atan2(dz, dx);
-    for (let index = 0; index < count; index++) {
-      const t = (index + 0.5) / count;
-      placements.push({
-        x: start.x + dx * t,
-        z: start.z + dz * t,
-        rotationY,
-        sectionIndex,
-      });
-    }
+    placements.push(
+      ...layoutWallChainSection(points[sectionIndex], points[sectionIndex + 1], sectionIndex, maxSpacing),
+    );
   }
   return placements;
 }
