@@ -5071,6 +5071,7 @@ export class RtsEngine {
   }
 
   private applyWallPlacementPreviewTint(color: number): void {
+    if (this.wallPlacementPreviewTint === color) return;
     this.wallPlacementPreviewTint = color;
     if (this.wallPlacementPreviewLine) {
       (this.wallPlacementPreviewLine.material as THREE.LineBasicMaterial).color.setHex(color);
@@ -5547,6 +5548,11 @@ export class RtsEngine {
         ? 0xf59e0b
         : 0x22c55e;
 
+    this.wallPlacementPreviewIsValid =
+      segmentCount > 0 &&
+      !overflow &&
+      !this.wallPlacementPreviewBlocked &&
+      affordable > 0;
     this.applyWallPlacementPreviewTint(tint);
 
     const signature = String(segmentCount) + ':' + String(affordable) + ':' + (blocked ? '1' : '0');
@@ -5577,13 +5583,7 @@ export class RtsEngine {
     const group = this.wallPlacementPreviewGroup;
     group.visible = true;
 
-    const previewPoints = [...this.wallPlacementPoints];
-    if (this.wallPlacementCursor && previewPoints.length > 0) {
-      const last = previewPoints[previewPoints.length - 1];
-      if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
-        previewPoints.push(this.wallPlacementCursor);
-      }
-    }
+    const previewPoints = this.buildWallPlacementPreviewPoints();
 
     const placements = previewPoints.length >= 2 ? layoutWallChain(previewPoints) : [];
     this.wallPlacementPreviewPointsCache = previewPoints;
@@ -5594,6 +5594,11 @@ export class RtsEngine {
       0,
     );
     this.refreshWallPlacementPreviewObstruction(previewPoints, placements);
+    this.wallPlacementPreviewAffordableSegmentCount = getAffordableWallSegmentCount(
+      this.getResourcesForFaction(this.humanPlayerId),
+      DEFAULT_BUILDINGS.wall.cost,
+      placements.length,
+    );
     const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
 
     // Keep one reusable 3D ghost per maximum segment count reached. Pointer movement
