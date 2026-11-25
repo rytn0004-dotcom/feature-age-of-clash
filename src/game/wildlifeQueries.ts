@@ -70,10 +70,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
       output.nearestThreat = nearest;
     }
 
-    if (
-      unit.unitDef.category !== 'worker' &&
-      (unit.state === 'attacking' || !!unit.attackMoveGoal)
-    ) {
+    if (isActiveWildlifeHunter(unit)) {
       const range = unit.unitDef.stats.range || 1.5;
       const attackDistance = Math.max(2.4, range + 0.5);
       if (distance <= attackDistance) output.attackers.push(unit);
@@ -81,4 +78,57 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
   }
 
   return output;
+}
+
+
+/** True only for living ground combat units currently executing an attack order. */
+function isActiveWildlifeHunter(unit: WildlifeInteractionUnit): boolean {
+  return (
+    unit.hp > 0 &&
+    !unit.garrisonedInBuildingId &&
+    !unit.unitDef.isNaval &&
+    unit.unitDef.category !== 'worker' &&
+    (unit.state === 'attacking' || !!unit.attackMoveGoal)
+  );
+}
+
+/**
+ * Returns the broad-phase radius needed for deer perception and active hunter reach.
+ * Idle units and workers cannot inflate the radius or force a whole-map query.
+ */
+export function getWildlifeInteractionQueryRadius(
+  units: readonly WildlifeInteractionUnit[],
+  detectRadius: number,
+): number {
+  if (!Number.isFinite(detectRadius) || detectRadius < 0) return 0;
+  let radius = detectRadius;
+  for (const unit of units) {
+    if (!isActiveWildlifeHunter(unit)) continue;
+    const range = unit.unitDef.stats.range || 1.5;
+    if (range === Number.POSITIVE_INFINITY) return Number.POSITIVE_INFINITY;
+    if (Number.isFinite(range)) radius = Math.max(radius, Math.max(2.4, range + 0.5));
+  }
+  return radius;
+}
+
+export interface WildlifeHunterCooldown {
+  /** Simulation timestamp when this unit may damage another deer. */
+  wildlifeHuntReadyAt?: number;
+}
+
+/**
+ * Consumes a hunter's shared deer-attack cooldown exactly once per simulation time.
+ * Keeping an absolute deadline avoids decrementing the same unit once per nearby deer.
+ */
+export function tryConsumeWildlifeHunterAttack(
+  unit: WildlifeHunterCooldown,
+  simTime: number,
+  attackRate: number,
+): boolean {
+  if (!Number.isFinite(simTime)) return false;
+  const readyAt = Number.isFinite(unit.wildlifeHuntReadyAt) ? unit.wildlifeHuntReadyAt! : 0;
+  if (readyAt > simTime) return false;
+  const safeRate = Number.isFinite(attackRate) ? Math.max(0.35, attackRate) : 1;
+  unit.wildlifeHuntReadyAt = simTime + Math.max(0.5, 1 / safeRate);
+  return true;
 }

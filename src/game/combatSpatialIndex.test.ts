@@ -1,5 +1,10 @@
 import test from 'node:test';
-import { collectWildlifeUnitInteractions, type WildlifeInteractionUnit } from './wildlifeQueries';
+import {
+  collectWildlifeUnitInteractions,
+  getWildlifeInteractionQueryRadius,
+  tryConsumeWildlifeHunterAttack,
+  type WildlifeInteractionUnit,
+} from './wildlifeQueries';
 import assert from 'node:assert/strict';
 import {
   countNearbyCombatForces,
@@ -273,4 +278,70 @@ test('wildlife interaction query: invalid and out-of-range candidates are ignore
   assert.deepEqual(output, { nearestThreat: null, attackers: [] });
   collectWildlifeUnitInteractions([], Number.NaN, 0, 18, output);
   assert.deepEqual(output, { nearestThreat: null, attackers: [] });
+});
+
+
+test('wildlife query radius: only active ground hunters expand deer interaction range', () => {
+  const makeUnit = (
+    id: string,
+    options: {
+      range?: number;
+      category?: string;
+      state?: string;
+      isNaval?: boolean;
+      hp?: number;
+      garrisonedInBuildingId?: string;
+      attackMoveGoal?: unknown;
+    } = {},
+  ): WildlifeInteractionUnit => ({
+    id,
+    x: 0,
+    z: 0,
+    hp: options.hp ?? 100,
+    garrisonedInBuildingId: options.garrisonedInBuildingId,
+    unitDef: {
+      category: options.category ?? 'ranged',
+      isNaval: options.isNaval,
+      stats: { range: options.range ?? 1.5 },
+    },
+    state: options.state ?? 'idle',
+    attackMoveGoal: options.attackMoveGoal,
+  });
+
+  const units = [
+    makeUnit('idle-long-range', { range: 500 }),
+    makeUnit('worker', { range: 700, category: 'worker', state: 'attacking' }),
+    makeUnit('naval', { range: 800, isNaval: true, state: 'attacking' }),
+    makeUnit('garrisoned', { range: 900, garrisonedInBuildingId: 'keep', state: 'attacking' }),
+    makeUnit('dead', { range: 1000, hp: 0, state: 'attacking' }),
+    makeUnit('active-ranged', { range: 8, state: 'attacking' }),
+  ];
+
+  assert.equal(getWildlifeInteractionQueryRadius(units, 18), 18);
+  assert.equal(
+    getWildlifeInteractionQueryRadius([makeUnit('long-range-hunter', { range: 28, state: 'attacking' })], 18),
+    28.5,
+  );
+  assert.equal(
+    getWildlifeInteractionQueryRadius([makeUnit('infinite-hunter', { range: Infinity, state: 'attacking' })], 18),
+    Infinity,
+  );
+  assert.equal(getWildlifeInteractionQueryRadius(units, Number.NaN), 0);
+});
+
+test('wildlife hunter cooldown: one unit cannot spend its attack interval multiple times on the same frame', () => {
+  const hunter: { wildlifeHuntReadyAt?: number } = {};
+
+  assert.equal(tryConsumeWildlifeHunterAttack(hunter, 10, 1), true);
+  assert.equal(hunter.wildlifeHuntReadyAt, 11);
+  // A second nearby deer in the same simulation frame must not decrement or reset cooldown.
+  assert.equal(tryConsumeWildlifeHunterAttack(hunter, 10, 1), false);
+  assert.equal(tryConsumeWildlifeHunterAttack(hunter, 10.99, 1), false);
+  assert.equal(tryConsumeWildlifeHunterAttack(hunter, 11, 1), true);
+  assert.equal(hunter.wildlifeHuntReadyAt, 12);
+
+  const fastHunter: { wildlifeHuntReadyAt?: number } = {};
+  assert.equal(tryConsumeWildlifeHunterAttack(fastHunter, 2, 5), true);
+  assert.equal(fastHunter.wildlifeHuntReadyAt, 2.5);
+  assert.equal(tryConsumeWildlifeHunterAttack(fastHunter, Number.NaN, 5), false);
 });

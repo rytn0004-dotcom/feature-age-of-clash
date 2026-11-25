@@ -13,7 +13,12 @@ import {
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
-import { collectWildlifeUnitInteractions, type WildlifeUnitInteractionScratch } from './wildlifeQueries';
+import {
+  collectWildlifeUnitInteractions,
+  getWildlifeInteractionQueryRadius,
+  tryConsumeWildlifeHunterAttack,
+  type WildlifeUnitInteractionScratch,
+} from './wildlifeQueries';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -10078,21 +10083,7 @@ export class RtsEngine {
   private updateWildAnimals(dt: number) {
     const DETECT = 18;
     let deerIdx = 0;
-    let wildlifeInteractionQueryRadius = DETECT;
-    for (const unit of this.units) {
-      if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.isNaval) continue;
-      const range = unit.unitDef.stats.range || 1.5;
-      if (range === Number.POSITIVE_INFINITY) {
-        wildlifeInteractionQueryRadius = Number.POSITIVE_INFINITY;
-        break;
-      }
-      if (Number.isFinite(range)) {
-        wildlifeInteractionQueryRadius = Math.max(
-          wildlifeInteractionQueryRadius,
-          Math.max(2.4, range + 0.5),
-        );
-      }
-    }
+    const wildlifeInteractionQueryRadius = getWildlifeInteractionQueryRadius(this.units, DETECT);
 
     let maxBuildingCollisionRadius = 0;
     for (const building of this.buildings) {
@@ -10317,16 +10308,11 @@ export class RtsEngine {
       }
 
       for (const attacker of interactions.attackers) {
-        let hitCd = (attacker as any)._huntHitCd || 0;
-        hitCd -= dt;
-        if (hitCd <= 0) {
-          const dmg = Math.max(1, attacker.unitDef.stats.attack);
-          node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
-          hitCd = Math.max(0.5, 1 / Math.max(0.35, attacker.unitDef.stats.attackRate || 1));
-          triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
-          if (node.animalHp <= 0) killAnimal(node, mesh, '山羌倒地');
-        }
-        (attacker as any)._huntHitCd = hitCd;
+        if (!tryConsumeWildlifeHunterAttack(attacker, this.simTime, attacker.unitDef.stats.attackRate || 1)) continue;
+        const dmg = Math.max(1, attacker.unitDef.stats.attack);
+        node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
+        triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
+        if (node.animalHp <= 0) killAnimal(node, mesh, '山羌倒地');
       }
     }
   }

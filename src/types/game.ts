@@ -321,6 +321,8 @@ export interface UnitEntity extends EntityCommon {
   targetGarrisonBuildingId?: string;
   garrisonedInBuildingId?: string;
   attackCooldown: number;
+  /** Shared simulation-time cooldown for incidental attacks on wild deer. */
+  wildlifeHuntReadyAt?: number;
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;
