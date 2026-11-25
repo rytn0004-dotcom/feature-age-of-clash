@@ -81,6 +81,11 @@ export function evaluateMongolOvooPolicy(input: MongolOvooPolicyInput): MongolOv
 }
 
 
+/** A Mangudai is a mounted archer: include it in the Mongol ranged support roster despite its cavalry category. */
+export function isMongolRangedSupportUnit(unitDefId: string, unitCategory: string): boolean {
+  return unitCategory === 'ranged' || unitDefId === 'mongol_mangudai';
+}
+
 /**
  * Mongol ranged formations use a small shaman support core rather than training only Mangudai.
  * One shaman per six ranged troops, capped at two, keeps area control useful without flooding the queue.

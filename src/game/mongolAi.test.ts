@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   evaluateMongolOvooPolicy,
   hasNearbyHostileUnit,
+  isMongolRangedSupportUnit,
   shouldTrainMongolShaman,
   type MongolNearbyUnit,
 } from './mongolAi';
@@ -117,4 +118,11 @@ test('Mongol AI keeps a capped shaman support ratio in ranged formations', () =>
   assert.equal(shouldTrainMongolShaman(18, 2), false);
   assert.equal(shouldTrainMongolShaman(Number.NaN, 0), false);
   assert.equal(shouldTrainMongolShaman(12, Number.NaN), true);
+});
+
+test('Mongol ranged roster counts mounted archers and Shaman but not melee cavalry', () => {
+  assert.equal(isMongolRangedSupportUnit('mongol_mangudai', 'cavalry'), true);
+  assert.equal(isMongolRangedSupportUnit('mongol_shaman', 'ranged'), true);
+  assert.equal(isMongolRangedSupportUnit('mongol_lancer', 'cavalry'), false);
+  assert.equal(isMongolRangedSupportUnit('mongol_keshik', 'cavalry'), false);
 });
