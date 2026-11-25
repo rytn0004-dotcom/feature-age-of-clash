@@ -9137,6 +9137,13 @@ export class RtsEngine {
     replacement.currentActionText = '🧭 接手受阻工地，尋找施工路線';
 
     unit.targetBuildingId = undefined;
+    unit.targetResourceNodeId = undefined;
+    unit.targetEntityId = undefined;
+    unit.targetGarrisonBuildingId = undefined;
+    unit.targetX = undefined;
+    unit.targetZ = undefined;
+    unit.attackMoveGoal = null;
+    unit.queuedGatherStopAfterDeposit = false;
     unit.buildApproachBuildingId = undefined;
     unit.buildApproachIndex = undefined;
     unit.buildApproachAngle = undefined;
