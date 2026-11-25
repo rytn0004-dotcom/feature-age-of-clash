@@ -2521,7 +2521,7 @@ export const HUD: React.FC<HUDProps> = ({
                     >
                       <span>✕ 取消施工並拆除地基</span>
                       <span className="font-mono text-emerald-300">
-                        退款 木 {constructionRefund.wood} · 石 {constructionRefund.stone}
+                        退款 食 {constructionRefund.food} · 木 {constructionRefund.wood} · 金 {constructionRefund.gold} · 石 {constructionRefund.stone}
                       </span>
                     </button>
                   )}
