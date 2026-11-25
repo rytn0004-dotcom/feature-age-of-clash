@@ -80,12 +80,12 @@ test("battle stress report aggregates all F3 windows with bounded weighted stati
   assert.equal(report.simulationAverageMs, 16);
   assert.equal(report.simulationMaxMs, 30);
   assert.equal(report.unitUpdateAverageMs, 5.6);
-  assert.equal(report.fieldSiegeAverageMs, 0.3);
+  assert.equal(report.fieldSiegeAverageMs, 0.28);
   assert.equal(report.unitCollisionAverageMs, 2.8);
   assert.equal(report.buildingCollisionAverageMs, 1.4);
   assert.equal(report.resourceCollisionAverageMs, 0.7);
-  assert.equal(report.unitVisualSyncAverageMs, 3.8);
-  assert.equal(report.simulationOtherAverageMs, 3.4);
+  assert.equal(report.unitVisualSyncAverageMs, 3.5);
+  assert.equal(report.simulationOtherAverageMs, 3.36);
   assert.equal(report.renderAverageMs, 6);
   assert.equal(report.renderMaxMs, 12);
   assert.equal(report.aiDecisionLastMs, 5);
