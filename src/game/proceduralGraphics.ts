@@ -1862,7 +1862,6 @@ function createMongolCampMesh(type: 'lumber' | 'mining', faction: FactionId, pro
     adit.rotation.z = Math.PI;
     const darkOpening = new THREE.Mesh(new THREE.CircleGeometry(0.46, 18), materials.darkFelt);
     darkOpening.position.set(1.05, 0.64, -0.72);
-    darkOpening.rotation.y = Math.PI;
     group.add(adit, darkOpening);
     const cart = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.42, 0.68), materials.timber);
     cart.position.set(1.06, 0.42, 1.02);
@@ -2059,6 +2058,107 @@ function createMongolCastleMesh(faction: FactionId, profile: MongolBuildingModel
   group.add(lintel, gateLeaf, gateBrace);
   addMongolBuildingSulde(group, 0, -4.1, 8.0, materials);
   addMongolBuildingBadge(group, faction, '大汗草原牙帳城寨', '🏰', '4800', 9.0);
+  return group;
+}
+
+
+const sharedMongolPalisadeLogGeo = new THREE.CylinderGeometry(0.1, 0.13, 2.18, 8);
+const sharedMongolPalisadeBraceGeo = new THREE.BoxGeometry(1.0, 0.13, 0.16);
+
+function createMongolWallMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolSteppePalisadeWall';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 1.85);
+  const sill = new THREE.Mesh(sharedWallSillGeo, materials.stone);
+  sill.name = 'wallSill';
+  sill.position.y = 0.21;
+  sill.castShadow = true;
+  sill.receiveShadow = true;
+  const timberCurtain = new THREE.Mesh(sharedWallCurtainGeo, materials.timber);
+  timberCurtain.name = 'wallCurtain';
+  timberCurtain.position.y = 1.18;
+  timberCurtain.castShadow = true;
+  timberCurtain.receiveShadow = true;
+  group.add(sill, timberCurtain);
+  // Six vertical logs are instanced as one batch; horizontal rails tie the palisade together.
+  const logTransforms: VisualInstanceTransform[] = [];
+  for (let i = 0; i < 7; i++) {
+    logTransforms.push({ position: [-1.18 + i * 0.393, 1.2, 0.38] });
+  }
+  createVisualInstanceBatch(group, sharedMongolPalisadeLogGeo, materials.timber, logTransforms, 'instancedMongolPalisadeLogs', true);
+  const topRail = new THREE.Mesh(sharedWallWalkwayGeo, materials.timber);
+  topRail.name = 'wallWalkway';
+  topRail.position.y = 2.02;
+  const lowerBrace = new THREE.Mesh(sharedMongolPalisadeBraceGeo, materials.rope);
+  lowerBrace.position.set(0, 0.72, 0.57);
+  const upperBrace = new THREE.Mesh(sharedMongolPalisadeBraceGeo, materials.rope);
+  upperBrace.position.set(0, 1.58, 0.57);
+  group.add(topRail, lowerBrace, upperBrace);
+  const stakeTransforms: VisualInstanceTransform[] = [];
+  for (let i = -2; i <= 2; i++) {
+    stakeTransforms.push({
+      position: [i * 0.48, 2.3, 0.36],
+      rotation: [Math.PI * 0.18, 0, 0],
+    });
+  }
+  createVisualInstanceBatch(group, sharedWallStakeGeo, materials.timber, stakeTransforms, 'instancedWallPalisadeStakes');
+  return group;
+}
+
+function createMongolGateMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolSteppePalisadeGate';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 1.95);
+  // Heavy gate posts and a timber lintel maintain the palisade language.
+  [-1.32, 1.32].forEach((x, index) => {
+    const footing = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.42, 1.02), materials.stone);
+    footing.position.set(x, 0.21, 0);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 3.0, 10), materials.timber);
+    post.position.set(x, 1.72, 0);
+    const ropeBand = new THREE.Mesh(new THREE.TorusGeometry(0.245, 0.045, 6, 14), materials.rope);
+    ropeBand.position.set(x, 2.55, 0);
+    ropeBand.rotation.x = Math.PI / 2;
+    group.add(footing, post, ropeBand);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.27, 0.36, 8), materials.timber);
+    cap.position.set(x, 3.4, 0);
+    group.add(cap);
+  });
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.28, 0.72), materials.timber);
+  lintel.position.set(0, 3.08, 0);
+  group.add(lintel);
+  const crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 0), materials.bronze);
+  crest.position.set(0, 3.35, 0.4);
+  group.add(crest);
+  const createLeaf = (name: string, hingeX: number, sign: number) => {
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.set(hingeX, 0, 0);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.22, 2.18, 0.22), materials.darkFelt);
+    panel.position.set(sign * 0.61, 1.18, 0.12);
+    const horizontalUpper = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.16, 0.3), materials.timber);
+    horizontalUpper.position.set(sign * 0.61, 2.1, 0.16);
+    const horizontalLower = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.16, 0.3), materials.timber);
+    horizontalLower.position.set(sign * 0.61, 0.32, 0.16);
+    const diagonal = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.12, 0.28), materials.rope);
+    diagonal.position.set(sign * 0.61, 1.2, 0.2);
+    diagonal.rotation.z = sign * 0.65;
+    for (let i = 0; i < 5; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.11, 2.0, 0.25), materials.timber);
+      slat.position.set(sign * (0.12 + i * 0.245), 1.18, 0.18);
+      pivot.add(slat);
+    }
+    pivot.add(panel, horizontalUpper, horizontalLower, diagonal);
+    group.add(pivot);
+  };
+  // Keep these names stable: updateGateDoorAnimation() finds and rotates these pivots.
+  createLeaf('gateLeftLeaf', -1.22, 1);
+  createLeaf('gateRightLeaf', 1.22, -1);
+  addMongolBuildingSulde(group, 0, -0.58, 4.55, materials);
+  addMongolBuildingBadge(group, faction, '草原木柵城門', '🚪', '1900', 4.9);
   return group;
 }
 
@@ -3177,6 +3277,8 @@ export function createWallMesh(faction: FactionId, civId?: CivilizationId): THRE
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
   const civ = civId || colors.civilization || 'medieval';
+  const mongolProfile = civ === 'mongol' ? getMongolBuildingModelProfile('wall') : null;
+  if (mongolProfile) return createMongolWallMesh(faction, mongolProfile);
 
   addContactShadow(group, 1.85);
   const stoneMaps = getStoneMasonryMaps();
@@ -3279,6 +3381,8 @@ export function createGateMesh(faction: FactionId, civId?: CivilizationId): THRE
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
   const civ = civId || colors.civilization || 'medieval';
+  const mongolProfile = civ === 'mongol' ? getMongolBuildingModelProfile('gate') : null;
+  if (mongolProfile) return createMongolGateMesh(faction, mongolProfile);
   addContactShadow(group, 1.95);
 
   const stoneMaps = getStoneMasonryMaps();

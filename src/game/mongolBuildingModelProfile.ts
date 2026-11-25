@@ -9,7 +9,9 @@ export type MongolBuildingModelProfile =
   | 'nomad_ore_outpost'
   | 'steppe_ferry_landing'
   | 'frontier_watchtower'
-  | 'khanate_palisade_fortress';
+  | 'khanate_palisade_fortress'
+  | 'steppe_palisade_wall'
+  | 'steppe_palisade_gate';
 
 const MONGOL_BUILDING_MODEL_PROFILES: Partial<Record<BuildingType, MongolBuildingModelProfile>> = {
   archery_range: 'steppe_archery_yard',
@@ -21,6 +23,8 @@ const MONGOL_BUILDING_MODEL_PROFILES: Partial<Record<BuildingType, MongolBuildin
   dock: 'steppe_ferry_landing',
   tower: 'frontier_watchtower',
   castle: 'khanate_palisade_fortress',
+  wall: 'steppe_palisade_wall',
+  gate: 'steppe_palisade_gate',
 };
 
 /** Returns the dedicated Mongol structural model family, or null when the standard civ model is intended. */
