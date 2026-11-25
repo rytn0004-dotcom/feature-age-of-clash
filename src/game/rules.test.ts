@@ -3744,7 +3744,11 @@ test('AI age-up saving stops for active landmarks and yields to genuine emergenc
   assert.equal(shouldAiSaveForNextAge({ ...readiness, landmarkActive: true }), false);
   assert.equal(shouldAiSaveForNextAge({ ...readiness, gameTime: 34.9 }), false);
   assert.equal(shouldAiSaveForNextAge({ ...readiness, workerCount: 4 }), false);
-  assert.equal(shouldAiSaveForNextAge({ ...readiness, resources: { food: 400, wood: 0, gold: 200, stone: 0 } }), false);
+  assert.equal(
+    shouldAiSaveForNextAge({ ...readiness, resources: { food: 400, wood: 0, gold: 200, stone: 0 } }),
+    true,
+    'the age-up reserve remains active after the landmark cost becomes affordable'
+  );
   assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 0 }), true);
   assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 2, underAttack: 0 }), false);
   assert.equal(shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 4, underAttack: 1 }), false);
