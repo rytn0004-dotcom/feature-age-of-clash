@@ -7,6 +7,13 @@ export interface PerformanceSample {
   maxHitchMs: number;
   simulationUpdateAverageMs: number;
   simulationUpdateMaxMs: number;
+  unitUpdateAverageMs: number;
+  fieldSiegeAverageMs: number;
+  unitCollisionAverageMs: number;
+  buildingCollisionAverageMs: number;
+  resourceCollisionAverageMs: number;
+  unitVisualSyncAverageMs: number;
+  simulationOtherAverageMs: number;
   renderCallAverageMs: number;
   renderCallMaxMs: number;
   pathSearchSamples: number;
@@ -67,6 +74,13 @@ const CSV_COLUMNS: (keyof PerformanceSample)[] = [
   'maxHitchMs',
   'simulationUpdateAverageMs',
   'simulationUpdateMaxMs',
+  'unitUpdateAverageMs',
+  'fieldSiegeAverageMs',
+  'unitCollisionAverageMs',
+  'buildingCollisionAverageMs',
+  'resourceCollisionAverageMs',
+  'unitVisualSyncAverageMs',
+  'simulationOtherAverageMs',
   'renderCallAverageMs',
   'renderCallMaxMs',
   'pathSearchSamples',

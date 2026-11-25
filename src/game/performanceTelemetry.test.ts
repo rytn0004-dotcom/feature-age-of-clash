@@ -21,6 +21,13 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
     maxHitchMs: 42.1,
     simulationUpdateAverageMs: 8.1,
     simulationUpdateMaxMs: 17.4,
+    unitUpdateAverageMs: 2.2,
+    fieldSiegeAverageMs: 0.1,
+    unitCollisionAverageMs: 1.3,
+    buildingCollisionAverageMs: 0.6,
+    resourceCollisionAverageMs: 0.4,
+    unitVisualSyncAverageMs: 1.5,
+    simulationOtherAverageMs: 2,
     renderCallAverageMs: 3.7,
     renderCallMaxMs: 6.2,
     pathSearchSamples: 23,
@@ -77,7 +84,7 @@ function makeSample(overrides: Partial<PerformanceSample> = {}): PerformanceSamp
 test('performance telemetry: exports stable columns and numeric samples', () => {
   const csv = formatPerformanceTelemetryCsv([makeSample()]);
   const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-  assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,simulationUpdateAverageMs,simulationUpdateMaxMs,renderCallAverageMs,renderCallMaxMs,/);
+  assert.match(header, /^elapsedSeconds,wallTime,fps,frameAverageMs,frameP95Ms,maxHitchMs,simulationUpdateAverageMs,simulationUpdateMaxMs,unitUpdateAverageMs,fieldSiegeAverageMs,unitCollisionAverageMs,buildingCollisionAverageMs,resourceCollisionAverageMs,unitVisualSyncAverageMs,simulationOtherAverageMs,renderCallAverageMs,renderCallMaxMs,/);
   assert.match(header, /aiAliveUnits,aiStalledUnits,aiPathRecoveryCount,aiMaxStuckSeconds/);
   assert.match(header, /aiDecisionCount,aiDecisionAccumulatorSeconds,aiDecisionTimingSamples,aiDecisionLastMs,aiDecisionAverageMs,aiDecisionMaxMs/);
   assert.ok(row.includes('59.8'));
@@ -85,6 +92,8 @@ test('performance telemetry: exports stable columns and numeric samples', () => 
   assert.ok(row.includes('highland_basin'));
   assert.ok(row.includes('2.25'));
   assert.ok(row.includes('17.4'));
+  assert.ok(row.includes('2.2'));
+  assert.ok(row.includes('1.3'));
   assert.ok(row.includes('6.2'));
   assert.ok(row.includes('2.1'));
 });

@@ -490,7 +490,10 @@ async function main() {
       report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
-        " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms, AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
+        " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms (units " + telemetry.unitUpdateAverageMs.toFixed(2) +
+        ", collisions U/B/R " + telemetry.unitCollisionAverageMs.toFixed(2) + "/" +
+        telemetry.buildingCollisionAverageMs.toFixed(2) + "/" + telemetry.resourceCollisionAverageMs.toFixed(2) +
+        ", visual " + telemetry.unitVisualSyncAverageMs.toFixed(2) + "), AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
         " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
         telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " +
         staticMeshes.drawCallsSaved + " static mesh draws saved, " +

@@ -407,6 +407,23 @@ export class RtsEngine {
   private performanceFrameTimes: number[] = [];
   private performanceSimulationTotalMs = 0;
   private performanceSimulationMaxMs = 0;
+  /** Sub-phase timers run only while the F3 performance monitor is visible. */
+  private performanceCurrentSimulationPhases = {
+    unitUpdateMs: 0,
+    fieldSiegeMs: 0,
+    unitCollisionMs: 0,
+    buildingCollisionMs: 0,
+    resourceCollisionMs: 0,
+    unitVisualSyncMs: 0,
+  };
+  private performanceWindowSimulationPhases = {
+    unitUpdateMs: 0,
+    fieldSiegeMs: 0,
+    unitCollisionMs: 0,
+    buildingCollisionMs: 0,
+    resourceCollisionMs: 0,
+    unitVisualSyncMs: 0,
+  };
   private performanceRenderCallTotalMs = 0;
   private performanceRenderCallMaxMs = 0;
   private pathSearchTiming: PathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
@@ -6322,6 +6339,18 @@ export class RtsEngine {
       this.performanceFrameTimes = [];
       this.performanceSimulationTotalMs = 0;
       this.performanceSimulationMaxMs = 0;
+      this.performanceCurrentSimulationPhases.unitUpdateMs = 0;
+      this.performanceCurrentSimulationPhases.fieldSiegeMs = 0;
+      this.performanceCurrentSimulationPhases.unitCollisionMs = 0;
+      this.performanceCurrentSimulationPhases.buildingCollisionMs = 0;
+      this.performanceCurrentSimulationPhases.resourceCollisionMs = 0;
+      this.performanceCurrentSimulationPhases.unitVisualSyncMs = 0;
+      this.performanceWindowSimulationPhases.unitUpdateMs = 0;
+      this.performanceWindowSimulationPhases.fieldSiegeMs = 0;
+      this.performanceWindowSimulationPhases.unitCollisionMs = 0;
+      this.performanceWindowSimulationPhases.buildingCollisionMs = 0;
+      this.performanceWindowSimulationPhases.resourceCollisionMs = 0;
+      this.performanceWindowSimulationPhases.unitVisualSyncMs = 0;
       this.performanceRenderCallTotalMs = 0;
       this.performanceRenderCallMaxMs = 0;
       this.pathSearchTiming = { ...EMPTY_PATH_SEARCH_TIMING };
@@ -6348,13 +6377,36 @@ export class RtsEngine {
       this.performanceRenderCallTotalMs += renderCallMs;
       this.performanceRenderCallMaxMs = Math.max(this.performanceRenderCallMaxMs, renderCallMs);
     }
+    const currentPhases = this.performanceCurrentSimulationPhases;
+    const windowPhases = this.performanceWindowSimulationPhases;
+    windowPhases.unitUpdateMs += currentPhases.unitUpdateMs;
+    windowPhases.fieldSiegeMs += currentPhases.fieldSiegeMs;
+    windowPhases.unitCollisionMs += currentPhases.unitCollisionMs;
+    windowPhases.buildingCollisionMs += currentPhases.buildingCollisionMs;
+    windowPhases.resourceCollisionMs += currentPhases.resourceCollisionMs;
+    windowPhases.unitVisualSyncMs += currentPhases.unitVisualSyncMs;
     const elapsedMs = now - this.performanceWindowStart;
     if (elapsedMs < 500) return;
 
     const fps = (this.performanceFrameCount * 1000) / Math.max(1, elapsedMs);
     const frameTimes = summarizeFrameTimes(this.performanceFrameTimes);
-    const simulationUpdateAverageMs = this.performanceSimulationTotalMs / Math.max(1, this.performanceFrameCount);
-    const renderCallAverageMs = this.performanceRenderCallTotalMs / Math.max(1, this.performanceFrameCount);
+    const sampleFrameCount = Math.max(1, this.performanceFrameCount);
+    const simulationUpdateAverageMs = this.performanceSimulationTotalMs / sampleFrameCount;
+    const renderCallAverageMs = this.performanceRenderCallTotalMs / sampleFrameCount;
+    const unitUpdateAverageMs = windowPhases.unitUpdateMs / sampleFrameCount;
+    const fieldSiegeAverageMs = windowPhases.fieldSiegeMs / sampleFrameCount;
+    const unitCollisionAverageMs = windowPhases.unitCollisionMs / sampleFrameCount;
+    const buildingCollisionAverageMs = windowPhases.buildingCollisionMs / sampleFrameCount;
+    const resourceCollisionAverageMs = windowPhases.resourceCollisionMs / sampleFrameCount;
+    const unitVisualSyncAverageMs = windowPhases.unitVisualSyncMs / sampleFrameCount;
+    const measuredPhaseAverageMs =
+      unitUpdateAverageMs +
+      fieldSiegeAverageMs +
+      unitCollisionAverageMs +
+      buildingCollisionAverageMs +
+      resourceCollisionAverageMs +
+      unitVisualSyncAverageMs;
+    const simulationOtherAverageMs = Math.max(0, simulationUpdateAverageMs - measuredPhaseAverageMs);
     const activeParticles = this.particlePool.reduce((total, particle) => total + (particle.active ? 1 : 0), 0);
     const aliveUnits = this.units.reduce((total, unit) => total + (unit.hp > 0 ? 1 : 0), 0);
     const renderInfo = this.renderer.info;
@@ -6394,6 +6446,13 @@ export class RtsEngine {
       maxHitchMs: frameTimes.maxMs,
       simulationUpdateAverageMs,
       simulationUpdateMaxMs: this.performanceSimulationMaxMs,
+      unitUpdateAverageMs,
+      fieldSiegeAverageMs,
+      unitCollisionAverageMs,
+      buildingCollisionAverageMs,
+      resourceCollisionAverageMs,
+      unitVisualSyncAverageMs,
+      simulationOtherAverageMs,
       renderCallAverageMs,
       renderCallMaxMs: this.performanceRenderCallMaxMs,
       pathSearchSamples: this.pathSearchTiming.sampleCount,
@@ -6456,6 +6515,9 @@ export class RtsEngine {
       `Frame ms p95     ${frameTimes.p95Ms.toFixed(2)}`,
       `Max hitch ms     ${frameTimes.maxMs.toFixed(2)}`,
       `Simulation ms    ${simulationUpdateAverageMs.toFixed(2)} avg / ${this.performanceSimulationMaxMs.toFixed(2)} max`,
+      `Unit update ms   ${unitUpdateAverageMs.toFixed(2)} · Field siege ${fieldSiegeAverageMs.toFixed(2)}`,
+      `Collision ms     U ${unitCollisionAverageMs.toFixed(2)} · B ${buildingCollisionAverageMs.toFixed(2)} · R ${resourceCollisionAverageMs.toFixed(2)}`,
+      `Visual/Other ms  ${unitVisualSyncAverageMs.toFixed(2)} / ${simulationOtherAverageMs.toFixed(2)}`,
       `Render call ms   ${renderCallAverageMs.toFixed(2)} avg / ${this.performanceRenderCallMaxMs.toFixed(2)} max`,
       `A* Searches      ${this.pathSearchTiming.sampleCount} total / ${this.pathSearchTiming.aiSampleCount} AI / ${this.pathSearchTiming.emptyPathCount} empty`,
       `A* Search ms     ${pathSearchAverageMs.toFixed(3)} avg / ${this.pathSearchTiming.maxMs.toFixed(3)} max`,
@@ -6483,6 +6545,12 @@ export class RtsEngine {
     this.performanceFrameTimes = [];
     this.performanceSimulationTotalMs = 0;
     this.performanceSimulationMaxMs = 0;
+    this.performanceWindowSimulationPhases.unitUpdateMs = 0;
+    this.performanceWindowSimulationPhases.fieldSiegeMs = 0;
+    this.performanceWindowSimulationPhases.unitCollisionMs = 0;
+    this.performanceWindowSimulationPhases.buildingCollisionMs = 0;
+    this.performanceWindowSimulationPhases.resourceCollisionMs = 0;
+    this.performanceWindowSimulationPhases.unitVisualSyncMs = 0;
     this.performanceRenderCallTotalMs = 0;
     this.performanceRenderCallMaxMs = 0;
   }
@@ -6525,9 +6593,17 @@ export class RtsEngine {
       const rawDt = Math.max(0.001, (now - lastTime) / 1000);
       lastTime = now;
       let simulationUpdateMs = 0;
+      const measureSimulation = this.performanceOverlayVisible;
+      if (measureSimulation) {
+        this.performanceCurrentSimulationPhases.unitUpdateMs = 0;
+        this.performanceCurrentSimulationPhases.fieldSiegeMs = 0;
+        this.performanceCurrentSimulationPhases.unitCollisionMs = 0;
+        this.performanceCurrentSimulationPhases.buildingCollisionMs = 0;
+        this.performanceCurrentSimulationPhases.resourceCollisionMs = 0;
+        this.performanceCurrentSimulationPhases.unitVisualSyncMs = 0;
+      }
       if (this.gameState === 'playing') {
         const { stepDt, steps } = computeSimulationSubsteps(rawDt, this.gameSpeed, this.isSoftwareGl);
-        const measureSimulation = this.performanceOverlayVisible;
         const simulationStartedAt = measureSimulation ? performance.now() : 0;
         for (let s = 0; s < steps; s++) {
           this.updateSimulation(stepDt);
@@ -6642,13 +6718,27 @@ export class RtsEngine {
     this.evaluateEnemySpottedAlert(dt);
 
     // 2. Units simulation
+    const measurePhases = this.performanceOverlayVisible;
+    let phaseStartedAt = measurePhases ? performance.now() : 0;
     this.updateUnits(dt);
+    if (measurePhases) this.performanceCurrentSimulationPhases.unitUpdateMs += performance.now() - phaseStartedAt;
+
+    phaseStartedAt = measurePhases ? performance.now() : 0;
     this.updateFieldSiegeProjects(dt);
+    if (measurePhases) this.performanceCurrentSimulationPhases.fieldSiegeMs += performance.now() - phaseStartedAt;
 
     // 2.5 Layer-based Collision Resolution (Prevents clipping & overlapping)
+    phaseStartedAt = measurePhases ? performance.now() : 0;
     resolveUnitUnitCollisions(this.units, 0.52, this.collisionResolutionScratch);
+    if (measurePhases) this.performanceCurrentSimulationPhases.unitCollisionMs += performance.now() - phaseStartedAt;
+
+    phaseStartedAt = measurePhases ? performance.now() : 0;
     resolveUnitBuildingCollisions(this.units, this.buildings, this.collisionResolutionScratch);
+    if (measurePhases) this.performanceCurrentSimulationPhases.buildingCollisionMs += performance.now() - phaseStartedAt;
+
+    phaseStartedAt = measurePhases ? performance.now() : 0;
     resolveUnitResourceCollisions(this.units, this.resourceNodes, this.collisionResolutionScratch);
+    if (measurePhases) this.performanceCurrentSimulationPhases.resourceCollisionMs += performance.now() - phaseStartedAt;
 
     // Unit decoration batches replace the per-unit contact-shadow and faction-ring draw calls.
     this.unitDecorationInstanceCursor = 0;
@@ -6656,6 +6746,7 @@ export class RtsEngine {
     this.unitRoleSiegeInstanceCursor = 0;
     this.unitBuffRingInstanceCursor = 0;
     // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
+    phaseStartedAt = measurePhases ? performance.now() : 0;
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
       const mesh = this.unitMeshes.get(unit.id);
@@ -6671,6 +6762,7 @@ export class RtsEngine {
         this.writeUnitRoleAndBuffInstances(mesh);
       }
     }
+    if (measurePhases) this.performanceCurrentSimulationPhases.unitVisualSyncMs += performance.now() - phaseStartedAt;
 
     // 3. Buildings simulation & Civ Building Auras
     this.updateBuildings(dt);
