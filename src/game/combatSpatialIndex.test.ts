@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { collectWildlifeUnitInteractions, type WildlifeInteractionUnit } from './wildlifeQueries';
 import assert from 'node:assert/strict';
 import {
   countNearbyCombatForces,
@@ -196,4 +197,80 @@ test('combat spatial index: reusable query outputs retain identity and clear pre
   assert.equal(all, output);
   assert.deepEqual(output.units.map((unit) => unit.id), ['near']);
   assert.deepEqual(output.buildings.map((building) => building.id), ['tower']);
+});
+
+
+test('wildlife interaction query: finds nearest ground threat and only active attackers in their own range', () => {
+  type Candidate = WildlifeInteractionUnit;
+  const makeUnit = (
+    id: string,
+    x: number,
+    options: {
+      hp?: number;
+      category?: string;
+      isNaval?: boolean;
+      range?: number;
+      state?: string;
+      attackMoveGoal?: unknown;
+      garrisonedInBuildingId?: string;
+    } = {},
+  ): Candidate => ({
+    id,
+    x,
+    z: 0,
+    hp: options.hp ?? 100,
+    garrisonedInBuildingId: options.garrisonedInBuildingId,
+    unitDef: {
+      category: options.category ?? 'melee',
+      isNaval: options.isNaval,
+      stats: { range: options.range ?? 1.5 },
+    },
+    state: options.state ?? 'idle',
+    attackMoveGoal: options.attackMoveGoal,
+  });
+
+  const idleThreat = makeUnit('idle-threat', 0.5);
+  const closeMelee = makeUnit('close-melee', 2.4, { state: 'moving', attackMoveGoal: { x: 20, z: 0 } });
+  const rangedAttacker = makeUnit('ranged-attacker', 6, { category: 'ranged', range: 6, state: 'attacking' });
+  const outOfRange = makeUnit('out-of-range', 7, { category: 'ranged', range: 5, state: 'attacking' });
+  const worker = makeUnit('worker', 1, { category: 'worker', state: 'attacking' });
+  const idleMilitary = makeUnit('idle-military', 1.2);
+  const naval = makeUnit('naval', 0.2, { isNaval: true, state: 'attacking' });
+  const dead = makeUnit('dead', 0.1, { hp: 0, state: 'attacking' });
+  const garrisoned = makeUnit('garrisoned', 0.15, { garrisonedInBuildingId: 'keep', state: 'attacking' });
+
+  const output = {
+    nearestThreat: null as { x: number; z: number; d: number } | null,
+    attackers: [] as Candidate[],
+  };
+  const attackersBuffer = output.attackers;
+  const first = collectWildlifeUnitInteractions(
+    [idleThreat, closeMelee, rangedAttacker, outOfRange, worker, idleMilitary, naval, dead, garrisoned],
+    0,
+    0,
+    18,
+    output,
+  );
+
+  assert.equal(first, output);
+  assert.equal(output.nearestThreat?.x, 0.5);
+  assert.deepEqual(output.attackers.map((unit) => unit.id), ['close-melee', 'ranged-attacker']);
+  assert.equal(output.attackers, attackersBuffer);
+
+  const nearestVector = output.nearestThreat;
+  collectWildlifeUnitInteractions([rangedAttacker], 0, 0, 18, output);
+  assert.equal(output.nearestThreat, nearestVector, 'nearest-threat vector should be reused');
+  assert.equal(output.nearestThreat?.x, 6);
+  assert.deepEqual(output.attackers.map((unit) => unit.id), ['ranged-attacker']);
+});
+
+test('wildlife interaction query: invalid and out-of-range candidates are ignored safely', () => {
+  const output = {
+    nearestThreat: null as { x: number; z: number; d: number } | null,
+    attackers: [] as WildlifeInteractionUnit[],
+  };
+  collectWildlifeUnitInteractions([], 0, 0, 18, output);
+  assert.deepEqual(output, { nearestThreat: null, attackers: [] });
+  collectWildlifeUnitInteractions([], Number.NaN, 0, 18, output);
+  assert.deepEqual(output, { nearestThreat: null, attackers: [] });
 });

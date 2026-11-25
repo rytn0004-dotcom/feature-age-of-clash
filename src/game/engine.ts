@@ -13,6 +13,7 @@ import {
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
+import { collectWildlifeUnitInteractions, type WildlifeUnitInteractionScratch } from './wildlifeQueries';
 import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
@@ -456,6 +457,19 @@ export class RtsEngine {
   private cavalryRetreatQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
     buildings: [],
+  };
+  /** Reused local candidates for wildlife threat, attacker, and nearby-building queries. */
+  private wildlifeUnitQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
+    units: [],
+    buildings: [],
+  };
+  private wildlifeBuildingQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
+    units: [],
+    buildings: [],
+  };
+  private wildlifeUnitInteractionScratch: WildlifeUnitInteractionScratch<UnitEntity> = {
+    nearestThreat: null,
+    attackers: [],
   };
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
@@ -6651,6 +6665,9 @@ export class RtsEngine {
 
     // 3. Buildings simulation & Civ Building Auras
     this.updateBuildings(dt);
+    // Publish one post-movement, post-collision spatial snapshot for wildlife and AI.
+    // The next frame's unit targeting reuses this same end-of-frame snapshot.
+    this.rebuildCombatSpatialIndex();
     this.updateWildAnimals(dt);
     this.updateContestedPoints(dt);
     this.updateStarRelic(dt);
@@ -6767,7 +6784,6 @@ export class RtsEngine {
     if (aiFactionId) {
       this.aiDecisionCount += 1;
       const aiDecisionStartedAt = performance.now();
-      this.rebuildCombatSpatialIndex();
       try {
         this.evaluateAiLogic(aiFactionId);
       } finally {
@@ -7353,7 +7369,6 @@ export class RtsEngine {
 
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
-    this.rebuildCombatSpatialIndex();
     this.rebuildActiveConstructionWorkerCounts();
     if (
       this.battlefieldLeadershipRosterSource !== this.units ||
@@ -10063,6 +10078,29 @@ export class RtsEngine {
   private updateWildAnimals(dt: number) {
     const DETECT = 18;
     let deerIdx = 0;
+    let wildlifeInteractionQueryRadius = DETECT;
+    for (const unit of this.units) {
+      if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.isNaval) continue;
+      const range = unit.unitDef.stats.range || 1.5;
+      if (range === Number.POSITIVE_INFINITY) {
+        wildlifeInteractionQueryRadius = Number.POSITIVE_INFINITY;
+        break;
+      }
+      if (Number.isFinite(range)) {
+        wildlifeInteractionQueryRadius = Math.max(
+          wildlifeInteractionQueryRadius,
+          Math.max(2.4, range + 0.5),
+        );
+      }
+    }
+
+    let maxBuildingCollisionRadius = 0;
+    for (const building of this.buildings) {
+      if (building.hp <= 0) continue;
+      const radius = getBuildingCollisionRadius(building);
+      if (Number.isFinite(radius)) maxBuildingCollisionRadius = Math.max(maxBuildingCollisionRadius, radius);
+    }
+
     const isAnimalBlocked = (cx: number, cz: number): boolean => {
       if (Math.abs(cx) > 91 || Math.abs(cz) > 91) return true;
       if (this.mapLayout) {
@@ -10071,10 +10109,19 @@ export class RtsEngine {
           if (Math.hypot(cx - c.x, cz - c.z) <= c.radius + 0.75) return true;
         }
       }
-      for (const b of this.buildings) {
-        if (b.hp <= 0) continue;
-        const br = getBuildingCollisionRadius(b);
-        if (br > 0 && Math.hypot(cx - b.x, cz - b.z) <= br + 0.7) return true;
+      const nearbyBuildings = this.combatSpatialIndex
+        ? queryCombatSpatialIndex(
+            this.combatSpatialIndex,
+            cx,
+            cz,
+            maxBuildingCollisionRadius + 0.7,
+            this.wildlifeBuildingQueryScratch,
+          ).buildings
+        : this.buildings;
+      for (const building of nearbyBuildings) {
+        if (building.hp <= 0) continue;
+        const radius = getBuildingCollisionRadius(building);
+        if (radius > 0 && Math.hypot(cx - building.x, cz - building.z) <= radius + 0.7) return true;
       }
       return false;
     };
@@ -10198,13 +10245,23 @@ export class RtsEngine {
       }
 
       deerIdx++;
-      let nearest: { x: number; z: number; d: number } | null = null;
-      for (const unit of this.units) {
-        if (unit.hp <= 0 || unit.garrisonedInBuildingId || unit.unitDef.isNaval) continue;
-        const d = getDistance(node.x, node.z, unit.x, unit.z);
-        if (d < DETECT && (!nearest || d < nearest.d)) nearest = { x: unit.x, z: unit.z, d };
-      }
-      const step = stepWildAnimalState(node, nearest, this.simTime, dt, isAnimalBlocked);
+      const nearbyUnits = this.combatSpatialIndex
+        ? queryCombatSpatialIndex(
+            this.combatSpatialIndex,
+            node.x,
+            node.z,
+            wildlifeInteractionQueryRadius,
+            this.wildlifeUnitQueryScratch,
+          ).units
+        : this.units;
+      const interactions = collectWildlifeUnitInteractions(
+        nearbyUnits,
+        node.x,
+        node.z,
+        DETECT,
+        this.wildlifeUnitInteractionScratch,
+      );
+      const step = stepWildAnimalState(node, interactions.nearestThreat, this.simTime, dt, isAnimalBlocked);
 
       if (mesh) {
         const animationState = step.moveBlend > 0.02
@@ -10259,11 +10316,7 @@ export class RtsEngine {
         }
       }
 
-      for (const attacker of this.units) {
-        if (attacker.hp <= 0 || attacker.unitDef.category === 'worker' || attacker.unitDef.isNaval ||
-          (attacker.state !== 'attacking' && !attacker.attackMoveGoal)) continue;
-        const d = getDistance(node.x, node.z, attacker.x, attacker.z);
-        if (d > Math.max(2.4, (attacker.unitDef.stats.range || 1.5) + 0.5)) continue;
+      for (const attacker of interactions.attackers) {
         let hitCd = (attacker as any)._huntHitCd || 0;
         hitCd -= dt;
         if (hitCd <= 0) {
