@@ -828,6 +828,15 @@ function createBuildingFacadeGeometry(
     add(new RoundedBoxGeometry(portalHalf * 2.35, trim * 0.42, trim * 0.5, 3, trim * 0.12), main, [0, portalHeight + portalPost * 0.82, portalZ]);
     add(new RoundedBoxGeometry(trim * 0.72, h * 0.13, trim * 0.48, 2, trim * 0.08), palette.secondary, [0, portalHeight * 0.55, portalZ + trim * 0.55]);
     add(new THREE.OctahedronGeometry(trim * 0.34, 0), highlight, [0, band * 1.8, portalZ + trim * 0.62]);
+  } else if (civilization === 'mongol') {
+    // Steppe entrances use a timber lintel, felt awning and paired Sulde pennons.
+    add(new RoundedBoxGeometry(portalHalf * 2.35, trim * 0.52, trim * 0.72, 3, trim * 0.16), 0x70452a, [0, portalHeight + portalPost * 0.78, portalZ]);
+    add(new RoundedBoxGeometry(portalHalf * 1.8, h * 0.12, trim * 0.48, 3, trim * 0.12), main, [0, portalHeight + portalPost * 0.48, portalZ + trim * 0.36]);
+    for (const side of [-1, 1]) {
+      add(new THREE.CylinderGeometry(trim * 0.08, trim * 0.1, h * 0.28, 6), palette.secondary, [side * portalHalf * 1.62, portalHeight + h * 0.07, portalZ + trim * 0.1]);
+      add(new THREE.ConeGeometry(trim * 0.18, h * 0.1, 4), palette.banner, [side * portalHalf * 1.62, portalHeight + h * 0.22, portalZ + trim * 0.1], [0.72, 1.6, 0.22], [0, 0, side * -0.18]);
+    }
+    add(new THREE.OctahedronGeometry(trim * 0.38, 0), palette.secondary, [0, band * 1.8, portalZ + trim * 0.62]);
   } else {
     // Fantasy entrances use an illuminated keystone and paired crystal fins.
     add(new THREE.OctahedronGeometry(trim * 0.8, 1), highlight, [0, portalHeight + portalPost * 0.55, portalZ + trim * 0.45], [0.85, 1.45, 0.62]);
@@ -943,6 +952,13 @@ function createBuildingCrownGeometry(
     add(new THREE.ConeGeometry(0.045 * s, 0.25 * s, 5), palette.banner, [0.4 * s, 0.64 * s, 0], [1, 1, 1], [0, 0, -0.72]);
     add(new RoundedBoxGeometry(0.16 * s, 0.23 * s, 0.035 * s, 2, 0.012 * s), 0xfef3c7, [0, 0.18 * s, 0.14 * s]);
     add(new THREE.OctahedronGeometry(0.06 * s, 0), palette.secondary, [0, 0.18 * s, 0.17 * s]);
+  } else if (civilization === 'mongol') {
+    // Steppe roofline: a central Sulde standard, crossbar pennons and a horsehair halo.
+    add(new THREE.TorusGeometry(0.3 * s, 0.025 * s, 6, 20), palette.secondary, [0, 0.26 * s, 0], [1, 0.82, 1], [Math.PI / 2, 0, 0]);
+    add(new THREE.CylinderGeometry(0.035 * s, 0.06 * s, 0.72 * s, 8), palette.secondary, [0, 0.48 * s, 0]);
+    add(new RoundedBoxGeometry(0.72 * s, 0.075 * s, 0.07 * s, 3, 0.02 * s), palette.primary, [0, 0.66 * s, 0]);
+    add(new RoundedBoxGeometry(0.26 * s, (highProfile ? 0.55 : 0.38) * s, 0.035 * s, 3, 0.02 * s), palette.banner, [0.18 * s, 0.42 * s, 0], [1, 1, 1], [0, 0, -0.1]);
+    for (const side of [-1, 1]) add(new THREE.ConeGeometry(0.06 * s, 0.32 * s, 5), palette.secondary, [side * 0.28 * s, 0.34 * s, 0], [0.6, 1.2, 0.5], [0, 0, side * -0.3]);
   } else {
     // Fantasy crown: a suspended rune ring around a faceted crystal, with three shard spires.
     add(new THREE.TorusGeometry(0.28 * s, 0.025 * s, 6, 22), palette.secondary, [0, 0.3 * s, 0], [1, 0.9, 1], [Math.PI / 2, 0, 0]);
@@ -1042,16 +1058,19 @@ function createBuildingEraGeometry(
         civilization === 'fantasy' ? palette.secondary : palette.primary,
         [sx * x, top + 0.12 * s, sz * z]
       );
-      add(
-        new THREE.OctahedronGeometry(post * 0.7, 0),
-        palette.banner,
-        [sx * x, top + 0.29 * s, sz * z],
-        [1, 1.12, 0.8]
-      );
+      if (civilization === 'mongol') {
+        add(new THREE.ConeGeometry(post * 0.38, 0.42 * s, 5), palette.banner, [sx * x, top + 0.35 * s, sz * z], [0.58, 1.35, 0.5], [0, 0, sx * -0.18]);
+      } else {
+        add(new THREE.OctahedronGeometry(post * 0.7, 0), palette.banner, [sx * x, top + 0.29 * s, sz * z], [1, 1.12, 0.8]);
+      }
     }
   }
 
-  if (civilization === 'anime') {
+  if (civilization === 'mongol') {
+    add(new RoundedBoxGeometry(w * 0.84, rail * 1.25, rail * 1.45, 3, rail * 0.2), palette.secondary, [0, top + 0.16 * s, z]);
+    add(new THREE.CylinderGeometry(rail * 0.18, rail * 0.24, 0.62 * s, 7), palette.primary, [0, top + 0.42 * s, z]);
+    add(new RoundedBoxGeometry(0.3 * s, 0.38 * s, 0.035 * s, 3, 0.02 * s), palette.banner, [0.18 * s, top + 0.54 * s, z], [1, 1, 1], [0, 0, -0.1]);
+  } else if (civilization === 'anime') {
     add(new RoundedBoxGeometry(w * 0.9, rail * 1.35, rail * 1.5, 3, rail * 0.24), palette.primary, [0, top + 0.13 * s, z]);
     add(new RoundedBoxGeometry(w * 0.78, rail, rail * 1.35, 3, rail * 0.2), palette.secondary, [0, top + 0.23 * s, z]);
     add(new RoundedBoxGeometry(rail * 1.25, 0.27 * s, rail, 2, rail * 0.15), palette.banner, [0, top + 0.05 * s, z + rail]);
@@ -1070,7 +1089,9 @@ function createBuildingEraGeometry(
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
         add(
-          new THREE.ConeGeometry(post * (civilization === 'fantasy' ? 1.05 : 0.82), 0.42 * s, civilization === 'anime' ? 4 : 6),
+          civilization === 'mongol'
+            ? new THREE.CylinderGeometry(post * 0.22, post * 0.4, 0.62 * s, 6)
+            : new THREE.ConeGeometry(post * (civilization === 'fantasy' ? 1.05 : 0.82), 0.42 * s, civilization === 'anime' ? 4 : 6),
           civilization === 'anime' ? palette.primary : palette.secondary,
           [sx * x, top + 0.48 * s, sz * z],
           [1, 1, 1],
@@ -1078,7 +1099,11 @@ function createBuildingEraGeometry(
         );
       }
     }
-    if (civilization === 'anime') {
+    if (civilization === 'mongol') {
+      add(new THREE.TorusGeometry(0.34 * s, 0.026 * s, 6, 22), palette.secondary, [0, top + 0.38 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0, 0]);
+      add(new THREE.CylinderGeometry(0.03 * s, 0.05 * s, 0.92 * s, 7), palette.secondary, [0, top + 0.66 * s, 0]);
+      add(new RoundedBoxGeometry(0.34 * s, 0.46 * s, 0.035 * s, 3, 0.02 * s), palette.banner, [0.21 * s, top + 0.72 * s, 0], [1, 1, 1], [0, 0, -0.12]);
+    } else if (civilization === 'anime') {
       add(new RoundedBoxGeometry(w * 0.58, rail * 1.4, rail * 1.7, 3, rail * 0.25), palette.banner, [0, top + 0.45 * s, z * 0.83]);
     } else {
       add(new THREE.TorusGeometry(0.3 * s, 0.027 * s, 6, 20), palette.banner, [0, top + 0.35 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0, 0]);
@@ -1088,7 +1113,12 @@ function createBuildingEraGeometry(
   if (age >= 4) {
     // Age IV: an unmistakable imperial / sacred crown, deliberately restrained to one merged mesh.
     const apexY = top + 0.82 * s;
-    if (civilization === 'fantasy') {
+    if (civilization === 'mongol') {
+      add(new THREE.CylinderGeometry(0.045 * s, 0.075 * s, 1.02 * s, 8), palette.secondary, [0, apexY + 0.08 * s, 0]);
+      add(new RoundedBoxGeometry(0.48 * s, 0.76 * s, 0.04 * s, 3, 0.025 * s), palette.banner, [0.25 * s, apexY + 0.24 * s, 0], [1, 1, 1], [0, 0, -0.14]);
+      add(new THREE.TorusGeometry(0.4 * s, 0.03 * s, 6, 24), palette.secondary, [0, apexY - 0.22 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0, 0]);
+      for (const side of [-1, 1]) add(new THREE.ConeGeometry(0.075 * s, 0.38 * s, 5), palette.primary, [side * 0.38 * s, apexY + 0.42 * s, 0], [0.7, 1.4, 0.6], [0, 0, side * -0.2]);
+    } else if (civilization === 'fantasy') {
       add(new THREE.OctahedronGeometry(0.19 * s, 1), palette.banner, [0, apexY, 0], [0.82, 1.55, 0.76]);
       add(new THREE.TorusGeometry(0.38 * s, 0.028 * s, 6, 24), palette.secondary, [0, apexY - 0.12 * s, 0], [w / d, 1, 1], [Math.PI / 2, 0.15, 0]);
       for (const sx of [-1, 1]) {

@@ -2996,7 +2996,233 @@ export function createCastleMesh(faction: FactionId): THREE.Group {
   return group;
 }
 
-export function createLandmarkMesh(type: LandmarkType, faction: FactionId): THREE.Group {
+function createMongolLandmarkMesh(type: LandmarkType, faction: FactionId): THREE.Group {
+  const group = new THREE.Group();
+  const colors = getFactionPalette(faction);
+  const felt = new THREE.MeshStandardMaterial({ color: 0x8b5e34, roughness: 0.94 });
+  const darkFelt = new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.98 });
+  const timber = new THREE.MeshStandardMaterial({ color: 0x5b351c, roughness: 0.88 });
+  const rope = new THREE.MeshStandardMaterial({ color: 0xd6b879, roughness: 0.8 });
+  const stone = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.92 });
+  const bronze = new THREE.MeshStandardMaterial({ color: 0xd6a84b, roughness: 0.28, metalness: 0.82 });
+  const bannerMat = new THREE.MeshStandardMaterial({ color: colors.banner, roughness: 0.76, side: THREE.DoubleSide });
+  const paleBannerMat = new THREE.MeshStandardMaterial({ color: 0xf5e6c8, roughness: 0.86, side: THREE.DoubleSide });
+  const addGer = (x: number, z: number, radius: number, wallHeight: number, roofMaterial: THREE.MeshStandardMaterial = felt): void => {
+    const ger = new THREE.Group();
+    ger.position.set(x, 0, z);
+    const dais = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.08, radius * 1.16, 0.22, 18), stone);
+    dais.position.y = 0.11;
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.98, wallHeight, 18, 1, true), roofMaterial);
+    wall.position.y = 0.22 + wallHeight * 0.5;
+    wall.castShadow = true;
+    const roof = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.03, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), roofMaterial);
+    roof.position.y = 0.22 + wallHeight;
+    roof.scale.y = 0.9;
+    roof.castShadow = true;
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.98, 0.055, 7, 24), rope);
+    belt.rotation.x = Math.PI / 2;
+    belt.position.y = 0.22 + wallHeight * 0.76;
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, 0.22, 10), timber);
+    crown.position.y = 0.22 + wallHeight + radius * 0.34;
+    const smokeRim = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 6, 14), bronze);
+    smokeRim.rotation.x = Math.PI / 2;
+    smokeRim.position.y = crown.position.y + 0.1;
+    const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.42, wallHeight * 0.58, 0.12), timber);
+    doorFrame.position.set(0, 0.22 + wallHeight * 0.3, radius * 0.985);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.29, wallHeight * 0.48, 0.035), darkFelt);
+    door.position.set(0, doorFrame.position.y, radius * 1.06);
+    const doorLintel = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.52, 0.1, 0.15), bronze);
+    doorLintel.position.set(0, 0.22 + wallHeight * 0.62, radius * 1.02);
+    ger.add(dais, wall, roof, belt, crown, smokeRim, doorFrame, door, doorLintel);
+    group.add(ger);
+  };
+  const addSulde = (x: number, z: number, height: number, rotation = 0, material: THREE.MeshStandardMaterial = bannerMat): void => {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.065, height, 8), timber);
+    pole.position.set(x, height * 0.5, z);
+    pole.castShadow = true;
+    const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.62, 6), bronze);
+    crossbar.rotation.z = Math.PI / 2;
+    crossbar.position.set(x, height * 0.76, z);
+    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.76, 4, 4), material);
+    cloth.position.set(x + 0.22 * Math.cos(rotation), height * 0.65, z + 0.22 * Math.sin(rotation));
+    cloth.rotation.y = rotation;
+    cloth.rotation.z = -0.08;
+    cloth.castShadow = true;
+    const pennon = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.24, 4), bronze);
+    pennon.position.set(x, height + 0.1, z);
+    group.add(pole, crossbar, cloth, pennon);
+  };
+  const addPalisade = (radius: number, count: number, height: number): void => {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.11, height, 7), timber);
+      post.position.set(x, height * 0.5, z);
+      post.rotation.z = Math.cos(angle) * -0.08;
+      const point = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.35, 6), timber);
+      point.position.set(x, height + 0.16, z);
+      group.add(post, point);
+    }
+  };
+  const addBadge = (label: string, icon: string, hp: string, height: number): void => {
+    const badge = createBadgeSprite(label, icon, hp, 1, colors.isHostile, false);
+    badge.position.set(0, height, 0);
+    badge.name = 'bldgBadge';
+    group.add(badge);
+  };
+
+  group.name = 'mongolLandmark_' + type;
+  group.userData.landmarkCivilization = 'mongol';
+  group.userData.landmarkType = type;
+  addContactShadow(group, 5.2);
+  switch (type) {
+    case 'landmark_aachen': {
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.55, 0.72, 18), stone);
+      base.position.y = 0.36;
+      group.add(base);
+      for (let tier = 0; tier < 3; tier++) {
+        const cairn = new THREE.Mesh(new THREE.CylinderGeometry(1.75 - tier * 0.22, 2.0 - tier * 0.22, 0.68, 12), tier === 1 ? bronze : stone);
+        cairn.position.y = 0.88 + tier * 0.62;
+        group.add(cairn);
+      }
+      const sacredOrb = new THREE.Mesh(new THREE.OctahedronGeometry(0.64, 1), new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x0369a1, emissiveIntensity: 0.75, roughness: 0.24 }));
+      sacredOrb.position.y = 3.2;
+      group.add(sacredOrb);
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4;
+        const x = Math.cos(angle) * 2.55;
+        const z = Math.sin(angle) * 2.55;
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.075, 3.2, 6), timber);
+        pole.position.set(x, 1.65, z);
+        const streamer = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.9), i % 2 ? bannerMat : paleBannerMat);
+        streamer.position.set(x + 0.18, 2.35, z);
+        streamer.rotation.y = -angle;
+        group.add(pole, streamer);
+      }
+      addBadge(colors.isHostile ? '敵·長生天敖包聖壇' : '長生天敖包聖壇', '☀️', '3500', 5.1);
+      break;
+    }
+    case 'landmark_barracks': {
+      addPalisade(4.2, 18, 2.7);
+      addGer(0, 0, 2.05, 2.65);
+      addGer(-2.7, 1.7, 1.05, 1.85, darkFelt);
+      addGer(2.7, 1.7, 1.05, 1.85, felt);
+      for (const side of [-1, 1]) {
+        const rack = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.9, 1.8), timber);
+        rack.position.set(side * 3.2, 1.05, -1.8);
+        group.add(rack);
+        for (let i = 0; i < 5; i++) {
+          const spear = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 2.55, 6), timber);
+          spear.position.set(side * 3.18 + (i - 2) * 0.22, 2.0, -1.8);
+          spear.rotation.z = side * 0.08;
+          group.add(spear);
+        }
+      }
+      addSulde(-3.7, -2.5, 5.1, 0.2);
+      addSulde(3.7, -2.5, 5.1, -0.2, paleBannerMat);
+      addBadge(colors.isHostile ? '敵·怯薛萬騎大營' : '怯薛萬騎大營', '⚔️', '3500', 7.4);
+      break;
+    }
+    case 'landmark_guildhall': {
+      const dais = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.9, 0.65, 20), stone);
+      dais.position.y = 0.33;
+      group.add(dais);
+      addGer(0, -0.35, 2.0, 2.65);
+      for (let i = 0; i < 4; i++) {
+        const angle = i * Math.PI / 2 + Math.PI / 4;
+        const x = Math.cos(angle) * 3.05;
+        const z = Math.sin(angle) * 3.05;
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 2.25, 6), timber);
+        pole.position.set(x, 1.15, z);
+        const awning = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.35), i % 2 ? bannerMat : paleBannerMat);
+        awning.position.set(x * 0.84, 2.1, z * 0.84);
+        awning.rotation.set(-0.18, -angle, 0.08);
+        group.add(pole, awning);
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.58, 0.65), timber);
+        crate.position.set(x * 0.82, 0.66, z * 0.82);
+        group.add(crate);
+      }
+      addSulde(-3.8, 2.5, 5.3, Math.PI / 2);
+      addSulde(3.8, 2.5, 5.3, -Math.PI / 2, paleBannerMat);
+      addBadge(colors.isHostile ? '敵·絲路萬帳貿易大市' : '絲路萬帳貿易大市', '🪙', '4500', 7.2);
+      break;
+    }
+    case 'landmark_citadel': {
+      addPalisade(4.35, 24, 3.55);
+      addGer(0, 0, 2.25, 3.15, darkFelt);
+      for (let i = 0; i < 4; i++) {
+        const angle = Math.PI / 4 + i * Math.PI / 2;
+        const x = Math.cos(angle) * 3.7;
+        const z = Math.sin(angle) * 3.7;
+        const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.72, 3.2, 10), timber);
+        tower.position.set(x, 1.6, z);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(0.84, 1.1, 8), bannerMat);
+        roof.position.set(x, 3.7, z);
+        group.add(tower, roof);
+        addSulde(x, z, 5.6, -angle);
+      }
+      addBadge(colors.isHostile ? '敵·大汗鐵騎牙帳城' : '大汗鐵騎牙帳城', '🛡️', '5200', 9.0);
+      break;
+    }
+    case 'landmark_observatory': {
+      const dais = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.9, 0.8, 20), stone);
+      dais.position.y = 0.4;
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.9, 2.15, 12), darkFelt);
+      drum.position.y = 1.85;
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(1.8, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), felt);
+      dome.position.y = 2.9;
+      const armillaryA = new THREE.Mesh(new THREE.TorusGeometry(2.25, 0.095, 10, 32), bronze);
+      armillaryA.position.y = 4.45;
+      armillaryA.rotation.x = Math.PI / 3;
+      const armillaryB = new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.075, 10, 32), rope);
+      armillaryB.position.y = 4.4;
+      armillaryB.rotation.y = Math.PI / 3;
+      armillaryB.rotation.x = Math.PI / 2.8;
+      const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 1), new THREE.MeshStandardMaterial({ color: 0x7dd3fc, emissive: 0x0284c7, emissiveIntensity: 0.85, roughness: 0.2 }));
+      star.position.y = 4.55;
+      group.add(dais, drum, dome, armillaryA, armillaryB, star);
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2;
+        addSulde(Math.cos(angle) * 3.0, Math.sin(angle) * 3.0, 6.5, -angle, i % 2 ? bannerMat : paleBannerMat);
+      }
+      addBadge(colors.isHostile ? '敵·蒼狼天穹觀星台' : '蒼狼天穹觀星台', '🌌', '6000', 8.2);
+      break;
+    }
+    case 'landmark_arsenal': {
+      addGer(0, -1.2, 1.85, 2.55, darkFelt);
+      const workPad = new THREE.Mesh(new THREE.BoxGeometry(6.1, 0.26, 5.2), stone);
+      workPad.position.set(0, 0.13, 1.55);
+      group.add(workPad);
+      for (const side of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 3.9), timber);
+        rail.position.set(side * 1.55, 0.72, 1.5);
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.075, 8, 16), timber);
+        wheel.position.set(side * 1.62, 0.62, 0.1);
+        wheel.rotation.y = Math.PI / 2;
+        const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 3.6, 8), bronze);
+        axle.rotation.z = Math.PI / 2;
+        axle.position.set(0, 0.62, 0.1);
+        group.add(rail, wheel, axle);
+      }
+      const bombard = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.42, 2.3, 14), bronze);
+      bombard.position.set(0, 1.45, 2.05);
+      bombard.rotation.x = Math.PI / 2 - 0.18;
+      const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.055, 8, 14), timber);
+      muzzle.position.set(0, 1.45, 3.1);
+      muzzle.rotation.x = Math.PI / 2 - 0.18;
+      group.add(bombard, muzzle);
+      addSulde(-3.1, -2.6, 5.9, 0.25);
+      addSulde(3.1, -2.6, 5.9, -0.25, paleBannerMat);
+      addBadge(colors.isHostile ? '敵·汗國重炮軍械營' : '汗國重炮軍械營', '💥', '6000', 8.0);
+      break;
+    }
+  }
+  return group;
+}
+
+export function createLandmarkMesh(type: LandmarkType, faction: FactionId, civilization: CivilizationId = 'medieval'): THREE.Group {
+  if (civilization === 'mongol') return createMongolLandmarkMesh(type, faction);
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
 
@@ -4840,7 +5066,7 @@ export function createBuildingMesh(
     case 'landmark_citadel':
     case 'landmark_observatory':
     case 'landmark_arsenal':
-      group = createLandmarkMesh(type, faction);
+      group = createLandmarkMesh(type, faction, resolvedCiv);
       break;
   }
 
