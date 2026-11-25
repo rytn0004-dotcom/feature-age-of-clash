@@ -4,6 +4,7 @@ import {
   evaluateMongolOvooPolicy,
   hasNearbyHostileUnit,
   isMongolRangedSupportUnit,
+  shouldTrainMongolLancer,
   shouldTrainMongolShaman,
   type MongolNearbyUnit,
 } from './mongolAi';
@@ -125,4 +126,13 @@ test('Mongol ranged roster counts mounted archers and Shaman but not melee caval
   assert.equal(isMongolRangedSupportUnit('mongol_shaman', 'ranged'), true);
   assert.equal(isMongolRangedSupportUnit('mongol_lancer', 'cavalry'), false);
   assert.equal(isMongolRangedSupportUnit('mongol_keshik', 'cavalry'), false);
+});
+
+test('Mongol AI maintains a small Steppe Lancer wing beside Keshik cavalry', () => {
+  assert.equal(shouldTrainMongolLancer(0, 0), false);
+  assert.equal(shouldTrainMongolLancer(0, 1), true);
+  assert.equal(shouldTrainMongolLancer(1, 1), false);
+  assert.equal(shouldTrainMongolLancer(1, 3), true);
+  assert.equal(shouldTrainMongolLancer(4, 10), false);
+  assert.equal(shouldTrainMongolLancer(Number.NaN, 1), true);
 });

@@ -96,3 +96,12 @@ export function shouldTrainMongolShaman(rangedUnitCount: number, currentShamanCo
   const desiredShamans = Math.min(2, Math.floor(ranged / 6));
   return shamans < desiredShamans;
 }
+
+
+/** Keep a light Steppe Lancer wing in the cavalry roster: roughly one Lancer per three mounted troops, capped at four. */
+export function shouldTrainMongolLancer(currentLancerCount: number, currentKeshikCount: number): boolean {
+  const lancers = Math.max(0, Math.floor(Number.isFinite(currentLancerCount) ? currentLancerCount : 0));
+  const keshiks = Math.max(0, Math.floor(Number.isFinite(currentKeshikCount) ? currentKeshikCount : 0));
+  const desiredLancers = Math.min(4, Math.floor((lancers + keshiks + 2) / 3));
+  return lancers < desiredLancers;
+}

@@ -72,7 +72,7 @@ import {
   getTrainableUnitsForBuilding,
   getTrainingTimeMultiplier,
 } from './civilizations';
-import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolShaman } from './mongolAi';
+import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolLancer, shouldTrainMongolShaman } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
@@ -11518,7 +11518,17 @@ export class RtsEngine {
         unitDefId = aiCiv.starterRangedUnitId;
       }
     } else if (rawTargetId === 'knight') {
-      unitDefId = resolveAiKnightUnitId(aiCiv.id);
+      if (aiCiv.id === 'mongol') {
+        let lancerCount = this.units.filter((unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_lancer').length;
+        let keshikCount = this.units.filter((unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_keshik').length;
+        for (const building of aiBuildings) {
+          lancerCount += building.queue.filter((queuedUnitId) => queuedUnitId === 'mongol_lancer').length;
+          keshikCount += building.queue.filter((queuedUnitId) => queuedUnitId === 'mongol_keshik').length;
+        }
+        unitDefId = shouldTrainMongolLancer(lancerCount, keshikCount) ? 'mongol_lancer' : 'mongol_keshik';
+      } else {
+        unitDefId = resolveAiKnightUnitId(aiCiv.id);
+      }
     } else if (rawTargetId === 'battering_ram') {
       unitDefId = 'battering_ram';
     } else if (rawTargetId === 'bombard_cannon') {
