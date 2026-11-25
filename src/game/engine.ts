@@ -5069,6 +5069,8 @@ export class RtsEngine {
       building.hp,
       building.maxHp,
     );
+    if (!this.removeBuildingEntity(building)) return false;
+
     const current = this.getResourcesForFaction(building.faction);
     this.resourcesByFaction[building.faction] = {
       food: current.food + refund.food,
@@ -5077,8 +5079,6 @@ export class RtsEngine {
       stone: current.stone + refund.stone,
     };
     this.syncHumanResourcesAlias();
-
-    if (!this.removeBuildingEntity(building)) return false;
     this.onResourcesChange?.(this.playerResources);
     this.addFloatingText(
       building.x,
