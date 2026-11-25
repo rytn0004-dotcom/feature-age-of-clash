@@ -12,6 +12,7 @@ import {
 } from './civilizations';
 import { getLandmarkName } from './landmarkIdentity';
 import { getUnitPortraitSpec } from './unitPortraits';
+import { getMongolBuildingModelProfile } from './mongolBuildingModelProfile';
 
 test('Mongol civilization: is the fourth selectable civilization with its own progression identity', () => {
   assert.equal(CIVILIZATION_LIST.length, 4);
@@ -106,4 +107,15 @@ test('Mongol civilization: steppe lancer has a dedicated portrait fallback', () 
   const portrait = getUnitPortraitSpec(undefined, 'mongol_lancer');
   assert.equal(portrait.key, 'mongol_lancer');
   assert.equal(portrait.label, '草原長槍騎兵');
+});
+
+
+test('Mongol architecture: key military and economy buildings use dedicated steppe models', () => {
+  assert.equal(getMongolBuildingModelProfile('archery_range'), 'steppe_archery_yard');
+  assert.equal(getMongolBuildingModelProfile('stable'), 'steppe_horse_corral');
+  assert.equal(getMongolBuildingModelProfile('siege_workshop'), 'mobile_siege_camp');
+  assert.equal(getMongolBuildingModelProfile('granary'), 'raised_grain_store');
+  assert.equal(getMongolBuildingModelProfile('lumber_camp'), 'nomad_lumber_outpost');
+  assert.equal(getMongolBuildingModelProfile('mining_camp'), 'nomad_ore_outpost');
+  assert.equal(getMongolBuildingModelProfile('town_center'), null);
 });

@@ -7,6 +7,7 @@ import { isPointInTerrainObstacle } from './collision';
 import { mergeStaticUnitMeshes } from './unitMeshBatching';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
+import { getMongolBuildingModelProfile, type MongolBuildingModelProfile } from './mongolBuildingModelProfile';
 
 export interface DeerAnimParts {
   bodyPivot: THREE.Group;
@@ -1474,9 +1475,419 @@ const sharedArcheryTargetDiscGeo = new THREE.CylinderGeometry(0.56, 0.56, 0.18, 
 const sharedArcheryTargetRingGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.195, 16);
 const sharedArcheryTargetBullGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.21, 16);
 
+
+interface MongolBuildingMaterials {
+  timber: THREE.MeshStandardMaterial;
+  felt: THREE.MeshStandardMaterial;
+  darkFelt: THREE.MeshStandardMaterial;
+  stone: THREE.MeshStandardMaterial;
+  rope: THREE.MeshStandardMaterial;
+  iron: THREE.MeshStandardMaterial;
+  bronze: THREE.MeshStandardMaterial;
+  banner: THREE.MeshStandardMaterial;
+  paleBanner: THREE.MeshStandardMaterial;
+}
+
+const mongolBuildingMaterialCache = new Map<string, MongolBuildingMaterials>();
+
+function getMongolBuildingMaterials(faction: FactionId): MongolBuildingMaterials {
+  const colors = getFactionPalette(faction);
+  const key = [colors.primary, colors.secondary, colors.banner].map((value) => value.toString(16)).join('|');
+  const cached = mongolBuildingMaterialCache.get(key);
+  if (cached) return cached;
+  const woodMaps = getTimberWoodMaps();
+  const stoneMaps = getStoneMasonryMaps();
+  const result: MongolBuildingMaterials = {
+    timber: new THREE.MeshStandardMaterial({
+      color: 0x754521, map: woodMaps.map, normalMap: woodMaps.normalMap,
+      roughnessMap: woodMaps.roughnessMap || null, roughness: 0.88,
+    }),
+    felt: new THREE.MeshStandardMaterial({ color: 0x9a6b3c, roughness: 0.94 }),
+    darkFelt: new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.98 }),
+    stone: new THREE.MeshStandardMaterial({
+      color: 0x78716c, map: stoneMaps.map, normalMap: stoneMaps.normalMap,
+      roughnessMap: stoneMaps.roughnessMap || null, roughness: 0.94,
+    }),
+    rope: new THREE.MeshStandardMaterial({ color: 0xd6b879, roughness: 0.86 }),
+    iron: new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.38, metalness: 0.78 }),
+    bronze: new THREE.MeshStandardMaterial({ color: 0xc49a4a, roughness: 0.34, metalness: 0.72 }),
+    banner: new THREE.MeshStandardMaterial({ color: colors.banner, roughness: 0.78, side: THREE.DoubleSide }),
+    paleBanner: new THREE.MeshStandardMaterial({ color: 0xf1e4c8, roughness: 0.88, side: THREE.DoubleSide }),
+  };
+  mongolBuildingMaterialCache.set(key, result);
+  return result;
+}
+
+function addMongolGer(
+  parent: THREE.Group,
+  x: number,
+  z: number,
+  radius: number,
+  wallHeight: number,
+  materials: MongolBuildingMaterials,
+  roofMaterial: THREE.MeshStandardMaterial = materials.felt,
+): THREE.Group {
+  const ger = new THREE.Group();
+  ger.name = 'mongolGer';
+  ger.position.set(x, 0, z);
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.06, radius * 1.12, 0.2, 18), materials.stone);
+  dais.position.y = 0.1;
+  dais.receiveShadow = true;
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.98, wallHeight, 18), roofMaterial);
+  wall.position.y = 0.2 + wallHeight * 0.5;
+  wall.castShadow = true;
+  const roofHeight = radius * 0.72;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(radius * 1.08, roofHeight, 18), roofMaterial);
+  roof.position.y = 0.2 + wallHeight + roofHeight * 0.5;
+  roof.castShadow = true;
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.99, 0.045, 7, 22), materials.rope);
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = 0.2 + wallHeight * 0.75;
+  const roofRing = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.2, 0.035, 6, 16), materials.bronze);
+  roofRing.rotation.x = Math.PI / 2;
+  roofRing.position.y = 0.2 + wallHeight + roofHeight * 0.83;
+  const smokeVent = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.12, radius * 0.16, 0.18, 10), materials.timber);
+  smokeVent.position.y = 0.2 + wallHeight + roofHeight * 0.94;
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.48, wallHeight * 0.62, 0.13), materials.timber);
+  doorFrame.position.set(0, 0.2 + wallHeight * 0.3, radius * 0.98);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.34, wallHeight * 0.52, 0.05), materials.darkFelt);
+  door.position.set(0, doorFrame.position.y, radius * 1.035);
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.58, 0.11, 0.16), materials.bronze);
+  lintel.position.set(0, 0.2 + wallHeight * 0.62, radius * 1.02);
+  ger.add(dais, wall, roof, belt, roofRing, smokeVent, doorFrame, door, lintel);
+  parent.add(ger);
+  return ger;
+}
+
+function addMongolBuildingSulde(
+  parent: THREE.Group,
+  x: number,
+  z: number,
+  height: number,
+  materials: MongolBuildingMaterials,
+  pale = false,
+): void {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, height, 8), materials.timber);
+  pole.position.set(x, height * 0.5, z);
+  pole.castShadow = true;
+  const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.56, 6), materials.bronze);
+  crossbar.rotation.z = Math.PI / 2;
+  crossbar.position.set(x, height * 0.75, z);
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.7, 4, 4), pale ? materials.paleBanner : materials.banner);
+  cloth.position.set(x + 0.22, height * 0.64, z);
+  cloth.rotation.z = -0.08;
+  cloth.name = 'animatedFlag';
+  const finial = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.2, 5), materials.bronze);
+  finial.position.set(x, height + 0.1, z);
+  parent.add(pole, crossbar, cloth, finial);
+}
+
+function addMongolBuildingBadge(
+  group: THREE.Group,
+  faction: FactionId,
+  label: string,
+  icon: string,
+  hp: string,
+  y: number,
+): void {
+  const colors = getFactionPalette(faction);
+  const badge = createBadgeSprite(
+    colors.isHostile ? (colors.labelPrefix || '') + label : label,
+    icon, hp, 1, colors.isHostile, false
+  );
+  badge.position.set(0, y, 0);
+  badge.name = 'bldgBadge';
+  group.add(badge);
+}
+
+function createMongolArcheryRangeMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolSteppeArcheryYard';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 3.55);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.28, 5.2), materials.timber);
+  platform.position.y = 0.14;
+  platform.receiveShadow = true;
+  group.add(platform);
+  addMongolGer(group, -1.9, -1.15, 1.14, 1.42, materials);
+  // Open-sided bowyer awning: visible from above without hiding target lanes.
+  [-2.75, -0.45, 1.8, 2.75].forEach((x, index) => {
+    const z = index < 2 ? -1.7 : 1.48;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 2.55, 7), materials.timber);
+    post.position.set(x, 1.4, z);
+    post.castShadow = true;
+    group.add(post);
+  });
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.17, 0.18), materials.timber);
+  ridge.position.set(0.1, 2.67, -0.12);
+  group.add(ridge);
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.12, 1.7), materials.darkFelt);
+  awning.position.set(0.1, 2.56, -0.1);
+  awning.rotation.z = -0.025;
+  awning.castShadow = true;
+  group.add(awning);
+  // Three separate mounted targets and bow racks identify the mounted-archery training role.
+  [-0.35, 1.05, 2.42].forEach((x, index) => {
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.2, 0.12), materials.timber);
+    stand.position.set(x, 0.78, 1.62);
+    const crossFoot = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.12, 0.2), materials.timber);
+    crossFoot.position.set(x, 0.16, 1.62);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 20), materials.felt);
+    disc.rotation.x = Math.PI / 2;
+    disc.position.set(x, 1.35, 1.72);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 6, 22), materials.paleBanner);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 1.35, 1.79);
+    const bull = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.11, 16), index === 1 ? materials.banner : materials.bronze);
+    bull.rotation.x = Math.PI / 2;
+    bull.position.set(x, 1.35, 1.82);
+    group.add(stand, crossFoot, disc, ring, bull);
+  });
+  const bowRack = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.14), materials.timber);
+  bowRack.position.set(2.65, 1.05, -1.25);
+  const arrowBundle = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.72, 10), materials.rope);
+  arrowBundle.position.set(2.65, 0.55, -1.25);
+  group.add(bowRack, arrowBundle);
+  [-0.18, 0, 0.18].forEach((offset) => {
+    const arrow = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.82, 5), materials.timber);
+    arrow.position.set(2.65 + offset, 1.5, -1.25);
+    arrow.rotation.z = offset * 0.35;
+    group.add(arrow);
+  });
+  addMongolBuildingSulde(group, -3.05, -2.0, 4.1, materials);
+  addMongolBuildingBadge(group, faction, '草原騎射訓練場', '🏹', '1200', 4.85);
+  return group;
+}
+
+function createMongolStableMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolSteppeHorseCorral';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 3.8);
+  const platform = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.25, 0.28, 24), materials.stone);
+  platform.position.y = 0.14;
+  group.add(platform);
+  // A circular corral replaces the Western three-bay stable.
+  for (let i = 0; i < 18; i++) {
+    const angle = i / 18 * Math.PI * 2;
+    const x = Math.cos(angle) * 2.35;
+    const z = Math.sin(angle) * 2.05;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, 1.38, 7), materials.timber);
+    post.position.set(x, 0.78, z);
+    post.rotation.z = Math.cos(angle) * -0.06;
+    group.add(post);
+  }
+  const railUpper = new THREE.Mesh(new THREE.TorusGeometry(2.23, 0.075, 7, 36), materials.timber);
+  railUpper.rotation.x = Math.PI / 2;
+  railUpper.scale.set(1, 0.88, 1);
+  railUpper.position.y = 1.05;
+  const railLower = new THREE.Mesh(new THREE.TorusGeometry(2.23, 0.06, 7, 36), materials.rope);
+  railLower.rotation.x = Math.PI / 2;
+  railLower.scale.set(1, 0.88, 1);
+  railLower.position.y = 0.55;
+  group.add(railUpper, railLower);
+  addMongolGer(group, 1.78, -1.28, 1.14, 1.4, materials, materials.darkFelt);
+  // Tether posts, troughs and travelling tack make the corral read as a working horse camp.
+  [-1.25, 0.0, 1.25].forEach((x) => {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.08, 1.55, 7), materials.timber);
+    post.position.set(x - 0.55, 0.9, 2.12);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 5, 12), materials.iron);
+    ring.position.set(x - 0.55, 1.25, 2.12);
+    ring.rotation.y = Math.PI / 2;
+    const trough = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.23, 0.38), materials.darkFelt);
+    trough.position.set(x - 0.55, 0.43, 2.45);
+    group.add(post, ring, trough);
+  });
+  const hayMat = new THREE.MeshStandardMaterial({ color: 0xd6b45f, roughness: 0.98 });
+  [-1.6, -0.8, 0.0].forEach((x, i) => {
+    const hay = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.29, 0.58, 9), hayMat);
+    hay.rotation.z = Math.PI / 2;
+    hay.position.set(x, 0.48, -1.55 + i * 0.08);
+    group.add(hay);
+  });
+  const tackRack = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.12, 0.16), materials.timber);
+  tackRack.position.set(-2.5, 1.45, -0.2);
+  for (let i = 0; i < 3; i++) {
+    const saddle = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.065, 7, 12, Math.PI), materials.rope);
+    saddle.position.set(-2.9 + i * 0.42, 1.05, 0.0);
+    saddle.rotation.z = Math.PI;
+    group.add(saddle);
+  }
+  group.add(tackRack);
+  addMongolBuildingSulde(group, -2.9, -2.45, 4.25, materials);
+  addMongolBuildingBadge(group, faction, '草原戰馬圍場', '🐎', '1250', 5.1);
+  return group;
+}
+
+function createMongolSiegeWorkshopMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolMobileSiegeCamp';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 4.05);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(7.1, 0.3, 5.6), materials.stone);
+  platform.position.y = 0.15;
+  group.add(platform);
+  addMongolGer(group, -2.0, -1.25, 1.18, 1.45, materials, materials.darkFelt);
+  // Open timber A-frame with a counterweighted traction trebuchet and a field-built ram.
+  [-1, 1].forEach((side) => {
+    const support = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.65, 0.25), materials.timber);
+    support.position.set(side * 1.3, 1.95, -0.05);
+    support.rotation.z = side * -0.13;
+    group.add(support);
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.3, 0.2), materials.rope);
+    brace.position.set(side * 0.86, 1.25, 0.48);
+    brace.rotation.z = side * 0.58;
+    group.add(brace);
+  });
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.3, 10), materials.iron);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.set(0, 1.85, 0.1);
+  const throwArm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 3.75, 0.2), materials.timber);
+  throwArm.position.set(0, 2.35, 0.1);
+  throwArm.rotation.z = -0.55;
+  const counterweight = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.56, 0.62), materials.stone);
+  counterweight.position.set(-0.93, 3.75, 0.1);
+  const slingRope = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.035, 5, 14), materials.rope);
+  slingRope.position.set(1.62, 3.4, 0.1);
+  group.add(axle, throwArm, counterweight, slingRope);
+  // Two iron-rimmed cart wheels and a heavy ram log signal mobile siege manufacture.
+  [-1.55, 1.55].forEach((x) => {
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.1, 8, 18), materials.timber);
+    wheel.position.set(x, 0.82, 2.0);
+    wheel.rotation.y = Math.PI / 2;
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.36, 10), materials.iron);
+    hub.rotation.z = Math.PI / 2;
+    hub.position.copy(wheel.position);
+    group.add(wheel, hub);
+  });
+  const ramLog = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 3.3, 12), materials.timber);
+  ramLog.rotation.z = Math.PI / 2;
+  ramLog.position.set(0, 0.92, 2.0);
+  const ramBand1 = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.045, 6, 14), materials.iron);
+  const ramBand2 = ramBand1.clone();
+  ramBand1.rotation.y = Math.PI / 2;
+  ramBand2.rotation.y = Math.PI / 2;
+  ramBand1.position.set(-1.0, 0.92, 2.0);
+  ramBand2.position.set(1.0, 0.92, 2.0);
+  const ramTip = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 8), materials.iron);
+  ramTip.rotation.z = -Math.PI / 2;
+  ramTip.position.set(1.86, 0.92, 2.0);
+  group.add(ramLog, ramBand1, ramBand2, ramTip);
+  addMongolBuildingSulde(group, 2.8, -2.2, 5.4, materials);
+  addMongolBuildingBadge(group, faction, '汗國野戰攻城工坊', '⚙️', '1450', 6.0);
+  return group;
+}
+
+function createMongolGranaryMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolRaisedGrainStore';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 1.9);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.25, 3.0), materials.stone);
+  platform.position.y = 0.13;
+  group.add(platform);
+  // Raised grain platform keeps sacks away from damp ground and is distinct from a European barn.
+  [-1, 1].forEach((x) => [-1, 1].forEach((z) => {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 1.35, 8), materials.timber);
+    leg.position.set(x * 1.15, 0.92, z * 0.88);
+    group.add(leg);
+  }));
+  const store = new THREE.Mesh(new THREE.BoxGeometry(2.55, 1.35, 2.05), materials.felt);
+  store.position.y = 1.75;
+  store.castShadow = true;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.85, 0.82, 4), materials.darkFelt);
+  roof.position.y = 2.86;
+  roof.rotation.y = Math.PI / 4;
+  const ridge = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.13, 0.16), materials.timber);
+  ridge.position.set(0, 3.25, 0);
+  group.add(store, roof, ridge);
+  // Ladder and lidded grain jars make storage use visible at the camera's normal zoom.
+  const ladderSideA = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.75, 6), materials.timber);
+  const ladderSideB = ladderSideA.clone();
+  ladderSideA.position.set(-1.55, 1.12, 1.2);
+  ladderSideB.position.set(-1.1, 1.12, 1.2);
+  for (let i = 0; i < 5; i++) {
+    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.46, 6), materials.rope);
+    rung.rotation.z = Math.PI / 2;
+    rung.position.set(-1.325, 0.48 + i * 0.3, 1.2);
+    group.add(rung);
+  }
+  group.add(ladderSideA, ladderSideB);
+  for (let i = 0; i < 3; i++) {
+    const sack = new THREE.Mesh(new THREE.SphereGeometry(0.23, 8, 6), materials.rope);
+    sack.scale.set(1.1, 0.78, 0.92);
+    sack.position.set(-0.7 + i * 0.62, 0.5, 1.45);
+    group.add(sack);
+  }
+  addMongolBuildingSulde(group, 1.65, -1.15, 4.1, materials, true);
+  addMongolBuildingBadge(group, faction, '草原糧秣倉', '🌾', '', 4.0);
+  return group;
+}
+
+function createMongolCampMesh(type: 'lumber' | 'mining', faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = type === 'lumber' ? 'mongolNomadLumberOutpost' : 'mongolNomadOreOutpost';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 2.45);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.18, 3.0), materials.timber);
+  platform.position.y = 0.09;
+  group.add(platform);
+  addMongolGer(group, -0.75, -0.45, 0.88, 1.12, materials);
+  if (type === 'lumber') {
+    // Log stacks, a saw horse and a chopping stump visually identify the timber camp.
+    [0.25, 0.52, 0.79].forEach((y, i) => {
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.14, 1.4, 9), materials.timber);
+      log.rotation.z = Math.PI / 2;
+      log.position.set(1.05, y, 0.92 - i * 0.06);
+      group.add(log);
+    });
+    const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.42, 10), materials.timber);
+    stump.position.set(-1.22, 0.3, 1.05);
+    const axeHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.7, 6), materials.timber);
+    axeHandle.position.set(-1.2, 0.72, 1.05);
+    axeHandle.rotation.z = 0.5;
+    const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.08), materials.iron);
+    axeHead.position.set(-1.0, 0.95, 1.05);
+    group.add(stump, axeHandle, axeHead);
+    addMongolBuildingBadge(group, faction, '遊牧伐木營地', '🪓', '', 3.75);
+  } else {
+    // Low quarry props and an ore cart replace the generic timber shed and mine trolley.
+    const adit = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.12, 8, 16, Math.PI), materials.timber);
+    adit.position.set(1.05, 0.65, -0.75);
+    adit.rotation.z = Math.PI;
+    const darkOpening = new THREE.Mesh(new THREE.CircleGeometry(0.46, 18), materials.darkFelt);
+    darkOpening.position.set(1.05, 0.64, -0.72);
+    darkOpening.rotation.y = Math.PI;
+    group.add(adit, darkOpening);
+    const cart = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.42, 0.68), materials.timber);
+    cart.position.set(1.06, 0.42, 1.02);
+    const wheelA = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.045, 6, 12), materials.iron);
+    const wheelB = wheelA.clone();
+    wheelA.position.set(0.72, 0.2, 1.02);
+    wheelB.position.set(1.4, 0.2, 1.02);
+    wheelA.rotation.y = Math.PI / 2;
+    wheelB.rotation.y = Math.PI / 2;
+    const ore1 = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), materials.bronze);
+    const ore2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), materials.stone);
+    ore1.position.set(0.92, 0.78, 1.0);
+    ore2.position.set(1.23, 0.74, 1.08);
+    group.add(cart, wheelA, wheelB, ore1, ore2);
+    addMongolBuildingBadge(group, faction, '草原礦石採集營', '⛏️', '', 3.75);
+  }
+  addMongolBuildingSulde(group, -1.45, -1.25, 3.65, materials);
+  return group;
+}
+
 export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
+  const mongolProfile = colors.civilization === 'mongol' ? getMongolBuildingModelProfile('archery_range') : null;
+  if (mongolProfile) return createMongolArcheryRangeMesh(faction, mongolProfile);
 
   addContactShadow(group, 3.2);
 
@@ -1642,6 +2053,8 @@ export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
 export function createStableMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
+  const mongolProfile = colors.civilization === 'mongol' ? getMongolBuildingModelProfile('stable') : null;
+  if (mongolProfile) return createMongolStableMesh(faction, mongolProfile);
   const woodMaps = getTimberWoodMaps();
   const stoneMaps = getStoneMasonryMaps();
   const roofMaps = getRoofShingleMaps();
@@ -1728,6 +2141,8 @@ export function createStableMesh(faction: FactionId): THREE.Group {
 export function createSiegeWorkshopMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
+  const mongolProfile = colors.civilization === 'mongol' ? getMongolBuildingModelProfile('siege_workshop') : null;
+  if (mongolProfile) return createMongolSiegeWorkshopMesh(faction, mongolProfile);
   const woodMaps = getTimberWoodMaps();
   const stoneMaps = getStoneMasonryMaps();
   const roofMaps = getRoofShingleMaps();
@@ -1839,6 +2254,8 @@ const darkMatForSiege = new THREE.MeshStandardMaterial({ color: 0x1c1917, roughn
 export function createGranaryMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
+  const mongolProfile = colors.civilization === 'mongol' ? getMongolBuildingModelProfile('granary') : null;
+  if (mongolProfile) return createMongolGranaryMesh(faction, mongolProfile);
   addContactShadow(group, 1.4);
   const wood = sharedWoodScaffoldMat;
   const roof = new THREE.MeshStandardMaterial({ color: colors.primary, roughness: 0.7 });
@@ -2214,6 +2631,8 @@ export function createFarmMesh(): THREE.Group {
 export function createCampMesh(type: 'lumber' | 'mining', faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
+  const mongolProfile = colors.civilization === 'mongol' ? getMongolBuildingModelProfile(type === 'lumber' ? 'lumber_camp' : 'mining_camp') : null;
+  if (mongolProfile) return createMongolCampMesh(type, faction, mongolProfile);
 
   addContactShadow(group, 2.35);
 
