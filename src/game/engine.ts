@@ -12068,11 +12068,15 @@ export class RtsEngine {
           if (queuedDef && queuedDef.category in queuedRoleCounts) {
             queuedRoleCounts[queuedDef.category as keyof typeof queuedRoleCounts]++;
           }
+          // Mangudai are cavalry for combat counters and mounted archers for composition planning.
+          if (queuedDef && queuedDef.category !== 'ranged' && isMongolRangedSupportUnit(queuedUnitId, queuedDef.category)) {
+            queuedRoleCounts.ranged++;
+          }
         }
       }
       const roleCounts = {
         melee: aiUnits.filter((unit) => unit.unitDef.category === 'melee').length + queuedRoleCounts.melee,
-        ranged: aiUnits.filter((unit) => unit.unitDef.category === 'ranged').length + queuedRoleCounts.ranged,
+        ranged: aiUnits.filter((unit) => isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category)).length + queuedRoleCounts.ranged,
         cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
         siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
       };
