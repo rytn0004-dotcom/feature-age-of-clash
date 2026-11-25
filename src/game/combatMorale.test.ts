@@ -153,3 +153,27 @@ test('leadership resistance also reduces the shock of a commander casualty', () 
   });
   assert.ok(supported > unsupported);
 });
+
+
+test('morale combat modifiers reuse immutable presets for every morale band', () => {
+  const steady = getMoraleCombatModifiers(100);
+  const shaken = getMoraleCombatModifiers(55);
+  const broken = getMoraleCombatModifiers(20);
+  const critical = getMoraleCombatModifiers(5);
+
+  assert.equal(getMoraleCombatModifiers(85), steady);
+  assert.equal(getMoraleCombatModifiers(50), shaken);
+  assert.equal(getMoraleCombatModifiers(15), broken);
+  assert.equal(getMoraleCombatModifiers(0), critical);
+  assert.notEqual(steady, shaken);
+  assert.notEqual(broken, critical);
+  assert.equal(Object.isFrozen(steady), true);
+  assert.equal(Object.isFrozen(shaken), true);
+  assert.equal(Object.isFrozen(broken), true);
+  assert.equal(Object.isFrozen(critical), true);
+  assert.deepEqual(critical, {
+    state: 'broken',
+    movementSpeedMultiplier: 0.76,
+    attackRateMultiplier: 0.55,
+  });
+});

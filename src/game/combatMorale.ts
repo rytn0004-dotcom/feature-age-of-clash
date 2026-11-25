@@ -16,10 +16,31 @@ export interface MoraleImpactInput {
 }
 
 export interface MoraleCombatModifiers {
-  state: MoraleState;
-  movementSpeedMultiplier: number;
-  attackRateMultiplier: number;
+  readonly state: MoraleState;
+  readonly movementSpeedMultiplier: number;
+  readonly attackRateMultiplier: number;
 }
+
+const MORALE_STEADY: MoraleCombatModifiers = Object.freeze({
+  state: 'steady',
+  movementSpeedMultiplier: 1,
+  attackRateMultiplier: 1,
+});
+const MORALE_SHAKEN: MoraleCombatModifiers = Object.freeze({
+  state: 'shaken',
+  movementSpeedMultiplier: 0.94,
+  attackRateMultiplier: 0.9,
+});
+const MORALE_BROKEN: MoraleCombatModifiers = Object.freeze({
+  state: 'broken',
+  movementSpeedMultiplier: 0.82,
+  attackRateMultiplier: 0.75,
+});
+const MORALE_CRITICAL: MoraleCombatModifiers = Object.freeze({
+  state: 'broken',
+  movementSpeedMultiplier: 0.76,
+  attackRateMultiplier: 0.55,
+});
 
 export interface MoraleRoutEligibility {
   morale: number;
@@ -72,16 +93,10 @@ export function applyMoraleImpact(input: MoraleImpactInput): number {
 /** Low morale gradually damages combat tempo without changing unit base statistics. */
 export function getMoraleCombatModifiers(morale: number): MoraleCombatModifiers {
   const score = clampMorale(morale);
-  if (score >= 70) {
-    return { state: 'steady', movementSpeedMultiplier: 1, attackRateMultiplier: 1 };
-  }
-  if (score >= 35) {
-    return { state: 'shaken', movementSpeedMultiplier: 0.94, attackRateMultiplier: 0.9 };
-  }
-  if (score >= 12) {
-    return { state: 'broken', movementSpeedMultiplier: 0.82, attackRateMultiplier: 0.75 };
-  }
-  return { state: 'broken', movementSpeedMultiplier: 0.76, attackRateMultiplier: 0.55 };
+  if (score >= 70) return MORALE_STEADY;
+  if (score >= 35) return MORALE_SHAKEN;
+  if (score >= 12) return MORALE_BROKEN;
+  return MORALE_CRITICAL;
 }
 
 /** Human-issued orders retain control; only AI combat troops can be forced to rout. */

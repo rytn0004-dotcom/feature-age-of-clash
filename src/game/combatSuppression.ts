@@ -3,10 +3,31 @@ import type { UnitCategory } from '../types/game';
 export type SuppressionState = 'clear' | 'pressured' | 'suppressed' | 'pinned';
 
 export interface SuppressionCombatModifiers {
-  state: SuppressionState;
-  movementSpeedMultiplier: number;
-  attackRateMultiplier: number;
+  readonly state: SuppressionState;
+  readonly movementSpeedMultiplier: number;
+  readonly attackRateMultiplier: number;
 }
+
+const SUPPRESSION_CLEAR: SuppressionCombatModifiers = Object.freeze({
+  state: 'clear',
+  movementSpeedMultiplier: 1,
+  attackRateMultiplier: 1,
+});
+const SUPPRESSION_PRESSURED: SuppressionCombatModifiers = Object.freeze({
+  state: 'pressured',
+  movementSpeedMultiplier: 0.97,
+  attackRateMultiplier: 0.94,
+});
+const SUPPRESSION_SUPPRESSED: SuppressionCombatModifiers = Object.freeze({
+  state: 'suppressed',
+  movementSpeedMultiplier: 0.92,
+  attackRateMultiplier: 0.82,
+});
+const SUPPRESSION_PINNED: SuppressionCombatModifiers = Object.freeze({
+  state: 'pinned',
+  movementSpeedMultiplier: 0.84,
+  attackRateMultiplier: 0.66,
+});
 
 export function applySuppressionImpact(
   currentSuppression: number,
@@ -62,14 +83,8 @@ export function getSuppressionCombatModifiers(suppression: number): SuppressionC
   const score = Number.isFinite(suppression)
     ? Math.max(0, Math.min(100, suppression))
     : 0;
-  if (score >= 75) {
-    return { state: 'pinned', movementSpeedMultiplier: 0.84, attackRateMultiplier: 0.66 };
-  }
-  if (score >= 45) {
-    return { state: 'suppressed', movementSpeedMultiplier: 0.92, attackRateMultiplier: 0.82 };
-  }
-  if (score >= 20) {
-    return { state: 'pressured', movementSpeedMultiplier: 0.97, attackRateMultiplier: 0.94 };
-  }
-  return { state: 'clear', movementSpeedMultiplier: 1, attackRateMultiplier: 1 };
+  if (score >= 75) return SUPPRESSION_PINNED;
+  if (score >= 45) return SUPPRESSION_SUPPRESSED;
+  if (score >= 20) return SUPPRESSION_PRESSURED;
+  return SUPPRESSION_CLEAR;
 }

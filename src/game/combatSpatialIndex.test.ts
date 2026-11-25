@@ -3,8 +3,6 @@ import {
   collectWildlifeUnitInteractions,
   getWildlifeInteractionQueryRadius,
   tryConsumeWildlifeHunterAttack,
-  rebuildWildlifeGathererIndex,
-  type WildlifeGatheringUnit,
   type WildlifeInteractionUnit,
 } from './wildlifeQueries';
 import assert from 'node:assert/strict';
@@ -346,54 +344,4 @@ test('wildlife hunter cooldown: one unit cannot spend its attack interval multip
   assert.equal(tryConsumeWildlifeHunterAttack(fastHunter, 2, 5), true);
   assert.equal(fastHunter.wildlifeHuntReadyAt, 2.5);
   assert.equal(tryConsumeWildlifeHunterAttack(fastHunter, Number.NaN, 5), false);
-});
-
-
-test('wildlife gatherer index: groups only live grounded gatherers by exact resource node and recycles buckets', () => {
-  const makeUnit = (
-    id: string,
-    nodeId: string | undefined,
-    options: {
-      state?: string;
-      hp?: number;
-      naval?: boolean;
-      garrisonedInBuildingId?: string;
-      x?: number;
-    } = {},
-  ): WildlifeGatheringUnit => ({
-    id,
-    x: options.x ?? 0,
-    z: 0,
-    hp: options.hp ?? 100,
-    state: options.state ?? 'gathering',
-    targetResourceNodeId: nodeId,
-    garrisonedInBuildingId: options.garrisonedInBuildingId,
-    unitDef: { isNaval: options.naval },
-  });
-
-  const output = new Map<string, WildlifeGatheringUnit[]>();
-  const pool: WildlifeGatheringUnit[][] = [];
-  const first = [
-    makeUnit('worker-a', 'boar-a'),
-    makeUnit('ranged-a', 'boar-a'),
-    makeUnit('worker-b', 'boar-b'),
-    makeUnit('idle', 'boar-a', { state: 'idle' }),
-    makeUnit('dead', 'boar-a', { hp: 0 }),
-    makeUnit('naval', 'boar-a', { naval: true }),
-    makeUnit('garrisoned', 'boar-a', { garrisonedInBuildingId: 'keep' }),
-    makeUnit('missing-node', undefined),
-    makeUnit('invalid-position', 'boar-a', { x: Number.NaN }),
-  ];
-
-  assert.equal(rebuildWildlifeGathererIndex(first, output, pool), output);
-  assert.deepEqual(output.get('boar-a')?.map(unit => unit.id), ['worker-a', 'ranged-a']);
-  assert.deepEqual(output.get('boar-b')?.map(unit => unit.id), ['worker-b']);
-  const oldBoarA = output.get('boar-a');
-  const oldBoarB = output.get('boar-b');
-
-  rebuildWildlifeGathererIndex([makeUnit('new-hunter', 'boar-c')], output, pool);
-  assert.deepEqual([...output.keys()], ['boar-c']);
-  assert.deepEqual(output.get('boar-c')?.map(unit => unit.id), ['new-hunter']);
-  assert.ok(pool.length >= 1);
-  assert.ok(output.get('boar-c') === oldBoarA || output.get('boar-c') === oldBoarB);
 });

@@ -54,3 +54,27 @@ test('invalid inputs safely return neutral suppression', () => {
     attackRateMultiplier: 1,
   });
 });
+
+
+test('suppression combat modifiers reuse immutable presets for every pressure band', () => {
+  const clear = getSuppressionCombatModifiers(0);
+  const pressured = getSuppressionCombatModifiers(30);
+  const suppressed = getSuppressionCombatModifiers(55);
+  const pinned = getSuppressionCombatModifiers(90);
+
+  assert.equal(getSuppressionCombatModifiers(10), clear);
+  assert.equal(getSuppressionCombatModifiers(40), pressured);
+  assert.equal(getSuppressionCombatModifiers(60), suppressed);
+  assert.equal(getSuppressionCombatModifiers(100), pinned);
+  assert.notEqual(clear, pressured);
+  assert.notEqual(suppressed, pinned);
+  assert.equal(Object.isFrozen(clear), true);
+  assert.equal(Object.isFrozen(pressured), true);
+  assert.equal(Object.isFrozen(suppressed), true);
+  assert.equal(Object.isFrozen(pinned), true);
+  assert.deepEqual(pinned, {
+    state: 'pinned',
+    movementSpeedMultiplier: 0.84,
+    attackRateMultiplier: 0.66,
+  });
+});
