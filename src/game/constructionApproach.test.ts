@@ -39,6 +39,35 @@ test('construction targets are globally matched to the closest distinct workers'
 
   assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [1, 0]);
 });
+test('construction worker assignment minimizes total travel instead of greedily taking the nearest pair', () => {
+  const workers = [{ x: 0, z: 0 }, { x: 3, z: 0 }];
+  const targets = [{ x: 2, z: 0 }, { x: 5, z: 0 }];
+
+  // Greedy matching takes worker 1 for target 0 (cost 1), leaving a long trip
+  // for worker 0 (cost 25). The global optimum is 4 + 4.
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [0, 1]);
+});
+
+test('construction matching handles more workers than targets without assigning a worker twice', () => {
+  const workers = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 2, z: 0 }];
+  const targets = [{ x: 1, z: 0 }, { x: 9, z: 0 }];
+
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [0, 1]);
+});
+
+test('construction matching leaves invalid coordinates unassigned and preserves original indices', () => {
+  const workers = [
+    { x: Number.NaN, z: 0 },
+    { x: 4, z: 0 },
+    { x: 100, z: Number.POSITIVE_INFINITY },
+  ];
+  const targets = [
+    { x: 5, z: 0 },
+    { x: Number.NaN, z: 3 },
+  ];
+
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [1, -1]);
+});
 
 test('construction matching leaves excess targets unassigned without duplicating workers', () => {
   const workers = [{ x: 0, z: 0 }];
