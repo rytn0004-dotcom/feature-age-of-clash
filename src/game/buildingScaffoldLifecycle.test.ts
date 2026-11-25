@@ -139,8 +139,7 @@ test('building scaffold lifecycle: a late-added construction overlay is removed 
   assert.equal(building.userData.completedScaffoldChildCount, 1);
 
   // Civilization/age model refreshes may attach a temporary facade after the
-  // initial construction cleanup. A changed root child count must trigger one
-  // new scan rather than leaving the overlay in the finished building.
+  // initial cleanup. A tracked structural change must trigger one new scan.
   const lateFacade = new Group();
   lateFacade.name = 'originalArchitectureFacadeKit';
   lateFacade.userData.removeOnConstructionComplete = true;
@@ -161,4 +160,69 @@ test('building scaffold lifecycle: a late-added construction overlay is removed 
   removeBuildingScaffoldFromRoot(building);
   assert.equal(traverseCalls, 2, 'unchanged completed roots must not be rescanned each frame');
   material.dispose();
+});
+
+
+test('building scaffold lifecycle: nested late overlays invalidate cleanup without changing root child count', () => {
+  const building = new Group();
+  const architecture = new Group();
+  architecture.name = 'architectureRoot';
+  const facadeSlot = new Group();
+  facadeSlot.name = 'facadeSlot';
+  architecture.add(facadeSlot);
+  building.add(architecture);
+
+  const originalTraverse = building.traverse.bind(building);
+  let traverseCalls = 0;
+  building.traverse = (callback) => {
+    traverseCalls += 1;
+    return originalTraverse(callback);
+  };
+
+  removeBuildingScaffoldFromRoot(building);
+  assert.equal(traverseCalls, 1);
+  const rootChildCount = building.children.length;
+
+  const nestedFacade = new Group();
+  nestedFacade.name = 'originalArchitectureFacadeKit';
+  nestedFacade.userData.removeOnConstructionComplete = true;
+  nestedFacade.userData.ownsGeometry = false;
+  const sharedGeometry = createTrackedGeometry();
+  const material = new MeshBasicMaterial();
+  nestedFacade.add(new Mesh(sharedGeometry.geometry, material));
+
+  // The overlay is inserted two levels below the building root, so the root
+  // child count remains unchanged. The tracked parent.add() must still dirty it.
+  facadeSlot.add(nestedFacade);
+  assert.equal(building.children.length, rootChildCount);
+
+  removeBuildingScaffoldFromRoot(building);
+
+  assert.equal(traverseCalls, 2);
+  assert.equal(nestedFacade.parent, null);
+  assert.equal(building.getObjectByName('originalArchitectureFacadeKit'), undefined);
+  assert.equal(sharedGeometry.wasDisposed(), false, 'shared facade geometry must remain cached');
+
+  removeBuildingScaffoldFromRoot(building);
+  assert.equal(traverseCalls, 2, 'stable completed buildings must not be rescanned');
+  material.dispose();
+});
+
+test('building scaffold lifecycle: newly attached nested containers are tracked for later child additions', () => {
+  const building = new Group();
+  removeBuildingScaffoldFromRoot(building);
+
+  const lateContainer = new Group();
+  lateContainer.name = 'lateArchitectureContainer';
+  building.add(lateContainer);
+  removeBuildingScaffoldFromRoot(building);
+
+  const lateScaffold = new Group();
+  lateScaffold.name = 'scaffoldNestedOverlay';
+  lateContainer.add(lateScaffold);
+  removeBuildingScaffoldFromRoot(building);
+
+  assert.equal(lateScaffold.parent, null);
+  assert.equal(building.getObjectByName('scaffoldNestedOverlay'), undefined);
+  assert.equal(building.userData.completedScaffoldRemoved, true);
 });
