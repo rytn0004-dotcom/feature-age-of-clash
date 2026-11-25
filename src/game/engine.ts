@@ -6,8 +6,8 @@ import { createUnitLodHighDetailSet } from './unitLodSelection';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
+  applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
-  DELETE_HOLD_DURATION_MS,
   getDeleteHoldProgress,
 } from './entityActions';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
@@ -9657,8 +9657,13 @@ export class RtsEngine {
         const buildSpeed =
           (constructionSpeedMultiplier * perBuilderWorkShare) /
           (bldg.buildingDef.buildTime * PRODUCTION_TIME_SCALE);
-        bldg.buildProgress += buildSpeed * dt;
-        bldg.hp = Math.round(bldg.maxHp * Math.min(1, bldg.buildProgress));
+        const previousProgress = bldg.buildProgress;
+        bldg.buildProgress = Math.min(1, bldg.buildProgress + buildSpeed * dt);
+        bldg.hp = applyConstructionWorkToHealth(
+          bldg.hp,
+          bldg.maxHp,
+          bldg.buildProgress - previousProgress,
+        );
       }
 
       // Advance unified carpenter hammer cycle and trigger impact FX cleanly at downstroke contact
@@ -9726,7 +9731,8 @@ export class RtsEngine {
         this.constructionApproachFailedWorkersByBuilding.delete(bldg.id);
         if (bldg.buildingDef.isWall) this.wallEndpointIndexDirty = true;
         bldg.buildProgress = 1;
-        bldg.hp = bldg.maxHp;
+        // Do not heal away damage sustained during construction.
+        bldg.hp = Math.min(bldg.hp, bldg.maxHp);
         (bldg as any)._constructImpulse = 1.35;
         const mesh = this.buildingMeshes.get(bldg.id);
         if (mesh) {
