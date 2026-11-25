@@ -390,6 +390,7 @@ export interface AiFieldEngineeringReadiness {
 export function resolveAiKnightUnitId(civilizationId: string): string {
   if (civilizationId === 'anime') return 'scout_rider';
   if (civilizationId === 'fantasy') return 'fantasy_paladin';
+  if (civilizationId === 'mongol') return 'mongol_keshik';
   return 'knight';
 }
 

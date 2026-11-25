@@ -2670,6 +2670,8 @@ test('AI army composition: role counters prevent single-unit-type overproduction
   assert.equal(evaluateCondition(siegeUnderCap, snapshot), true);
   assert.equal(resolveAiKnightUnitId('anime'), 'scout_rider');
   assert.equal(resolveAiKnightUnitId('fantasy'), 'fantasy_paladin');
+  assert.equal(resolveAiKnightUnitId('mongol'), 'mongol_keshik');
+  assert.equal(getCivilizationConfig('mongol').trainableByBuilding.stable?.includes(resolveAiKnightUnitId('mongol')), true);
   assert.equal(resolveAiKnightUnitId('medieval'), 'knight');
 });
 
