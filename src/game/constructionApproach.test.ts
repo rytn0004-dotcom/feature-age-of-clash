@@ -48,6 +48,14 @@ test('construction worker assignment minimizes total travel instead of greedily 
   // for worker 0 (cost 25). The global optimum is 4 + 4.
   assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [0, 1]);
 });
+test('construction assignment minimizes actual Euclidean travel, not squared distance', () => {
+  const workers = [{ x: 0, z: 0 }, { x: 0, z: 1 }];
+  const targets = [{ x: 0, z: 1 }, { x: 1, z: 2 }];
+
+  // Crossing assignment totals sqrt(5) + 0, while direct assignment totals
+  // 1 + sqrt(2). Squared-distance matching incorrectly prefers the direct pair.
+  assert.deepEqual(assignWorkersToConstructionTargets(workers, targets), [1, 0]);
+});
 
 test('construction matching handles more workers than targets without assigning a worker twice', () => {
   const workers = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 2, z: 0 }];
