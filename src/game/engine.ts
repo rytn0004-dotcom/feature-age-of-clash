@@ -116,6 +116,7 @@ import {
   shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
+  getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
   calculateWallChainCost,
   WallChainPoint,
@@ -12661,12 +12662,16 @@ export class RtsEngine {
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
+      const ageUpReadiness = getAiAgeUpReadinessTargets(activeRules, aiAge, {
+        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
+        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
+      });
       const savingForAgeUp = shouldAiSaveForNextAge({
         age: aiAge,
         gameTime: this.stats.gameDuration,
         workerCount: aiWorkers.length,
-        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
-        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
+        minimumWorkers: ageUpReadiness.minimumWorkers,
+        minimumGameTime: ageUpReadiness.minimumGameTime,
         landmarkActive: nextAgeLandmarkActive,
         resources: aiRes,
         ageUpCost: nextAgeCost,
@@ -12691,24 +12696,7 @@ export class RtsEngine {
         workerTrainRule?.conditions.find(
           (condition) => condition.field === 'workerCount' && condition.operator === '<'
         )?.value ?? 12;
-      const nextAgeRule = activeRules.find((rule) => {
-        if (!rule.enabled || rule.action.type !== 'advance_age') return false;
-        const ageCondition = rule.conditions.find((condition) => condition.field === 'age');
-        if (!ageCondition) return false;
-        switch (ageCondition.operator) {
-          case '<': return aiAge < ageCondition.value;
-          case '<=': return aiAge <= ageCondition.value;
-          case '>': return aiAge > ageCondition.value;
-          case '>=': return aiAge >= ageCondition.value;
-          case '==': return aiAge === ageCondition.value;
-          case '!=': return aiAge !== ageCondition.value;
-          default: return false;
-        }
-      });
-      const minimumWorkersForAgeUp =
-        nextAgeRule?.conditions.find(
-          (condition) => condition.field === 'workerCount' && condition.operator === '>='
-        )?.value ?? 0;
+      const minimumWorkersForAgeUp = ageUpReadiness.minimumWorkers;
       let queuedWorkerCount = aiBuildings.reduce(
         (total, building) =>
           total + building.queue.filter((unitId) => unitId === aiCiv.workerUnitId).length,

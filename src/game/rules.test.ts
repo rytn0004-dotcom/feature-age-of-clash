@@ -17,6 +17,7 @@ import {
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
   shouldAiSaveForNextAge,
+  getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
@@ -51,7 +52,7 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon, UnitEntity } from '../types/game';
-import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, MONGOL_UNITS, SHARED_UNITS, INITIAL_MODS } from './mods';
+import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, MONGOL_UNITS, SHARED_UNITS, INITIAL_MODS, DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } from './mods';
 import {
   canResearchTech,
   getAllTechsForBuilding,
@@ -3730,6 +3731,35 @@ test('AI resource-demand forecast expands bounded buffers for sustained stock dr
   assert.deepEqual(computeAiResourceDemandTargets(4, { food: -5000, wood: -5000, gold: -5000, stone: -5000 }), {
     food: 1750, wood: 850, gold: 625, stone: 650,
   });
+});
+
+test('AI age-up: readiness gates follow each difficulty rule instead of a shared hard-coded threshold', () => {
+  const fallback = { minimumWorkers: 5, minimumGameTime: 35 };
+  const easyAgeTwo = getAiAgeUpReadinessTargets(EASY_AI_RULES, 1, fallback);
+  assert.equal(easyAgeTwo.rule?.id, 'easy_advance_age_2');
+  assert.equal(easyAgeTwo.minimumWorkers, 7);
+  assert.equal(easyAgeTwo.minimumGameTime, 90);
+
+  const hardAgeTwo = getAiAgeUpReadinessTargets(HARD_AI_RULES, 1, fallback);
+  assert.equal(hardAgeTwo.rule?.id, 'hard_advance_age_2');
+  assert.equal(hardAgeTwo.minimumWorkers, 4);
+  assert.equal(hardAgeTwo.minimumGameTime, 35, 'rules without an explicit time gate use the safe fallback');
+
+  const standardAgeThree = getAiAgeUpReadinessTargets(DEFAULT_AI_RULES, 2, {
+    minimumWorkers: 6,
+    minimumGameTime: 90,
+  });
+  assert.equal(standardAgeThree.rule?.id, 'ai_advance_age_3');
+  assert.equal(standardAgeThree.minimumWorkers, 7);
+  assert.equal(standardAgeThree.minimumGameTime, 90);
+
+  const defensiveAgeFour = getAiAgeUpReadinessTargets(DEFENSIVE_AI_RULES, 3, {
+    minimumWorkers: 8,
+    minimumGameTime: 180,
+  });
+  assert.equal(defensiveAgeFour.rule?.id, 'def_advance_age_4');
+  assert.equal(defensiveAgeFour.minimumWorkers, 8);
+  assert.equal(defensiveAgeFour.minimumGameTime, 180);
 });
 
 test('AI age-up saving stops for active landmarks and yields to genuine emergencies', async () => {

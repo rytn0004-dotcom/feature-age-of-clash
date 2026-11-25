@@ -991,6 +991,48 @@ export function computeAiResourceDemandTargets(
   return targets;
 }
 
+export interface AiAgeUpReadinessTargets {
+  rule: AiRule | null;
+  minimumWorkers: number;
+  minimumGameTime: number;
+}
+
+/** Resolve age-up workforce/time thresholds from the active difficulty's own rule set. */
+export function getAiAgeUpReadinessTargets(
+  rules: readonly AiRule[],
+  age: number,
+  fallback: { minimumWorkers: number; minimumGameTime: number },
+): AiAgeUpReadinessTargets {
+  const matchesAge = (rule: AiRule): boolean => {
+    if (!rule.enabled || rule.action.type !== 'advance_age') return false;
+    const condition = rule.conditions.find((item) => item.field === 'age');
+    if (!condition || !Number.isFinite(age)) return false;
+    switch (condition.operator) {
+      case '<': return age < condition.value;
+      case '<=': return age <= condition.value;
+      case '>': return age > condition.value;
+      case '>=': return age >= condition.value;
+      case '==': return age === condition.value;
+      case '!=': return age !== condition.value;
+      default: return false;
+    }
+  };
+  const rule = rules.find(matchesAge) || null;
+  const workerCondition = rule?.conditions.find(
+    (condition) => condition.field === 'workerCount' && condition.operator === '>='
+  );
+  const timeCondition = rule?.conditions.find(
+    (condition) => condition.field === 'gameTime' && condition.operator === '>='
+  );
+  const minimumWorkers = workerCondition && Number.isFinite(workerCondition.value)
+    ? Math.max(0, workerCondition.value)
+    : fallback.minimumWorkers;
+  const minimumGameTime = timeCondition && Number.isFinite(timeCondition.value)
+    ? Math.max(0, timeCondition.value)
+    : fallback.minimumGameTime;
+  return { rule, minimumWorkers, minimumGameTime };
+}
+
 export interface AiAgeUpSavingReadiness {
   age: number;
   gameTime: number;
