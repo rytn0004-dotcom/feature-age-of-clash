@@ -1002,7 +1002,12 @@ export interface AiAgeUpSavingReadiness {
   ageUpCost: Resources | null;
 }
 
-/** Saves for the next landmark only while its construction has not started. */
+/**
+ * Protect the next-age landmark budget as soon as the AI meets its workforce/time gate.
+ * Keep the reserve even after it can afford the landmark: construction placement or builder
+ * assignment can fail for a few decision ticks, and optional military production must not
+ * immediately spend the newly reached threshold before the landmark actually starts.
+ */
 export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
   if (
     !Number.isFinite(input.age) || input.age < 1 || input.age >= 4 ||
@@ -1011,7 +1016,7 @@ export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
     input.landmarkActive || !input.ageUpCost ||
     input.workerCount < input.minimumWorkers || input.gameTime < input.minimumGameTime
   ) return false;
-  return !canAfford(input.resources, input.ageUpCost);
+  return true;
 }
 
 /** Keep the age-up reserve unless an active attack or undersized army needs defense. */

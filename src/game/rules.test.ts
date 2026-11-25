@@ -16,6 +16,8 @@ import {
   isAgeUnlocked,
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
+  shouldAiSaveForNextAge,
+  shouldAiDeferOptionalMilitaryProduction,
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
@@ -62,6 +64,55 @@ import {
   getEffectiveUnitTrainingDuration,
   PRODUCTION_TIME_SCALE,
 } from './civilizations';
+
+
+test('AI age-up: protects the landmark budget after it can afford the cost until construction starts', () => {
+  const ready = {
+    age: 1,
+    gameTime: 60,
+    workerCount: 7,
+    minimumWorkers: 5,
+    minimumGameTime: 35,
+    landmarkActive: false,
+    resources: { food: 900, wood: 300, gold: 260, stone: 100 },
+    ageUpCost: { food: 400, wood: 0, gold: 200, stone: 0 },
+  };
+  assert.equal(canAfford(ready.resources, ready.ageUpCost), true);
+  assert.equal(shouldAiSaveForNextAge(ready), true);
+  assert.equal(
+    shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: shouldAiSaveForNextAge(ready), armyCount: 5, underAttack: 0 }),
+    true,
+    'optional army production must not spend the landmark reserve after the stock threshold is reached'
+  );
+  assert.equal(shouldAiSaveForNextAge({ ...ready, landmarkActive: true }), false);
+});
+
+test('AI age-up: reserves are not protected before the workforce/time gates or while emergency defense is needed', () => {
+  const ready = {
+    age: 1,
+    gameTime: 60,
+    workerCount: 7,
+    minimumWorkers: 5,
+    minimumGameTime: 35,
+    landmarkActive: false,
+    resources: { food: 900, wood: 300, gold: 260, stone: 100 },
+    ageUpCost: { food: 400, wood: 0, gold: 200, stone: 0 },
+  };
+  assert.equal(shouldAiSaveForNextAge({ ...ready, workerCount: 4 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...ready, gameTime: 30 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...ready, age: 4 }), false);
+  assert.equal(shouldAiSaveForNextAge({ ...ready, ageUpCost: null }), false);
+  assert.equal(
+    shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 5, underAttack: 1 }),
+    false,
+    'an active attack must still allow defensive reinforcement'
+  );
+  assert.equal(
+    shouldAiDeferOptionalMilitaryProduction({ savingForAgeUp: true, armyCount: 2, underAttack: 0 }),
+    false,
+    'the AI must build its minimum defense force before pausing optional production'
+  );
+});
 
 test('progression: military production buildings unlock at the intended ages', async () => {
   const { getBuildableTypesForCiv, isBuildingBuildableForCiv } = await import('./civilizations');
