@@ -12,6 +12,7 @@ import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
+  queryCombatSpatialUnits,
   rebuildCombatSpatialIndexInPlace,
   type CombatSpatialCandidates,
   type CombatSpatialIndex,
@@ -75,7 +76,7 @@ import {
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolLancer, shouldTrainMongolShaman } from './mongolAi';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
-import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, shouldUnitRout } from './combatMorale';
+import { applyMoraleImpact, getMoraleCombatModifiers, getMoraleRoutGoal, selectNearestMoraleRoutThreat, shouldUnitRout } from './combatMorale';
 import { applySuppressionImpact, decaySuppression, getSuppressionCombatModifiers, getSuppressionImpact } from './combatSuppression';
 import {
   AGE_ADVANCE_HOTKEY,
@@ -447,6 +448,9 @@ export class RtsEngine {
     units: [],
     buildings: [],
   };
+  /** Separate unit-only scratch arrays allow casualty shocks to trigger nested rout queries safely. */
+  private moraleShockQueryScratch: UnitEntity[] = [];
+  private moraleRoutQueryScratch: UnitEntity[] = [];
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
   private starRelicPhase: 'waiting' | 'ground' | 'carried' | 'spent' = 'waiting';
@@ -1467,6 +1471,8 @@ export class RtsEngine {
     this.combatTargetQueryScratch.buildings.length = 0;
     this.cavalryRetreatQueryScratch.units.length = 0;
     this.cavalryRetreatQueryScratch.buildings.length = 0;
+    this.moraleShockQueryScratch.length = 0;
+    this.moraleRoutQueryScratch.length = 0;
     this.resourceNodes = [];
     this.contestedPoints = [];
     this.starRelicPhase = 'waiting';
@@ -7542,20 +7548,20 @@ export class RtsEngine {
 
     let threat = attacker && attacker.hp > 0 && this.isHostile(unit, attacker) ? attacker : undefined;
     if (!threat) {
-      let nearestDistance = 24;
-      for (const candidate of this.units) {
-        if (
-          candidate.hp <= 0 ||
-          candidate.garrisonedInBuildingId ||
-          candidate.id === unit.id ||
-          !this.isHostile(unit, candidate)
-        ) continue;
-        const distance = getDistance(unit.x, unit.z, candidate.x, candidate.z);
-        if (distance < nearestDistance) {
-          nearestDistance = distance;
-          threat = candidate;
-        }
-      }
+      const nearbyUnits = this.queryNearbyMoraleUnits(
+        unit.x,
+        unit.z,
+        24,
+        this.moraleRoutQueryScratch,
+      );
+      threat = selectNearestMoraleRoutThreat(
+        nearbyUnits,
+        unit.id,
+        unit.x,
+        unit.z,
+        24,
+        (candidate) => this.isHostile(unit, candidate),
+      ) ?? undefined;
     }
     if (!threat) return;
 
@@ -7648,21 +7654,56 @@ export class RtsEngine {
     if ((unit.suppression ?? 0) < 0.5) unit.suppression = 0;
   }
 
+  /**
+   * The combat index is sampled before unit movement in each <=50ms simulation
+   * substep. Expand the broad-phase radius by one cell to cover that movement,
+   * then apply the exact gameplay radius at the call site.
+   */
+  private queryNearbyMoraleUnits(
+    x: number,
+    z: number,
+    exactRadius: number,
+    output: UnitEntity[],
+  ): UnitEntity[] {
+    if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+    const index = this.combatSpatialIndex;
+    if (!index) {
+      output.length = 0;
+      return output;
+    }
+    return queryCombatSpatialUnits(
+      index,
+      x,
+      z,
+      exactRadius + index.cellSize,
+      output,
+    );
+  }
+
   private applyNearbyCasualtyMoraleShock(casualty: UnitEntity): void {
     if (casualty.unitDef.category === 'worker') return;
     const isCommanderCasualty = !!casualty.unitDef.leadershipAura;
     const shockRadius = isCommanderCasualty
       ? Math.max(13, casualty.unitDef.leadershipAura?.radius ?? 0)
       : 9;
-    for (const ally of this.units) {
+    const shockRadiusSquared = shockRadius * shockRadius;
+    const nearbyUnits = this.queryNearbyMoraleUnits(
+      casualty.x,
+      casualty.z,
+      shockRadius,
+      this.moraleShockQueryScratch,
+    );
+    for (const ally of nearbyUnits) {
       if (
         ally.id === casualty.id ||
         ally.hp <= 0 ||
         this.isHostile(casualty, ally) ||
         ally.garrisonedInBuildingId ||
-        ally.unitDef.category === 'worker' ||
-        getDistance(casualty.x, casualty.z, ally.x, ally.z) > shockRadius
+        ally.unitDef.category === 'worker'
       ) continue;
+      const dx = casualty.x - ally.x;
+      const dz = casualty.z - ally.z;
+      if (dx * dx + dz * dz > shockRadiusSquared) continue;
 
       const leadership = this.getNearbyLeadershipAura(ally);
       ally.morale = applyMoraleImpact({
@@ -13700,6 +13741,8 @@ export class RtsEngine {
     this.aiDecisionFactionIds.length = 0;
     this.aiDecisionSchedulerState.accumulatorSeconds = 0;
     this.aiDecisionSchedulerState.cursor = 0;
+    this.moraleShockQueryScratch.length = 0;
+    this.moraleRoutQueryScratch.length = 0;
     this.cancelPlacement();
     this.fieldSiegeProjects.forEach((project) => this.disposeFieldSiegeProject(project));
     this.fieldSiegeProjects = [];

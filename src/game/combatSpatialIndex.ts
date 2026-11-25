@@ -164,6 +164,56 @@ export function rebuildCombatSpatialIndexInPlace<
   return index;
 }
 
+/** Returns only nearby living units, avoiding the building-bucket scan for morale queries. */
+export function queryCombatSpatialUnits<
+  Unit extends CombatSpatialUnit,
+  Building extends CombatSpatialBuilding,
+>(
+  index: CombatSpatialIndex<Unit, Building>,
+  x: number,
+  z: number,
+  radius: number,
+  output: Unit[] = [],
+): Unit[] {
+  output.length = 0;
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(z) ||
+    (!Number.isFinite(radius) && radius !== Infinity) ||
+    radius < 0
+  ) {
+    return output;
+  }
+
+  if (radius === Infinity) {
+    for (const unit of index.units) {
+      if (unit.hp > 0 && !unit.garrisonedInBuildingId) output.push(unit);
+    }
+    return output;
+  }
+
+  const radiusSquared = radius * radius;
+  const minCellX = Math.floor((x - radius) / index.cellSize);
+  const maxCellX = Math.floor((x + radius) / index.cellSize);
+  const minCellZ = Math.floor((z - radius) / index.cellSize);
+  const maxCellZ = Math.floor((z + radius) / index.cellSize);
+  for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      const bucket = index.unitBuckets.get(cellX + ':' + cellZ);
+      if (!bucket) continue;
+      for (const unit of bucket) {
+        if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
+        const dx = unit.x - x;
+        const dz = unit.z - z;
+        if (dx * dx + dz * dz <= radiusSquared) output.push(unit);
+      }
+    }
+  }
+
+  return output;
+}
+
 /** Returns the living entities inside an exact circular query around a combat unit. */
 export function queryCombatSpatialIndex<
   Unit extends CombatSpatialUnit,
