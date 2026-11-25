@@ -324,6 +324,7 @@ import {
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
+  selectConstructionHandoffWorker,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -438,6 +439,8 @@ export class RtsEngine {
   private combatBuildingLookupLength = -1;
   /** Rebuilt once per simulation step; avoids one full unit scan per active builder. */
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
+  /** Workers that already failed every approach slot for one construction target. */
+  private constructionApproachFailedWorkersByBuilding = new Map<string, Set<string>>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
   private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -9064,6 +9067,95 @@ export class RtsEngine {
     return true;
   }
 
+  /**
+   * After all stable approach slots fail, hand the construction target to a
+   * different idle worker. Never steal a worker with queued orders, cargo,
+   * garrison reservations, or another active target.
+   */
+  private handoffBlockedConstructionTarget(unit: UnitEntity, building: BuildingEntity): boolean {
+    let failedWorkerIds = this.constructionApproachFailedWorkersByBuilding.get(building.id);
+    if (!failedWorkerIds) {
+      failedWorkerIds = new Set<string>();
+      this.constructionApproachFailedWorkersByBuilding.set(building.id, failedWorkerIds);
+    }
+    failedWorkerIds.add(unit.id);
+
+    const candidates = this.units.map((candidate) => ({
+      id: candidate.id,
+      x: candidate.x,
+      z: candidate.z,
+      hp: candidate.hp,
+      faction: candidate.faction,
+      category: candidate.unitDef.category,
+      state: candidate.state,
+      targetBuildingId: candidate.targetBuildingId,
+      targetResourceNodeId: candidate.targetResourceNodeId,
+      targetEntityId: candidate.targetEntityId,
+      targetGarrisonBuildingId: candidate.targetGarrisonBuildingId,
+      garrisonedInBuildingId: candidate.garrisonedInBuildingId,
+      fieldAssemblyProjectId: candidate.fieldAssemblyProjectId,
+      queuedCommandCount: candidate.commandQueue?.length ?? 0,
+      hasCarriedResource: !!candidate.carryingResource,
+    }));
+    const replacementIndex = selectConstructionHandoffWorker(
+      candidates,
+      { x: building.x, z: building.z, faction: building.faction },
+      failedWorkerIds,
+    );
+
+    if (replacementIndex < 0) {
+      // Keep the current assignment intact, but back off long enough to avoid
+      // a tight retry loop. Newly idle workers can be considered next time.
+      this.constructionApproachFailedWorkersByBuilding.delete(building.id);
+      unit.buildApproachRetryAt = this.simTime + BUILD_APPROACH_BLOCKED_RETRY_SECONDS;
+      unit.velocity = { x: 0, z: 0 };
+      unit.currentActionText = '🧭 工地暫時無法抵達，稍後重新嘗試';
+      return false;
+    }
+
+    const replacement = this.units[replacementIndex];
+    replacement.targetBuildingId = building.id;
+    replacement.targetResourceNodeId = undefined;
+    replacement.targetEntityId = undefined;
+    replacement.targetGarrisonBuildingId = undefined;
+    replacement.targetX = undefined;
+    replacement.targetZ = undefined;
+    replacement.attackMoveGoal = null;
+    replacement.commandQueue = undefined;
+    replacement.queuedGatherStopAfterDeposit = false;
+    replacement.buildApproachBuildingId = undefined;
+    replacement.buildApproachIndex = undefined;
+    replacement.buildApproachAngle = undefined;
+    replacement.buildApproachRetryAt = undefined;
+    replacement.buildApproachRecoveryCount = undefined;
+    replacement.waypoints = undefined;
+    replacement.pathGoal = undefined;
+    replacement.pathCooldown = 0;
+    replacement.velocity = { x: 0, z: 0 };
+    replacement.state = 'building';
+    replacement.currentActionText = '🧭 接手受阻工地，尋找施工路線';
+
+    unit.targetBuildingId = undefined;
+    unit.buildApproachBuildingId = undefined;
+    unit.buildApproachIndex = undefined;
+    unit.buildApproachAngle = undefined;
+    unit.buildApproachRetryAt = undefined;
+    unit.buildApproachRecoveryCount = undefined;
+    unit.waypoints = undefined;
+    unit.pathGoal = undefined;
+    unit.pathCooldown = 0;
+    unit.velocity = { x: 0, z: 0 };
+    if (!this.tryDequeueCommand(unit)) {
+      unit.state = 'idle';
+      unit.currentActionText = '💤 施工目標已交接';
+    }
+
+    if (this.isHumanControlled(building.faction)) {
+      this.addFloatingText(building.x, 2.7, building.z, '🧭 原施工路線受阻，已改派空閒村民', '#67e8f9');
+    }
+    return true;
+  }
+
   private stepUnitBuilding(unit: UnitEntity, dt: number) {
     if (!unit.targetBuildingId) {
       if (!this.tryDequeueCommand(unit)) {
@@ -9077,6 +9169,7 @@ export class RtsEngine {
     const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     const repairingStructure = !!bldg && bldg.isConstructed && !repairingWall && bldg.hp < bldg.maxHp;
     if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall && !repairingStructure)) {
+      this.constructionApproachFailedWorkersByBuilding.delete(unit.targetBuildingId);
       unit.buildApproachBuildingId = undefined;
       unit.buildApproachIndex = undefined;
       unit.buildApproachRetryAt = undefined;
@@ -9105,6 +9198,9 @@ export class RtsEngine {
 
     if (distToCenter > buildReach) {
       if (unit.buildApproachBuildingId !== bldg.id) {
+        const failedWorkers = this.constructionApproachFailedWorkersByBuilding.get(bldg.id);
+        failedWorkers?.delete(unit.id);
+        if (failedWorkers?.size === 0) this.constructionApproachFailedWorkersByBuilding.delete(bldg.id);
         unit.buildApproachBuildingId = bldg.id;
         unit.buildApproachAngle = Math.atan2(unit.z - bldg.z, unit.x - bldg.x);
         const initialApproachRadius = Math.min(workRingRad, buildReach - 0.25);
@@ -9132,6 +9228,7 @@ export class RtsEngine {
         if (nextIndex === 0) {
           unit.buildApproachRetryAt = this.simTime + BUILD_APPROACH_RETRY_DELAY_SECONDS;
           if (this.deferBlockedWallChainSegment(unit, bldg)) return true;
+          if (this.handoffBlockedConstructionTarget(unit, bldg)) return true;
         }
         return false;
       };
@@ -9177,6 +9274,7 @@ export class RtsEngine {
 
     // Reached a valid construction ring; do not carry a stale candidate into
     // the next wall segment or repair target.
+    this.constructionApproachFailedWorkersByBuilding.delete(bldg.id);
     unit.buildApproachBuildingId = undefined;
     unit.buildApproachIndex = undefined;
     unit.buildApproachRetryAt = undefined;
@@ -9268,6 +9366,7 @@ export class RtsEngine {
 
       if (!repairingWall && !repairingStructure && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
+        this.constructionApproachFailedWorkersByBuilding.delete(bldg.id);
         if (bldg.buildingDef.isWall) this.wallEndpointIndexDirty = true;
         bldg.buildProgress = 1;
         bldg.hp = bldg.maxHp;
@@ -13759,6 +13858,7 @@ export class RtsEngine {
   public destroy() {
     this.isDestroyed = true;
     this.activeConstructionWorkerCountByBuilding.clear();
+    this.constructionApproachFailedWorkersByBuilding.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
