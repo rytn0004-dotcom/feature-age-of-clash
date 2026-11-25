@@ -10,38 +10,35 @@ import type { Resources } from '../types/game';
 
 const cost: Resources = { food: 40, wood: 120, gold: 30, stone: 80 };
 
-test('construction cancellation refunds only the un-damaged completed HP ratio', () => {
+test('cancelling a pristine foundation refunds the full cost even at 10% progress', () => {
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 10, 100, 0.1), cost);
+});
+
+test('cancelling an undamaged partially-built structure still refunds the full cost', () => {
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 40, 100, 0.4), cost);
+});
+
+test('construction cancellation withholds only the percentage of HP damage', () => {
   assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, 60, 100),
-    { food: 24, wood: 72, gold: 18, stone: 48 },
+    calculateConstructionCancellationRefund(cost, 30, 100, 0.4),
+    { food: 30, wood: 90, gold: 22, stone: 60 },
+  );
+  assert.deepEqual(
+    calculateConstructionCancellationRefund(cost, 45, 100, 0.9),
+    { food: 20, wood: 60, gold: 15, stone: 40 },
   );
 });
 
-test('construction cancellation accounts for a foundation damaged before cancellation', () => {
-  // A new foundation starts at 10% HP; taking half of that HP leaves 5% refund.
-  assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, 5, 100),
-    { food: 2, wood: 6, gold: 1, stone: 4 },
-  );
+test('construction cancellation refund clamps invalid health and progress values', () => {
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 130, 100, 0.4), cost);
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, -10, 100, 0.4), { food: 0, wood: 0, gold: 0, stone: 0 });
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 50, 0, 0.5), { food: 0, wood: 0, gold: 0, stone: 0 });
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, Number.NaN, 100, 0.5), { food: 0, wood: 0, gold: 0, stone: 0 });
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 0, 100, Number.NaN), { food: 0, wood: 0, gold: 0, stone: 0 });
 });
 
-test('construction cancellation refund is clamped and rejects invalid health values', () => {
-  assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, 130, 100),
-    cost,
-  );
-  assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, -10, 100),
-    { food: 0, wood: 0, gold: 0, stone: 0 },
-  );
-  assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, 50, 0),
-    { food: 0, wood: 0, gold: 0, stone: 0 },
-  );
-  assert.deepEqual(
-    calculateConstructionCancellationRefund(cost, Number.NaN, 100),
-    { food: 0, wood: 0, gold: 0, stone: 0 },
-  );
+test('tiny HP rounding differences do not penalize a pristine foundation', () => {
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 39.6, 100, 0.4), cost);
 });
 
 test('delete hold progress reaches completion only after three seconds', () => {
