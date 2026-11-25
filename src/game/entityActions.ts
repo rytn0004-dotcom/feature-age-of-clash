@@ -32,3 +32,18 @@ export function getDeleteHoldProgress(startedAt: number, now: number): number {
   if (!Number.isFinite(startedAt) || !Number.isFinite(now)) return 0;
   return Math.max(0, Math.min(1, (now - startedAt) / DELETE_HOLD_DURATION_MS));
 }
+ 
+/**
+ * Construction work contributes health as progress advances, but never erases
+ * damage already dealt to the foundation.
+ */
+export function applyConstructionWorkToHealth(
+  currentHp: number,
+  maxHp: number,
+  progressDelta: number,
+): number {
+  if (!Number.isFinite(maxHp) || maxHp <= 0) return 0;
+  const safeCurrentHp = Number.isFinite(currentHp) ? Math.max(0, Math.min(maxHp, currentHp)) : 0;
+  const safeProgressDelta = Number.isFinite(progressDelta) ? Math.max(0, progressDelta) : 0;
+  return Math.min(maxHp, safeCurrentHp + maxHp * safeProgressDelta);
+}
