@@ -281,7 +281,9 @@ export function layoutWallChainSection(
   end: WallChainPoint,
   sectionIndex = 0,
   maxSpacing = WALL_SEGMENT_SPACING,
+  reusablePlacements?: WallSegmentPlacement[],
 ): WallSegmentPlacement[] {
+  const placements = reusablePlacements ?? [];
   if (
     !Number.isFinite(start.x) ||
     !Number.isFinite(start.z) ||
@@ -289,25 +291,31 @@ export function layoutWallChainSection(
     !Number.isFinite(end.z) ||
     !Number.isFinite(maxSpacing) ||
     maxSpacing <= 0
-  ) return [];
+  ) {
+    placements.length = 0;
+    return placements;
+  }
 
   const dx = end.x - start.x;
   const dz = end.z - start.z;
   const length = Math.hypot(dx, dz);
-  if (!Number.isFinite(length) || length < 0.75) return [];
+  if (!Number.isFinite(length) || length < 0.75) {
+    placements.length = 0;
+    return placements;
+  }
 
   const count = Math.max(1, Math.ceil(length / maxSpacing));
   const rotationY = -Math.atan2(dz, dx);
-  const placements: WallSegmentPlacement[] = [];
   for (let index = 0; index < count; index++) {
     const t = (index + 0.5) / count;
-    placements.push({
-      x: start.x + dx * t,
-      z: start.z + dz * t,
-      rotationY,
-      sectionIndex,
-    });
+    const placement = placements[index] ?? { x: 0, z: 0, rotationY: 0, sectionIndex };
+    placement.x = start.x + dx * t;
+    placement.z = start.z + dz * t;
+    placement.rotationY = rotationY;
+    placement.sectionIndex = sectionIndex;
+    placements[index] = placement;
   }
+  placements.length = count;
   return placements;
 }
 

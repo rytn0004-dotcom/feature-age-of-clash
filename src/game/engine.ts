@@ -322,7 +322,13 @@ import {
   updateFishAssetAnimations,
 } from './modelAssets';
 import { getCraggyRockMaps, getFoliagePBRMaps, getTreeBarkMaps, getWaterRippleNormalMap } from './proceduralTextures';
-import { findNearestValidWallStartPoint, getAffordableWallSegmentCount, getWallSegmentPreviewStatus } from './wallPlacement';
+import {
+  findNearestValidWallStartPoint,
+  getAffordableWallSegmentCount,
+  getWallSegmentPreviewStatus,
+  shouldUseInstancedWallPreview,
+  WALL_PREVIEW_DETAILED_SEGMENT_LIMIT,
+} from './wallPlacement';
 import {
   findNearestRepairableWall,
   WallEndpointIndex,
@@ -663,6 +669,12 @@ export class RtsEngine {
   private wallPlacementPreviewMarkers: THREE.Mesh[] = [];
   private wallPlacementPreviewPointsCache: WallChainPoint[] = [];
   private wallPlacementPreviewPlacementsCache: ReturnType<typeof layoutWallChain> = [];
+  private wallPlacementPreviewActiveSectionCache: ReturnType<typeof layoutWallChainSection> = [];
+  private wallPlacementPreviewInstancedGhost: THREE.InstancedMesh | null = null;
+  private wallPlacementPreviewInstanceTransform = new THREE.Object3D();
+  private wallPlacementPreviewInstanceColor = new THREE.Color();
+  private wallPlacementPreviewInstancedFixedCount = 0;
+  private wallPlacementPreviewUsingInstancedGhost = false;
   private wallPlacementPreviewFixedPlacementCount = 0;
   private wallPlacementPreviewFixedDistance = 0;
   private wallPlacementPreviewFixedGhostsPlaced = 0;
@@ -5912,6 +5924,56 @@ export class RtsEngine {
           : 0xef4444;
       this.setWallPlacementPreviewGhostTint(this.wallPlacementPreviewGhosts[index], color);
     }
+
+    const instanced = this.wallPlacementPreviewInstancedGhost;
+    if (instanced) {
+      const instanceCount = Math.min(segmentCount, instanced.instanceMatrix.count);
+      for (let index = 0; index < instanceCount; index++) {
+        const status = getWallSegmentPreviewStatus(index, segmentCount, affordable, blocked);
+        const color = status === 'buildable'
+          ? 0x22c55e
+          : status === 'unaffordable'
+            ? 0xf59e0b
+            : 0xef4444;
+        this.wallPlacementPreviewInstanceColor.setHex(color);
+        instanced.setColorAt(index, this.wallPlacementPreviewInstanceColor);
+      }
+      if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
+    }
+  }
+
+  private ensureInstancedWallPlacementPreview(group: THREE.Group): THREE.InstancedMesh | null {
+    if (this.wallPlacementPreviewInstancedGhost) return this.wallPlacementPreviewInstancedGhost;
+    const template = this.wallPlacementGhostTemplate;
+    if (!template) return null;
+
+    template.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(template);
+    if (bounds.isEmpty()) return null;
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    if (size.x <= 0.05 || size.y <= 0.05 || size.z <= 0.05) return null;
+
+    // Long routes use one lightweight ghost batch rather than dozens of
+    // complete multi-mesh wall models, reducing both draw calls and scene nodes.
+    const geometry = new THREE.BoxGeometry(size.x * 0.96, size.y * 0.96, size.z * 0.96);
+    geometry.translate(center.x, center.y, center.z);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const instanced = new THREE.InstancedMesh(geometry, material, MAX_WALL_CHAIN_SEGMENTS);
+    instanced.name = 'wallPlacementInstancedPreview';
+    instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    instanced.frustumCulled = false;
+    instanced.renderOrder = 5;
+    instanced.count = 0;
+    group.add(instanced);
+    this.wallPlacementPreviewInstancedGhost = instanced;
+    return instanced;
   }
 
   private rebuildWallPlacementPreview() {
@@ -5945,6 +6007,8 @@ export class RtsEngine {
         activeStart,
         activeCursor,
         this.wallPlacementPoints.length - 1,
+        undefined,
+        this.wallPlacementPreviewActiveSectionCache,
       );
       placements.push(...activeSection);
       activeDistance = getDistance(activeStart.x, activeStart.z, activeCursor.x, activeCursor.z);
@@ -5956,10 +6020,18 @@ export class RtsEngine {
       placements.length,
     );
     const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
+    const useInstancedPreview = shouldUseInstancedWallPreview(previewLimit);
+    const detailedPreviewLimit = useInstancedPreview
+      ? Math.min(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT, previewLimit)
+      : previewLimit;
 
-    // Keep one reusable 3D ghost per maximum segment count reached. Pointer movement
-    // only updates transforms/visibility; it no longer destroys and reclones every wall.
-    while (this.wallPlacementPreviewGhosts.length < previewLimit && this.wallPlacementGhostTemplate) {
+    // Short routes keep full 3D models. Long routes hide them and use one
+    // InstancedMesh, preserving one affordability colour per wall segment.
+    while (
+      !useInstancedPreview &&
+      this.wallPlacementPreviewGhosts.length < detailedPreviewLimit &&
+      this.wallPlacementGhostTemplate
+    ) {
       const ghost = this.wallPlacementGhostTemplate.clone(true);
       ghost.userData.wallPreviewSharedAssets = true;
       this.registerWallPlacementPreviewMaterials(ghost);
@@ -5970,12 +6042,38 @@ export class RtsEngine {
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
       const ghost = this.wallPlacementPreviewGhosts[index];
       const placement = placements[index];
-      ghost.visible = !!placement && index < previewLimit;
-      if (!placement || index >= previewLimit || index < fixedGhostsPlaced) continue;
+      ghost.visible = !useInstancedPreview && !!placement && index < detailedPreviewLimit;
+      if (!ghost.visible || !placement || index < fixedGhostsPlaced) continue;
       ghost.position.set(placement.x, 0, placement.z);
       ghost.rotation.y = placement.rotationY;
     }
     this.wallPlacementPreviewFixedGhostsPlaced = this.wallPlacementPreviewFixedPlacementCount;
+
+    if (useInstancedPreview) {
+      const instanced = this.ensureInstancedWallPlacementPreview(group);
+      if (instanced) {
+        if (!this.wallPlacementPreviewUsingInstancedGhost) this.wallPlacementPreviewInstancedFixedCount = 0;
+        instanced.visible = true;
+        instanced.count = previewLimit;
+        const startIndex = Math.min(this.wallPlacementPreviewInstancedFixedCount, previewLimit);
+        const transform = this.wallPlacementPreviewInstanceTransform;
+        for (let index = startIndex; index < previewLimit; index++) {
+          const placement = placements[index];
+          transform.position.set(placement.x, 0, placement.z);
+          transform.rotation.set(0, placement.rotationY, 0);
+          transform.scale.set(1, 1, 1);
+          transform.updateMatrix();
+          instanced.setMatrixAt(index, transform.matrix);
+        }
+        if (previewLimit > startIndex) instanced.instanceMatrix.needsUpdate = true;
+        this.wallPlacementPreviewInstancedFixedCount = Math.min(this.wallPlacementPreviewFixedPlacementCount, previewLimit);
+        this.wallPlacementPreviewUsingInstancedGhost = true;
+      }
+    } else {
+      if (this.wallPlacementPreviewInstancedGhost) this.wallPlacementPreviewInstancedGhost.visible = false;
+      this.wallPlacementPreviewUsingInstancedGhost = false;
+      this.wallPlacementPreviewInstancedFixedCount = 0;
+    }
     this.refreshWallPlacementPreviewGhostTints(placements.length);
 
     if (!this.wallPlacementPreviewLine) {
@@ -6156,6 +6254,9 @@ export class RtsEngine {
     this.wallPlacementPreviewAffordableSegmentCount = 0;
     this.wallPlacementPreviewPointsCache.length = 0;
     this.wallPlacementPreviewPlacementsCache.length = 0;
+    this.wallPlacementPreviewActiveSectionCache.length = 0;
+    this.wallPlacementPreviewInstancedFixedCount = 0;
+    this.wallPlacementPreviewUsingInstancedGhost = false;
     this.wallPlacementPreviewFixedPlacementCount = 0;
     this.wallPlacementPreviewFixedDistance = 0;
     this.wallPlacementPreviewFixedGhostsPlaced = 0;
@@ -6179,6 +6280,7 @@ export class RtsEngine {
     this.wallPlacementPreviewGhosts = [];
     this.wallPlacementPreviewMarkers = [];
     this.wallPlacementPreviewLine = null;
+    this.wallPlacementPreviewInstancedGhost = null;
     if (this.wallPlacementGhostTemplate) {
       this.disposeWallPreviewObject(this.wallPlacementGhostTemplate);
       this.wallPlacementGhostTemplate = null;

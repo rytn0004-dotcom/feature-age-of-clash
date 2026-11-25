@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   getAffordableWallSegmentCount,
   getWallSegmentPreviewStatus,
+  shouldUseInstancedWallPreview,
+  WALL_PREVIEW_DETAILED_SEGMENT_LIMIT,
 } from './wallPlacement';
 import { layoutWallChain, layoutWallChainSection } from './rules';
 import type { Resources } from '../types/game';
@@ -86,4 +88,33 @@ test('wall layout: section helper rejects invalid endpoints and retains the shor
     layoutWallChainSection({ x: 0, z: 0 }, { x: 0.7, z: 0 }),
     [],
   );
+});
+
+test('wall preview switches to instanced low-detail rendering only after the detail limit', () => {
+  assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT - 1), false);
+  assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT), false);
+  assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT + 1), true);
+  assert.equal(shouldUseInstancedWallPreview(120), true);
+  assert.equal(shouldUseInstancedWallPreview(Number.NaN), false);
+  assert.equal(shouldUseInstancedWallPreview(Number.POSITIVE_INFINITY), false);
+});
+
+test('wall layout: active section can reuse the placement array and its records', () => {
+  const reusable: ReturnType<typeof layoutWallChainSection> = [];
+  const start = { x: 0, z: 0 };
+  const first = layoutWallChainSection(start, { x: 12, z: 0 }, 0, undefined, reusable);
+  const firstRecord = first[0];
+
+  const second = layoutWallChainSection(start, { x: 18, z: 6 }, 2, undefined, reusable);
+  assert.equal(second, reusable, 'the caller-owned array is retained');
+  assert.equal(first, second, 'repeated layout returns the same array');
+  assert.equal(second.length, 8);
+  assert.equal(second[0], firstRecord, 'placement records are mutated in place');
+  assert.equal(second[0].x, 18 / 16);
+  assert.equal(second[0].z, 6 / 16);
+  assert.equal(second[0].sectionIndex, 2);
+
+  const invalid = layoutWallChainSection(start, { x: 0.5, z: 0 }, 3, undefined, reusable);
+  assert.equal(invalid, reusable);
+  assert.equal(invalid.length, 0, 'invalid input clears stale placements');
 });

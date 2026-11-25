@@ -1,5 +1,13 @@
 import type { Resources } from '../types/game';
 
+/** Long wall previews switch from full models to one low-detail instanced batch. */
+export const WALL_PREVIEW_DETAILED_SEGMENT_LIMIT = 36;
+
+export function shouldUseInstancedWallPreview(segmentCount: number): boolean {
+  return Number.isFinite(segmentCount) &&
+    Math.max(0, Math.floor(segmentCount)) > WALL_PREVIEW_DETAILED_SEGMENT_LIMIT;
+}
+
 export interface WallStartPoint {
   x: number;
   z: number;
