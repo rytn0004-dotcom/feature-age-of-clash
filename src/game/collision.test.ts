@@ -7,6 +7,7 @@ import {
   resolveUnitUnitCollisions,
   getUnitColliderRadius,
   getUnitCollisionFirstDisplacementShare,
+  createCollisionResolutionScratch,
 } from './collision';
 
 function makeUnit(
@@ -288,4 +289,67 @@ test('collision priority: two stationary builders and ordinary units still share
   assert.equal(getUnitCollisionFirstDisplacementShare(movingA, movingB), 0.5);
   assert.equal(getUnitCollisionFirstDisplacementShare(firstBuilder, movingB), 0.12);
   assert.equal(getUnitCollisionFirstDisplacementShare(movingA, secondBuilder), 0.88);
+});
+
+
+test('collision scratch: reuses collision maps, entries, buckets and candidate buffers across steps', () => {
+  const scratch = createCollisionResolutionScratch();
+  const firstUnits = [
+    makeUnit('first-a', 0, 0),
+    makeUnit('first-b', 0.2, 0),
+  ];
+  const buildings = [makeBuilding('tower-a', 40, 40)];
+  const resources = [makeResource('wood-a', -40, -40)];
+
+  resolveUnitUnitCollisions(firstUnits, 0.52, scratch);
+  resolveUnitBuildingCollisions(firstUnits, buildings, scratch);
+  resolveUnitResourceCollisions(firstUnits, resources, scratch);
+
+  const unitMap = scratch.unitIndex.buckets;
+  const unitEntries = scratch.unitIndex.entries;
+  const unitEntry = scratch.unitIndex.entries.find(Boolean);
+  const unitBucket = [...scratch.unitIndex.buckets.values()][0];
+  const unitCandidates = scratch.unitCandidates;
+  const buildingMap = scratch.buildingIndex.buckets;
+  const buildingEntries = scratch.buildingIndex.entries;
+  const buildingBucket = [...scratch.buildingIndex.buckets.values()][0];
+  const resourceMap = scratch.resourceIndex.buckets;
+  const resourceEntries = scratch.resourceIndex.entries;
+  const resourceBucket = [...scratch.resourceIndex.buckets.values()][0];
+  const buildingCandidates = scratch.buildingCandidates;
+  const resourceCandidates = scratch.resourceCandidates;
+
+  const nextUnits = [makeUnit('next-unit', 64, 64)];
+  resolveUnitUnitCollisions(nextUnits, 0.52, scratch);
+  resolveUnitBuildingCollisions(nextUnits, [makeBuilding('next-tower', 64, 64)], scratch);
+  resolveUnitResourceCollisions(nextUnits, [makeResource('next-wood', 64, 64)], scratch);
+
+  assert.equal(scratch.unitIndex.buckets, unitMap);
+  assert.equal(scratch.unitIndex.entries, unitEntries);
+  assert.equal(scratch.unitIndex.entries[0], unitEntry, 'entity entry objects should be recycled');
+  assert.equal(scratch.unitIndex.buckets.get('8:8'), unitBucket, 'unit bucket arrays should be recycled');
+  assert.equal(scratch.unitCandidates, unitCandidates);
+  assert.deepEqual(scratch.unitIndex.entries.map(entry => entry?.item.id), ['next-unit']);
+
+  assert.equal(scratch.buildingIndex.buckets, buildingMap);
+  assert.equal(scratch.buildingIndex.entries, buildingEntries);
+  assert.equal([...scratch.buildingIndex.buckets.values()][0], buildingBucket);
+  assert.equal(scratch.buildingCandidates, buildingCandidates);
+  assert.deepEqual(scratch.buildingIndex.entries.map(entry => entry?.item.id), ['next-tower']);
+
+  assert.equal(scratch.resourceIndex.buckets, resourceMap);
+  assert.equal(scratch.resourceIndex.entries, resourceEntries);
+  assert.equal([...scratch.resourceIndex.buckets.values()][0], resourceBucket);
+  assert.equal(scratch.resourceCandidates, resourceCandidates);
+  assert.deepEqual(scratch.resourceIndex.entries.map(entry => entry?.item.id), ['next-wood']);
+});
+
+test('collision scratch: clears stale entries and buckets when all entities become inactive', () => {
+  const scratch = createCollisionResolutionScratch();
+  resolveUnitUnitCollisions([makeUnit('active', 0, 0)], 0.52, scratch);
+  resolveUnitUnitCollisions([makeUnit('inactive', 0, 0, { hp: 0 })], 0.52, scratch);
+  assert.equal(scratch.unitIndex.entryCount, 0);
+  assert.equal(scratch.unitIndex.buckets.size, 0);
+  assert.equal(scratch.unitIndex.entries.length, 1);
+  assert.equal(scratch.unitIndex.entries[0], undefined);
 });

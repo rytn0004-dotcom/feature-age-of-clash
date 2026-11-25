@@ -199,6 +199,8 @@ import {
 } from './rules';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
 import {
+  createCollisionResolutionScratch,
+  type CollisionResolutionScratch,
   getBuildingCollisionRadius,
   getResourceColliderRadius,
   getUnitColliderRadius,
@@ -436,6 +438,8 @@ export class RtsEngine {
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
+  /** Persistent collision maps, entries and candidates reused across simulation steps. */
+  private collisionResolutionScratch: CollisionResolutionScratch = createCollisionResolutionScratch();
   /** Cached commander candidates; roster changes rebuild this small list only once. */
   private battlefieldLeadershipRosterSource: UnitEntity[] | null = null;
   private battlefieldLeadershipRosterLength = -1;
@@ -6642,9 +6646,9 @@ export class RtsEngine {
     this.updateFieldSiegeProjects(dt);
 
     // 2.5 Layer-based Collision Resolution (Prevents clipping & overlapping)
-    resolveUnitUnitCollisions(this.units);
-    resolveUnitBuildingCollisions(this.units, this.buildings);
-    resolveUnitResourceCollisions(this.units, this.resourceNodes);
+    resolveUnitUnitCollisions(this.units, 0.52, this.collisionResolutionScratch);
+    resolveUnitBuildingCollisions(this.units, this.buildings, this.collisionResolutionScratch);
+    resolveUnitResourceCollisions(this.units, this.resourceNodes, this.collisionResolutionScratch);
 
     // Unit decoration batches replace the per-unit contact-shadow and faction-ring draw calls.
     this.unitDecorationInstanceCursor = 0;

@@ -116,12 +116,23 @@ export function getResourceColliderRadius(
 
 const COLLISION_CELL_SIZE = 8;
 
-interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
-interface CollisionIndex<T> {
+export interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
+export interface CollisionIndex<T> {
   buckets: Map<string, CollisionEntry<T>[]>;
   entries: Array<CollisionEntry<T> | undefined>;
   entryCount: number;
   maxRadius: number;
+  reusableBuckets: CollisionEntry<T>[][];
+  reusableEntries: CollisionEntry<T>[];
+}
+
+export interface CollisionResolutionScratch {
+  unitIndex: CollisionIndex<UnitEntity>;
+  buildingIndex: CollisionIndex<BuildingEntity>;
+  resourceIndex: CollisionIndex<ResourceNode>;
+  unitCandidates: CollisionEntry<UnitEntity>[];
+  buildingCandidates: CollisionEntry<BuildingEntity>[];
+  resourceCandidates: CollisionEntry<ResourceNode>[];
 }
 
 /**
@@ -156,32 +167,91 @@ function collisionQueryKey(x: number, z: number, reach: number): string {
   return `${minX}:${maxX}:${minZ}:${maxZ}`;
 }
 
+function createEmptyCollisionIndex<T>(): CollisionIndex<T> {
+  return {
+    buckets: new Map<string, CollisionEntry<T>[]>(),
+    entries: [],
+    entryCount: 0,
+    maxRadius: 0,
+    reusableBuckets: [],
+    reusableEntries: [],
+  };
+}
+
+/** Refresh an index in place, reusing both its active arrays and per-cell records. */
+function rebuildCollisionIndexInPlace<T extends { x: number; z: number }>(
+  index: CollisionIndex<T>,
+  items: readonly T[],
+  radiusOf: (item: T) => number,
+  include: (item: T) => boolean = () => true,
+): CollisionIndex<T> {
+  for (const bucket of index.buckets.values()) {
+    bucket.length = 0;
+    index.reusableBuckets.push(bucket);
+  }
+  index.buckets.clear();
+
+  for (const entry of index.entries) {
+    if (entry) index.reusableEntries.push(entry);
+  }
+  index.entries.length = items.length;
+  index.entries.fill(undefined);
+  index.entryCount = 0;
+  index.maxRadius = 0;
+
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+    const item = items[itemIndex];
+    if (!include(item) || !Number.isFinite(item.x) || !Number.isFinite(item.z)) continue;
+    const radius = radiusOf(item);
+    if (!Number.isFinite(radius) || radius <= 0) continue;
+
+    const key = collisionKey(item.x, item.z);
+    const entry = index.reusableEntries.pop() ?? {
+      item,
+      index: itemIndex,
+      radius,
+      key,
+    };
+    entry.item = item;
+    entry.index = itemIndex;
+    entry.radius = radius;
+    entry.key = key;
+
+    let bucket = index.buckets.get(key);
+    if (!bucket) {
+      bucket = index.reusableBuckets.pop() ?? [];
+      bucket.length = 0;
+      index.buckets.set(key, bucket);
+    }
+    bucket.push(entry);
+    index.entries[itemIndex] = entry;
+    index.entryCount++;
+    index.maxRadius = Math.max(index.maxRadius, radius);
+  }
+
+  return index;
+}
+
 function createCollisionIndex<T extends { x: number; z: number }>(
   items: readonly T[],
   radiusOf: (item: T) => number,
-  include: (item: T) => boolean = () => true
+  include: (item: T) => boolean = () => true,
 ): CollisionIndex<T> {
-  const result: CollisionIndex<T> = {
-    buckets: new Map(),
-    entries: new Array<CollisionEntry<T> | undefined>(items.length),
-    entryCount: 0,
-    maxRadius: 0,
-  };
-  items.forEach((item, index) => {
-    if (!include(item) || !Number.isFinite(item.x) || !Number.isFinite(item.z)) return;
-    const radius = radiusOf(item);
-    if (!Number.isFinite(radius) || radius <= 0) return;
-    const key = collisionKey(item.x, item.z);
-    const entry = { item, index, radius, key };
-    const bucket = result.buckets.get(key);
-    if (bucket) bucket.push(entry);
-    else result.buckets.set(key, [entry]);
-    result.entries[index] = entry;
-    result.entryCount++;
-    result.maxRadius = Math.max(result.maxRadius, radius);
-  });
-  return result;
+  return rebuildCollisionIndexInPlace(createEmptyCollisionIndex<T>(), items, radiusOf, include);
 }
+
+/** Allocate one scratch bundle per engine; each collision pass keeps its own reusable index. */
+export function createCollisionResolutionScratch(): CollisionResolutionScratch {
+  return {
+    unitIndex: createEmptyCollisionIndex<UnitEntity>(),
+    buildingIndex: createEmptyCollisionIndex<BuildingEntity>(),
+    resourceIndex: createEmptyCollisionIndex<ResourceNode>(),
+    unitCandidates: [],
+    buildingCandidates: [],
+    resourceCandidates: [],
+  };
+}
+
 
 function moveCollisionEntry<T extends { x: number; z: number }>(
   index: CollisionIndex<T>,
@@ -257,13 +327,24 @@ export function getUnitCollisionFirstDisplacementShare(
 }
 
 /** Resolves soft unit collisions using a spatial broad phase and exact circle tests. */
-export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.52): void {
-  const index = createCollisionIndex(
-    units,
-    (unit) => getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
-    (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId
-  );
-  const candidates: CollisionEntry<UnitEntity>[] = [];
+export function resolveUnitUnitCollisions(
+  units: UnitEntity[],
+  pushStrength = 0.52,
+  scratch?: CollisionResolutionScratch,
+): void {
+  const index = scratch
+    ? rebuildCollisionIndexInPlace(
+        scratch.unitIndex,
+        units,
+        (unit) => getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
+        (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId,
+      )
+    : createCollisionIndex(
+        units,
+        (unit) => getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale),
+        (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId,
+      );
+  const candidates = scratch?.unitCandidates ?? [];
 
   for (let i = 0; i < units.length; i++) {
     const first = index.entries[i];
@@ -328,10 +409,16 @@ export function resolveUnitUnitCollisions(units: UnitEntity[], pushStrength = 0.
 }
 
 /** Resolves unit/building collisions; only nearby solid buildings reach the exact test. */
-export function resolveUnitBuildingCollisions(units: UnitEntity[], buildings: BuildingEntity[]): void {
-  const index = createCollisionIndex(buildings, getBuildingCollisionRadius, (building) => building.hp > 0);
+export function resolveUnitBuildingCollisions(
+  units: UnitEntity[],
+  buildings: BuildingEntity[],
+  scratch?: CollisionResolutionScratch,
+): void {
+  const index = scratch
+    ? rebuildCollisionIndexInPlace(scratch.buildingIndex, buildings, getBuildingCollisionRadius, (building) => building.hp > 0)
+    : createCollisionIndex(buildings, getBuildingCollisionRadius, (building) => building.hp > 0);
   if (index.entryCount === 0) return;
-  const candidates: CollisionEntry<BuildingEntity>[] = [];
+  const candidates = scratch?.buildingCandidates ?? [];
   for (const unit of units) {
     if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
     const visitToken = nextCollisionVisitToken(index.entries.length);
@@ -373,14 +460,25 @@ export function resolveUnitBuildingCollisions(units: UnitEntity[], buildings: Bu
 }
 
 /** Resolves unit/resource collisions while preserving farm walkability and gather reach. */
-export function resolveUnitResourceCollisions(units: UnitEntity[], nodes: ResourceNode[]): void {
-  const index = createCollisionIndex(
-    nodes,
-    (node) => getResourceColliderRadius(node.resourceType, node.subtype),
-    (node) => node.amount > 0 && !(node.resourceType === 'food' && (!node.subtype || node.subtype === 'farm'))
-  );
+export function resolveUnitResourceCollisions(
+  units: UnitEntity[],
+  nodes: ResourceNode[],
+  scratch?: CollisionResolutionScratch,
+): void {
+  const index = scratch
+    ? rebuildCollisionIndexInPlace(
+        scratch.resourceIndex,
+        nodes,
+        (node) => getResourceColliderRadius(node.resourceType, node.subtype),
+        (node) => node.amount > 0 && !(node.resourceType === 'food' && (!node.subtype || node.subtype === 'farm')),
+      )
+    : createCollisionIndex(
+        nodes,
+        (node) => getResourceColliderRadius(node.resourceType, node.subtype),
+        (node) => node.amount > 0 && !(node.resourceType === 'food' && (!node.subtype || node.subtype === 'farm')),
+      );
   if (index.entryCount === 0) return;
-  const candidates: CollisionEntry<ResourceNode>[] = [];
+  const candidates = scratch?.resourceCandidates ?? [];
   for (const unit of units) {
     if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;
     const visitToken = nextCollisionVisitToken(index.entries.length);
