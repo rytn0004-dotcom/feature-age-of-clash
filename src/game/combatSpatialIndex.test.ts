@@ -5,6 +5,7 @@ import {
   createCombatSpatialIndex,
   type CombatSpatialCandidates,
   queryCombatSpatialIndex,
+  queryCombatSpatialUnits,
   rebuildCombatSpatialIndexInPlace,
 } from './combatSpatialIndex';
 
@@ -196,4 +197,60 @@ test('combat spatial index: reusable query outputs retain identity and clear pre
   assert.equal(all, output);
   assert.deepEqual(output.units.map((unit) => unit.id), ['near']);
   assert.deepEqual(output.buildings.map((building) => building.id), ['tower']);
+});
+
+
+test('combat spatial unit query reuses its output and matches the unit half of the full query', () => {
+  const units = [
+    { id: 'near-a', x: 15.8, z: 0, hp: 100 },
+    { id: 'near-b', x: 18, z: 3, hp: 100 },
+    { id: 'dead', x: 16, z: 1, hp: 0 },
+    { id: 'sheltered', x: 17, z: 0, hp: 100, garrisonedInBuildingId: 'keep' },
+    { id: 'far', x: 45, z: 0, hp: 100 },
+  ];
+  const buildings = [{ id: 'tower', x: 16, z: 0, hp: 500 }];
+  const index = createCombatSpatialIndex(units, buildings, 16);
+  const output: typeof units = [];
+  const identity = output;
+
+  assert.equal(queryCombatSpatialUnits(index, 16, 0, 4, output), identity);
+  assert.deepEqual(output.map((unit) => unit.id), ['near-a', 'near-b']);
+  assert.deepEqual(
+    output.map((unit) => unit.id).sort(),
+    queryCombatSpatialIndex(index, 16, 0, 4).units.map((unit) => unit.id).sort(),
+  );
+
+  queryCombatSpatialUnits(index, 500, 500, 3, output);
+  assert.equal(output, identity);
+  assert.deepEqual(output, []);
+  queryCombatSpatialUnits(index, 0, 0, Number.NaN, output);
+  assert.equal(output, identity);
+  assert.deepEqual(output, []);
+});
+
+test('combat spatial unit query covers one-cell movement since the index snapshot', () => {
+  const movedUnit = { id: 'moving', x: 25, z: 0, hp: 100 };
+  const index = createCombatSpatialIndex([movedUnit], [], 16);
+  // The index bucket remains at x=25 while the unit moves into a 9-unit query.
+  movedUnit.x = 9;
+
+  const nearby = queryCombatSpatialUnits(index, 0, 0, 9 + index.cellSize);
+  assert.deepEqual(nearby.map((unit) => unit.id), ['moving']);
+  assert.ok(Math.hypot(nearby[0].x, nearby[0].z) <= 9);
+});
+
+test('combat spatial unit query preserves infinite-range and invalid-input semantics', () => {
+  const index = createCombatSpatialIndex(
+    [
+      { id: 'alive', x: 80, z: 80, hp: 100 },
+      { id: 'dead', x: 0, z: 0, hp: 0 },
+      { id: 'garrisoned', x: 1, z: 0, hp: 100, garrisonedInBuildingId: 'keep' },
+    ],
+    [],
+  );
+  const output: Array<{ id: string; x: number; z: number; hp: number; garrisonedInBuildingId?: string }> = [];
+
+  assert.deepEqual(queryCombatSpatialUnits(index, 0, 0, Infinity, output).map((unit) => unit.id), ['alive']);
+  assert.deepEqual(queryCombatSpatialUnits(index, Number.POSITIVE_INFINITY, 0, 5, output), []);
+  assert.deepEqual(queryCombatSpatialUnits(index, 0, 0, -1, output), []);
 });

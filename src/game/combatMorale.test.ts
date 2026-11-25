@@ -5,6 +5,7 @@ import {
   getMoraleCombatModifiers,
   getMoraleRoutGoal,
   shouldUnitRout,
+  selectNearestMoraleRoutThreat,
 } from './combatMorale';
 
 test('small hits cause pressure while morale remains bounded', () => {
@@ -152,4 +153,47 @@ test('leadership resistance also reduces the shock of a commander casualty', () 
     moraleShockResistance: 0.4,
   });
   assert.ok(supported > unsupported);
+});
+
+
+test('morale rout threat selection ignores invalid candidates and resolves ties by stable ID', () => {
+  const hostileIds = new Set(['red-z', 'red-a', 'red-near']);
+  const candidates = [
+    { id: 'self', x: 0, z: 0, hp: 100 },
+    { id: 'dead', x: 0.5, z: 0, hp: 0 },
+    { id: 'sheltered', x: 0.25, z: 0, hp: 100, garrisonedInBuildingId: 'keep' },
+    { id: 'friend', x: 0.2, z: 0, hp: 100 },
+    { id: 'red-z', x: -3, z: 0, hp: 100 },
+    { id: 'red-a', x: 3, z: 0, hp: 100 },
+    { id: 'red-near', x: 0, z: 4, hp: 100 },
+    { id: 'red-far', x: 20, z: 0, hp: 100 },
+  ];
+  const isHostile = (candidate: (typeof candidates)[number]) => hostileIds.has(candidate.id);
+  const expected = selectNearestMoraleRoutThreat(candidates, 'self', 0, 0, 24, isHostile);
+  assert.equal(expected?.id, 'red-a');
+
+  const reversedTies = selectNearestMoraleRoutThreat(
+    [candidates[5], candidates[4]],
+    'self',
+    0,
+    0,
+    24,
+    isHostile,
+  );
+  assert.equal(reversedTies?.id, 'red-a');
+});
+
+test('morale rout threat selection rejects the exact radius boundary and invalid coordinates', () => {
+  const candidates = [
+    { id: 'boundary', x: 24, z: 0, hp: 100 },
+    { id: 'invalid', x: Number.NaN, z: 0, hp: 100 },
+  ];
+  assert.equal(
+    selectNearestMoraleRoutThreat(candidates, 'self', 0, 0, 24, () => true),
+    null,
+  );
+  assert.equal(
+    selectNearestMoraleRoutThreat(candidates, 'self', Number.NaN, 0, 24, () => true),
+    null,
+  );
 });
