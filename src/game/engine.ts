@@ -326,7 +326,6 @@ import { findNearestValidWallStartPoint, getAffordableWallSegmentCount, getWallS
 import {
   findNearestRepairableWall,
   WallEndpointIndex,
-  WALL_ENDPOINT_INDEX_REFRESH_MS,
   isWallChainPointTooClose,
   planWallChainExtension,
   type WallEndpointSnap,
@@ -674,14 +673,12 @@ export class RtsEngine {
   private wallPlacementPreviewLine: THREE.Line | null = null;
   private wallPlacementPreviewIsValid = false;
   private wallPlacementPreviewBlocked = false;
-  private wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
   private wallPlacementPreviewTint = 0x22c55e;
   private wallPlacementPreviewAffordableSegmentCount = 0;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
   private wallEndpointIndex = new WallEndpointIndex<BuildingEntity>();
   private wallEndpointIndexDirty = true;
-  private wallEndpointIndexLastRefreshAt = Number.NEGATIVE_INFINITY;
   private wallEndpointIndexBuildingSource: BuildingEntity[] | null = null;
   private wallEndpointIndexBuildingCount = -1;
   private wallEndpointIndexFaction: FactionId | null = null;
@@ -1501,7 +1498,6 @@ export class RtsEngine {
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
-    this.wallEndpointIndexLastRefreshAt = Number.NEGATIVE_INFINITY;
     this.wallEndpointIndexBuildingSource = null;
     this.wallEndpointIndexBuildingCount = -1;
     this.wallEndpointIndexFaction = null;
@@ -5241,7 +5237,6 @@ export class RtsEngine {
       this.wallPlacementCursor = null;
       this.wallPlacementSnapTargetId = null;
       this.wallPlacementPreviewBlocked = false;
-      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.wallPlacementPreviewTint = 0x22c55e;
       this.wallPlacementPreviewAffordableSegmentCount = 0;
       this.wallPlacementPreviewPlacementsCache.length = 0;
@@ -5339,14 +5334,12 @@ export class RtsEngine {
     point: WallChainPoint,
     forceRefresh = false,
   ): WallEndpointSnap<BuildingEntity> | null {
-    const now = performance.now();
     const shouldRefresh =
       forceRefresh ||
       this.wallEndpointIndexDirty ||
       this.wallEndpointIndexBuildingSource !== this.buildings ||
       this.wallEndpointIndexBuildingCount !== this.buildings.length ||
-      this.wallEndpointIndexFaction !== this.humanPlayerId ||
-      now - this.wallEndpointIndexLastRefreshAt >= WALL_ENDPOINT_INDEX_REFRESH_MS;
+      this.wallEndpointIndexFaction !== this.humanPlayerId;
 
     if (shouldRefresh) {
       const walls = this.buildings.filter(
@@ -5358,7 +5351,6 @@ export class RtsEngine {
       );
       this.wallEndpointIndex.rebuild(walls);
       this.wallEndpointIndexDirty = false;
-      this.wallEndpointIndexLastRefreshAt = now;
       this.wallEndpointIndexBuildingSource = this.buildings;
       this.wallEndpointIndexBuildingCount = this.buildings.length;
       this.wallEndpointIndexFaction = this.humanPlayerId;
@@ -5461,30 +5453,6 @@ export class RtsEngine {
     // stays untouched so adding a new segment never triggers another model tint pass.
   }
 
-  private refreshWallPlacementPreviewObstruction(
-    points: readonly WallChainPoint[],
-    placements: ReturnType<typeof layoutWallChain>,
-    force = false,
-  ): void {
-    const now = performance.now();
-    // This is presentation feedback only. Final clicks still run authoritative
-    // placement validation against the complete current wall route.
-    if (!force && now - this.wallPlacementPreviewCheckedAt < 180) return;
-
-    const obstacles = this.getTerrainNavObstacles();
-    this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
-      placements,
-      DEFAULT_BUILDINGS.wall.size,
-      this.buildings,
-      this.resourceNodes,
-      obstacles?.rects,
-      obstacles?.discs,
-      obstacles?.bridges,
-      points,
-    );
-    this.wallPlacementPreviewCheckedAt = now;
-  }
-
   /** Formally validate one newly completed wall batch exactly once. */
   private validateWallPlacementSection(points: readonly WallChainPoint[]): boolean {
     const placements = layoutWallChain(points);
@@ -5507,18 +5475,17 @@ export class RtsEngine {
     if (this.placementBuildingType !== 'wall') return;
     const snap = this.findWallPlacementSnap({ x, z });
     const nextCursor = snap?.point ?? { x, z };
-    this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
-
+    const nextSnapTargetId = snap?.wall.id ?? null;
     const previous = this.wallPlacementCursor;
-    if (
-      previous &&
+    const unchangedPosition = !!previous &&
       Math.abs(previous.x - nextCursor.x) < 0.035 &&
-      Math.abs(previous.z - nextCursor.z) < 0.035
-    ) {
-      return;
-    }
+      Math.abs(previous.z - nextCursor.z) < 0.035;
+    if (unchangedPosition && this.wallPlacementSnapTargetId === nextSnapTargetId) return;
 
     this.wallPlacementCursor = nextCursor;
+    this.wallPlacementSnapTargetId = nextSnapTargetId;
+    // A rejected click remains red until the user changes the route.
+    this.wallPlacementPreviewBlocked = false;
     this.rebuildWallPlacementPreview();
   }
 
@@ -5567,7 +5534,6 @@ export class RtsEngine {
       this.wallPlacementPreviewFixedGhostsPlaced = 0;
       this.wallPlacementCursor = point;
       this.wallPlacementPreviewBlocked = false;
-      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.rebuildWallPlacementPreview();
       this.spawnCommandIndicator(point.x, point.z, 'build');
       this.addFloatingText(point.x, 2.4, point.z, '📍 起點已設定，移動滑鼠預覽城牆', '#67e8f9');
@@ -5584,15 +5550,12 @@ export class RtsEngine {
       return 'invalid';
     }
 
-    // A Shift-click validates only the newly drawn section and stores that
-    // verified waypoint. The final commit validates the complete chain again,
-    // because AI or other construction may have occupied an earlier section
-    // while the player was still planning the route.
-    if (!this.validateWallPlacementSection([previous, point])) {
+    // Shift-click validates only the newly completed section before fixing it.
+    // The final click skips this partial pass and lets commitWallChain validate
+    // the entire current route once against the latest world state.
+    if (addWaypoint && !this.validateWallPlacementSection([previous, point])) {
       this.wallPlacementCursor = point;
       this.wallPlacementPreviewBlocked = true;
-      this.wallPlacementPreviewCheckedAt = performance.now();
-      this.applyWallPlacementPreviewTint(0xef4444);
       this.rebuildWallPlacementPreview();
       this.addFloatingText(x, 2.5, z, '⚠️ 這一段城牆碰到障礙物，請調整路線', '#ef4444');
       sound.playInvalid();
@@ -5612,7 +5575,6 @@ export class RtsEngine {
       this.wallPlacementPointSnaps = [...this.wallPlacementPointSnaps, snap];
       this.wallPlacementCursor = point;
       this.wallPlacementPreviewBlocked = false;
-      this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.rebuildWallPlacementPreview();
       this.spawnCommandIndicator(point.x, point.z, 'build');
       this.addFloatingText(point.x, 2.4, point.z, '↪️ 本段已驗證，轉折點固定，繼續規劃', '#67e8f9');
@@ -5626,6 +5588,7 @@ export class RtsEngine {
     const committed = this.commitWallChain(completedPoints, completedSnaps);
     if (!committed) {
       this.wallPlacementCursor = point;
+      this.wallPlacementPreviewBlocked = true;
       this.rebuildWallPlacementPreview();
       return 'invalid';
     }
@@ -5636,13 +5599,10 @@ export class RtsEngine {
   }
 
   public getWallPlacementPreviewInfo() {
-    // The scene preview owns route layout. HUD reads this snapshot instead of
-    // laying out the complete wall chain a second time every refresh.
-    const points = this.wallPlacementPreviewPointsCache;
+    // This is a read-only HUD snapshot. Terrain/building/resource validation is
+    // intentionally deferred to an explicit click so HUD refreshes stay cheap.
     const placements = this.wallPlacementPreviewPlacementsCache;
-    const previousBlocked = this.wallPlacementPreviewBlocked;
     const previousAffordable = this.wallPlacementPreviewAffordableSegmentCount;
-    this.refreshWallPlacementPreviewObstruction(points, placements);
 
     const cost = calculateWallChainCost(placements.length, DEFAULT_BUILDINGS.wall.cost);
     const resources = this.getResourcesForFaction(this.humanPlayerId);
@@ -5653,10 +5613,7 @@ export class RtsEngine {
     );
     this.wallPlacementPreviewAffordableSegmentCount = affordableSegmentCount;
 
-    if (
-      previousBlocked !== this.wallPlacementPreviewBlocked ||
-      previousAffordable !== affordableSegmentCount
-    ) {
+    if (previousAffordable !== affordableSegmentCount) {
       this.refreshWallPlacementPreviewGhostTints(placements.length);
     }
 
@@ -5993,7 +5950,6 @@ export class RtsEngine {
       activeDistance = getDistance(activeStart.x, activeStart.z, activeCursor.x, activeCursor.z);
     }
     this.wallPlacementPreviewDistanceCache = this.wallPlacementPreviewFixedDistance + activeDistance;
-    this.refreshWallPlacementPreviewObstruction(previewPoints, placements);
     this.wallPlacementPreviewAffordableSegmentCount = getAffordableWallSegmentCount(
       this.getResourcesForFaction(this.humanPlayerId),
       DEFAULT_BUILDINGS.wall.cost,
@@ -6196,7 +6152,6 @@ export class RtsEngine {
     this.wallPlacementPointSnaps = [];
     this.wallPlacementPreviewIsValid = false;
     this.wallPlacementPreviewBlocked = false;
-    this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
     this.wallPlacementPreviewTint = 0x22c55e;
     this.wallPlacementPreviewAffordableSegmentCount = 0;
     this.wallPlacementPreviewPointsCache.length = 0;

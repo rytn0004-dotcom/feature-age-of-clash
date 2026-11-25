@@ -23,8 +23,6 @@ export interface WallEndpointSnap<T extends WallSnapBuilding = WallSnapBuilding>
   side: 'start' | 'end';
 }
 
-/** Rebuild the cached endpoint topology at most every 100ms while a player is drawing a wall. */
-export const WALL_ENDPOINT_INDEX_REFRESH_MS = 100;
 /** Distance at which a new wall endpoint magnetically joins an existing chain. */
 export const WALL_ENDPOINT_SNAP_RADIUS = 1.65;
 /** Workers can issue a repair order by right-clicking near a damaged wall segment. */

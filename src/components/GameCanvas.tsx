@@ -533,10 +533,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           if (!latestPoint) return;
           activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
 
-          // Terrain/overlap validation is substantially heavier than moving the ghost.
-          // Refresh the HUD at 10 Hz instead of once for every pointer event.
+          // The ghost follows the pointer every display frame. HUD text changes
+          // far less often, so update its resource/cost summary at 4 Hz only.
           const now = performance.now();
-          if (now - lastWallInfoRefreshRef.current >= 100) {
+          if (now - lastWallInfoRefreshRef.current >= 250) {
             setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
             lastWallInfoRefreshRef.current = now;
           }
