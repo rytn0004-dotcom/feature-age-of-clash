@@ -1883,6 +1883,185 @@ function createMongolCampMesh(type: 'lumber' | 'mining', faction: FactionId, pro
   return group;
 }
 
+
+function createMongolDockMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolRiverFerryLanding';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 3.0);
+  const quay = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.54, 2.35), materials.stone);
+  quay.position.set(0, 0.27, -1.15);
+  quay.receiveShadow = true;
+  const pier = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.24, 4.25), materials.timber);
+  pier.position.set(0, 0.72, 0.78);
+  pier.castShadow = true;
+  group.add(quay, pier);
+  // Stilt piles and cross-bracing extend the landing out over the water.
+  [-1.72, -0.56, 0.56, 1.72].forEach((x) => {
+    [-0.35, 1.25, 2.75].forEach((z) => {
+      const piling = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.11, 1.85, 8), materials.timber);
+      piling.position.set(x, 0.15, z);
+      group.add(piling);
+    });
+  });
+  [-1.65, 1.65].forEach((x) => {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.45, 0.12), materials.rope);
+    brace.position.set(x, 0.3, 1.3);
+    brace.rotation.x = 0.42;
+    group.add(brace);
+  });
+  addMongolGer(group, -0.85, -1.3, 1.12, 1.42, materials, materials.darkFelt);
+  // A shallow ferry pontoon, loading ramp, and mooring bollards make the structure read as a landing.
+  const pontoon = new THREE.Mesh(new THREE.BoxGeometry(2.55, 0.34, 1.15), materials.darkFelt);
+  pontoon.position.set(0.1, 0.12, 3.05);
+  pontoon.scale.set(1, 0.86, 1);
+  const gunwale = new THREE.Mesh(new THREE.BoxGeometry(2.62, 0.12, 0.13), materials.timber);
+  gunwale.position.set(0.1, 0.34, 3.55);
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.14, 1.15), materials.timber);
+  ramp.position.set(0.1, 0.52, 2.0);
+  ramp.rotation.x = -0.13;
+  group.add(pontoon, gunwale, ramp);
+  [-1.75, 1.75].forEach((x) => {
+    const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.9, 8), materials.timber);
+    bollard.position.set(x, 1.12, 2.5);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), materials.bronze);
+    cap.position.set(x, 1.6, 2.5);
+    group.add(bollard, cap);
+  });
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.085, 4.6, 8), materials.timber);
+  mast.position.set(1.65, 2.65, -0.7);
+  const crossarm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 1.55), materials.timber);
+  crossarm.position.set(1.65, 4.5, -0.7);
+  const cargoNet = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.055, 6, 12), materials.rope);
+  cargoNet.position.set(1.65, 1.12, 0.0);
+  cargoNet.rotation.x = Math.PI / 2;
+  group.add(mast, crossarm, cargoNet);
+  addMongolBuildingSulde(group, -2.2, -2.05, 4.8, materials, true);
+  addMongolBuildingBadge(group, faction, '草原渡口與商旅碼頭', '⛵', '1350', 5.5);
+  return group;
+}
+
+function createMongolWatchtowerMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolFrontierWatchtower';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 2.0);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.72, 0.42, 12), materials.stone);
+  base.position.y = 0.21;
+  group.add(base);
+  // Four high timber stilts lift the lookout above the palisade line.
+  [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 4.05, 0.24), materials.timber);
+    leg.position.set(sx * 1.12, 2.25, sz * 1.12);
+    leg.rotation.z = sx * -0.06;
+    leg.castShadow = true;
+    group.add(leg);
+    const kneeBrace = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.55, 0.16), materials.rope);
+    kneeBrace.position.set(sx * 0.86, 1.75, sz * 1.12);
+    kneeBrace.rotation.z = sx * 0.52;
+    group.add(kneeBrace);
+  }));
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(3.65, 0.28, 3.65), materials.timber);
+  platform.position.y = 4.12;
+  platform.castShadow = true;
+  group.add(platform);
+  // Open lookout rails preserve a clear, recognizable elevated silhouette.
+  for (let i = -1; i <= 1; i++) {
+    const railX = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.78, 3.35), materials.timber);
+    railX.position.set(i * 1.55, 4.63, 0);
+    const railZ = new THREE.Mesh(new THREE.BoxGeometry(3.35, 0.78, 0.12), materials.timber);
+    railZ.position.set(0, 4.63, i * 1.55);
+    group.add(railX, railZ);
+  }
+  [-1, 1].forEach((x) => {
+    const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.42, 0.26), materials.stone);
+    merlon.position.set(x * 1.55, 5.18, 0);
+    group.add(merlon);
+  });
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(2.25, 1.12, 4), materials.darkFelt);
+  roof.position.y = 5.55;
+  roof.rotation.y = Math.PI / 4;
+  roof.castShadow = true;
+  const roofCap = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.28, 0.25, 8), materials.bronze);
+  roofCap.position.y = 6.16;
+  group.add(roof, roofCap);
+  // A simple ladder is visible on the front face.
+  const ladderSides = [-0.22, 0.22].map((x) => {
+    const side = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 3.55, 6), materials.timber);
+    side.position.set(x, 1.92, 1.82);
+    side.rotation.x = 0.06;
+    return side;
+  });
+  const rungs: THREE.Mesh[] = [];
+  for (let i = 0; i < 9; i++) {
+    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.48, 6), materials.rope);
+    rung.rotation.z = Math.PI / 2;
+    rung.position.set(0, 0.38 + i * 0.36, 1.82);
+    rungs.push(rung);
+  }
+  group.add(...ladderSides, ...rungs);
+  addMongolBuildingSulde(group, 0.0, -1.28, 7.5, materials);
+  addMongolBuildingBadge(group, faction, '草原邊境瞭望塔', '🏹', '1600', 8.15);
+  return group;
+}
+
+function createMongolCastleMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'mongolKhanatePalisadeFortress';
+  group.userData.mongolBuildingModel = profile;
+  const materials = getMongolBuildingMaterials(faction);
+  addContactShadow(group, 5.15);
+  const earthwork = new THREE.Mesh(new THREE.CylinderGeometry(4.45, 4.7, 0.58, 24), materials.stone);
+  earthwork.position.y = 0.29;
+  earthwork.receiveShadow = true;
+  group.add(earthwork);
+  // Timber palisade, walk rails and outward-facing sharpened stakes form a continuous defensive ring.
+  for (let i = 0; i < 28; i++) {
+    const angle = i / 28 * Math.PI * 2;
+    const x = Math.cos(angle) * 4.05;
+    const z = Math.sin(angle) * 4.05;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.12, 3.45, 7), materials.timber);
+    post.position.set(x, 2.0, z);
+    post.rotation.z = Math.cos(angle) * -0.06;
+    const point = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.34, 6), materials.timber);
+    point.position.set(x, 3.9, z);
+    group.add(post, point);
+  }
+  const walkRing = new THREE.Mesh(new THREE.TorusGeometry(4.02, 0.085, 7, 48), materials.rope);
+  walkRing.rotation.x = Math.PI / 2;
+  walkRing.position.y = 3.25;
+  group.add(walkRing);
+  // Four raised watch posts and the Khan's large command ger create a distinct steppe fortress silhouette.
+  addMongolGer(group, 0, -0.15, 2.05, 2.25, materials, materials.darkFelt);
+  const towerPositions: Array<[number, number]> = [[-3.2, -3.2], [3.2, -3.2], [-3.2, 3.2], [3.2, 3.2]];
+  towerPositions.forEach(([x, z], index) => {
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.62, 4.1, 10), materials.timber);
+    tower.position.set(x, 2.35, z);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.86, 1.05, 8), index % 2 ? materials.banner : materials.darkFelt);
+    roof.position.set(x, 4.95, z);
+    group.add(tower, roof);
+    addMongolBuildingSulde(group, x, z, 6.0, materials, index % 2 === 1);
+  });
+  // Heavy gate portal and two open leaves face the approach.
+  [-0.95, 0.95].forEach((x) => {
+    const gatePost = new THREE.Mesh(new THREE.BoxGeometry(0.32, 3.1, 0.42), materials.timber);
+    gatePost.position.set(x, 1.85, 4.03);
+    group.add(gatePost);
+  });
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.28, 0.52), materials.bronze);
+  lintel.position.set(0, 3.28, 4.03);
+  const gateLeaf = new THREE.Mesh(new THREE.BoxGeometry(1.68, 2.25, 0.16), materials.darkFelt);
+  gateLeaf.position.set(0, 1.45, 4.08);
+  const gateBrace = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.13, 0.2), materials.iron);
+  gateBrace.position.set(0, 2.35, 4.18);
+  group.add(lintel, gateLeaf, gateBrace);
+  addMongolBuildingSulde(group, 0, -4.1, 8.0, materials);
+  addMongolBuildingBadge(group, faction, '大汗草原牙帳城寨', '🏰', '4800', 9.0);
+  return group;
+}
+
 export function createArcheryRangeMesh(faction: FactionId): THREE.Group {
   const group = new THREE.Group();
   const colors = getFactionPalette(faction);
@@ -5440,9 +5619,11 @@ export function createBuildingMesh(
     case 'siege_workshop':
       group = createSiegeWorkshopMesh(faction);
       break;
-    case 'dock':
-      group = createDockMesh(faction);
+    case 'dock': {
+      const dockProfile = resolvedCiv === 'mongol' ? getMongolBuildingModelProfile('dock') : null;
+      group = dockProfile ? createMongolDockMesh(faction, dockProfile) : createDockMesh(faction);
       break;
+    }
     case 'farm':
       group = createFarmMesh();
       break;
@@ -5461,12 +5642,16 @@ export function createBuildingMesh(
     case 'gate':
       group = createGateMesh(faction, resolvedCiv);
       break;
-    case 'tower':
-      group = createTowerMesh(faction);
+    case 'tower': {
+      const towerProfile = resolvedCiv === 'mongol' ? getMongolBuildingModelProfile('tower') : null;
+      group = towerProfile ? createMongolWatchtowerMesh(faction, towerProfile) : createTowerMesh(faction);
       break;
-    case 'castle':
-      group = createCastleMesh(faction);
+    }
+    case 'castle': {
+      const castleProfile = resolvedCiv === 'mongol' ? getMongolBuildingModelProfile('castle') : null;
+      group = castleProfile ? createMongolCastleMesh(faction, castleProfile) : createCastleMesh(faction);
       break;
+    }
     case 'armory_forge':
       group = createArmoryForgeMesh(faction);
       break;

@@ -117,5 +117,8 @@ test('Mongol architecture: key military and economy buildings use dedicated step
   assert.equal(getMongolBuildingModelProfile('granary'), 'raised_grain_store');
   assert.equal(getMongolBuildingModelProfile('lumber_camp'), 'nomad_lumber_outpost');
   assert.equal(getMongolBuildingModelProfile('mining_camp'), 'nomad_ore_outpost');
+  assert.equal(getMongolBuildingModelProfile('dock'), 'steppe_ferry_landing');
+  assert.equal(getMongolBuildingModelProfile('tower'), 'frontier_watchtower');
+  assert.equal(getMongolBuildingModelProfile('castle'), 'khanate_palisade_fortress');
   assert.equal(getMongolBuildingModelProfile('town_center'), null);
 });

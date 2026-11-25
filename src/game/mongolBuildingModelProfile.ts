@@ -6,7 +6,10 @@ export type MongolBuildingModelProfile =
   | 'mobile_siege_camp'
   | 'raised_grain_store'
   | 'nomad_lumber_outpost'
-  | 'nomad_ore_outpost';
+  | 'nomad_ore_outpost'
+  | 'steppe_ferry_landing'
+  | 'frontier_watchtower'
+  | 'khanate_palisade_fortress';
 
 const MONGOL_BUILDING_MODEL_PROFILES: Partial<Record<BuildingType, MongolBuildingModelProfile>> = {
   archery_range: 'steppe_archery_yard',
@@ -15,6 +18,9 @@ const MONGOL_BUILDING_MODEL_PROFILES: Partial<Record<BuildingType, MongolBuildin
   granary: 'raised_grain_store',
   lumber_camp: 'nomad_lumber_outpost',
   mining_camp: 'nomad_ore_outpost',
+  dock: 'steppe_ferry_landing',
+  tower: 'frontier_watchtower',
+  castle: 'khanate_palisade_fortress',
 };
 
 /** Returns the dedicated Mongol structural model family, or null when the standard civ model is intended. */
