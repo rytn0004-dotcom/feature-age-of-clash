@@ -99,6 +99,7 @@ export const HOTKEY_REFERENCE_GROUPS = [
       { keys: 'F', desc: '攻擊推進 (Attack-Move)' },
       { keys: 'X', desc: '立即停止當前指令' },
       { keys: 'Tab / M / Esc', desc: '頭頂標籤 / 靜音 / 暫停' },
+      { keys: '長按 Delete 3 秒', desc: '拆除選取建築或解散選取部隊（不退款；放開按鍵可取消）' },
     ],
   },
   {
