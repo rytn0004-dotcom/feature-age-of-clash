@@ -126,6 +126,7 @@ import {
   calculateWallChainCost,
   WallChainPoint,
   layoutWallChain,
+  layoutWallChainSection,
   computeBuildingVisualState,
   computeFactionResourceTelemetry,
   estimateConstructionTimeRemaining,
@@ -623,6 +624,9 @@ export class RtsEngine {
   private wallPlacementPreviewMarkers: THREE.Mesh[] = [];
   private wallPlacementPreviewPointsCache: WallChainPoint[] = [];
   private wallPlacementPreviewPlacementsCache: ReturnType<typeof layoutWallChain> = [];
+  private wallPlacementPreviewFixedPlacementCount = 0;
+  private wallPlacementPreviewFixedDistance = 0;
+  private wallPlacementPreviewFixedGhostsPlaced = 0;
   private wallPlacementPreviewDistanceCache = 0;
   private wallPlacementPreviewTintSignature = '';
   private wallPlacementPreviewOriginalMaterials = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>();
@@ -5199,6 +5203,11 @@ export class RtsEngine {
       this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
       this.wallPlacementPreviewTint = 0x22c55e;
       this.wallPlacementPreviewAffordableSegmentCount = 0;
+      this.wallPlacementPreviewPlacementsCache.length = 0;
+      this.wallPlacementPreviewFixedPlacementCount = 0;
+      this.wallPlacementPreviewFixedDistance = 0;
+      this.wallPlacementPreviewFixedGhostsPlaced = 0;
+      this.wallPlacementPreviewDistanceCache = 0;
       this.wallPlacementPointSnaps = [];
       this.wallPlacementGhostTemplate = this.createTranslucentBuildingPreview('wall', this.humanPlayerId, 0.42, 0x38bdf8);
       this.rebuildWallPlacementPreview();
@@ -5383,7 +5392,9 @@ export class RtsEngine {
   }
 
   private buildWallPlacementPreviewPoints(): WallChainPoint[] {
-    const points = [...this.wallPlacementPoints];
+    const points = this.wallPlacementPreviewPointsCache;
+    points.length = 0;
+    for (const point of this.wallPlacementPoints) points.push(point);
     if (this.wallPlacementCursor && points.length > 0) {
       const last = points[points.length - 1];
       if (getDistance(last.x, last.z, this.wallPlacementCursor.x, this.wallPlacementCursor.z) >= 0.1) {
@@ -5509,6 +5520,10 @@ export class RtsEngine {
       this.wallPlacementSnapTargetId = snap?.wall.id ?? null;
       this.wallPlacementPoints = [point];
       this.wallPlacementPointSnaps = [snap];
+      this.wallPlacementPreviewPlacementsCache.length = 0;
+      this.wallPlacementPreviewFixedPlacementCount = 0;
+      this.wallPlacementPreviewFixedDistance = 0;
+      this.wallPlacementPreviewFixedGhostsPlaced = 0;
       this.wallPlacementCursor = point;
       this.wallPlacementPreviewBlocked = false;
       this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
@@ -5544,6 +5559,14 @@ export class RtsEngine {
     }
 
     if (addWaypoint) {
+      // The cursor section has now been validated. Store its placements as a
+      // fixed prefix so future pointer moves only calculate the next section.
+      this.wallPlacementPreviewPlacementsCache.length = this.wallPlacementPreviewFixedPlacementCount;
+      const sectionIndex = this.wallPlacementPoints.length - 1;
+      const fixedSection = layoutWallChainSection(previous, point, sectionIndex);
+      this.wallPlacementPreviewPlacementsCache.push(...fixedSection);
+      this.wallPlacementPreviewFixedPlacementCount = this.wallPlacementPreviewPlacementsCache.length;
+      this.wallPlacementPreviewFixedDistance += getDistance(previous.x, previous.z, point.x, point.z);
       this.wallPlacementPoints = [...this.wallPlacementPoints, point];
       this.wallPlacementPointSnaps = [...this.wallPlacementPointSnaps, snap];
       this.wallPlacementCursor = point;
@@ -5907,15 +5930,28 @@ export class RtsEngine {
     group.visible = true;
 
     const previewPoints = this.buildWallPlacementPreviewPoints();
+    const placements = this.wallPlacementPreviewPlacementsCache;
+    // Fixed sections are retained in-place. Recalculate only the active section
+    // between the final Shift waypoint and the current pointer.
+    placements.length = this.wallPlacementPreviewFixedPlacementCount;
 
-    const placements = previewPoints.length >= 2 ? layoutWallChain(previewPoints) : [];
-    this.wallPlacementPreviewPointsCache = previewPoints;
-    this.wallPlacementPreviewPlacementsCache = placements;
-    this.wallPlacementPreviewDistanceCache = previewPoints.slice(1).reduce(
-      (sum, point, index) =>
-        sum + getDistance(previewPoints[index].x, previewPoints[index].z, point.x, point.z),
-      0,
-    );
+    const activeStart = this.wallPlacementPoints[this.wallPlacementPoints.length - 1];
+    const activeCursor = this.wallPlacementCursor;
+    let activeDistance = 0;
+    if (
+      activeStart &&
+      activeCursor &&
+      getDistance(activeStart.x, activeStart.z, activeCursor.x, activeCursor.z) >= 0.1
+    ) {
+      const activeSection = layoutWallChainSection(
+        activeStart,
+        activeCursor,
+        this.wallPlacementPoints.length - 1,
+      );
+      placements.push(...activeSection);
+      activeDistance = getDistance(activeStart.x, activeStart.z, activeCursor.x, activeCursor.z);
+    }
+    this.wallPlacementPreviewDistanceCache = this.wallPlacementPreviewFixedDistance + activeDistance;
     this.refreshWallPlacementPreviewObstruction(previewPoints, placements);
     this.wallPlacementPreviewAffordableSegmentCount = getAffordableWallSegmentCount(
       this.getResourcesForFaction(this.humanPlayerId),
@@ -5933,14 +5969,16 @@ export class RtsEngine {
       this.wallPlacementPreviewGhosts.push(ghost);
       group.add(ghost);
     }
+    const fixedGhostsPlaced = Math.min(this.wallPlacementPreviewFixedGhostsPlaced, this.wallPlacementPreviewFixedPlacementCount);
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
       const ghost = this.wallPlacementPreviewGhosts[index];
       const placement = placements[index];
       ghost.visible = !!placement && index < previewLimit;
-      if (!placement || index >= previewLimit) continue;
+      if (!placement || index >= previewLimit || index < fixedGhostsPlaced) continue;
       ghost.position.set(placement.x, 0, placement.z);
       ghost.rotation.y = placement.rotationY;
     }
+    this.wallPlacementPreviewFixedGhostsPlaced = this.wallPlacementPreviewFixedPlacementCount;
     this.refreshWallPlacementPreviewGhostTints(placements.length);
 
     if (!this.wallPlacementPreviewLine) {
@@ -6120,8 +6158,11 @@ export class RtsEngine {
     this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
     this.wallPlacementPreviewTint = 0x22c55e;
     this.wallPlacementPreviewAffordableSegmentCount = 0;
-    this.wallPlacementPreviewPointsCache = [];
-    this.wallPlacementPreviewPlacementsCache = [];
+    this.wallPlacementPreviewPointsCache.length = 0;
+    this.wallPlacementPreviewPlacementsCache.length = 0;
+    this.wallPlacementPreviewFixedPlacementCount = 0;
+    this.wallPlacementPreviewFixedDistance = 0;
+    this.wallPlacementPreviewFixedGhostsPlaced = 0;
     this.wallPlacementPreviewDistanceCache = 0;
     this.wallPlacementPreviewTintSignature = '';
     if (this.wallPlacementPreviewGroup) {
