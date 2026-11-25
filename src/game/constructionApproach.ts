@@ -41,12 +41,82 @@ export interface ConstructionWorkTarget {
 }
 
 /**
- * Match each construction target to a distinct closest worker. Candidate pairs are
- * considered globally, preventing an early target from consuming the only worker
- * who can reach a later target efficiently.
- *
- * The returned array is indexed by target and contains the original worker index.
- * Targets outnumbering workers receive -1.
+ * Solve a rectangular minimum-cost assignment matrix where rows <= columns.
+ * The Hungarian algorithm gives a globally optimal one-to-one matching in O(n^2 m).
+ */
+function solveMinimumCostAssignment(costs: readonly (readonly number[])[]): number[] {
+  const rowCount = costs.length;
+  if (rowCount === 0) return [];
+  const columnCount = costs[0]?.length ?? 0;
+  if (columnCount < rowCount || costs.some((row) => row.length !== columnCount)) {
+    return new Array<number>(rowCount).fill(-1);
+  }
+
+  const rowPotential = new Array<number>(rowCount + 1).fill(0);
+  const columnPotential = new Array<number>(columnCount + 1).fill(0);
+  const matchedRowForColumn = new Array<number>(columnCount + 1).fill(0);
+  const previousColumn = new Array<number>(columnCount + 1).fill(0);
+
+  for (let row = 1; row <= rowCount; row++) {
+    matchedRowForColumn[0] = row;
+    let currentColumn = 0;
+    const minimumReducedCost = new Array<number>(columnCount + 1).fill(Number.POSITIVE_INFINITY);
+    const visited = new Array<boolean>(columnCount + 1).fill(false);
+
+    do {
+      visited[currentColumn] = true;
+      const currentRow = matchedRowForColumn[currentColumn];
+      let delta = Number.POSITIVE_INFINITY;
+      let nextColumn = 0;
+
+      for (let column = 1; column <= columnCount; column++) {
+        if (visited[column]) continue;
+        const reducedCost =
+          costs[currentRow - 1][column - 1] -
+          rowPotential[currentRow] -
+          columnPotential[column];
+        if (reducedCost < minimumReducedCost[column]) {
+          minimumReducedCost[column] = reducedCost;
+          previousColumn[column] = currentColumn;
+        }
+        if (minimumReducedCost[column] < delta) {
+          delta = minimumReducedCost[column];
+          nextColumn = column;
+        }
+      }
+
+      if (!Number.isFinite(delta) || nextColumn === 0) return new Array<number>(rowCount).fill(-1);
+      for (let column = 0; column <= columnCount; column++) {
+        if (visited[column]) {
+          rowPotential[matchedRowForColumn[column]] += delta;
+          columnPotential[column] -= delta;
+        } else {
+          minimumReducedCost[column] -= delta;
+        }
+      }
+      currentColumn = nextColumn;
+    } while (matchedRowForColumn[currentColumn] !== 0);
+
+    do {
+      const priorColumn = previousColumn[currentColumn];
+      matchedRowForColumn[currentColumn] = matchedRowForColumn[priorColumn];
+      currentColumn = priorColumn;
+    } while (currentColumn !== 0);
+  }
+
+  const rowToColumn = new Array<number>(rowCount).fill(-1);
+  for (let column = 1; column <= columnCount; column++) {
+    const matchedRow = matchedRowForColumn[column];
+    if (matchedRow > 0) rowToColumn[matchedRow - 1] = column - 1;
+  }
+  return rowToColumn;
+}
+
+/**
+ * Match construction targets to distinct workers while minimizing total travel
+ * distance, rather than greedily consuming the nearest pair. The result is
+ * indexed by target and contains the original worker index; unmatched targets
+ * and targets/workers with invalid coordinates remain unassigned.
  */
 export function assignWorkersToConstructionTargets(
   workers: readonly ConstructionWorkerPosition[],
@@ -55,33 +125,41 @@ export function assignWorkersToConstructionTargets(
   const assignments = new Array<number>(targets.length).fill(-1);
   if (workers.length === 0 || targets.length === 0) return assignments;
 
-  const candidates: Array<{ targetIndex: number; workerIndex: number; distanceSquared: number }> = [];
-  targets.forEach((target, targetIndex) => {
-    workers.forEach((worker, workerIndex) => {
-      const dx = worker.x - target.x;
-      const dz = worker.z - target.z;
-      candidates.push({
-        targetIndex,
-        workerIndex,
-        distanceSquared: dx * dx + dz * dz,
-      });
+  const validWorkerIndices = workers
+    .map((worker, index) => ({ worker, index }))
+    .filter(({ worker }) => Number.isFinite(worker.x) && Number.isFinite(worker.z))
+    .map(({ index }) => index);
+  const validTargetIndices = targets
+    .map((target, index) => ({ target, index }))
+    .filter(({ target }) => Number.isFinite(target.x) && Number.isFinite(target.z))
+    .map(({ index }) => index);
+  if (validWorkerIndices.length === 0 || validTargetIndices.length === 0) return assignments;
+
+  const distanceSquared = (workerIndex: number, targetIndex: number): number => {
+    const dx = workers[workerIndex].x - targets[targetIndex].x;
+    const dz = workers[workerIndex].z - targets[targetIndex].z;
+    const distance = dx * dx + dz * dz;
+    return Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER;
+  };
+
+  if (validWorkerIndices.length <= validTargetIndices.length) {
+    const costs = validWorkerIndices.map((workerIndex) =>
+      validTargetIndices.map((targetIndex) => distanceSquared(workerIndex, targetIndex))
+    );
+    const workerToTarget = solveMinimumCostAssignment(costs);
+    workerToTarget.forEach((targetColumn, workerRow) => {
+      if (targetColumn < 0) return;
+      assignments[validTargetIndices[targetColumn]] = validWorkerIndices[workerRow];
     });
-  });
-
-  candidates.sort((a, b) =>
-    a.distanceSquared - b.distanceSquared ||
-    a.targetIndex - b.targetIndex ||
-    a.workerIndex - b.workerIndex
-  );
-
-  const assignedWorkers = new Set<number>();
-  let assignedCount = 0;
-  for (const candidate of candidates) {
-    if (assignments[candidate.targetIndex] !== -1 || assignedWorkers.has(candidate.workerIndex)) continue;
-    assignments[candidate.targetIndex] = candidate.workerIndex;
-    assignedWorkers.add(candidate.workerIndex);
-    assignedCount++;
-    if (assignedCount >= Math.min(workers.length, targets.length)) break;
+  } else {
+    const costs = validTargetIndices.map((targetIndex) =>
+      validWorkerIndices.map((workerIndex) => distanceSquared(workerIndex, targetIndex))
+    );
+    const targetToWorker = solveMinimumCostAssignment(costs);
+    targetToWorker.forEach((workerColumn, targetRow) => {
+      if (workerColumn < 0) return;
+      assignments[validTargetIndices[targetRow]] = validWorkerIndices[workerColumn];
+    });
   }
 
   return assignments;
