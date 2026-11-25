@@ -612,6 +612,12 @@ export class RtsEngine {
   private wallPlacementPreviewGroup: THREE.Group | null = null;
   private wallPlacementPreviewGhosts: THREE.Group[] = [];
   private wallPlacementPreviewMarkers: THREE.Mesh[] = [];
+  private wallPlacementPreviewPointsCache: WallChainPoint[] = [];
+  private wallPlacementPreviewPlacementsCache: ReturnType<typeof layoutWallChain> = [];
+  private wallPlacementPreviewDistanceCache = 0;
+  private wallPlacementPreviewTintSignature = '';
+  private wallPlacementPreviewOriginalMaterials = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  private wallPlacementPreviewMaterialVariants = new Map<number, Map<THREE.Material, THREE.Material>>();
   private wallPlacementPreviewLine: THREE.Line | null = null;
   private wallPlacementPreviewIsValid = false;
   private wallPlacementPreviewBlocked = false;
@@ -5075,17 +5081,8 @@ export class RtsEngine {
       }
     }
 
-    // Ghost clones share the translucent template materials, so one traversal
-    // recolors every pooled segment without rebuilding or reloading any model.
-    this.wallPlacementGhostTemplate?.traverse((object) => {
-      const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.material) return;
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        const colored = material as THREE.Material & { color?: THREE.Color };
-        colored.color?.setHex(color);
-      }
-    });
+    // Segment ghosts use shared, pooled material variants. The template itself
+    // stays untouched so adding a new segment never triggers another model tint pass.
   }
 
   private refreshWallPlacementPreviewObstruction(
@@ -5094,7 +5091,9 @@ export class RtsEngine {
     force = false,
   ): void {
     const now = performance.now();
-    if (!force && now - this.wallPlacementPreviewCheckedAt < 100) return;
+    // This is presentation feedback only. Final clicks still run authoritative
+    // placement validation against the complete current wall route.
+    if (!force && now - this.wallPlacementPreviewCheckedAt < 180) return;
 
     const obstacles = this.getTerrainNavObstacles();
     this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
@@ -5108,24 +5107,6 @@ export class RtsEngine {
       points,
     );
     this.wallPlacementPreviewCheckedAt = now;
-
-    const resources = this.getResourcesForFaction(this.humanPlayerId);
-    const affordable = getAffordableWallSegmentCount(
-      resources,
-      DEFAULT_BUILDINGS.wall.cost,
-      placements.length,
-    );
-    const withinLimit = placements.length > 0 && placements.length <= MAX_WALL_CHAIN_SEGMENTS;
-    const hasAffordablePart = affordable > 0;
-    this.wallPlacementPreviewAffordableSegmentCount = affordable;
-    this.wallPlacementPreviewIsValid = withinLimit && !this.wallPlacementPreviewBlocked && hasAffordablePart;
-    this.applyWallPlacementPreviewTint(
-      this.wallPlacementPreviewBlocked || placements.length > MAX_WALL_CHAIN_SEGMENTS
-        ? 0xef4444
-        : !hasAffordablePart || affordable < placements.length
-          ? 0xf59e0b
-          : 0x22c55e,
-    );
   }
 
   /** Formally validate one newly completed wall batch exactly once. */
@@ -5267,9 +5248,14 @@ export class RtsEngine {
   }
 
   public getWallPlacementPreviewInfo() {
-    const points = this.buildWallPlacementPreviewPoints();
-    const placements = layoutWallChain(points);
+    // The scene preview owns route layout. HUD reads this snapshot instead of
+    // laying out the complete wall chain a second time every refresh.
+    const points = this.wallPlacementPreviewPointsCache;
+    const placements = this.wallPlacementPreviewPlacementsCache;
+    const previousBlocked = this.wallPlacementPreviewBlocked;
+    const previousAffordable = this.wallPlacementPreviewAffordableSegmentCount;
     this.refreshWallPlacementPreviewObstruction(points, placements);
+
     const cost = calculateWallChainCost(placements.length, DEFAULT_BUILDINGS.wall.cost);
     const resources = this.getResourcesForFaction(this.humanPlayerId);
     const affordableSegmentCount = getAffordableWallSegmentCount(
@@ -5278,16 +5264,18 @@ export class RtsEngine {
       placements.length,
     );
     this.wallPlacementPreviewAffordableSegmentCount = affordableSegmentCount;
-    this.refreshWallPlacementPreviewGhostTints(placements.length);
+
+    if (
+      previousBlocked !== this.wallPlacementPreviewBlocked ||
+      previousAffordable !== affordableSegmentCount
+    ) {
+      this.refreshWallPlacementPreviewGhostTints(placements.length);
+    }
 
     return {
       pointCount: this.wallPlacementPoints.length,
       segmentCount: placements.length,
-      distance: points.slice(1).reduce(
-        (sum, point, index) =>
-          sum + getDistance(points[index].x, points[index].z, point.x, point.z),
-        0,
-      ),
+      distance: this.wallPlacementPreviewDistanceCache,
       cost,
       canAfford: affordableSegmentCount >= placements.length,
       affordableSegmentCount,
@@ -5505,48 +5493,68 @@ export class RtsEngine {
     return true;
   }
 
-  private cloneWallPlacementPreviewMaterials(ghost: THREE.Group): void {
-    const clones = new Map<THREE.Material, THREE.Material>();
-    const ownedMaterials: THREE.Material[] = [];
+  private registerWallPlacementPreviewMaterials(ghost: THREE.Group): void {
+    // Cloned wall meshes share the template's source materials. Remember those
+    // sources once; each visual state gets one pooled material per source, not
+    // a fresh set of materials for every wall segment.
     ghost.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh || !mesh.material) return;
-      const cloneMaterial = (source: THREE.Material): THREE.Material => {
-        let cloned = clones.get(source);
-        if (!cloned) {
-          cloned = source.clone();
-          clones.set(source, cloned);
-          ownedMaterials.push(cloned);
-        }
-        return cloned;
-      };
-      mesh.material = Array.isArray(mesh.material)
-        ? mesh.material.map(cloneMaterial)
-        : cloneMaterial(mesh.material);
+      this.wallPlacementPreviewOriginalMaterials.set(mesh, mesh.material);
     });
-    // Geometry remains shared with the single template; only these cheap
-    // material instances belong to this segment and need separate tinting.
-    ghost.userData.wallPreviewOwnedMaterials = ownedMaterials;
+  }
+
+  private getWallPlacementPreviewMaterialVariant(source: THREE.Material, color: number): THREE.Material {
+    let variants = this.wallPlacementPreviewMaterialVariants.get(color);
+    if (!variants) {
+      variants = new Map<THREE.Material, THREE.Material>();
+      this.wallPlacementPreviewMaterialVariants.set(color, variants);
+    }
+
+    let variant = variants.get(source);
+    if (!variant) {
+      variant = source.clone();
+      const colored = variant as THREE.Material & { color?: THREE.Color };
+      colored.color?.setHex(color);
+      variants.set(source, variant);
+    }
+    return variant;
   }
 
   private setWallPlacementPreviewGhostTint(ghost: THREE.Group, color: number): void {
-    const materials = ghost.userData.wallPreviewOwnedMaterials as THREE.Material[] | undefined;
-    if (!materials) return;
-    for (const material of materials) {
-      const colored = material as THREE.Material & { color?: THREE.Color };
-      colored.color?.setHex(color);
-    }
+    if (ghost.userData.wallPreviewTint === color) return;
+
+    ghost.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const original = this.wallPlacementPreviewOriginalMaterials.get(mesh) ?? mesh.material;
+      this.wallPlacementPreviewOriginalMaterials.set(mesh, original);
+      mesh.material = Array.isArray(original)
+        ? original.map((material) => this.getWallPlacementPreviewMaterialVariant(material, color))
+        : this.getWallPlacementPreviewMaterialVariant(original, color);
+    });
+
+    ghost.userData.wallPreviewTint = color;
   }
 
   private refreshWallPlacementPreviewGhostTints(segmentCount: number): void {
     const overflow = segmentCount > MAX_WALL_CHAIN_SEGMENTS;
+    const affordable = this.wallPlacementPreviewAffordableSegmentCount;
+    const blocked = this.wallPlacementPreviewBlocked || overflow;
+    const tint = blocked
+      ? 0xef4444
+      : affordable === 0 || affordable < segmentCount
+        ? 0xf59e0b
+        : 0x22c55e;
+
+    this.applyWallPlacementPreviewTint(tint);
+
+    const signature = String(segmentCount) + ':' + String(affordable) + ':' + (blocked ? '1' : '0');
+    if (signature === this.wallPlacementPreviewTintSignature) return;
+    this.wallPlacementPreviewTintSignature = signature;
+
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
-      const status = getWallSegmentPreviewStatus(
-        index,
-        segmentCount,
-        this.wallPlacementPreviewAffordableSegmentCount,
-        this.wallPlacementPreviewBlocked || overflow,
-      );
+      const status = getWallSegmentPreviewStatus(index, segmentCount, affordable, blocked);
       const color = status === 'buildable'
         ? 0x22c55e
         : status === 'unaffordable'
@@ -5578,6 +5586,13 @@ export class RtsEngine {
     }
 
     const placements = previewPoints.length >= 2 ? layoutWallChain(previewPoints) : [];
+    this.wallPlacementPreviewPointsCache = previewPoints;
+    this.wallPlacementPreviewPlacementsCache = placements;
+    this.wallPlacementPreviewDistanceCache = previewPoints.slice(1).reduce(
+      (sum, point, index) =>
+        sum + getDistance(previewPoints[index].x, previewPoints[index].z, point.x, point.z),
+      0,
+    );
     this.refreshWallPlacementPreviewObstruction(previewPoints, placements);
     const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
 
@@ -5586,7 +5601,7 @@ export class RtsEngine {
     while (this.wallPlacementPreviewGhosts.length < previewLimit && this.wallPlacementGhostTemplate) {
       const ghost = this.wallPlacementGhostTemplate.clone(true);
       ghost.userData.wallPreviewSharedAssets = true;
-      this.cloneWallPlacementPreviewMaterials(ghost);
+      this.registerWallPlacementPreviewMaterials(ghost);
       this.wallPlacementPreviewGhosts.push(ghost);
       group.add(ghost);
     }
@@ -5777,19 +5792,25 @@ export class RtsEngine {
     this.wallPlacementPreviewCheckedAt = Number.NEGATIVE_INFINITY;
     this.wallPlacementPreviewTint = 0x22c55e;
     this.wallPlacementPreviewAffordableSegmentCount = 0;
+    this.wallPlacementPreviewPointsCache = [];
+    this.wallPlacementPreviewPlacementsCache = [];
+    this.wallPlacementPreviewDistanceCache = 0;
+    this.wallPlacementPreviewTintSignature = '';
     if (this.wallPlacementPreviewGroup) {
       this.scene.remove(this.wallPlacementPreviewGroup);
       for (const child of [...this.wallPlacementPreviewGroup.children]) {
         if (child.userData.wallPreviewSharedAssets) {
-          const ownedMaterials = child.userData.wallPreviewOwnedMaterials as THREE.Material[] | undefined;
-          ownedMaterials?.forEach((material) => material.dispose());
-          child.userData.wallPreviewOwnedMaterials = [];
+          // Geometry and tint variants are shared by all pooled segment ghosts.
         } else {
           this.disposeWallPreviewObject(child);
         }
       }
       this.wallPlacementPreviewGroup = null;
     }
+    for (const variants of this.wallPlacementPreviewMaterialVariants.values()) {
+      for (const material of variants.values()) material.dispose();
+    }
+    this.wallPlacementPreviewMaterialVariants.clear();
     this.wallPlacementPreviewGhosts = [];
     this.wallPlacementPreviewMarkers = [];
     this.wallPlacementPreviewLine = null;
