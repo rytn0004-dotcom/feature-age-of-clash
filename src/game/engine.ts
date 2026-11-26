@@ -165,6 +165,7 @@ import {
   isDangerousWildlifeSubtype,
   isHuntableWildlifeSubtype,
   canUnitHuntDangerousWildlife,
+  shouldAiOrganizeWildlifeHunt,
   advanceStarRelicChannel,
   pickStarRelicSite,
   resolveStarRelicDelivery,
@@ -13146,6 +13147,92 @@ export class RtsEngine {
 
       const plan = evaluateAiPlan(activeRules, snapshot);
       const gatherFocus = plan.gatherAction?.targetId || (aiWorkers.length >= 8 ? 'military_eco' : 'balanced_eco');
+
+      // Aurochs and boars are explicit hunting objectives, never automatic
+      // villager assignments. When the front is quiet and food is scarce, the
+      // AI can commit a four-unit ground party while retaining a home reserve.
+      const hasActiveHuntParty = aiArmy.some((unit) => {
+        const targetNode = unit.targetResourceNodeId
+          ? this.resourceNodes.find((node) => node.id === unit.targetResourceNodeId)
+          : undefined;
+        return !!targetNode &&
+          isDangerousWildlifeSubtype(targetNode.subtype) &&
+          (unit.state === 'gathering' || unit.state === 'returning_resource');
+      });
+      const availableHuntUnits = aiArmy.filter((unit) =>
+        canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
+        unit.state === 'idle' &&
+        !unit.targetResourceNodeId &&
+        !unit.targetEntityId &&
+        !unit.targetBuildingId &&
+        unit.targetX === undefined &&
+        unit.targetZ === undefined &&
+        !unit.attackMoveGoal &&
+        !unit.wallPatrolRoute?.length &&
+        !unit.garrisonedInBuildingId &&
+        !unit.commandQueue?.length &&
+        (!unit.lastDamagedTime || performance.now() - unit.lastDamagedTime > 12_000)
+      );
+      if (shouldAiOrganizeWildlifeHunt({
+        gameTime: this.stats.gameDuration,
+        food: aiRes.food,
+        armyCount: aiArmy.length,
+        availableHunters: availableHuntUnits.length,
+        enemyDistance: nearestEnemyDist,
+        underAttack: underAttack === 1,
+        hasActiveHuntParty,
+      })) {
+        let targetWildlife: ResourceNode | null = null;
+        let targetScore = Number.POSITIVE_INFINITY;
+        for (const node of this.resourceNodes) {
+          if (
+            !isDangerousWildlifeSubtype(node.subtype) ||
+            node.amount <= 0 ||
+            node.animalAlive === false ||
+            (node.animalHp !== undefined && node.animalHp <= 0)
+          ) continue;
+
+          const distance = getDistance(anchorX, anchorZ, node.x, node.z);
+          if (distance > 48) continue;
+          const enemyNearby = aiHostileUnits.some((enemy) =>
+            enemy.hp > 0 && !enemy.garrisonedInBuildingId &&
+            getDistance(enemy.x, enemy.z, node.x, node.z) < 28
+          );
+          if (enemyNearby) continue;
+
+          const yieldBonus = Math.min(8, node.amount / 220);
+          const largeGameBonus = node.subtype === 'aurochs' ? 2 : 0;
+          const score = distance - yieldBonus - largeGameBonus;
+          if (score < targetScore) {
+            targetScore = score;
+            targetWildlife = node;
+          }
+        }
+
+        if (targetWildlife) {
+          const huntingParty = availableHuntUnits
+            .slice()
+            .sort((a, b) =>
+              getDistance(a.x, a.z, targetWildlife!.x, targetWildlife!.z) -
+              getDistance(b.x, b.z, targetWildlife!.x, targetWildlife!.z)
+            )
+            .slice(0, 4);
+          const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
+          for (const hunter of huntingParty) {
+            hunter.targetResourceNodeId = targetWildlife.id;
+            hunter.targetEntityId = undefined;
+            hunter.targetBuildingId = undefined;
+            hunter.targetX = undefined;
+            hunter.targetZ = undefined;
+            hunter.attackMoveGoal = null;
+            hunter.waypoints = undefined;
+            hunter.pathGoal = undefined;
+            hunter.pathCooldown = 0;
+            hunter.state = 'gathering';
+            hunter.currentActionText = `🐾 組隊圍獵${animalName}`;
+          }
+        }
+      }
 
       // 2. Dynamic Worker Allocation & Rebalancing.
       // Builders are excluded from the gatherer target; they are never reassigned from construction.
