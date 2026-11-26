@@ -22,6 +22,11 @@ import {
 } from './entityActions';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
+import {
+  getCachedUnitBadge,
+  getUnitRoleBadgeIcon,
+  type UnitBadgeLookupCache,
+} from './unitBadgeCache';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
 import {
   applyWildlifeHunterAttacks,
@@ -7942,7 +7947,10 @@ export class RtsEngine {
         const mesh = this.unitMeshes.get(unit.id);
         if (mesh) {
           this.unitMeshes.delete(unit.id);
-          const badge = mesh.getObjectByName('unitBadge');
+          const badge = getCachedUnitBadge(
+            mesh.userData as UnitBadgeLookupCache<THREE.Sprite>,
+            () => (mesh.getObjectByName('unitBadge') as THREE.Sprite | undefined) ?? null,
+          );
           if (badge) badge.visible = false;
           mesh.userData.baseScale = unit.unitDef.visual.scale || 1;
           this.dyingEffects.push({ mesh, age: 0, duration: 0.38, startY: mesh.position.y });
@@ -8158,7 +8166,10 @@ export class RtsEngine {
       // Overhead Badge Visibility, Exclusive Saiyan Level badge, Action Status, and HP sync
       const mesh = this.unitMeshes.get(unit.id);
       if (mesh) {
-        const badge = (mesh.userData.unitBadge as THREE.Sprite) || (mesh.getObjectByName('unitBadge') as THREE.Sprite);
+        const badge = getCachedUnitBadge(
+          mesh.userData as UnitBadgeLookupCache<THREE.Sprite>,
+          () => (mesh.getObjectByName('unitBadge') as THREE.Sprite | undefined) ?? null,
+        );
         if (badge) {
           mesh.userData.overheadBadgesEnabled = this.showOverheadBadges;
           const isUnderAttack = !!(
@@ -8193,19 +8204,6 @@ export class RtsEngine {
             (unit as any)._lastAttack = isUnderAttack;
             (unit as any)._lastLvl = lvl;
 
-            const roleIcons: Record<string, string> = {
-              villager: '⛏️',
-              boat: '⛵',
-              swordsman: '⚔️',
-              archer: '🏹',
-              knight: '🐎',
-              ninja: '🥷',
-              saiyan: '⚡',
-              mage: '🔮',
-              golem: unit.unitDef.category === 'siege' ? '🪨' : '🪵',
-              ram: '🐏',
-              cannon: '💣',
-            };
             const icon =
               unit.unitDefId === 'transport_boat'
                 ? '🚢'
@@ -8219,7 +8217,7 @@ export class RtsEngine {
                 ? '🗡️'
                 : unit.unitDefId === 'fantasy_paladin'
                 ? '🛡️'
-                : roleIcons[unit.unitDef.visual.modelType] || '⚔️';
+                : getUnitRoleBadgeIcon(unit.unitDef.visual.modelType, unit.unitDef.category === 'siege');
             const hostile = this.isHostileToPlayer(unit);
             const pName = this.getParticipant(unit.faction)?.name || '';
             const prefix = this.isHumanControlled(unit.faction)
