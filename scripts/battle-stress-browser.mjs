@@ -487,7 +487,63 @@ async function main() {
       assert.ok(telemetry.aStarAiSearches > 0, "No AI-owned A* path searches were captured in the stress scenario.");
       assert.equal(exceptions.length, 0, "Uncaught browser exceptions: " + exceptions.join("; "));
 
-      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, exceptionCount: exceptions.length });
+      const wallPlacement = await evaluate(`
+        (() => {
+          const e = window.__rtsEngine;
+          if (!e || typeof e.validateWallPlacementSection !== "function") return null;
+          const segmentCount = 120;
+          const radius = 51.5;
+          const placements = Array.from({ length: segmentCount }, (_, index) => {
+            const angle = (index / segmentCount) * Math.PI * 2;
+            return {
+              x: Math.cos(angle) * radius,
+              z: Math.sin(angle) * radius,
+              rotationY: angle + Math.PI / 2,
+            };
+          });
+          const points = placements.map(({ x, z }) => ({ x, z }));
+          points.push({ x: points[0].x, z: points[0].z });
+          const timings = [];
+          let lastValid = false;
+          for (let attempt = 0; attempt < 15; attempt++) {
+            const started = performance.now();
+            lastValid = e.validateWallPlacementSection(points, placements, []);
+            const elapsed = performance.now() - started;
+            if (attempt >= 3) timings.push(elapsed);
+          }
+          timings.sort((a, b) => a - b);
+          const percentile = (ratio) => timings[Math.min(timings.length - 1, Math.ceil(timings.length * ratio) - 1)] ?? 0;
+          return {
+            segmentCount,
+            measuredAttempts: timings.length,
+            p50Ms: percentile(0.5),
+            p95Ms: percentile(0.95),
+            maxMs: timings[timings.length - 1] ?? 0,
+            buildingCandidates: e.wallPlacementBuildingCandidates?.length ?? -1,
+            resourceCandidates: e.wallPlacementResourceCandidates?.length ?? -1,
+            totalBuildings: e.buildings?.length ?? 0,
+            totalResources: e.resourceNodes?.length ?? 0,
+            lastValidationValid: lastValid,
+          };
+        })()
+      `);
+      assert.ok(wallPlacement && wallPlacement.segmentCount === 120, "120-piece wall validation benchmark did not run.");
+      assert.equal(wallPlacement.measuredAttempts, 12, "Wall validation benchmark sample count mismatch.");
+      for (const key of ["p50Ms", "p95Ms", "maxMs"]) {
+        assert.ok(Number.isFinite(wallPlacement[key]) && wallPlacement[key] >= 0, "Invalid wall validation timing: " + key);
+      }
+      assert.ok(
+        wallPlacement.buildingCandidates >= 0 &&
+        wallPlacement.buildingCandidates <= wallPlacement.totalBuildings,
+        "Wall building broad-phase candidate count is invalid.",
+      );
+      assert.ok(
+        wallPlacement.resourceCandidates >= 0 &&
+        wallPlacement.resourceCandidates <= wallPlacement.totalResources,
+        "Wall resource broad-phase candidate count is invalid.",
+      );
+
+      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, wallPlacement, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms (units " + telemetry.unitUpdateAverageMs.toFixed(2) +
@@ -495,7 +551,10 @@ async function main() {
         telemetry.buildingCollisionAverageMs.toFixed(2) + "/" + telemetry.resourceCollisionAverageMs.toFixed(2) +
         ", visual " + telemetry.unitVisualSyncAverageMs.toFixed(2) + "), AI " + telemetry.aiDecisionAverageMs.toFixed(2) +
         " ms, render " + telemetry.renderAverageMs.toFixed(2) + " ms, hitch " + telemetry.hitchMs.toFixed(2) + " ms, " +
-        telemetry.drawCalls + " draws, " + decorations.shadowInstances + " shadow/ring instances, " +
+        telemetry.drawCalls + " draws, wall validation P95 " + wallPlacement.p95Ms.toFixed(3) +
+        " ms (" + wallPlacement.buildingCandidates + "/" + wallPlacement.totalBuildings + " building candidates, " +
+        wallPlacement.resourceCandidates + "/" + wallPlacement.totalResources + " resource candidates), " +
+        decorations.shadowInstances + " shadow/ring instances, "
         staticMeshes.drawCallsSaved + " static mesh draws saved, " +
         (decorations.roleCrestInstances + decorations.roleSiegeInstances) + " role markers, " +
         decorations.buffRingInstances + " buff rings, " + telemetry.renderer);

@@ -912,18 +912,18 @@ interface OrientedWallFootprint {
   rotationY: number;
 }
 
-/** True when a circle touches the actual rotated rectangular wall footprint. */
-export function doesCircleOverlapWallFootprint(
-  footprint: OrientedWallFootprint,
+function doesCircleOverlapWallFootprintWithAxes(
+  footprintX: number,
+  footprintZ: number,
+  cos: number,
+  sin: number,
   x: number,
   z: number,
   radius: number,
 ): boolean {
   if (!Number.isFinite(radius) || radius < 0) return false;
-  const dx = x - footprint.x;
-  const dz = z - footprint.z;
-  const cos = Math.cos(footprint.rotationY);
-  const sin = Math.sin(footprint.rotationY);
+  const dx = x - footprintX;
+  const dz = z - footprintZ;
   const localX = dx * cos - dz * sin;
   const localZ = dx * sin + dz * cos;
   const closestX = Math.max(-WALL_MODEL_HALF_LENGTH, Math.min(WALL_MODEL_HALF_LENGTH, localX));
@@ -933,18 +933,37 @@ export function doesCircleOverlapWallFootprint(
   return gapX * gapX + gapZ * gapZ <= radius * radius;
 }
 
-/** SAT overlap for two rotated wall rectangles without allocating axis arrays. */
-export function doWallFootprintsOverlap(
-  first: OrientedWallFootprint,
-  second: OrientedWallFootprint,
+/** True when a circle touches the actual rotated rectangular wall footprint. */
+export function doesCircleOverlapWallFootprint(
+  footprint: OrientedWallFootprint,
+  x: number,
+  z: number,
+  radius: number,
+): boolean {
+  return doesCircleOverlapWallFootprintWithAxes(
+    footprint.x,
+    footprint.z,
+    Math.cos(footprint.rotationY),
+    Math.sin(footprint.rotationY),
+    x,
+    z,
+    radius,
+  );
+}
+
+function doWallFootprintsOverlapWithAxes(
+  firstX: number,
+  firstZ: number,
+  firstCos: number,
+  firstSin: number,
+  secondX: number,
+  secondZ: number,
+  secondCos: number,
+  secondSin: number,
   clearance = 0.025,
 ): boolean {
-  const firstCos = Math.cos(first.rotationY);
-  const firstSin = Math.sin(first.rotationY);
-  const secondCos = Math.cos(second.rotationY);
-  const secondSin = Math.sin(second.rotationY);
-  const deltaX = second.x - first.x;
-  const deltaZ = second.z - first.z;
+  const deltaX = secondX - firstX;
+  const deltaZ = secondZ - firstZ;
 
   for (let axisIndex = 0; axisIndex < 4; axisIndex++) {
     let axisX: number;
@@ -963,9 +982,9 @@ export function doWallFootprintsOverlap(
       axisZ = secondCos;
     }
 
-    const firstAxisX = axisX * firstCos + axisZ * -firstSin;
+    const firstAxisX = axisX * firstCos - axisZ * firstSin;
     const firstAxisZ = axisX * firstSin + axisZ * firstCos;
-    const secondAxisX = axisX * secondCos + axisZ * -secondSin;
+    const secondAxisX = axisX * secondCos - axisZ * secondSin;
     const secondAxisZ = axisX * secondSin + axisZ * secondCos;
     const firstRadius =
       WALL_MODEL_HALF_LENGTH * Math.abs(firstAxisX) +
@@ -976,6 +995,25 @@ export function doWallFootprintsOverlap(
     if (Math.abs(deltaX * axisX + deltaZ * axisZ) > firstRadius + secondRadius + clearance) return false;
   }
   return true;
+}
+
+/** SAT overlap for two rotated wall rectangles without allocating axis arrays. */
+export function doWallFootprintsOverlap(
+  first: OrientedWallFootprint,
+  second: OrientedWallFootprint,
+  clearance = 0.025,
+): boolean {
+  return doWallFootprintsOverlapWithAxes(
+    first.x,
+    first.z,
+    Math.cos(first.rotationY),
+    Math.sin(first.rotationY),
+    second.x,
+    second.z,
+    Math.cos(second.rotationY),
+    Math.sin(second.rotationY),
+    clearance,
+  );
 }
 
 function isWallFootprintBlockedByTerrain(
@@ -1070,44 +1108,57 @@ export function isWallChainPreviewObstructed(
   const wallFootprint: OrientedWallFootprint = { x: 0, z: 0, rotationY: 0 };
   for (const placement of placements) {
     if (Math.abs(placement.x) > 90 || Math.abs(placement.z) > 90) return true;
+    const rotationY = placement.rotationY ?? 0;
+    const wallCos = Math.cos(rotationY);
+    const wallSin = Math.sin(rotationY);
     wallFootprint.x = placement.x;
     wallFootprint.z = placement.z;
-    wallFootprint.rotationY = placement.rotationY ?? 0;
+    wallFootprint.rotationY = rotationY;
     if (
       isPointInTerrainObstacle(placement.x, placement.z, terrainRects, terrainDiscs, bridges) ||
       isWallFootprintBlockedByTerrain(wallFootprint, terrainRects, terrainDiscs, bridges)
     ) return true;
-  }
 
-  for (const building of buildings) {
-    if (building.hp <= 0 || connectedEndpointWallIds.includes(building.id)) continue;
-    for (const placement of placements) {
-      wallFootprint.x = placement.x;
-      wallFootprint.z = placement.z;
-      wallFootprint.rotationY = placement.rotationY ?? 0;
+    // Keep one wall's orientation hot while checking all nearby blockers. This
+    // avoids rebuilding temporary footprint objects and recalculating the same
+    // wall sin/cos for every building/resource candidate.
+    for (const building of buildings) {
+      if (building.hp <= 0 || connectedEndpointWallIds.includes(building.id)) continue;
       if (building.buildingDef.isWall) {
-        if (doWallFootprintsOverlap(wallFootprint, {
-          x: building.x,
-          z: building.z,
-          rotationY: building.rotationY ?? 0,
-        })) return true;
-      } else if (doesCircleOverlapWallFootprint(
-        wallFootprint,
+        const buildingRotation = building.rotationY ?? 0;
+        if (doWallFootprintsOverlapWithAxes(
+          wallFootprint.x,
+          wallFootprint.z,
+          wallCos,
+          wallSin,
+          building.x,
+          building.z,
+          Math.cos(buildingRotation),
+          Math.sin(buildingRotation),
+        )) return true;
+      } else if (doesCircleOverlapWallFootprintWithAxes(
+        wallFootprint.x,
+        wallFootprint.z,
+        wallCos,
+        wallSin,
         building.x,
         building.z,
         Math.max(0, building.buildingDef.size),
       )) return true;
     }
-  }
 
-  for (const node of nodes) {
-    if (node.amount <= 0) continue;
-    const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
-    for (const placement of placements) {
-      wallFootprint.x = placement.x;
-      wallFootprint.z = placement.z;
-      wallFootprint.rotationY = placement.rotationY ?? 0;
-      if (doesCircleOverlapWallFootprint(wallFootprint, node.x, node.z, nodeRadius)) return true;
+    for (const node of nodes) {
+      if (node.amount <= 0) continue;
+      const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
+      if (doesCircleOverlapWallFootprintWithAxes(
+        wallFootprint.x,
+        wallFootprint.z,
+        wallCos,
+        wallSin,
+        node.x,
+        node.z,
+        nodeRadius,
+      )) return true;
     }
   }
 

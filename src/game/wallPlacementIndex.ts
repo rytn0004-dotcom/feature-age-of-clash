@@ -6,7 +6,7 @@ interface SpatialEntry<T> { item: T; queryStamp: number; }
 /** Match-local grid index for static obstacle centres along a wall route. */
 export class WallPlacementSpatialIndex<T extends { x: number; z: number }> {
   private static readonly CELL_SIZE = 8;
-  private readonly buckets = new Map<string, SpatialEntry<T>[]>();
+  private readonly buckets = new Map<number | string, SpatialEntry<T>[]>();
   private readonly entries: SpatialEntry<T>[] = [];
   private maxRadius = 0;
   private queryStamp = 0;
@@ -77,5 +77,18 @@ export class WallPlacementSpatialIndex<T extends { x: number; z: number }> {
   public get size(): number { return this.entries.length; }
   public get cellCount(): number { return this.buckets.size; }
 
-  private key(cellX: number, cellZ: number): string { return `${cellX},${cellZ}`; }
+  private key(cellX: number, cellZ: number): number | string {
+    // Game maps stay far inside this signed 16-bit cell range. A packed numeric
+    // key avoids allocating a template string for every bucket lookup in the
+    // 10 Hz wall-preview path; retain a collision-free string fallback for
+    // unusually large custom maps or test coordinates.
+    if (
+      Number.isInteger(cellX) && Number.isInteger(cellZ) &&
+      cellX >= -32768 && cellX <= 32767 &&
+      cellZ >= -32768 && cellZ <= 32767
+    ) {
+      return (cellX + 32768) * 65536 + (cellZ + 32768);
+    }
+    return `${cellX},${cellZ}`;
+  }
 }

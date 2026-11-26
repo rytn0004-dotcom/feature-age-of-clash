@@ -28,6 +28,8 @@
 
 CI 的 `browser-stress` job 使用 headless Chromium 和 Vite 開發模式，依序啟動 100、200、400 單位的固定 seed 情境。壓測情境建立時會自動開啟 F3 監視器，從第一波單位尋路開始收集資料；每個規模至少累積 8 個 F3 樣本。腳本位於 `scripts/battle-stress-browser.mjs`，可用 `bun run test:browser` 執行。 報告會聚合整段 F3 樣本，而非只讀取最後一個 500ms 視窗：FPS/Draw Calls/Triangles 以視窗時間加權，frame/simulation/render 平均值以估計影格數加權，hitch 與 CPU 最大值取整段最大值；P95 由各視窗 P95 近似聚合，並非從原始逐幀資料重建的精確全域分位數。
 
+每個單位規模也會用遊戲引擎本身的 120 段封閉路線重複執行城牆障礙驗證，報告 P50/P95/最大耗時，以及空間索引篩出的建築／資源候選數相對於場景總數。這是城牆幾何與障礙驗證熱路徑的瀏覽器量測，不包含實際滑鼠事件派送與玩家 GPU 繪製耗時，也不套用跨硬體的固定毫秒門檻。
+
 自動檢查會讀取執行中 `window.__rtsEngine` 的真實狀態，確認：
 - 遊戲成功進入 playing、單位實際數量符合 100/200/400、四個參與勢力全為 AI。
 - seed 與地圖設定和測試參數一致。

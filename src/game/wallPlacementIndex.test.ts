@@ -47,3 +47,28 @@ test('wall placement index clears stale entries after roster rebuild', () => {
   index.clear();
   assert.equal(index.size, 0);
 });
+
+
+test('wall placement index keeps packed keys collision-free across signed cell boundaries', () => {
+  const index = new WallPlacementSpatialIndex<Item>();
+  const items = [
+    { id: 'negative-limit', x: -262144, z: -262144 },
+    { id: 'positive-overflow', x: 262144, z: 262144 },
+    { id: 'mixed-overflow', x: 0, z: 262144 },
+    { id: 'ordinary-negative', x: -8, z: -8 },
+  ];
+  index.rebuild(items, () => 0);
+  const target: Item[] = [];
+
+  index.collect([{ x: -262144, z: -262144 }], target);
+  assert.deepEqual(target.map(item => item.id), ['negative-limit']);
+
+  index.collect([{ x: 262144, z: 262144 }], target);
+  assert.deepEqual(target.map(item => item.id), ['positive-overflow']);
+
+  index.collect([{ x: 0, z: 262144 }], target);
+  assert.deepEqual(target.map(item => item.id), ['mixed-overflow']);
+
+  index.collect([{ x: -8, z: -8 }], target);
+  assert.deepEqual(target.map(item => item.id), ['ordinary-negative']);
+});
