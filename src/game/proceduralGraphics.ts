@@ -6,6 +6,7 @@ import { getBattlefieldVisualProfile, type BuildingVisualState } from './rules';
 import { isPointInTerrainObstacle } from './collision';
 import { mergeStaticUnitMeshes } from './unitMeshBatching';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
+import { advanceBuildingAgeEvolutionTransition } from './ambientBuildingAnimation';
 import { createBuildingAgeEvolutionKit, createBuildingFacadeKit, createBuildingHeritageKit, createCharacterFaceDetails, createCharacterHandDetails, createUnitSignatureKit, getUnitBodyProportionProfile } from './artDirection';
 import { getMongolBuildingModelProfile, type MongolBuildingModelProfile } from './mongolBuildingModelProfile';
 
@@ -5883,7 +5884,7 @@ export function createBuildingMesh(
 
 
 /** Update the age-specific ornament layer without rebuilding structural or animated meshes. */
-export function updateBuildingAgeVisuals(group: THREE.Group, age: number): void {
+export function updateBuildingAgeVisuals(group: THREE.Group, age: number): boolean {
   const meta = group.userData.buildingArchitecture as {
     type: BuildingType;
     civilization: CivilizationId;
@@ -5895,7 +5896,7 @@ export function updateBuildingAgeVisuals(group: THREE.Group, age: number): void 
     centerZ: number;
     topY: number;
   } | undefined;
-  if (!meta) return;
+  if (!meta) return false;
 
   const oldKit = group.getObjectByName('buildingAgeEvolutionKit');
   if (oldKit) group.remove(oldKit);
@@ -5910,13 +5911,49 @@ export function updateBuildingAgeVisuals(group: THREE.Group, age: number): void 
   );
   if (nextKit.children.length > 0) {
     nextKit.position.set(meta.centerX, meta.topY - 0.16, meta.centerZ);
+    const eraDetails = nextKit.getObjectByName('buildingAgeEvolutionDetails') as THREE.Mesh | undefined;
+    if (eraDetails) {
+      // The structural model stays in place; only its new, merged era ornament layer
+      // grows into the roofline. This is a single cached mesh, not per-part animation.
+      eraDetails.scale.setScalar(0.82);
+      group.userData.ageEvolutionTransition = { elapsed: 0, duration: 0.9 };
+    } else {
+      delete group.userData.ageEvolutionTransition;
+    }
     group.add(nextKit);
+  } else {
+    delete group.userData.ageEvolutionTransition;
   }
   group.userData.buildingAgeTier = THREE.MathUtils.clamp(Math.floor(age), 1, 4);
   // Refresh both caches because the new era detail adds shadow participants and optional LOD parts.
   group.userData.buildingLodParts = undefined;
   group.userData.distanceShadowLodCache = undefined;
   prepareBuildingVisualLod(group);
+  return !!group.userData.ageEvolutionTransition;
+}
+
+/** Advance one building's cached era ornament transition; returns true while it remains active. */
+export function updateBuildingAgeEvolutionTransition(group: THREE.Group, deltaSeconds: number): boolean {
+  const transition = group.userData.ageEvolutionTransition as {
+    elapsed: number;
+    duration: number;
+  } | undefined;
+  if (!transition) return false;
+
+  const step = advanceBuildingAgeEvolutionTransition(
+    transition.elapsed,
+    deltaSeconds,
+    transition.duration,
+  );
+  transition.elapsed = step.elapsed;
+  const eraDetails = group.getObjectByName('buildingAgeEvolutionDetails') as THREE.Mesh | undefined;
+  if (eraDetails) eraDetails.scale.setScalar(step.scale);
+  if (step.complete) {
+    if (eraDetails) eraDetails.scale.set(1, 1, 1);
+    delete group.userData.ageEvolutionTransition;
+    return false;
+  }
+  return true;
 }
 
 
