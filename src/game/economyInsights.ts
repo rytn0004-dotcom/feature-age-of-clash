@@ -62,8 +62,16 @@ export function calculateAgeResourceShortfall(
   stock: Pick<Resources, 'food' | 'gold'>,
   cost: Pick<Resources, 'food' | 'gold'>,
 ): { food: number; gold: number; ready: boolean } {
-  const food = Math.max(0, Math.ceil(cost.food - stock.food));
-  const gold = Math.max(0, Math.ceil(cost.gold - stock.gold));
+  // Keep the HUD/AI readiness signal finite even if a save, mod, or transient
+  // simulation state contains invalid resource values. Invalid stock is treated
+  // as empty; invalid or negative requirements are treated as zero, matching
+  // getAgeResourceProgress and preventing NaN from leaking into UI comparisons.
+  const safeStock = (value: number): number =>
+    Number.isFinite(value) ? Math.max(0, value) : 0;
+  const safeCost = (value: number): number =>
+    Number.isFinite(value) ? Math.max(0, value) : 0;
+  const food = Math.max(0, Math.ceil(safeCost(cost.food) - safeStock(stock.food)));
+  const gold = Math.max(0, Math.ceil(safeCost(cost.gold) - safeStock(stock.gold)));
   return { food, gold, ready: food === 0 && gold === 0 };
 }
 

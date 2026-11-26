@@ -88,10 +88,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     ro.observe(mount);
 
     const scratchVec = new THREE.Vector3();
+    // Canvas returns the same 2D context for the lifetime of this element.
+    // Resolve it once rather than asking for it on every animation frame.
+    const ctx = canvas.getContext('2d');
     let rafId = 0;
 
     const renderFloatingTexts = () => {
-      const ctx = canvas.getContext('2d');
       const engine = engineRef.current;
       if (ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -99,6 +101,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.font = '700 13px system-ui, -apple-system, sans-serif';
+          ctx.lineWidth = 3.5;
+          ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
 
           for (let i = 0; i < engine.floatingTexts.length; i++) {
             const ft = engine.floatingTexts[i];
@@ -110,15 +114,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             const sy = ((-scratchVec.y + 1) * canvas.height) / 2;
             if (sx < -80 || sx > canvas.width + 80 || sy < -40 || sy > canvas.height + 40) continue;
 
-            ctx.save();
+            // No transforms, clips, or paths are changed here, so assigning the
+            // per-label state directly avoids a save/restore pair for every hit.
             ctx.globalAlpha = Math.max(0, Math.min(1, ft.opacity));
-            ctx.lineWidth = 3.5;
-            ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
             ctx.strokeText(ft.text, sx, sy);
             ctx.fillStyle = ft.color || '#f8fafc';
             ctx.fillText(ft.text, sx, sy);
-            ctx.restore();
           }
+          // Do not leak a fading label's alpha into the next frame.
+          ctx.globalAlpha = 1;
         }
       }
       rafId = requestAnimationFrame(renderFloatingTexts);

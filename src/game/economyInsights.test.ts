@@ -110,3 +110,20 @@ test('nearest resource drop-off selection keeps first insertion on equal distanc
     null,
   );
 });
+
+test('age readiness shortfall remains finite for invalid and negative save/mod values', () => {
+  assert.deepEqual(
+    calculateAgeResourceShortfall(
+      { food: Number.NaN, gold: Number.POSITIVE_INFINITY },
+      { food: 400, gold: 200 },
+    ),
+    { food: 400, gold: 200, ready: false },
+  );
+  assert.deepEqual(
+    calculateAgeResourceShortfall(
+      { food: -25, gold: 80 },
+      { food: -10, gold: Number.NaN },
+    ),
+    { food: 0, gold: 0, ready: true },
+  );
+});
