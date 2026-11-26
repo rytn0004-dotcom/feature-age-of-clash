@@ -376,10 +376,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         }
       }
 
-      const hasWorkersSelected = engine.selectedUnitIds.some((uid) => {
-        const u = engine.units.find((unit) => unit.id === uid);
-        return !!u && u.hp > 0 && u.unitDef.category === 'worker' && engine.isHumanControlled(u.faction);
-      });
+      let hasWorkersSelected = false;
+      let hasGroundCombatHuntersSelected = false;
+      const selectedIds = new Set(engine.selectedUnitIds);
+      // Resolve this command selection in one roster pass instead of repeatedly
+      // searching the unit array for every selected id.
+      for (const unit of engine.units) {
+        if (!selectedIds.has(unit.id) || unit.hp <= 0 || !engine.isHumanControlled(unit.faction)) continue;
+        if (unit.unitDef.category === 'worker') {
+          hasWorkersSelected = true;
+        } else if (
+          !unit.unitDef.isNaval &&
+          unit.state !== 'assembling' &&
+          !unit.fieldAssemblyProjectId &&
+          (
+            unit.unitDef.category === 'melee' ||
+            unit.unitDef.category === 'ranged' ||
+            unit.unitDef.category === 'cavalry'
+          )
+        ) {
+          hasGroundCombatHuntersSelected = true;
+        }
+      }
 
       // 2. Attack order if targeted hostile unit
       if (hit.hitType === 'unit' && hit.unit && engine.isHostileToPlayer(hit.unit)) {
@@ -442,7 +460,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
       // 6. Gather order if targeted resource node
       if (hit.hitType === 'resource' && hit.resource) {
-        if (hasWorkersSelected) {
+        const isDangerousWildlife = hit.resource.subtype === 'boar' || hit.resource.subtype === 'aurochs';
+        if (hasWorkersSelected || (isDangerousWildlife && hasGroundCombatHuntersSelected)) {
           engine.issueGatherOrder(hit.resource.id, e.shiftKey);
           return;
         }
