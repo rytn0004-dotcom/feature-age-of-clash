@@ -8,6 +8,7 @@ import {
   shouldUseInstancedWallPreview,
   WALL_PREVIEW_DETAILED_SEGMENT_LIMIT,
   WALL_PREVIEW_REFRESH_INTERVAL_MS,
+  WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS,
 } from './wallPlacement';
 import { layoutWallChain, layoutWallChainSection } from './rules';
 import type { Resources } from '../types/game';
@@ -93,8 +94,9 @@ test('wall layout: section helper rejects invalid endpoints and retains the shor
   );
 });
 
-test('wall preview refresh is capped at ten updates per second', () => {
+test('wall preview geometry is capped at ten updates per second and HUD text at four', () => {
   assert.equal(WALL_PREVIEW_REFRESH_INTERVAL_MS, 100);
+  assert.equal(WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS, 250);
 });
 
 test('wall preview caps full 3D wall models at eight segments', () => {
