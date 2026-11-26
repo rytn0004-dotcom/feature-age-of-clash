@@ -82,7 +82,8 @@ export interface ConstructionHandoffCandidate extends ConstructionWorkerPosition
   id: string;
   hp: number;
   faction: string;
-  category: string;
+  category?: string;
+  unitDef?: { category: string };
   state: string;
   targetBuildingId?: string;
   targetResourceNodeId?: string;
@@ -137,7 +138,7 @@ export function selectConstructionHandoffWorker(
       !Number.isFinite(candidate.hp) ||
       candidate.hp <= 0 ||
       candidate.faction !== target.faction ||
-      candidate.category !== 'worker' ||
+      (candidate.unitDef?.category ?? candidate.category) !== 'worker' ||
       candidate.state !== 'idle' ||
       !!candidate.targetBuildingId ||
       !!candidate.targetResourceNodeId ||
