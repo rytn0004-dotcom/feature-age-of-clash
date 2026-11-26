@@ -1391,8 +1391,11 @@ export function canUnitHuntDangerousWildlife(
 ): boolean {
   return isDangerousWildlifeSubtype(subtype) &&
     !unitDef.isNaval &&
-    unitDef.category !== 'worker' &&
-    unitDef.category !== 'siege';
+    (
+      unitDef.category === 'melee' ||
+      unitDef.category === 'ranged' ||
+      unitDef.category === 'cavalry'
+    );
 }
 
 export function getWildlifeMaxHealth(subtype?: ResourceNode['subtype'] | string): number {
