@@ -786,7 +786,7 @@ export class RtsEngine {
   private wallPlacementPreviewLine: THREE.Line | null = null;
   private wallPlacementPreviewIsValid = false;
   private wallPlacementPreviewBlocked = false;
-  private wallPlacementPreviewTint = 0x22c55e;
+  private wallPlacementPreviewTint = 0x38bdf8;
   private wallPlacementPreviewAffordableSegmentCount = 0;
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
@@ -5563,7 +5563,7 @@ export class RtsEngine {
       this.wallPlacementCursor = null;
       this.wallPlacementSnapTargetId = null;
       this.wallPlacementPreviewBlocked = false;
-      this.wallPlacementPreviewTint = 0x22c55e;
+      this.wallPlacementPreviewTint = 0x38bdf8;
       this.wallPlacementPreviewAffordableSegmentCount = 0;
       this.wallPlacementPreviewPlacementsCache.length = 0;
       this.wallPlacementPreviewFixedPlacementCount = 0;
@@ -6073,11 +6073,10 @@ export class RtsEngine {
       canAfford: affordableSegmentCount >= placements.length,
       affordableSegmentCount,
       blocked: this.wallPlacementPreviewBlocked,
-      isValid:
-        placements.length > 0 &&
-        placements.length <= MAX_WALL_CHAIN_SEGMENTS &&
-        !this.wallPlacementPreviewBlocked &&
-        affordableSegmentCount > 0,
+      // The cursor preview is not collision-validated; this flag remains false
+      // until a click performs the authoritative commit check.
+      collisionChecked: false,
+      isValid: false,
       snapped: !!this.wallPlacementSnapTargetId,
       snapTargetId: this.wallPlacementSnapTargetId,
     };
@@ -6323,15 +6322,15 @@ export class RtsEngine {
     const blocked = this.wallPlacementPreviewBlocked || overflow;
     const tint = blocked
       ? 0xef4444
-      : affordable === 0 || affordable < segmentCount
-        ? 0xf59e0b
-        : 0x22c55e;
+      : segmentCount === 0
+        ? 0x38bdf8
+        : affordable === 0 || affordable < segmentCount
+          ? 0xf59e0b
+          : 0x38bdf8;
 
-    this.wallPlacementPreviewIsValid =
-      segmentCount > 0 &&
-      !overflow &&
-      !this.wallPlacementPreviewBlocked &&
-      affordable > 0;
+    // Geometry and budget are known during preview; collision is not confirmed
+    // until the player clicks, so never advertise the route as fully valid here.
+    this.wallPlacementPreviewIsValid = false;
     this.applyWallPlacementPreviewTint(tint);
 
     const signature = String(segmentCount) + ':' + String(affordable) + ':' + (blocked ? '1' : '0');
@@ -6341,7 +6340,7 @@ export class RtsEngine {
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
       const status = getWallSegmentPreviewStatus(index, segmentCount, affordable, blocked);
       const color = status === 'buildable'
-        ? 0x22c55e
+        ? 0x38bdf8
         : status === 'unaffordable'
           ? 0xf59e0b
           : 0xef4444;
@@ -6354,7 +6353,7 @@ export class RtsEngine {
       for (let index = 0; index < instanceCount; index++) {
         const status = getWallSegmentPreviewStatus(index, segmentCount, affordable, blocked);
         const color = status === 'buildable'
-          ? 0x22c55e
+          ? 0x38bdf8
           : status === 'unaffordable'
             ? 0xf59e0b
             : 0xef4444;
@@ -6456,38 +6455,10 @@ export class RtsEngine {
       this.wallPlacementPreviewAffordableSegmentCount,
       MAX_WALL_CHAIN_SEGMENTS,
     );
-    if (previewLimit > 0) {
-      this.wallPlacementCollisionPlacements.length = 0;
-      for (let index = 0; index < previewLimit; index++) {
-        this.wallPlacementCollisionPlacements.push(placements[index]);
-      }
-      clipWallChainPointsToSegmentCount(
-        previewPoints,
-        previewLimit,
-        WALL_SEGMENT_SPACING,
-        this.wallPlacementCollisionPoints,
-      );
-      const obstacles = this.getTerrainNavObstacles();
-      this.collectWallPlacementCollisionCandidates(this.wallPlacementCollisionPlacements);
-      const connectedIds = this.getWallPlacementConnectedEndpointWallIds(this.wallPlacementPointSnaps);
-      if (this.wallPlacementSnapTargetId && !connectedIds.includes(this.wallPlacementSnapTargetId)) {
-        connectedIds.push(this.wallPlacementSnapTargetId);
-      }
-      this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
-        this.wallPlacementCollisionPlacements,
-        DEFAULT_BUILDINGS.wall.size,
-        this.wallPlacementBuildingCandidates,
-        this.wallPlacementResourceCandidates,
-        obstacles?.rects,
-        obstacles?.discs,
-        obstacles?.bridges,
-        this.wallPlacementCollisionPoints,
-        connectedIds,
-        this.wallPlacementTerrainCandidates,
-      );
-    } else {
-      this.wallPlacementPreviewBlocked = false;
-    }
+    // Pointer previews are geometry-only. Full terrain/building/resource collision
+    // validation is intentionally performed once by commitWallChain() on an
+    // explicit click (including Shift waypoint commits), never during hover.
+    // A failed confirmation remains red until the pointer moves to a new route.
     const useInstancedPreview = shouldUseInstancedWallPreview(previewLimit);
     const instancedPreview = useInstancedPreview
       ? this.ensureInstancedWallPlacementPreview(group)
