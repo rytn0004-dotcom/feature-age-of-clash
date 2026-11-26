@@ -594,12 +594,12 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
   assert.equal(isHuntableWildlifeSubtype('aurochs'), true);
   assert.equal(getFoodGatherMultiplier('aurochs'), 1.55);
 
-  const workerDef = { category: 'worker', isNaval: false };
-  const meleeDef = { category: 'melee', isNaval: false };
-  const rangedDef = { category: 'ranged', isNaval: false };
-  const cavalryDef = { category: 'cavalry', isNaval: false };
-  const siegeDef = { category: 'siege', isNaval: false };
-  const fishingBoatDef = { category: 'ranged', isNaval: true };
+  const workerDef = { category: 'worker', isNaval: false } as const;
+  const meleeDef = { category: 'melee', isNaval: false } as const;
+  const rangedDef = { category: 'ranged', isNaval: false } as const;
+  const cavalryDef = { category: 'cavalry', isNaval: false } as const;
+  const siegeDef = { category: 'siege', isNaval: false } as const;
+  const fishingBoatDef = { category: 'ranged', isNaval: true } as const;
   assert.equal(canUnitHuntDangerousWildlife(workerDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'aurochs'), true);
   assert.equal(canUnitHuntDangerousWildlife(rangedDef, 'boar'), true);
