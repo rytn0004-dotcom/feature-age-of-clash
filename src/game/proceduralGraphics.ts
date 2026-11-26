@@ -1487,6 +1487,9 @@ interface MongolBuildingMaterials {
   bronze: THREE.MeshStandardMaterial;
   banner: THREE.MeshStandardMaterial;
   paleBanner: THREE.MeshStandardMaterial;
+  horseCoat: THREE.MeshStandardMaterial;
+  horseMane: THREE.MeshStandardMaterial;
+  horseTack: THREE.MeshStandardMaterial;
 }
 
 const mongolBuildingMaterialCache = new Map<string, MongolBuildingMaterials>();
@@ -1514,6 +1517,23 @@ function getMongolBuildingMaterials(faction: FactionId): MongolBuildingMaterials
     bronze: new THREE.MeshStandardMaterial({ color: 0xc49a4a, roughness: 0.34, metalness: 0.72 }),
     banner: new THREE.MeshStandardMaterial({ color: colors.banner, roughness: 0.78, side: THREE.DoubleSide }),
     paleBanner: new THREE.MeshStandardMaterial({ color: 0xf1e4c8, roughness: 0.88, side: THREE.DoubleSide }),
+    horseCoat: new THREE.MeshStandardMaterial({
+      color: 0x70452a,
+      map: resFurMaps.map,
+      normalMap: resFurMaps.normalMap,
+      roughnessMap: resFurMaps.roughnessMap || null,
+      normalScale: new THREE.Vector2(0.62, 0.62),
+      roughness: 0.82,
+    }),
+    horseMane: new THREE.MeshStandardMaterial({
+      color: 0x211811,
+      map: resFurMaps.map,
+      roughness: 0.96,
+    }),
+    horseTack: new THREE.MeshStandardMaterial({
+      color: 0x6b3f22,
+      roughness: 0.88,
+    }),
   };
   mongolBuildingMaterialCache.set(key, result);
   return result;
@@ -1661,6 +1681,67 @@ function createMongolArcheryRangeMesh(faction: FactionId, profile: MongolBuildin
   return group;
 }
 
+/**
+ * Two quiet steppe horses bring the corral to life. All props are static, use
+ * cached horse geometry/materials and are merged by compatible material before
+ * entering the building scene, keeping the added draw-call cost very small.
+ */
+function addMongolCorralHorses(parent: THREE.Group, materials: MongolBuildingMaterials): void {
+  const herd = new THREE.Group();
+  herd.name = 'mongolCorralHorseBatch';
+
+  const addHorse = (centerX: number, centerZ: number, yaw: number, scale: number) => {
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    const addPart = (
+      geometry: THREE.BufferGeometry,
+      material: THREE.Material,
+      position: [number, number, number],
+      size: [number, number, number] = [1, 1, 1],
+      rotation: [number, number, number] = [0, 0, 0],
+    ) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      const localX = position[0] * scale;
+      const localZ = position[2] * scale;
+      mesh.position.set(
+        centerX + cos * localX + sin * localZ,
+        position[1] * scale,
+        centerZ - sin * localX + cos * localZ,
+      );
+      mesh.rotation.set(rotation[0], yaw + rotation[1], rotation[2]);
+      mesh.scale.set(size[0] * scale, size[1] * scale, size[2] * scale);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      herd.add(mesh);
+    };
+
+    // The same anatomy used by mounted Mongol units, without rider or animation pivots.
+    addPart(horseBarrelGeo, materials.horseCoat, [0, 0.88, 0]);
+    addPart(horseNeckGeo, materials.horseCoat, [0, 1.0, 0.52], [1, 1, 1], [0.48, 0, 0]);
+    addPart(horseMuzzleGeo, materials.horseCoat, [0, 1.44, 0.77], [1, 1, 1], [0.48, 0, 0]);
+    addPart(new THREE.BoxGeometry(0.08, 0.48, 0.14), materials.horseMane, [0, 1.26, 0.54], [1, 1, 1], [0.48, 0, 0]);
+    addPart(horseTailGeo, materials.horseMane, [0, 0.98, -0.66]);
+
+    // Straight planted legs read clearly at RTS camera height and avoid idle skeletal overhead.
+    for (const frontZ of [-0.44, 0.44]) {
+      for (const sideX of [-0.18, 0.18]) {
+        addPart(horseLegUpperGeo, materials.horseCoat, [sideX, 0.465, frontZ]);
+        addPart(horseLegLowerGeo, materials.horseCoat, [sideX, 0.18, frontZ + 0.02]);
+      }
+    }
+
+    // Unmounted saddle, bedroll and girth identify the horses as working steppe mounts.
+    addPart(new THREE.BoxGeometry(0.56, 0.14, 0.58), materials.horseTack, [0, 1.12, -0.04]);
+    addPart(new THREE.BoxGeometry(0.46, 0.12, 0.46), materials.timber, [0, 1.2, -0.04]);
+    addPart(new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8), materials.rope, [0, 1.24, -0.32], [1, 1, 1], [0, 0, Math.PI / 2]);
+  };
+
+  addHorse(-1.12, -0.1, 0.34, 0.68);
+  addHorse(0.18, 0.72, -2.65, 0.64);
+  mergeStaticUnitMeshes(herd);
+  parent.add(herd);
+}
+
 function createMongolStableMesh(faction: FactionId, profile: MongolBuildingModelProfile): THREE.Group {
   const group = new THREE.Group();
   group.name = 'mongolSteppeHorseCorral';
@@ -1690,6 +1771,7 @@ function createMongolStableMesh(faction: FactionId, profile: MongolBuildingModel
   railLower.position.y = 0.55;
   group.add(railUpper, railLower);
   addMongolGer(group, 1.78, -1.28, 1.14, 1.4, materials, materials.darkFelt);
+  addMongolCorralHorses(group, materials);
   // Tether posts, troughs and travelling tack make the corral read as a working horse camp.
   [-1.25, 0.0, 1.25].forEach((x) => {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.08, 1.55, 7), materials.timber);
