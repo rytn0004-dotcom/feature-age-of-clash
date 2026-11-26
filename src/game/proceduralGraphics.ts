@@ -7672,6 +7672,14 @@ export function updateResourceNodeDepletionVisual(
   const ratio = Math.max(0, Math.min(1, amount / Math.max(1, maxAmount)));
   if (subtype === 'wood') mesh.userData.treeDepletionRatio = ratio;
 
+  // Animal meshes remain full-sized while alive (their meat amount does not
+  // change during the hunt). After the kill, scale the carcass as its meat is
+  // harvested so a large hunt visibly progresses instead of disappearing flat.
+  if (subtype === 'boar' || subtype === 'aurochs') {
+    mesh.scale.setScalar(0.72 + ratio * 0.28);
+    return;
+  }
+
   if (subtype === 'wood' && mesh.userData.treeCanopy) {
     const canopy = mesh.userData.treeCanopy as THREE.Object3D;
     const baseScale = typeof mesh.userData.baseCanopyScale === 'number' ? mesh.userData.baseCanopyScale : 1.0;
@@ -8667,6 +8675,8 @@ export function createEnvironmentFeaturesGroup(layout: MapLayoutResult): THREE.G
       case 'stone': return 2.05;
       case 'berry': return 1.25;
       case 'hunt': return 1.1;
+      case 'boar': return 1.45;
+      case 'aurochs': return 2.05;
       case 'farm': return 1.8;
       default: return 1.25;
     }
