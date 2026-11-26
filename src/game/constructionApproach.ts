@@ -88,10 +88,20 @@ export interface ConstructionHandoffCandidate extends ConstructionWorkerPosition
   targetResourceNodeId?: string;
   targetEntityId?: string;
   targetGarrisonBuildingId?: string;
+  targetX?: number;
+  targetZ?: number;
+  attackMoveGoal?: { x: number; z: number } | null;
+  formationGroupId?: string;
+  wallPatrolRoute?: readonly unknown[];
+  pathGoal?: { x: number; z: number };
+  waypoints?: readonly unknown[];
   garrisonedInBuildingId?: string | null;
   fieldAssemblyProjectId?: string;
+  commandQueue?: readonly unknown[];
   queuedCommandCount?: number;
+  carryingResource?: unknown;
   hasCarriedResource?: boolean;
+  queuedGatherStopAfterDeposit?: boolean;
 }
 
 export interface ConstructionHandoffTarget extends ConstructionWorkTarget {
@@ -108,9 +118,14 @@ export function selectConstructionHandoffWorker(
   candidates: readonly ConstructionHandoffCandidate[],
   target: ConstructionHandoffTarget,
   excludedWorkerIds: ReadonlySet<string> = new Set<string>(),
+  maxDistance = Number.POSITIVE_INFINITY,
 ): number {
   if (!Number.isFinite(target.x) || !Number.isFinite(target.z)) return -1;
+  if (Number.isNaN(maxDistance) || maxDistance < 0) return -1;
 
+  const maxDistanceSquared = Number.isFinite(maxDistance)
+    ? maxDistance * maxDistance
+    : Number.POSITIVE_INFINITY;
   let selectedIndex = -1;
   let selectedDistanceSquared = Number.POSITIVE_INFINITY;
 
@@ -119,6 +134,7 @@ export function selectConstructionHandoffWorker(
     if (
       !candidate.id ||
       excludedWorkerIds.has(candidate.id) ||
+      !Number.isFinite(candidate.hp) ||
       candidate.hp <= 0 ||
       candidate.faction !== target.faction ||
       candidate.category !== 'worker' ||
@@ -127,10 +143,19 @@ export function selectConstructionHandoffWorker(
       !!candidate.targetResourceNodeId ||
       !!candidate.targetEntityId ||
       !!candidate.targetGarrisonBuildingId ||
+      candidate.targetX !== undefined ||
+      candidate.targetZ !== undefined ||
+      !!candidate.attackMoveGoal ||
+      !!candidate.formationGroupId ||
+      !!candidate.wallPatrolRoute?.length ||
+      !!candidate.pathGoal ||
+      !!candidate.waypoints?.length ||
       !!candidate.garrisonedInBuildingId ||
       !!candidate.fieldAssemblyProjectId ||
+      !!candidate.carryingResource ||
       !!candidate.hasCarriedResource ||
-      (candidate.queuedCommandCount ?? 0) > 0 ||
+      !!candidate.queuedGatherStopAfterDeposit ||
+      (candidate.commandQueue?.length ?? candidate.queuedCommandCount ?? 0) > 0 ||
       !Number.isFinite(candidate.x) ||
       !Number.isFinite(candidate.z)
     ) {
@@ -142,6 +167,7 @@ export function selectConstructionHandoffWorker(
     const distanceSquared = dx * dx + dz * dz;
     if (
       Number.isFinite(distanceSquared) &&
+      distanceSquared <= maxDistanceSquared &&
       (distanceSquared < selectedDistanceSquared - 1e-9 ||
         (Math.abs(distanceSquared - selectedDistanceSquared) <= 1e-9 && selectedIndex < 0))
     ) {
