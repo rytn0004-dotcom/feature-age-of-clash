@@ -1094,6 +1094,16 @@ export function shouldAiSaveForNextAge(input: AiAgeUpSavingReadiness): boolean {
   return true;
 }
 
+/** Start the next landmark as soon as its own difficulty gate and full cost are met.
+ * Do not begin a strategic age-up while the faction is under an active attack. */
+export function shouldAiStartNextAgeLandmark(
+  input: AiAgeUpSavingReadiness & { underAttack: number },
+): boolean {
+  if (!Number.isFinite(input.underAttack) || input.underAttack > 0) return false;
+  if (!shouldAiSaveForNextAge(input) || !input.ageUpCost) return false;
+  return canAfford(input.resources, input.ageUpCost);
+}
+
 /** Keep the age-up reserve unless an active attack or undersized army needs defense. */
 export function shouldAiDeferOptionalMilitaryProduction(input: {
   savingForAgeUp: boolean;
