@@ -478,3 +478,63 @@ test('repair spatial index preserves roster order for equal-distance targets and
   assert.equal(index.findNearest({ x: 0, z: 0 }, Number.NaN, 'player'), null);
   assert.equal(index.findNearest({ x: 0, z: 0 }, -1, 'player'), null);
 });
+
+
+test('wall side-midpoint snapping follows all four parent-wall orientations', () => {
+  const cases = [
+    { yaw: 0, positive: { x: 0, z: WALL_MODEL_HALF_WIDTH }, negative: { x: 0, z: -WALL_MODEL_HALF_WIDTH } },
+    { yaw: Math.PI / 2, positive: { x: WALL_MODEL_HALF_WIDTH, z: 0 }, negative: { x: -WALL_MODEL_HALF_WIDTH, z: 0 } },
+    { yaw: Math.PI, positive: { x: 0, z: -WALL_MODEL_HALF_WIDTH }, negative: { x: 0, z: WALL_MODEL_HALF_WIDTH } },
+    { yaw: -Math.PI / 2, positive: { x: -WALL_MODEL_HALF_WIDTH, z: 0 }, negative: { x: WALL_MODEL_HALF_WIDTH, z: 0 } },
+  ];
+
+  for (const [index, orientation] of cases.entries()) {
+    const wall = makeWall(`rotated-${index}`, 12, {
+      z: -7,
+      rotationY: orientation.yaw,
+      wallChainId: `rotated-chain-${index}`,
+    });
+    for (const [side, expected] of [
+      ['side-positive', orientation.positive],
+      ['side-negative', orientation.negative],
+    ] as const) {
+      const snap = findNearestWallEndpoint({
+        x: wall.x + expected.x + 0.08,
+        z: wall.z + expected.z - 0.08,
+      }, [wall]);
+      assert.ok(snap, `orientation ${orientation.yaw} should expose ${side}`);
+      assert.equal(snap.side, side);
+      assert.equal(snap.wall.id, wall.id);
+      assert.ok(Math.abs(snap.point.x - (wall.x + expected.x)) < 1e-9);
+      assert.ok(Math.abs(snap.point.z - (wall.z + expected.z)) < 1e-9);
+    }
+  }
+});
+
+test('every segment in a continuous wall run exposes side branches without exposing internal end seams', () => {
+  const walls = Array.from({ length: 5 }, (_, index) => makeWall(`run-${index}`, index * 2.7, {
+    wallChainId: 'long-run',
+    wallChainIndex: index,
+    wallChainSize: 5,
+  }));
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild(walls);
+
+  assert.equal(index.endpointCount, 2);
+  assert.equal(index.sideAnchorCount, 10);
+  for (let segment = 0; segment < walls.length; segment++) {
+    const snap = index.findNearest({
+      x: walls[segment].x + 0.02,
+      z: WALL_MODEL_HALF_WIDTH + 0.02,
+    });
+    assert.ok(snap, `segment ${segment} should be a valid branch point`);
+    assert.equal(snap.side, 'side-positive');
+    assert.equal(snap.wall.id, walls[segment].id);
+  }
+
+  assert.equal(
+    index.findNearest({ x: 1.35, z: 0 }),
+    null,
+    'the same continuous run must not attract snaps at internal end seams',
+  );
+});
