@@ -447,6 +447,8 @@ interface AiEconomyFlowState {
 
 const AI_ECONOMY_FLOW_SAMPLE_INTERVAL_SECONDS = 12;
 const AI_WORKER_REBALANCE_INTERVAL_SECONDS = 6;
+/** Recheck resource-node relocation periodically, including when no safe replacement exists. */
+const AI_NODE_RELOCATION_RETRY_INTERVAL_SECONDS = 4.8;
 const MAX_WALL_CHAIN_SEGMENTS = 120;
 const BUILD_APPROACH_CANDIDATE_COUNT = 8;
 const BUILD_APPROACH_RETRY_DELAY_SECONDS = 1.6;
@@ -7859,7 +7861,10 @@ export class RtsEngine {
 
     for (const worker of this.units) {
       if (
+        !Number.isFinite(worker.hp) ||
         worker.hp <= 0 ||
+        !Number.isFinite(worker.x) ||
+        !Number.isFinite(worker.z) ||
         worker.state !== 'building' ||
         !worker.targetBuildingId ||
         worker.garrisonedInBuildingId
@@ -7870,7 +7875,10 @@ export class RtsEngine {
       const building = this.combatBuildingLookupById.get(worker.targetBuildingId);
       if (
         !building ||
+        !Number.isFinite(building.hp) ||
         building.hp <= 0 ||
+        !Number.isFinite(building.x) ||
+        !Number.isFinite(building.z) ||
         building.faction !== worker.faction ||
         this.isConstructionCancellationPending(building.id)
       ) continue;
@@ -10391,7 +10399,10 @@ export class RtsEngine {
     for (const other of candidates) {
       if (
         other.id === unit.id ||
+        !Number.isFinite(other.hp) ||
         other.hp <= 0 ||
+        !Number.isFinite(other.x) ||
+        !Number.isFinite(other.z) ||
         other.unitDef.category !== 'worker' ||
         other.state !== 'building' ||
         other.faction !== building.faction ||
@@ -10405,7 +10416,13 @@ export class RtsEngine {
       // construction orders are advanced. Avoid a nested buildings.find scan
       // for every worker on long wall chains.
       const otherBuilding = this.combatBuildingLookupById.get(other.targetBuildingId);
-      if (!otherBuilding) continue;
+      if (
+        !otherBuilding ||
+        !Number.isFinite(otherBuilding.hp) ||
+        otherBuilding.hp <= 0 ||
+        !Number.isFinite(otherBuilding.x) ||
+        !Number.isFinite(otherBuilding.z)
+      ) continue;
       const sameStructure = otherBuilding.id === building.id;
       const sameWallChain = !!building.wallChainId &&
         otherBuilding.wallChainId === building.wallChainId &&
@@ -14164,6 +14181,13 @@ export class RtsEngine {
       // The selector is allocation-light and ignores deliveries, queued orders and hunts.
       const nodeRelocationReadyAt = this.aiNodeRelocationReadyAt.get(aiId) || 0;
       if (this.stats.gameDuration >= nodeRelocationReadyAt) {
+        // The candidate scan is O(resource nodes × gatherers). Throttle even
+        // when no node qualifies or no replacement is reachable, otherwise
+        // the same broad scan repeats on every AI planning turn.
+        this.aiNodeRelocationReadyAt.set(
+          aiId,
+          this.stats.gameDuration + AI_NODE_RELOCATION_RETRY_INTERVAL_SECONDS
+        );
         const relocation = selectAiResourceNodeRelocation(
           this.resourceNodes,
           nodeGatherRateById,
@@ -14194,10 +14218,6 @@ export class RtsEngine {
             relocatingWorker.pathGoal = undefined;
             const replacementMeta = this.getResourceDisplayMeta(replacementNode);
             relocatingWorker.currentActionText = `${replacementMeta.icon} 資源將耗盡，轉往${replacementMeta.action}`;
-            this.aiNodeRelocationReadyAt.set(
-              aiId,
-              this.stats.gameDuration + 4.8
-            );
           }
         }
       }
@@ -14218,16 +14238,19 @@ export class RtsEngine {
             node?.resourceType === workerReassignment.from;
         });
         if (reassignable && reassignable.targetResourceNodeId) {
+          // Failed destination/path searches are throttled too; otherwise the
+          // same worker can trigger another expensive route scan every AI turn.
+          this.aiWorkerRebalanceReadyAt.set(
+            aiId,
+            this.stats.gameDuration + AI_WORKER_REBALANCE_INTERVAL_SECONDS
+          );
           const previousNodeId = reassignable.targetResourceNodeId;
           activeCounts[workerReassignment.from]--;
           const previousCount = nodeWorkerCounts.get(previousNodeId) || 0;
           nodeWorkerCounts.set(previousNodeId, Math.max(0, previousCount - 1));
 
           if (assignWorkerToType(reassignable, workerReassignment.to)) {
-            this.aiWorkerRebalanceReadyAt.set(
-              aiId,
-              this.stats.gameDuration + AI_WORKER_REBALANCE_INTERVAL_SECONDS
-            );
+            // The shared retry deadline was set before the destination search.
           } else {
             // A failed reassignment must leave the old gatherer / node counts intact.
             activeCounts[workerReassignment.from]++;
