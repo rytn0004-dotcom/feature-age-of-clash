@@ -600,12 +600,14 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
   const rangedDef = { category: 'ranged', isNaval: false } as const;
   const cavalryDef = { category: 'cavalry', isNaval: false } as const;
   const siegeDef = { category: 'siege', isNaval: false } as const;
+  const specialDef = { category: 'special', isNaval: false } as const;
   const fishingBoatDef = { category: 'ranged', isNaval: true } as const;
   assert.equal(canUnitHuntDangerousWildlife(workerDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'aurochs'), true);
   assert.equal(canUnitHuntDangerousWildlife(rangedDef, 'boar'), true);
   assert.equal(canUnitHuntDangerousWildlife(cavalryDef, 'boar'), true);
   assert.equal(canUnitHuntDangerousWildlife(siegeDef, 'aurochs'), false);
+  assert.equal(canUnitHuntDangerousWildlife(specialDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(fishingBoatDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'hunt'), false);
 
