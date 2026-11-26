@@ -29,6 +29,8 @@ export interface WallEndpointSnap<T extends WallSnapBuilding = WallSnapBuilding>
 
 /** Distance at which a new wall endpoint magnetically joins an existing chain. */
 export const WALL_ENDPOINT_SNAP_RADIUS = 1.65;
+/** Side-face midpoint snaps are tighter so internal seams do not attract the cursor. */
+export const WALL_SIDE_MIDPOINT_SNAP_RADIUS = 1.35;
 /** Workers can issue a repair order by right-clicking near a damaged wall segment. */
 export const WALL_REPAIR_SNAP_RADIUS = 2.35;
 /** Minimum distance between successive wall-chain waypoints after endpoint snapping. */
@@ -207,8 +209,12 @@ export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
           const dx = point.x - anchor.point.x;
           const dz = point.z - anchor.point.z;
           const distanceSquared = dx * dx + dz * dz;
+          const isSideAnchor = anchor.side === 'side-positive' || anchor.side === 'side-negative';
+          const anchorRadius = isSideAnchor
+            ? Math.min(snapRadius, WALL_SIDE_MIDPOINT_SNAP_RADIUS)
+            : snapRadius;
           if (
-            distanceSquared <= radiusSquared &&
+            distanceSquared <= anchorRadius * anchorRadius &&
             (
               nearest === null ||
               distanceSquared < nearestDistanceSquared ||
