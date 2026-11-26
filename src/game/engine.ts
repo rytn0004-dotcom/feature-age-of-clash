@@ -153,6 +153,7 @@ import {
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
+  selectAiWorkerReassignmentCandidateIndex,
   selectAiResourceNodeRelocation,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
@@ -511,6 +512,8 @@ export class RtsEngine {
   public resourcesByFaction: Record<string, Resources> = {};
   private aiEconomyFlowByFaction = new Map<string, AiEconomyFlowState>();
   private aiWorkerRebalanceReadyAt = new Map<string, number>();
+  /** Round-robin cursor prevents one unreachable gatherer from starving later candidates. */
+  private aiWorkerRebalanceCursorByFaction = new Map<string, number>();
   private aiNodeRelocationReadyAt = new Map<string, number>();
   private aiCampPlacementReadyAt = new Map<string, number>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
@@ -1539,6 +1542,7 @@ export class RtsEngine {
     this.battleStressInfo = null;
     this.aiEconomyFlowByFaction.clear();
     this.aiWorkerRebalanceReadyAt.clear();
+    this.aiWorkerRebalanceCursorByFaction.clear();
     this.aiNodeRelocationReadyAt.clear();
     this.aiCampPlacementReadyAt.clear();
     this.cancelPlacement();
@@ -14231,12 +14235,19 @@ export class RtsEngine {
       );
       const rebalanceReadyAt = this.aiWorkerRebalanceReadyAt.get(aiId) || 0;
       if (workerReassignment && this.stats.gameDuration >= rebalanceReadyAt) {
-        const reassignable = aiEconomicWorkers.find((worker) => {
-          if (!worker.targetResourceNodeId) return false;
-          const node = resourceNodeById.get(worker.targetResourceNodeId);
-          return isAiWorkerEligibleForEconomicReassignment(worker, node) &&
-            node?.resourceType === workerReassignment.from;
-        });
+        const candidateIndex = selectAiWorkerReassignmentCandidateIndex(
+          aiEconomicWorkers,
+          workerReassignment.from,
+          resourceNodeById,
+          this.aiWorkerRebalanceCursorByFaction.get(aiId) || 0,
+        );
+        const reassignable = candidateIndex >= 0 ? aiEconomicWorkers[candidateIndex] : undefined;
+        if (candidateIndex >= 0) {
+          this.aiWorkerRebalanceCursorByFaction.set(
+            aiId,
+            (candidateIndex + 1) % Math.max(1, aiEconomicWorkers.length)
+          );
+        }
         if (reassignable && reassignable.targetResourceNodeId) {
           // Failed destination/path searches are throttled too; otherwise the
           // same worker can trigger another expensive route scan every AI turn.

@@ -27,6 +27,7 @@ import {
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
+  selectAiWorkerReassignmentCandidateIndex,
   selectAiResourceNodeRelocation,
   shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
@@ -4421,4 +4422,25 @@ test('AI node relocation ignores unsafe deposits and never mutates candidate arr
   assert.equal(result, null);
   assert.equal(nodes[0].id, 'dead');
   assert.equal(workers[0].targetResourceNodeId, 'hunt');
+});
+
+
+test('AI economic reassignment rotates between eligible workers and skips committed tasks', () => {
+  const workers = [
+    { state: 'gathering', targetResourceNodeId: 'wood-a' },
+    { state: 'gathering', targetResourceNodeId: 'wood-b' },
+    { state: 'gathering', targetResourceNodeId: 'wood-a', carryingResource: { amount: 5 } },
+    { state: 'gathering', targetResourceNodeId: 'wood-b', commandQueue: [{ type: 'build' }] },
+    { state: 'returning_resource', targetResourceNodeId: 'wood-a' },
+  ];
+  const nodes = new Map([
+    ['wood-a', { amount: 100, subtype: 'wood' as const, resourceType: 'wood' as const }],
+    ['wood-b', { amount: 120, subtype: 'wood' as const, resourceType: 'wood' as const }],
+  ]);
+
+  assert.equal(selectAiWorkerReassignmentCandidateIndex(workers, 'wood', nodes, 0), 0);
+  assert.equal(selectAiWorkerReassignmentCandidateIndex(workers, 'wood', nodes, 1), 1);
+  assert.equal(selectAiWorkerReassignmentCandidateIndex(workers, 'wood', nodes, 2), 0);
+  assert.equal(selectAiWorkerReassignmentCandidateIndex(workers, 'gold', nodes, 0), -1);
+  assert.equal(selectAiWorkerReassignmentCandidateIndex([], 'wood', nodes), -1);
 });

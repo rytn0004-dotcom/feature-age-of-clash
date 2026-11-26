@@ -1471,6 +1471,52 @@ export function selectAiResourceNodeRelocation<
   return bestNode && bestWorker ? { node: bestNode, worker: bestWorker } : null;
 }
 
+/**
+ * Finds the next eligible gatherer in round-robin order. The engine advances
+ * its cursor after each attempt, so one worker with an unreachable destination
+ * cannot permanently block every other worker from being rebalanced.
+ */
+export function selectAiWorkerReassignmentCandidateIndex<
+  TWorker extends {
+    state: string;
+    targetResourceNodeId?: string;
+    targetEntityId?: string;
+    targetBuildingId?: string;
+    targetGarrisonBuildingId?: string;
+    fieldAssemblyProjectId?: string;
+    carryingResource?: { amount: number };
+    commandQueue?: readonly unknown[];
+    queuedGatherStopAfterDeposit?: boolean;
+  },
+  TNode extends Pick<ResourceNode, 'amount' | 'subtype' | 'resourceType'>,
+>(
+  workers: readonly TWorker[],
+  resourceType: ResourceType,
+  nodesById: ReadonlyMap<string, TNode>,
+  startIndex = 0,
+): number {
+  const count = workers.length;
+  if (count === 0) return -1;
+  const normalizedStart = Number.isFinite(startIndex)
+    ? ((Math.trunc(startIndex) % count) + count) % count
+    : 0;
+
+  for (let offset = 0; offset < count; offset++) {
+    const index = (normalizedStart + offset) % count;
+    const worker = workers[index];
+    const nodeId = worker.targetResourceNodeId;
+    if (!nodeId) continue;
+    const node = nodesById.get(nodeId);
+    if (
+      node?.resourceType !== resourceType ||
+      !isAiWorkerEligibleForEconomicReassignment(worker, node)
+    ) continue;
+    return index;
+  }
+
+  return -1;
+}
+
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,
