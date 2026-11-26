@@ -6,7 +6,10 @@ import { sound } from '../game/audio';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { isPlacementLocationValid } from '../game/collision';
 import { canUnitHuntDangerousWildlife, getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
-import { WALL_PREVIEW_REFRESH_INTERVAL_MS } from '../game/wallPlacement';
+import {
+  WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS,
+  WALL_PREVIEW_REFRESH_INTERVAL_MS,
+} from '../game/wallPlacement';
 
 interface GameCanvasProps {
   onEngineReady: (engine: RtsEngine) => void;
@@ -578,7 +581,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           const now = performance.now();
           lastWallPreviewRefreshRef.current = now;
           // HUD text changes at most 4 Hz, independently of the 10 Hz ghost.
-          if (now - lastWallInfoRefreshRef.current >= 250) {
+          if (now - lastWallInfoRefreshRef.current >= WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS) {
             setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
             lastWallInfoRefreshRef.current = now;
           }
