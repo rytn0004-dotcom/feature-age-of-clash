@@ -2075,7 +2075,7 @@ export class RtsEngine {
     trainingRemainingSeconds: number | null;
     queueRemainingSeconds: number | null;
   } {
-    const building = this.buildings.find((entry) => entry.id === buildingId);
+    const building = this.getBuildingById(buildingId);
     const empty = {
       constructionWorkers: 0,
       constructionWorkerMultiplier: 0,
@@ -2198,7 +2198,7 @@ export class RtsEngine {
 
   /** Exact unit queue duration using the same live bonuses as the production simulation. */
   public getUnitTrainingDuration(buildingId: string, unitDefId: string): number | null {
-    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    const building = this.getBuildingById(buildingId && entry.hp > 0);
     if (!building) return null;
     const unit = this.findUnitDef(unitDefId, building.faction);
     if (!unit) return null;
@@ -2229,7 +2229,7 @@ export class RtsEngine {
 
   /** Current research duration; the Royal Foundry aura is subject to the shared speed ceiling. */
   public getTechResearchDuration(buildingId: string, techId: string): number | null {
-    const building = this.buildings.find((entry) => entry.id === buildingId && entry.hp > 0);
+    const building = this.getBuildingById(buildingId && entry.hp > 0);
     const tech = findTechDef(techId);
     if (!building || !tech) return null;
     const hasNearbyForge =
@@ -2556,7 +2556,7 @@ export class RtsEngine {
   }
 
   public toggleGate(buildingId: string): boolean {
-    const gate = this.buildings.find((building) => building.id === buildingId);
+    const gate = this.getBuildingById(buildingId);
     if (!gate || gate.buildingType !== 'gate' || gate.hp <= 0 || !gate.isConstructed || gate.wallBreached || !this.isHumanControlled(gate.faction)) return false;
     gate.gateOpen = !gate.gateOpen;
     this.refreshWallTowerConnections();
@@ -2571,7 +2571,7 @@ export class RtsEngine {
   /** Assign selected infantry/cavalry/ranged guards to patrol their nearest friendly wall chain. */
   public issueWallPatrolOrder(): number {
     const selected = this.selectedUnitIds
-      .map((id) => this.units.find((unit) => unit.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0 && !unit.garrisonedInBuildingId && !unit.unitDef.isNaval && unit.unitDef.category !== 'worker' && unit.unitDef.category !== 'siege' && this.isHumanControlled(unit.faction));
     const availableWalls = this.buildings.filter((building) => building.faction === this.humanPlayerId && building.buildingDef.isWall && building.hp > 0 && building.isConstructed && !building.wallBreached && !(building.buildingType === 'gate' && building.gateOpen));
     if (selected.length === 0 || availableWalls.length === 0) {
@@ -2918,7 +2918,7 @@ export class RtsEngine {
   }
 
   public assignAllIdleWorkersToNode(nodeId: string): number {
-    const node = this.resourceNodes.find((n) => n.id === nodeId && n.amount > 0);
+    const node = this.getResourceNodeById(nodeId && n.amount > 0);
     if (!node) return 0;
     const idleWorkers = this.units.filter(
       (u) =>
@@ -2978,7 +2978,7 @@ export class RtsEngine {
     (node as any)._lastFarmCropBucket = bucket;
 
     const farmId = node.id.startsWith('food_') ? node.id.slice(5) : '';
-    const exactFarm = farmId ? this.buildings.find((building) => building.id === farmId) : undefined;
+    const exactFarm = farmId ? this.getBuildingById(farmId) : undefined;
     const farm =
       exactFarm?.buildingType === 'farm'
         ? exactFarm
@@ -3010,14 +3010,14 @@ export class RtsEngine {
   public assignControlGroup(groupNum: number, append = false) {
     if (groupNum < 1 || groupNum > 9) return;
     const validIds = this.selectedUnitIds.filter((uid) => {
-      const u = this.units.find((unit) => unit.id === uid);
+      const u = this.getUnitById(uid);
       return !!u && u.hp > 0 && this.isHumanControlled(u.faction);
     });
     if (validIds.length === 0) return;
 
     this.controlGroups = updateControlGroup(this.controlGroups, groupNum, validIds, append);
     sound.playSelect();
-    const first = this.units.find((u) => u.id === validIds[0]);
+    const first = this.getUnitById(validIds[0]);
     if (first) {
       this.addFloatingText(
         first.x,
@@ -3091,7 +3091,7 @@ export class RtsEngine {
   }
 
   public startResearch(buildingId: string, techId: string): boolean {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.isConstructed || bldg.activeTechId) return false;
 
     const tech = findTechDef(techId);
@@ -3202,9 +3202,7 @@ export class RtsEngine {
   }
 
   public toggleOvooMode(buildingId: string): boolean {
-    const building = this.buildings.find((entry) =>
-      entry.id === buildingId && entry.hp > 0 && entry.buildingType === 'ovoo_relay'
-    );
+    const building = this.getBuildingById(buildingId && entry.hp > 0 && entry.buildingType === 'ovoo_relay');
     if (!building) return false;
     const nextMode = building.ovooMode === 'sacred_extraction' ? 'yam_relay' : 'sacred_extraction';
     building.ovooMode = nextMode;
@@ -3231,9 +3229,7 @@ export class RtsEngine {
   }
 
   public triggerOvooWarHorn(buildingId: string): boolean {
-    const building = this.buildings.find((entry) =>
-      entry.id === buildingId && entry.hp > 0 && entry.isConstructed && entry.buildingType === 'ovoo_relay'
-    );
+    const building = this.getBuildingById(buildingId && entry.hp > 0 && entry.isConstructed && entry.buildingType === 'ovoo_relay');
     if (!building || (building.ovooHornCooldown || 0) > 0) return false;
     building.ovooHornCooldown = 45;
     this.spawnShockwaveRing(building.x, building.z, 0xf59e0b, 16);
@@ -3348,7 +3344,7 @@ export class RtsEngine {
           enemy.slowFactor = zone.slowFactor;
           this.addFloatingText(enemy.x, 2.2, enemy.z, `⚡-${damage}`, '#38bdf8');
           if (enemy.hp <= 0 && zone.casterId) {
-            const caster = this.units.find((unit) => unit.id === zone.casterId);
+            const caster = this.getUnitById(zone.casterId);
             if (caster) {
               caster.kills++;
               this.awardUnitXp(caster, 35);
@@ -3423,7 +3419,7 @@ export class RtsEngine {
           if (enemy.hp <= 0 || !this.isHostile(unit, enemy)) return;
           if (getDistance(unit.x, unit.z, enemy.x, enemy.z) > 10) return;
           if (enemy.targetEntityId) {
-            const locked = this.units.find((a) => a.id === enemy.targetEntityId);
+            const locked = this.getUnitById(enemy.targetEntityId);
             if (locked && locked.faction === unit.faction) {
               enemy.targetEntityId = undefined;
               if (enemy.state === 'attacking') enemy.state = 'idle';
@@ -3574,7 +3570,7 @@ export class RtsEngine {
   public activateSelectedUnitsAbility(): number {
     let triggered = 0;
     this.selectedUnitIds.forEach((uid) => {
-      const u = this.units.find((unit) => unit.id === uid);
+      const u = this.getUnitById(uid);
       if (u && this.isHumanControlled(u.faction) && this.activateUnitAbility(u)) {
         triggered++;
       }
@@ -3585,7 +3581,7 @@ export class RtsEngine {
 
   public stopSelectedUnits() {
     const units = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
     if (units.length === 0) return;
 
@@ -3645,7 +3641,7 @@ export class RtsEngine {
 
   public unloadSelectedTransports() {
     const boats = this.selectedUnitIds
-      .map((id) => this.units.find((u) => u.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((u): u is UnitEntity => !!u && u.unitDefId === 'transport_boat' && (u.transportCargoIds?.length || 0) > 0);
     boats.forEach((b) => this.unloadTransport(b));
   }
@@ -3656,7 +3652,7 @@ export class RtsEngine {
     boat.transportCargoIds = [];
     (boat as any)._unloadOnArrive = false;
     ids.forEach((uid, idx) => {
-      const u = this.units.find((x) => x.id === uid);
+      const u = this.getUnitById(uid);
       if (!u) return;
       u.garrisonedInBuildingId = undefined;
       const ang = (idx / Math.max(1, ids.length)) * Math.PI * 2;
@@ -3691,7 +3687,7 @@ export class RtsEngine {
 
   public issueAttackMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
     if (playerUnits.length === 0) return;
 
@@ -3753,7 +3749,7 @@ export class RtsEngine {
 
     if (centerCamera) {
       const members = ids
-        .map((id) => this.units.find((u) => u.id === id))
+        .map((id) => this.getUnitById(id))
         .filter((u): u is UnitEntity => !!u);
       if (members.length > 0) {
         const avgX = members.reduce((s, m) => s + m.x, 0) / members.length;
@@ -3864,7 +3860,7 @@ export class RtsEngine {
 
   public issueMinimapOrder(worldX: number, worldZ: number) {
     const humanUnits = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
 
     if (humanUnits.length === 0) return;
@@ -3918,7 +3914,7 @@ export class RtsEngine {
 
   public issueMoveOrder(x: number, z: number, queue = false) {
     const playerUnits = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction))
       .sort((a, b) => a.id.localeCompare(b.id));
     if (playerUnits.length === 0) return;
@@ -4081,12 +4077,12 @@ export class RtsEngine {
 
   public issueAttackOrder(targetId: string, queue = false) {
     const playerUnits = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && this.isHumanControlled(u.faction));
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
 
-    const targetUnit = this.units.find((u) => u.id === targetId);
+    const targetUnit = this.getUnitById(targetId);
     // Board friendly transport boat
     if (
       targetUnit &&
@@ -4111,7 +4107,7 @@ export class RtsEngine {
     }
 
     sound.playAttackOrder();
-    const target = targetUnit || this.buildings.find((b) => b.id === targetId);
+    const target = targetUnit || this.getBuildingById(targetId);
     if (queue) {
       if (!target || target.hp <= 0 || !this.isHostile(playerUnits[0], target)) {
         sound.playInvalid();
@@ -4202,11 +4198,11 @@ export class RtsEngine {
   }
 
   public issueGatherOrder(nodeId: string, queue = false) {
-    const node = this.resourceNodes.find((n) => n.id === nodeId);
+    const node = this.getResourceNodeById(nodeId);
     if (!node) return;
 
     const selectedUnits = this.selectedUnitIds
-      .map((id) => this.units.find((unit) => unit.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((unit): unit is UnitEntity =>
         !!unit &&
         unit.hp > 0 &&
@@ -4284,15 +4280,15 @@ export class RtsEngine {
       if (next.type === 'move' || next.type === 'attackMove') {
         isValid = Number.isFinite(next.x) && Number.isFinite(next.z);
       } else if (next.type === 'gather') {
-        const node = this.resourceNodes.find((entry) => entry.id === next.nodeId);
+        const node = this.getResourceNodeById(next.nodeId);
         isValid = !!node && node.amount > 0 && canUnitGatherNode(unit.unitDef, node);
       } else if (next.type === 'attack') {
-        const targetUnit = this.units.find((entry) => entry.id === next.targetId);
-        const targetBuilding = this.buildings.find((entry) => entry.id === next.targetId);
+        const targetUnit = this.getUnitById(next.targetId);
+        const targetBuilding = this.getBuildingById(next.targetId);
         const target = targetUnit || targetBuilding;
         isValid = !!target && target.hp > 0 && this.isHostile(unit, target);
       } else if (next.type === 'board') {
-        const boat = this.units.find((entry) => entry.id === next.targetId);
+        const boat = this.getUnitById(next.targetId);
         isValid = !!boat &&
           boat.hp > 0 &&
           boat.unitDefId === 'transport_boat' &&
@@ -4300,7 +4296,7 @@ export class RtsEngine {
           !unit.unitDef.isNaval &&
           unit.unitDef.category !== 'siege';
       } else if (next.type === 'build' || next.type === 'repair') {
-        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        const building = this.getBuildingById(next.buildingId);
         isValid = !!building &&
           building.hp > 0 &&
           building.faction === unit.faction &&
@@ -4313,7 +4309,7 @@ export class RtsEngine {
                 )
           );
       } else if (next.type === 'garrison') {
-        const building = this.buildings.find((entry) => entry.id === next.buildingId);
+        const building = this.getBuildingById(next.buildingId);
         isValid = !!building &&
           building.hp > 0 &&
           building.isConstructed &&
@@ -4343,13 +4339,13 @@ export class RtsEngine {
   }
 
   public issueBuildOrder(buildingId: string, queue = false) {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (bldg && this.isConstructionCancellationPending(bldg.id)) return;
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     const isDamagedStructure = !!bldg && bldg.isConstructed && bldg.hp < bldg.maxHp;
     if (!bldg || (bldg.isConstructed && !isWallRepair && !isDamagedStructure) || bldg.hp <= 0) return;
     const workers = this.selectedUnitIds
-      .map((id) => this.units.find((u) => u.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
 
     if (workers.length === 0) return;
@@ -4417,15 +4413,15 @@ export class RtsEngine {
       label?: string;
     }
   ) {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg) return;
 
     const targetNode = target?.targetResourceNodeId
-      ? this.resourceNodes.find((n) => n.id === target.targetResourceNodeId && n.amount > 0)
+      ? this.getResourceNodeById(target.targetResourceNodeId && n.amount > 0)
       : undefined;
     const targetBldg =
       !targetNode && target?.targetBuildingId
-        ? this.buildings.find((b) => b.id === target.targetBuildingId && !b.isConstructed && b.hp > 0)
+        ? this.getBuildingById(target.targetBuildingId && !b.isConstructed && b.hp > 0)
         : undefined;
 
     if (targetNode) {
@@ -4474,7 +4470,7 @@ export class RtsEngine {
   }
 
   public updateRallyVisuals(bldg?: BuildingEntity | null) {
-    const targetBldg = bldg || (this.selectedBuildingId ? this.buildings.find((b) => b.id === this.selectedBuildingId) : null);
+    const targetBldg = bldg || (this.selectedBuildingId ? this.getBuildingById(this.selectedBuildingId) : null);
     if (targetBldg && targetBldg.rallyPoint) {
       const rp = targetBldg.rallyPoint;
       const lineColor = rp.targetResourceNodeId
@@ -4665,13 +4661,13 @@ export class RtsEngine {
   }
 
   public issueGarrisonOrder(buildingId: string, queue = false): boolean {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.isConstructed || bldg.hp <= 0) return false;
     const maxCap = getBuildingMaxGarrison(bldg);
     if (maxCap <= 0) return false;
 
     const selected = this.selectedUnitIds
-      .map((uid) => this.units.find((u) => u.id === uid))
+      .map((uid) => this.getUnitById(uid))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && u.faction === bldg.faction);
     if (selected.length === 0) return false;
 
@@ -4806,11 +4802,11 @@ export class RtsEngine {
   }
 
   public ungarrisonUnit(buildingId: string, unitId: string): boolean {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.garrisonedUnitIds || !bldg.garrisonedUnitIds.includes(unitId)) return false;
 
     bldg.garrisonedUnitIds = bldg.garrisonedUnitIds.filter((id) => id !== unitId);
-    const unit = this.units.find((u) => u.id === unitId && u.hp > 0);
+    const unit = this.getUnitById(unitId && u.hp > 0);
     if (!unit) {
       this.onSelectionChange?.();
       return false;
@@ -4830,14 +4826,14 @@ export class RtsEngine {
    * garrison members remain sheltered until they recover to the requested ratio.
    */
   private ungarrisonRecoveredAiUnits(buildingId: string, recoveryRatio = 0.72): number {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.garrisonedUnitIds?.length) return 0;
 
     const ids = [...bldg.garrisonedUnitIds];
     const remaining: string[] = [];
     let released = 0;
     ids.forEach((unitId, index) => {
-      const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
+      const unit = this.getUnitById(unitId && candidate.hp > 0);
       if (!unit) return;
 
       if (!shouldAiUnitLeaveShelter(unit.hp, unit.maxHp, unit.unitDef.category, recoveryRatio)) {
@@ -4854,7 +4850,7 @@ export class RtsEngine {
   }
 
   public ungarrisonAll(buildingId: string): number {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.garrisonedUnitIds || bldg.garrisonedUnitIds.length === 0) return 0;
 
     const ids = [...bldg.garrisonedUnitIds];
@@ -4862,7 +4858,7 @@ export class RtsEngine {
     let released = 0;
 
     ids.forEach((uid, idx) => {
-      const unit = this.units.find((u) => u.id === uid && u.hp > 0);
+      const unit = this.getUnitById(uid && u.hp > 0);
       if (!unit) return;
       this.releaseGarrisonedUnitEntity(bldg, unit, idx);
       released++;
@@ -4879,7 +4875,7 @@ export class RtsEngine {
   }
 
   public ringTownBell(tcId: string): 'garrisoned' | 'ungarrisoned' | 'none' {
-    const tc = this.buildings.find((b) => b.id === tcId && b.isConstructed && b.hp > 0);
+    const tc = this.getBuildingById(tcId && b.isConstructed && b.hp > 0);
     if (!tc) return 'none';
     const faction = tc.faction;
 
@@ -4890,7 +4886,7 @@ export class RtsEngine {
         b.hp > 0 &&
         b.isConstructed &&
         (b.garrisonedUnitIds || []).some((uid) => {
-          const u = this.units.find((unit) => unit.id === uid);
+          const u = this.getUnitById(uid);
           return !!u && u.hp > 0 && u.unitDef.category === 'worker';
         })
     );
@@ -4966,7 +4962,7 @@ export class RtsEngine {
   }
 
   public trainUnit(buildingId: string, unitDefId: string): boolean {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || !bldg.isConstructed) return false;
     const def = this.findUnitDef(unitDefId, bldg.faction);
     if (!def) return false;
@@ -5021,7 +5017,7 @@ export class RtsEngine {
   }
 
   public cancelTrainingAt(buildingId: string, queueIndex: number): boolean {
-    const bldg = this.buildings.find((b) => b.id === buildingId);
+    const bldg = this.getBuildingById(buildingId);
     if (!bldg || bldg.hp <= 0 || queueIndex < 0 || queueIndex >= bldg.queue.length) return false;
 
     const unitDefId = bldg.queue[queueIndex];
@@ -5066,7 +5062,7 @@ export class RtsEngine {
 
     if (this.selectedUnitIds.length > 0 && !this.selectedBuildingId) {
       const selected = this.selectedUnitIds
-        .map((id) => this.units.find((unit) => unit.id === id))
+        .map((id) => this.getUnitById(id))
         .filter(
           (unit): unit is UnitEntity =>
             !!unit && unit.hp > 0 && this.isHumanControlled(unit.faction),
@@ -5135,7 +5131,7 @@ export class RtsEngine {
     }
     let ejectIndex = 0;
     for (const unitId of garrisonIds) {
-      const unit = this.units.find((candidate) => candidate.id === unitId && candidate.hp > 0);
+      const unit = this.getUnitById(unitId && candidate.hp > 0);
       if (!unit) continue;
       unit.garrisonedInBuildingId = undefined;
       unit.targetGarrisonBuildingId = undefined;
@@ -5206,7 +5202,7 @@ export class RtsEngine {
     // Remove only this farm's own crop node; nearby farms may share visual proximity.
     const farmNodeId = building.buildingType === 'farm' ? `food_${building.id}` : null;
     if (farmNodeId) {
-      const farmNode = this.resourceNodes.find((node) => node.id === farmNodeId);
+      const farmNode = this.getResourceNodeById(farmNodeId);
       if (farmNode) {
         this.resourceNodes = this.resourceNodes.filter((node) => node.id !== farmNodeId);
         this.resourceNodeLookupSource = null;
@@ -5261,7 +5257,7 @@ export class RtsEngine {
   }
 
   private finalizeConstructionCancellation(buildingId: string): boolean {
-    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    const building = this.getBuildingById(buildingId);
     if (
       !building ||
       building.hp <= 0 ||
@@ -5305,7 +5301,7 @@ export class RtsEngine {
 
   /** Begin cancellation; the foundation remains recoverable for five real-time seconds. */
   public cancelBuildingConstruction(buildingId: string): boolean {
-    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    const building = this.getBuildingById(buildingId);
     if (
       !building ||
       building.hp <= 0 ||
@@ -5344,7 +5340,7 @@ export class RtsEngine {
 
     window.clearTimeout(pending.timerId);
     this.pendingConstructionCancellations.delete(buildingId);
-    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    const building = this.getBuildingById(buildingId);
     if (!building || building.hp <= 0 || building.isConstructed) {
       this.onSelectionChange?.();
       return false;
@@ -5391,7 +5387,7 @@ export class RtsEngine {
     }> = [];
     for (const [buildingId, pending] of this.pendingConstructionCancellations) {
       const remainingMs = getConstructionCancellationUndoRemainingMs(pending.expiresAt, performance.now());
-      const building = this.buildings.find((candidate) => candidate.id === buildingId);
+      const building = this.getBuildingById(buildingId);
       if (!building || building.hp <= 0 || building.isConstructed || remainingMs <= 0) continue;
       entries.push({
         buildingId,
@@ -5411,7 +5407,7 @@ export class RtsEngine {
 
     if (selectionKey.startsWith('building:')) {
       const buildingId = selectionKey.slice('building:'.length);
-      const building = this.buildings.find((candidate) => candidate.id === buildingId);
+      const building = this.getBuildingById(buildingId);
       if (!building || !this.isHumanControlled(building.faction)) return false;
       const x = building.x;
       const z = building.z;
@@ -5435,14 +5431,14 @@ export class RtsEngine {
 
       for (const unit of selected) {
         if (unit.garrisonedInBuildingId && !unit.garrisonedInBuildingId.startsWith('transport:')) {
-          const host = this.buildings.find((building) => building.id === unit.garrisonedInBuildingId);
+          const host = this.getBuildingById(unit.garrisonedInBuildingId);
           if (host) {
             host.garrisonedUnitIds = (host.garrisonedUnitIds || []).filter((id) => id !== unit.id);
           }
         }
         if (unit.garrisonedInBuildingId?.startsWith('transport:')) {
           const boatId = unit.garrisonedInBuildingId.slice('transport:'.length);
-          const boat = this.units.find((candidate) => candidate.id === boatId);
+          const boat = this.getUnitById(boatId);
           if (boat?.transportCargoIds) {
             boat.transportCargoIds = boat.transportCargoIds.filter((id) => id !== unit.id);
           }
@@ -6093,7 +6089,7 @@ export class RtsEngine {
     this.refreshWallTowerConnections();
 
     const workers = this.selectedUnitIds
-      .map((id) => this.units.find((unit) => unit.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((unit): unit is UnitEntity =>
         !!unit &&
         unit.hp > 0 &&
@@ -6554,7 +6550,7 @@ export class RtsEngine {
 
     // Assign or Shift-queue the newly placed foundation for each selected worker.
     const workers = this.selectedUnitIds
-      .map((id) => this.units.find((u) => u.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((u): u is UnitEntity => !!u && u.hp > 0 && !u.garrisonedInBuildingId && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction));
 
     if (queueWorkers) {
@@ -7311,10 +7307,10 @@ export class RtsEngine {
     }
     const nowMs = performance.now();
     if (nowMs - this.lastHudSelectionSyncTime >= 200) {
-      const selBldg = this.selectedBuildingId ? this.buildings.find((b) => b.id === this.selectedBuildingId) : null;
+      const selBldg = this.selectedBuildingId ? this.getBuildingById(this.selectedBuildingId) : null;
       const bldgBusy = !!(selBldg && (selBldg.queue.length > 0 || selBldg.activeTechId));
       const unitBusy = this.selectedUnitIds.some((uid) => {
-        const u = this.units.find((unit) => unit.id === uid);
+        const u = this.getUnitById(uid);
         return !!u && (u.abilityCooldown > 0 || (u.buffSpeedUntil && u.buffSpeedUntil > this.simTime));
       });
       if (bldgBusy || unitBusy) {
@@ -9984,7 +9980,7 @@ export class RtsEngine {
 
   private cancelFieldSiegeProject(project: FieldSiegeProject, refundRatio = 0.5) {
     const projectBuilders = project.builderUnitIds
-      .map((id) => this.units.find((unit) => unit.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((unit): unit is UnitEntity => !!unit && unit.hp > 0);
     const activeBuilders = projectBuilders.filter(
       (unit) => unit.state === 'assembling' && unit.fieldAssemblyProjectId === project.id
@@ -10020,7 +10016,7 @@ export class RtsEngine {
     for (let i = this.fieldSiegeProjects.length - 1; i >= 0; i--) {
       const project = this.fieldSiegeProjects[i];
       const builders = project.builderUnitIds
-        .map((id) => this.units.find((unit) => unit.id === id))
+        .map((id) => this.getUnitById(id))
         .filter(
           (unit): unit is UnitEntity =>
             !!unit &&
@@ -10055,7 +10051,7 @@ export class RtsEngine {
 
       const completedBuilders = builders.slice();
       project.builderUnitIds.forEach((id) => {
-        const unit = this.units.find((entry) => entry.id === id);
+        const unit = this.getUnitById(id);
         if (unit && unit.fieldAssemblyProjectId === project.id) unit.fieldAssemblyProjectId = undefined;
       });
       completedBuilders.forEach((unit) => {
@@ -10153,7 +10149,7 @@ export class RtsEngine {
 
   public startFieldRamAssembly(): boolean {
     const selected = this.selectedUnitIds
-      .map((id) => this.units.find((unit) => unit.id === id))
+      .map((id) => this.getUnitById(id))
       .filter((unit): unit is UnitEntity => !!unit && this.isHumanControlled(unit.faction));
     return this.beginFieldRamAssembly(this.humanPlayerId, selected, true);
   }
@@ -10247,7 +10243,7 @@ export class RtsEngine {
     const nextCommand = queue?.[0];
     if (!queue?.length || nextCommand?.type !== 'build') return false;
 
-    const nextBuilding = this.buildings.find((candidate) => candidate.id === nextCommand.buildingId);
+    const nextBuilding = this.getBuildingById(nextCommand.buildingId);
     if (!shouldDeferBlockedWallConstructionTarget(
       {
         id: building.id,
@@ -10276,7 +10272,7 @@ export class RtsEngine {
       queue,
       building.id,
       building.wallChainId,
-      (buildingId) => this.buildings.find((candidate) => candidate.id === buildingId)?.wallChainId,
+      (buildingId) => this.getBuildingById(buildingId)?.wallChainId,
     );
     if (!deferred) return false;
 
@@ -11227,7 +11223,7 @@ export class RtsEngine {
         this.starRelicPhase = 'carried';
         this.starRelicCarrierId = best.id;
         this.starRelicChannel = 0;
-        const carrier = this.units.find((u) => u.id === best.id);
+        const carrier = this.getUnitById(best.id);
         if (carrier) {
           carrier.currentActionText = '捧著星誓';
           this.addFloatingText(carrier.x, 2.2, carrier.z, '取得星誓', '#c4b5fd');
@@ -11262,7 +11258,7 @@ export class RtsEngine {
     }
 
     if (this.starRelicPhase === 'carried' && this.starRelicCarrierId) {
-      const carrier = this.units.find((u) => u.id === this.starRelicCarrierId);
+      const carrier = this.getUnitById(this.starRelicCarrierId);
       if (!carrier || carrier.hp <= 0 || carrier.garrisonedInBuildingId) {
         if (carrier) {
           this.starRelicX = carrier.x;
@@ -11697,7 +11693,7 @@ export class RtsEngine {
         // Eject any surviving garrisoned units before removing collapsed structure
         if (bldg.garrisonedUnitIds && bldg.garrisonedUnitIds.length > 0) {
           bldg.garrisonedUnitIds.forEach((uid, idx) => {
-            const gu = this.units.find((u) => u.id === uid && u.hp > 0);
+            const gu = this.getUnitById(uid && u.hp > 0);
             if (!gu) return;
             gu.garrisonedInBuildingId = undefined;
             gu.targetGarrisonBuildingId = undefined;
@@ -12527,7 +12523,7 @@ export class RtsEngine {
 
     // Show for currently selected units (skip sheltered units hidden inside buildings)
     this.selectedUnitIds.forEach((uid) => {
-      const unit = this.units.find((u) => u.id === uid);
+      const unit = this.getUnitById(uid);
       if (!unit || unit.garrisonedInBuildingId) return;
 
       let ring = this.selectionRings.get(uid);
@@ -12542,7 +12538,7 @@ export class RtsEngine {
 
     // Show for currently selected resource node
     if (this.selectedNodeId) {
-      const node = this.resourceNodes.find((n) => n.id === this.selectedNodeId);
+      const node = this.getResourceNodeById(this.selectedNodeId);
       if (node && node.amount > 0) {
         let nodeRing = this.selectionRings.get('node_' + node.id);
         if (!nodeRing) {
@@ -13559,7 +13555,7 @@ export class RtsEngine {
             let score = 20;
             if (ew.state === 'gathering' || ew.targetResourceNodeId) {
               const node = ew.targetResourceNodeId
-                ? this.resourceNodes.find((n) => n.id === ew.targetResourceNodeId)
+                ? this.getResourceNodeById(ew.targetResourceNodeId)
                 : null;
               if (node?.resourceType === 'gold') score += 55;
               else if (node?.resourceType === 'stone') score += 40;
@@ -13729,7 +13725,7 @@ export class RtsEngine {
       // AI can commit a four-unit ground party while retaining a home reserve.
       const hasActiveHuntParty = aiArmy.some((unit) => {
         const targetNode = unit.targetResourceNodeId
-          ? this.resourceNodes.find((node) => node.id === unit.targetResourceNodeId)
+          ? this.getResourceNodeById(unit.targetResourceNodeId)
           : undefined;
         return !!targetNode &&
           isDangerousWildlifeSubtype(targetNode.subtype) &&
@@ -15062,7 +15058,7 @@ export class RtsEngine {
           const keyLabel = eventCodeToHotkeyLabel(e.code);
           if (keyLabel) {
             const hasWorkerSelected = this.selectedUnitIds.some((uid) => {
-              const u = this.units.find((unit) => unit.id === uid);
+              const u = this.getUnitById(uid);
               return !!u && u.hp > 0 && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction);
             });
 
@@ -15081,7 +15077,7 @@ export class RtsEngine {
                 return;
               }
             } else if (this.selectedUnitIds.length === 0 && this.selectedBuildingId) {
-              const bldg = this.buildings.find((b) => b.id === this.selectedBuildingId);
+              const bldg = this.getBuildingById(this.selectedBuildingId);
               if (bldg && bldg.isConstructed && this.isHumanControlled(bldg.faction)) {
                 if (keyLabel === UNGARRISON_HOTKEY && (bldg.garrisonedUnitIds?.length || 0) > 0) {
                   this.ungarrisonAll(bldg.id);
@@ -15337,7 +15333,7 @@ export class RtsEngine {
     this.raycaster.setFromCamera(this.pointerNdc, this.camera);
 
     const hasWorkerSelected = this.selectedUnitIds.some((uid) => {
-      const u = this.units.find((unit) => unit.id === uid);
+      const u = this.getUnitById(uid);
       return !!u && u.hp > 0 && u.unitDef.category === 'worker' && this.isHumanControlled(u.faction);
     });
 
@@ -15354,11 +15350,11 @@ export class RtsEngine {
       while (obj && obj !== this.scene) {
         const uData = obj.userData;
         if (uData && uData.type === 'unit') {
-          const u = this.units.find((unit) => unit.id === uData.id);
+          const u = this.getUnitById(uData.id);
           if (u && u.hp > 0) return { hitType: 'unit', unit: u, point: hit.point };
         }
         if (uData && uData.type === 'building') {
-          const b = this.buildings.find((bldg) => bldg.id === uData.id);
+          const b = this.getBuildingById(uData.id);
           if (b && b.hp > 0) {
             // If player has workers selected and hits a completed friendly Farm, target its food resource directly!
             if (hasWorkerSelected && b.buildingType === 'farm' && b.isConstructed && !this.isHostileToPlayer(b)) {
@@ -15371,7 +15367,7 @@ export class RtsEngine {
           }
         }
         if (uData && uData.type === 'resource') {
-          const n = this.resourceNodes.find((node) => node.id === uData.id);
+          const n = this.getResourceNodeById(uData.id);
           if (n && n.amount > 0) return { hitType: 'resource', resource: n, point: hit.point };
         }
         if (uData && uData.type === 'contested') {
