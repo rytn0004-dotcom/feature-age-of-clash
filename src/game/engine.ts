@@ -154,7 +154,6 @@ import {
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
   selectAiResourceNodeRelocation,
-  shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
   shouldAiStartNextAgeLandmark,

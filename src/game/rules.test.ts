@@ -4398,8 +4398,8 @@ test('AI node relocation selects the most urgent safe worker without reordering 
   ];
 
   const selected = selectAiResourceNodeRelocation(nodes, rates, workers);
-  assert.equal(selected?.node.id, 'gold-tie', 'four seconds remaining is more urgent than four seconds on the next ID tie-break candidate?');
-  assert.equal(selected?.worker.id, 'z-worker', 'the eligible worker is chosen deterministically when the only worker is eligible');
+  assert.equal(selected?.node.id, 'wood-urgent', 'a node without an eligible gatherer must not win relocation priority');
+  assert.equal(selected?.worker.id, 'a-worker', 'equal worker candidates use stable ID ordering');
 });
 
 test('AI node relocation ignores unsafe deposits and never mutates candidate arrays', () => {
