@@ -284,7 +284,9 @@ export class WallRepairIndex<T extends WallSnapBuilding = WallSnapBuilding> {
         !Number.isFinite(wall.x) ||
         !Number.isFinite(wall.z) ||
         !Number.isFinite(wall.hp) ||
-        wall.hp <= 0
+        wall.hp <= 0 ||
+        !Number.isFinite(wall.maxHp) ||
+        (!wall.wallBreached && wall.hp >= wall.maxHp)
       ) {
         continue;
       }
