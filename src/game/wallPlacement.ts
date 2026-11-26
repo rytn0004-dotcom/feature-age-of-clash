@@ -2,8 +2,10 @@ import type { Resources } from '../types/game';
 
 /** Keep at most eight full wall models in-scene; longer previews use one instanced batch. */
 export const WALL_PREVIEW_DETAILED_SEGMENT_LIMIT = 8;
-/** Wall ghost geometry and collision preview are intentionally capped at 10 Hz. */
+/** Pointer projection, snapping and lightweight ghost geometry are capped at 10 Hz. */
 export const WALL_PREVIEW_REFRESH_INTERVAL_MS = 100;
+/** HUD counts/cost text refresh independently at no more than 4 Hz. */
+export const WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS = 250;
 /** Measured outer footprint of the shared wall base / buttresses in local model space. */
 export const WALL_MODEL_HALF_LENGTH = 1.5;
 export const WALL_MODEL_HALF_WIDTH = 0.575;
