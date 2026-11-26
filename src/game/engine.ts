@@ -16,9 +16,9 @@ import { isFishAnimationSubtype } from './fishAnimationRegistry';
 import { getWildlifeBadgePresentation } from './wildlifeBadge';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
 import {
+  applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
   getWildlifeInteractionQueryRadius,
-  tryConsumeWildlifeHunterAttack,
   type WildlifeUnitInteractionScratch,
 } from './wildlifeQueries';
 import {
@@ -10765,13 +10765,13 @@ export class RtsEngine {
         }
       }
 
-      for (const attacker of interactions.attackers) {
-        if (!tryConsumeWildlifeHunterAttack(attacker, this.simTime, attacker.unitDef.stats.attackRate || 1)) continue;
-        const dmg = Math.max(1, attacker.unitDef.stats.attack);
-        node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
-        triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
-        if (node.animalHp <= 0) killAnimal(node, mesh, '山羌倒地');
-      }
+      applyWildlifeHunterAttacks(
+        node,
+        interactions.attackers,
+        this.simTime,
+        (attacker) => triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5),
+        () => killAnimal(node, mesh, '山羌倒地'),
+      );
     }
   }
 
