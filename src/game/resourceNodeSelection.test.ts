@@ -44,7 +44,7 @@ test('resource node top-K selection reuses fixed record objects across repeated 
   assert.equal(slots[0], firstRecord);
   assert.equal(slots[1], secondRecord);
   assert.equal(slots[0].node?.id, 'middle');
-  assert.equal(slots[1].node, null, 'records after the active prefix may retain old data but are ignored');
+  assert.equal(slots[1].node?.id, 'far', 'stale records outside the active prefix are retained but ignored by the count');
 });
 
 test('resource node top-K selection safely ignores invalid coordinates and score inputs', () => {
