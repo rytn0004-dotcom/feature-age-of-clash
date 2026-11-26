@@ -60,6 +60,35 @@ test('wildlife badge: deer presentation remains species-specific', () => {
   assert.equal(badge.valueText, '16/32 HP');
 });
 
+test('wildlife badge: aurochs communicates its high-risk group hunt and health', () => {
+  const badge = getWildlifeBadgePresentation({
+    subtype: 'aurochs',
+    animalAlive: true,
+    animalHp: 270,
+    animalMaxHp: 360,
+    amount: 1800,
+    maxAmount: 1800,
+  });
+
+  assert.ok(badge);
+  assert.equal(badge.title, '野生原牛');
+  assert.equal(badge.icon, '🦬');
+  assert.equal(badge.valueText, '270/360 HP');
+  assert.match(badge.actionText, /多人圍獵/);
+
+  const carcass = getWildlifeBadgePresentation({
+    subtype: 'aurochs',
+    animalAlive: false,
+    animalHp: 0,
+    animalMaxHp: 360,
+    amount: 900,
+    maxAmount: 1800,
+  });
+  assert.ok(carcass);
+  assert.equal(carcass.title, '原牛屍體');
+  assert.equal(carcass.valueText, '900/1800');
+});
+
 test('wildlife badge: ignores ordinary resource nodes', () => {
   assert.equal(getWildlifeBadgePresentation({
     subtype: 'farm', animalAlive: true, animalHp: 10, animalMaxHp: 10, amount: 100, maxAmount: 100,
