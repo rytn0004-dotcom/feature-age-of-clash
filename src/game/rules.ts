@@ -3724,7 +3724,9 @@ export function evaluateAiTechChoice(
         const rosterShare = uniqueOwnArmyTotal > 0
           ? Math.min(1, safeTargetedCount / uniqueOwnArmyTotal)
           : 0;
-        score += 6 + Math.min(22, safeTargetedCount * 2) + rosterShare * 10;
+        const coveredRoleCount = tech.targetCategories.filter((category) => safeOwnCount(category) > 0).length;
+        const multiRoleSynergy = Math.max(0, coveredRoleCount - 1) * 8;
+        score += 6 + Math.min(22, safeTargetedCount * 2) + rosterShare * 10 + multiRoleSynergy;
         if (tech.effect.attackBonus) score += Math.min(18, tech.effect.attackBonus * 3);
         if (tech.effect.defenseBonus || tech.effect.rangedDefenseBonus) {
           score += Math.min(14, ((tech.effect.defenseBonus || 0) + (tech.effect.rangedDefenseBonus || 0)) * 2.5);
