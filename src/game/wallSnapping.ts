@@ -99,7 +99,15 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
     });
   };
   for (const wall of walls) {
-    if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed) continue;
+    if (
+      !wall.buildingDef.isWall ||
+      !wall.isConstructed ||
+      !Number.isFinite(wall.x) ||
+      !Number.isFinite(wall.z) ||
+      !Number.isFinite(wall.rotationY ?? 0) ||
+      !Number.isFinite(wall.hp) ||
+      wall.hp <= 0
+    ) continue;
     sideWalls.push(wall);
     const key = wall.wallChainId ? `chain:${wall.wallChainId}` : `segment:${wall.id}`;
     const group = groups.get(key) ?? [];
@@ -404,7 +412,11 @@ export function findNearestRepairableWall<T extends WallSnapBuilding>(
       (factionId !== undefined && wall.faction !== factionId) ||
       !wall.buildingDef.isWall ||
       !wall.isConstructed ||
+      !Number.isFinite(wall.x) ||
+      !Number.isFinite(wall.z) ||
+      !Number.isFinite(wall.hp) ||
       wall.hp <= 0 ||
+      !Number.isFinite(wall.maxHp) ||
       (!wall.wallBreached && wall.hp >= wall.maxHp)
     ) {
       continue;

@@ -538,3 +538,33 @@ test('every segment in a continuous wall run exposes side branches without expos
     'the same continuous run must not attract snaps at internal end seams',
   );
 });
+
+
+test('wall endpoint index excludes non-finite geometry and rotation before bucketing', () => {
+  const valid = makeWall('valid-anchor', 0);
+  const invalidX = makeWall('invalid-x', Number.NaN, { wallChainId: 'bad-x' });
+  const invalidZ = makeWall('invalid-z', 4, { z: Number.POSITIVE_INFINITY, wallChainId: 'bad-z' });
+  const invalidRotation = makeWall('invalid-rotation', 8, { rotationY: Number.NaN, wallChainId: 'bad-rotation' });
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild([valid, invalidX, invalidZ, invalidRotation]);
+
+  assert.equal(index.endpointCount, 2);
+  assert.equal(index.sideAnchorCount, 2);
+  assert.equal(index.findNearest({ x: 1.35, z: 0 })?.wall.id, 'valid-anchor');
+  assert.equal(index.findNearest({ x: 4, z: 0 }), null);
+  assert.equal(index.findNearest({ x: 8, z: 0 }), null);
+});
+
+test('one-shot and indexed repair lookup reject malformed health and coordinates consistently', () => {
+  const invalidHealth = makeWall('invalid-health', 0, { hp: Number.NaN });
+  const invalidMaxHealth = makeWall('invalid-max-health', 0.2, { hp: 100, maxHp: Number.NaN });
+  const invalidCoordinates = makeWall('invalid-coordinates', Number.POSITIVE_INFINITY, { hp: 80 });
+  const valid = makeWall('valid-damaged', 1, { hp: 120 });
+  const roster = [invalidHealth, invalidMaxHealth, invalidCoordinates, valid];
+  const index = new WallRepairIndex<WallSnapBuilding>();
+  index.rebuild(roster);
+
+  assert.equal(findNearestRepairableWall({ x: 0, z: 0 }, roster)?.id, 'valid-damaged');
+  assert.equal(index.findNearest({ x: 0, z: 0 })?.id, 'valid-damaged');
+  assert.equal(index.indexedWallCount, 1);
+});
