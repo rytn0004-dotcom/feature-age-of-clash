@@ -13,11 +13,12 @@ export interface WildlifeBadgePresentation {
 export function getWildlifeBadgePresentation(
   node: Pick<ResourceNode, 'subtype' | 'animalAlive' | 'animalHp' | 'animalMaxHp' | 'amount' | 'maxAmount'>,
 ): WildlifeBadgePresentation | null {
+  const isAurochs = node.subtype === 'aurochs';
   const isBoar = node.subtype === 'boar';
   const isDeer = node.subtype === 'hunt';
-  if (!isBoar && !isDeer) return null;
+  if (!isAurochs && !isBoar && !isDeer) return null;
 
-  const maxHp = Math.max(1, node.animalMaxHp || (isBoar ? 200 : 32));
+  const maxHp = Math.max(1, node.animalMaxHp || (isAurochs ? 360 : isBoar ? 200 : 32));
   const hp = Math.max(0, Math.min(maxHp, node.animalHp ?? maxHp));
   const isAlive = node.animalAlive !== false && hp > 0;
   const ratio = isAlive
@@ -26,16 +27,20 @@ export function getWildlifeBadgePresentation(
   const bucket = Math.ceil(ratio * 20);
 
   return {
-    title: isBoar
-      ? isAlive ? '野生野豬' : '野豬屍體'
-      : isAlive ? '野生山羌' : '山羌屍體',
-    icon: isBoar ? '🐗' : '🦌',
+    title: isAurochs
+      ? isAlive ? '野生原牛' : '原牛屍體'
+      : isBoar
+        ? isAlive ? '野生野豬' : '野豬屍體'
+        : isAlive ? '野生山羌' : '山羌屍體',
+    icon: isAurochs ? '🦬' : isBoar ? '🐗' : '🦌',
     valueText: isAlive
       ? `${Math.ceil(hp)}/${maxHp} HP`
       : `${Math.round(node.amount)}/${Math.round(node.maxAmount)}`,
     ratio,
     actionText: isAlive
-      ? isBoar ? '危險野獸・受到攻擊會反擊' : '受驚會逃・先獵殺再採肉'
+      ? isAurochs
+        ? '大型野獸・需要多人圍獵並提防衝鋒'
+        : isBoar ? '危險野獸・受到攻擊會反擊' : '受驚會逃・先獵殺再採肉'
       : '已擊倒・可採集肉類',
     signature: isAlive ? `alive:${Math.ceil(hp)}:${bucket}` : `carcass:${Math.round(node.amount)}:${Math.round(node.maxAmount)}`,
   };
