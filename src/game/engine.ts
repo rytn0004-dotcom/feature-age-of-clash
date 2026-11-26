@@ -13524,7 +13524,7 @@ export class RtsEngine {
       };
       const maximumArmyCount = getAiMilitaryProductionCap(activeRules);
       let committedMilitaryCount =
-        aiArmy.length +
+        aiUnits.filter((unit) => unit.unitDef.category !== 'worker').length +
         queuedRoleCounts.melee +
         queuedRoleCounts.ranged +
         queuedRoleCounts.cavalry +
@@ -14234,12 +14234,6 @@ export class RtsEngine {
         resources: aiRes,
         ageUpCost: nextAgeCost,
       });
-      const deferOptionalMilitaryProduction = shouldAiDeferOptionalMilitaryProduction({
-        savingForAgeUp,
-        armyCount: aiArmy.length,
-        underAttack,
-      });
-
       // Derive the worker cap and next-age workforce target from the active
       // personality's own AI rules, rather than maintaining a second set of
       // hard-coded difficulty values here.
@@ -14293,8 +14287,14 @@ export class RtsEngine {
             }
           } else {
             const isSupportVessel = targetId === 'transport_boat' || targetId === 'fishing_boat';
+            const deferMilitaryForAgeUp = !isSupportVessel &&
+              shouldAiDeferOptionalMilitaryProduction({
+                savingForAgeUp,
+                armyCount: committedMilitaryCount,
+                underAttack,
+              });
             if (
-              deferOptionalMilitaryProduction ||
+              deferMilitaryForAgeUp ||
               (!isSupportVessel &&
                 !shouldAiQueueMilitaryUnit(committedMilitaryCount, 0, maximumArmyCount))
             ) {
