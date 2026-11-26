@@ -1603,8 +1603,9 @@ export function findBalancedResourceNode(
 
 /**
  * Enforces land vs naval gathering rules:
- * - Land villagers CANNOT harvest offshore `deep_fish`.
+ * - Land units cannot harvest offshore `deep_fish`.
  * - Naval Fishing Boats can harvest both `deep_fish` and `shore_fish`, and cannot harvest land nodes.
+ * - Role-specific wildlife hunting eligibility is handled by `canUnitHuntDangerousWildlife`.
  */
 export function canUnitGatherNode(
   unitDef: Pick<UnitDefinition, 'id' | 'category' | 'isNaval'>,
@@ -1622,8 +1623,8 @@ export function canUnitGatherNode(
 
 /**
  * Selects optimal available food node balancing food yield against travel distance.
- * Dangerous boars are excluded from autonomous worker reassignment by default; players
- * can still assign a hunting party directly without dispatching isolated villagers.
+ * Dangerous boars and aurochs are excluded from autonomous worker reassignment by default;
+ * players and sufficiently strong AI armies can assign coordinated hunting parties.
  */
 export function findBestFoodResourceNode(
   x: number,
