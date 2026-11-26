@@ -187,7 +187,9 @@ export function generateMapLayout(
     const rx = +x.toFixed(2);
     const rz = +z.toFixed(2);
     const minNodeSpacing =
-      subtype === 'wood' ? 1.85 : subtype === 'berry' || subtype === 'hunt' ? 2.2 : 3.3;
+      subtype === 'wood' ? 1.85 :
+      subtype === 'berry' || subtype === 'hunt' ? 2.2 :
+      subtype === 'aurochs' ? 4.8 : 3.3;
     if (!isClearForNode(rx, rz, minNodeSpacing, edgePad, isWild)) {
       return false;
     }
@@ -454,6 +456,30 @@ export function generateMapLayout(
       );
     }
   });
+
+  // Two neutral aurochs ranges create a high-risk food objective away from
+  // the guaranteed starting economy. A wide fallback keeps them on safe land
+  // across the river, highland and twin-lake layouts.
+  placeWithFallback(
+    'aurochs_mid_west',
+    'food',
+    'aurochs',
+    -34 + jitter(),
+    -36 + jitter(),
+    1800,
+    false,
+    true,
+  );
+  placeWithFallback(
+    'aurochs_mid_east',
+    'food',
+    'aurochs',
+    34 + jitter(),
+    36 + jitter(),
+    1800,
+    false,
+    true,
+  );
 
   // Forest Groves scattered strategically across enlarged battlefield
   const forestCenters = [
