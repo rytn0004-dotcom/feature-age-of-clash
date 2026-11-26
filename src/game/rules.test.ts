@@ -4199,3 +4199,33 @@ test('siege escort assignments stay empty without active siege engines or a usab
   assert.deepEqual(selectSiegeEscortAssignments([], [escort], 2), []);
   assert.deepEqual(selectSiegeEscortAssignments([{ id: 'ram', x: 0, z: 0 }], [escort], 0), []);
 });
+
+
+test('bombard cannon: frequent heavy shots destroy an unbuffed 2,400 HP town center in about 50 seconds', async () => {
+  const { calculateBuildingDamage } = await import('./rules');
+  const cannon = MEDIEVAL_UNITS.find((unit) => unit.id === 'bombard_cannon');
+  assert.ok(cannon, 'Bombard Cannon must be present in the medieval roster');
+  assert.equal(cannon.stats.attack, 36, 'direct anti-unit damage remains threatening');
+  assert.equal(cannon.stats.buildingAttack, 120);
+  assert.equal(cannon.stats.attackRate, 0.4);
+
+  const tc = { buildingDef: DEFAULT_BUILDINGS.town_center, buildingType: 'town_center' as const };
+  const damagePerShot = calculateBuildingDamage(
+    { unitDef: cannon, unitDefId: 'bombard_cannon', siegeChannelTime: 0 },
+    tc,
+    4,
+    [],
+    [],
+    [],
+  );
+  assert.equal(damagePerShot, 120);
+
+  const shotsRequired = Math.ceil(DEFAULT_BUILDINGS.town_center.maxHp / damagePerShot);
+  const interval = 1 / cannon.stats.attackRate;
+  const projectileFlightAtMaxRange = cannon.stats.range / 18;
+  const firstImpactDelay = 0.42 + projectileFlightAtMaxRange;
+  const timeToDestroy = firstImpactDelay + Math.max(0, shotsRequired - 1) * interval;
+
+  assert.equal(shotsRequired, 20);
+  assert.ok(timeToDestroy >= 48 && timeToDestroy <= 51, `expected ~50 seconds, got ${timeToDestroy.toFixed(2)}s`);
+});

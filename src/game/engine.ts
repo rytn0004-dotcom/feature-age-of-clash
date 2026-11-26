@@ -7,6 +7,10 @@ import {
   advanceUnitAttackWindup,
   getUnitAttackTiming,
 } from './unitAttackTiming';
+import {
+  BOMBARD_CANNON_SPLASH_RADIUS,
+  getBombardCannonSplashDamage,
+} from './artilleryBalance';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
@@ -540,6 +544,8 @@ export class RtsEngine {
   /** Separate unit-only outputs keep nested casualty-shock and rout queries re-entrant. */
   private moraleShockQueryScratch: UnitEntity[] = [];
   private moraleRoutQueryScratch: UnitEntity[] = [];
+  /** Reused broad-phase candidates for cannon impact splash. */
+  private artillerySplashQueryScratch: UnitEntity[] = [];
   /** Fixed top-K pool reused by worker resource-node preselection. */
   private resourceNodeCandidateScratch = createResourceNodeCandidateScratch<ResourceNode>(12);
   /** Reused local candidates for wildlife threat, attacker, and nearby-building queries. */
@@ -12079,6 +12085,81 @@ export class RtsEngine {
     this.projectileMeshes.set(id, { mesh, type });
   }
 
+  private applyBombardCannonSplash(
+    attacker: UnitEntity,
+    impactX: number,
+    impactZ: number,
+    directTargetId?: string,
+  ): void {
+    if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+    const index = this.combatSpatialIndex;
+    const candidates = this.artillerySplashQueryScratch;
+
+    if (index) {
+      // Expand the broad phase by one index cell; the exact blast radius is
+      // applied below using live positions, so snapshot drift cannot add hits.
+      queryCombatSpatialUnits(
+        index,
+        impactX,
+        impactZ,
+        BOMBARD_CANNON_SPLASH_RADIUS + index.cellSize,
+        candidates,
+      );
+    } else {
+      candidates.length = 0;
+      for (const unit of this.units) {
+        const dx = unit.x - impactX;
+        const dz = unit.z - impactZ;
+        if (dx * dx + dz * dz <= BOMBARD_CANNON_SPLASH_RADIUS * BOMBARD_CANNON_SPLASH_RADIUS) {
+          candidates.push(unit);
+        }
+      }
+    }
+
+    const radiusSquared = BOMBARD_CANNON_SPLASH_RADIUS * BOMBARD_CANNON_SPLASH_RADIUS;
+    for (const victim of candidates) {
+      if (
+        victim.id === directTargetId ||
+        victim.hp <= 0 ||
+        victim.garrisonedInBuildingId ||
+        !this.isHostile(attacker, victim)
+      ) continue;
+
+      const dx = victim.x - impactX;
+      const dz = victim.z - impactZ;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared > radiusSquared) continue;
+
+      const baseDamage = getBombardCannonSplashDamage(Math.sqrt(distanceSquared));
+      if (baseDamage <= 0) continue;
+      const damage = Math.max(
+        1,
+        Math.round(getUnitVsUnitDamage(
+          baseDamage,
+          victim,
+          false,
+          this.simTime,
+          attacker.unitDef.stats.bonusVsCategory,
+        )),
+      );
+      victim.hp -= damage;
+      this.applyUnitMoraleImpact(victim, damage, attacker, null);
+      this.applyUnitSuppression(victim, 'fireball', attacker);
+      victim.hitFlashTimer = 0.12;
+      victim.recoilTimer = 0.12;
+      (victim as any).lastDamagedTime = performance.now();
+
+      if (victim.hp <= 0) {
+        attacker.kills++;
+        this.awardUnitXp(attacker, 8);
+      }
+      if (this.isHumanControlled(victim.faction)) {
+        this.triggerUnderAttackAlert(victim.x, victim.z);
+      }
+      this.addFloatingText(victim.x, 2.1, victim.z, `-${damage}`, '#fb923c');
+    }
+  }
+
   private updateProjectiles(dt: number) {
     if (this.projectiles.length === 0) return;
 
@@ -12170,6 +12251,14 @@ export class RtsEngine {
         }
 
         target.hp -= dmg;
+        if (attacker?.unitDefId === 'bombard_cannon') {
+          this.applyBombardCannonSplash(
+            attacker,
+            target.x,
+            target.z,
+            target.type === 'unit' ? target.id : undefined,
+          );
+        }
         if (target.type === 'building' && target.hp <= 0 && (target as BuildingEntity).buildingDef.isWall) {
           this.wallEndpointIndexDirty = true;
         }
