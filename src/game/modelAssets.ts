@@ -164,8 +164,8 @@ export function updateDeerVisualLod(
   // Only the root transform is required for projected-size LOD. Recursively
   // updating every animated child before the renderer visits it is redundant.
   root.updateWorldMatrix(true, false);
-  root.getWorldPosition(deerLodWorldCenter);
-  root.getWorldScale(deerLodWorldScale);
+  deerLodWorldCenter.setFromMatrixPosition(root.matrixWorld);
+  deerLodWorldScale.setFromMatrixScale(root.matrixWorld);
   deerLodWorldCenter.y += 0.82 * deerLodWorldScale.y;
 
   const distance = Math.max(0.001, camera.position.distanceTo(deerLodWorldCenter));
@@ -261,8 +261,8 @@ export function updateTreeVisualLod(
   // Only the root transform is required for projected-size LOD. Recursively
   // updating every animated child before the renderer visits it is redundant.
   root.updateWorldMatrix(true, false);
-  root.getWorldPosition(treeLodWorldCenter);
-  root.getWorldScale(treeLodWorldScale);
+  treeLodWorldCenter.setFromMatrixPosition(root.matrixWorld);
+  treeLodWorldScale.setFromMatrixScale(root.matrixWorld);
   treeLodWorldCenter.y += 2.0 * treeLodWorldScale.y;
 
   const distance = Math.max(0.001, camera.position.distanceTo(treeLodWorldCenter));
@@ -430,8 +430,8 @@ export function updateFishVisualLod(
   // Only the root transform is required for projected-size LOD. Recursively
   // updating every animated child before the renderer visits it is redundant.
   root.updateWorldMatrix(true, false);
-  root.getWorldPosition(fishLodWorldCenter);
-  root.getWorldScale(fishLodWorldScale);
+  fishLodWorldCenter.setFromMatrixPosition(root.matrixWorld);
+  fishLodWorldScale.setFromMatrixScale(root.matrixWorld);
   fishLodWorldCenter.y += 0.45 * fishLodWorldScale.y;
 
   const distance = Math.max(0.001, camera.position.distanceTo(fishLodWorldCenter));
