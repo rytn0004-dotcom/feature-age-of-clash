@@ -251,6 +251,7 @@ import {
   isPlacementLocationValid,
   isPointInTerrainObstacle,
   isWallChainPreviewObstructed,
+  type TerrainObstacleQueryCandidates,
   resolveUnitBuildingCollisions,
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
@@ -377,6 +378,8 @@ import {
   shouldUseInstancedWallPreview,
   WALL_PREVIEW_DETAILED_SEGMENT_LIMIT,
   WALL_START_SEARCH_MAX_OFFSET,
+  WALL_MODEL_HALF_LENGTH,
+  WALL_MODEL_HALF_WIDTH,
 } from './wallPlacement';
 import {
   WallEndpointIndex,
@@ -385,6 +388,7 @@ import {
   planWallChainExtension,
   type WallEndpointSnap,
 } from './wallSnapping';
+import { WallPlacementSpatialIndex } from './wallPlacementIndex';
 import {
   accumulateActiveConstructionWorkerCount,
   assignWorkersToConstructionTargets,
@@ -609,6 +613,8 @@ export class RtsEngine {
   public mapPreset: MapPresetId = 'river_valley';
   public resourceRichness: ResourceRichness = 'standard';
   public mapLayout: MapLayoutResult | null = null;
+  private terrainNavObstaclesCacheLayout: MapLayoutResult | null = null;
+  private terrainNavObstaclesCache: TerrainNavObstacles | undefined;
   private environmentGroup: THREE.Group | null = null;
   private settlementEnvironmentGroup: THREE.Group | null = null;
   private terrainMesh: THREE.Mesh | null = null;
@@ -783,6 +789,24 @@ export class RtsEngine {
   private wallEndpointIndexBuildingCount = -1;
   private wallEndpointIndexFaction: FactionId | null = null;
   private wallPlacementPointSnaps: Array<WallEndpointSnap<BuildingEntity> | null> = [];
+  private wallPlacementBuildingIndex = new WallPlacementSpatialIndex<BuildingEntity>();
+  private wallPlacementResourceIndex = new WallPlacementSpatialIndex<ResourceNode>();
+  private wallPlacementStaticResourceNodes: ResourceNode[] = [];
+  private wallPlacementDynamicResourceNodes: ResourceNode[] = [];
+  private wallPlacementBuildingCandidates: BuildingEntity[] = [];
+  private wallPlacementResourceCandidates: ResourceNode[] = [];
+  private wallPlacementCollisionPlacements: ReturnType<typeof layoutWallChain> = [];
+  private wallPlacementCollisionPoints: WallChainPoint[] = [];
+  private wallPlacementConnectedEndpointIds: string[] = [];
+  private wallPlacementTerrainCandidates: TerrainObstacleQueryCandidates = {
+    rects: [],
+    discs: [],
+    bridges: [],
+  };
+  private wallPlacementObstacleBuildingSource: BuildingEntity[] | null = null;
+  private wallPlacementObstacleBuildingCount = -1;
+  private wallPlacementObstacleResourceSource: ResourceNode[] | null = null;
+  private wallPlacementObstacleResourceCount = -1;
   private wallRepairPreviewMesh: THREE.Group | null = null;
   private wallRepairPreviewTargetId: string | null = null;
   private wallRepairPreviewRing: THREE.Mesh | null = null;
@@ -1461,12 +1485,21 @@ export class RtsEngine {
   }
 
   public getTerrainNavObstacles(): TerrainNavObstacles | undefined {
-    if (!this.mapLayout) return undefined;
-    return {
-      rects: this.mapLayout.waterRects,
-      discs: [...this.mapLayout.waterDiscs, ...this.mapLayout.cliffDiscs],
-      bridges: this.mapLayout.bridges,
-    };
+    const layout = this.mapLayout;
+    if (!layout) {
+      this.terrainNavObstaclesCacheLayout = null;
+      this.terrainNavObstaclesCache = undefined;
+      return undefined;
+    }
+    if (this.terrainNavObstaclesCacheLayout !== layout || !this.terrainNavObstaclesCache) {
+      this.terrainNavObstaclesCacheLayout = layout;
+      this.terrainNavObstaclesCache = {
+        rects: layout.waterRects,
+        discs: [...layout.waterDiscs, ...layout.cliffDiscs],
+        bridges: layout.bridges,
+      };
+    }
+    return this.terrainNavObstaclesCache;
   }
 
   public getNavGrid(): NavGrid {
@@ -5620,7 +5653,11 @@ export class RtsEngine {
       this.wallEndpointIndexDirty ||
       this.wallEndpointIndexBuildingSource !== this.buildings ||
       this.wallEndpointIndexBuildingCount !== this.buildings.length ||
-      this.wallEndpointIndexFaction !== this.humanPlayerId;
+      this.wallEndpointIndexFaction !== this.humanPlayerId ||
+      this.wallPlacementObstacleBuildingSource !== this.buildings ||
+      this.wallPlacementObstacleBuildingCount !== this.buildings.length ||
+      this.wallPlacementObstacleResourceSource !== this.resourceNodes ||
+      this.wallPlacementObstacleResourceCount !== this.resourceNodes.length;
 
     if (!shouldRefresh) return;
 
@@ -5635,11 +5672,44 @@ export class RtsEngine {
     // Repair lookup indexes all constructed walls once; faction and damage state
     // are checked live per query, so combat/repair updates do not rebuild buckets.
     this.wallRepairIndex.rebuild(this.buildings);
+    this.wallPlacementBuildingIndex.rebuild(this.buildings, (building) =>
+      building.buildingDef.isWall
+        ? Math.hypot(WALL_MODEL_HALF_LENGTH, WALL_MODEL_HALF_WIDTH)
+        : Math.max(0, building.buildingDef.size),
+    );
+    this.wallPlacementStaticResourceNodes.length = 0;
+    this.wallPlacementDynamicResourceNodes.length = 0;
+    for (const node of this.resourceNodes) {
+      if (node.subtype === 'hunt' || node.subtype === 'boar' || node.subtype === 'aurochs') {
+        this.wallPlacementDynamicResourceNodes.push(node);
+      } else {
+        this.wallPlacementStaticResourceNodes.push(node);
+      }
+    }
+    this.wallPlacementResourceIndex.rebuild(this.wallPlacementStaticResourceNodes, (node) =>
+      getResourceColliderRadius(node.resourceType, node.subtype) + 0.5,
+    );
 
+    this.wallPlacementObstacleBuildingSource = this.buildings;
+    this.wallPlacementObstacleBuildingCount = this.buildings.length;
+    this.wallPlacementObstacleResourceSource = this.resourceNodes;
+    this.wallPlacementObstacleResourceCount = this.resourceNodes.length;
     this.wallEndpointIndexDirty = false;
     this.wallEndpointIndexBuildingSource = this.buildings;
     this.wallEndpointIndexBuildingCount = this.buildings.length;
     this.wallEndpointIndexFaction = this.humanPlayerId;
+  }
+
+  private collectWallPlacementCollisionCandidates(
+    placements: readonly ReturnType<typeof layoutWallChain>[number][],
+  ): void {
+    this.refreshWallSpatialIndexesIfNeeded();
+    this.wallPlacementBuildingIndex.collect(placements, this.wallPlacementBuildingCandidates);
+    this.wallPlacementResourceIndex.collect(placements, this.wallPlacementResourceCandidates);
+    // Wildlife moves between pointer previews, so its node positions must remain live.
+    for (const node of this.wallPlacementDynamicResourceNodes) {
+      this.wallPlacementResourceCandidates.push(node);
+    }
   }
 
   private findWallPlacementSnap(
@@ -5745,11 +5815,11 @@ export class RtsEngine {
     // stays untouched so adding a new segment never triggers another model tint pass.
   }
 
-  /** Only snapped endpoint segments of the same wall chain may touch the new route. */
   private getWallPlacementConnectedEndpointWallIds(
     snaps: readonly (WallEndpointSnap<BuildingEntity> | null)[],
   ): string[] {
-    const ids: string[] = [];
+    const ids = this.wallPlacementConnectedEndpointIds;
+    ids.length = 0;
     for (const snap of snaps) {
       const id = snap?.wall.id;
       if (id && !ids.includes(id)) ids.push(id);
@@ -5766,16 +5836,18 @@ export class RtsEngine {
     if (placements.length === 0 || placements.length > MAX_WALL_CHAIN_SEGMENTS) return false;
 
     const obstacles = this.getTerrainNavObstacles();
+    this.collectWallPlacementCollisionCandidates(placements);
     return !isWallChainPreviewObstructed(
       placements,
       DEFAULT_BUILDINGS.wall.size,
-      this.buildings,
-      this.resourceNodes,
+      this.wallPlacementBuildingCandidates,
+      this.wallPlacementResourceCandidates,
       obstacles?.rects,
       obstacles?.discs,
       obstacles?.bridges,
       points,
       this.getWallPlacementConnectedEndpointWallIds(pointSnaps),
+      this.wallPlacementTerrainCandidates,
     );
   }
 
@@ -6369,21 +6441,34 @@ export class RtsEngine {
       this.wallPlacementPreviewAffordableSegmentCount,
       MAX_WALL_CHAIN_SEGMENTS,
     );
-    if (placements.length > 0) {
+    if (previewLimit > 0) {
+      this.wallPlacementCollisionPlacements.length = 0;
+      for (let index = 0; index < previewLimit; index++) {
+        this.wallPlacementCollisionPlacements.push(placements[index]);
+      }
+      clipWallChainPointsToSegmentCount(
+        previewPoints,
+        previewLimit,
+        WALL_SEGMENT_SPACING,
+        this.wallPlacementCollisionPoints,
+      );
       const obstacles = this.getTerrainNavObstacles();
+      this.collectWallPlacementCollisionCandidates(this.wallPlacementCollisionPlacements);
+      const connectedIds = this.getWallPlacementConnectedEndpointWallIds(this.wallPlacementPointSnaps);
+      if (this.wallPlacementSnapTargetId && !connectedIds.includes(this.wallPlacementSnapTargetId)) {
+        connectedIds.push(this.wallPlacementSnapTargetId);
+      }
       this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
-        placements,
+        this.wallPlacementCollisionPlacements,
         DEFAULT_BUILDINGS.wall.size,
-        this.buildings,
-        this.resourceNodes,
+        this.wallPlacementBuildingCandidates,
+        this.wallPlacementResourceCandidates,
         obstacles?.rects,
         obstacles?.discs,
         obstacles?.bridges,
-        previewPoints,
-        [
-          ...this.getWallPlacementConnectedEndpointWallIds(this.wallPlacementPointSnaps),
-          ...(this.wallPlacementSnapTargetId ? [this.wallPlacementSnapTargetId] : []),
-        ],
+        this.wallPlacementCollisionPoints,
+        connectedIds,
+        this.wallPlacementTerrainCandidates,
       );
     } else {
       this.wallPlacementPreviewBlocked = false;

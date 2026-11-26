@@ -1,3 +1,4 @@
+import { WALL_MODEL_HALF_LENGTH, WALL_MODEL_HALF_WIDTH, WALL_TERRAIN_SAMPLE_STEP } from './wallPlacement';
 import {
   BuildingEntity,
   BuildingType,
@@ -630,6 +631,7 @@ export function filterTerrainObstaclesToBounds(
   discs: readonly TerrainBlockedDisc[] = [],
   bridges: readonly TerrainPassableBridge[] = [],
   padding = 0,
+  reusableCandidates?: TerrainObstacleQueryCandidates,
 ): TerrainObstacleQueryCandidates {
   if (
     !Number.isFinite(bounds.minX) ||
@@ -638,16 +640,29 @@ export function filterTerrainObstaclesToBounds(
     !Number.isFinite(bounds.maxZ) ||
     bounds.minX > bounds.maxX ||
     bounds.minZ > bounds.maxZ
-  ) return { rects: [], discs: [], bridges: [] };
+  ) {
+    if (reusableCandidates) {
+      reusableCandidates.rects.length = 0;
+      reusableCandidates.discs.length = 0;
+      reusableCandidates.bridges.length = 0;
+      return reusableCandidates;
+    }
+    return { rects: [], discs: [], bridges: [] };
+  }
+
+  const candidates = reusableCandidates ?? { rects: [], discs: [], bridges: [] };
+  candidates.rects.length = 0;
+  candidates.discs.length = 0;
+  candidates.bridges.length = 0;
 
   const pad = Number.isFinite(padding) ? Math.max(0, padding) : 0;
   const minX = bounds.minX - pad;
   const maxX = bounds.maxX + pad;
   const minZ = bounds.minZ - pad;
   const maxZ = bounds.maxZ + pad;
-  const rectCandidates: TerrainBlockedRect[] = [];
-  const discCandidates: TerrainBlockedDisc[] = [];
-  const bridgeCandidates: TerrainPassableBridge[] = [];
+  const rectCandidates = candidates.rects;
+  const discCandidates = candidates.discs;
+  const bridgeCandidates = candidates.bridges;
 
   for (const rect of rects) {
     const halfWidth = Math.max(
@@ -688,7 +703,7 @@ export function filterTerrainObstaclesToBounds(
     if (dx * dx + dz * dz <= radius * radius) bridgeCandidates.push(bridge);
   }
 
-  return { rects: rectCandidates, discs: discCandidates, bridges: bridgeCandidates };
+  return candidates;
 }
 
 export function isPointInTerrainObstacle(
@@ -891,9 +906,103 @@ export function isPlacementLocationValid(
  * modular segment centres in one pass and is intentionally not the authoritative
  * placement validator; the exact validator runs once when a click commits a batch.
  */
+interface OrientedWallFootprint {
+  x: number;
+  z: number;
+  rotationY: number;
+}
+
+function wallLocalPoint(footprint: OrientedWallFootprint, x: number, z: number): { x: number; z: number } {
+  const dx = x - footprint.x;
+  const dz = z - footprint.z;
+  const cos = Math.cos(footprint.rotationY);
+  const sin = Math.sin(footprint.rotationY);
+  return { x: dx * cos - dz * sin, z: dx * sin + dz * cos };
+}
+
+/** True when a circle touches the actual rotated rectangular wall footprint. */
+export function doesCircleOverlapWallFootprint(
+  footprint: OrientedWallFootprint,
+  x: number,
+  z: number,
+  radius: number,
+): boolean {
+  if (!Number.isFinite(radius) || radius < 0) return false;
+  const local = wallLocalPoint(footprint, x, z);
+  const closestX = Math.max(-WALL_MODEL_HALF_LENGTH, Math.min(WALL_MODEL_HALF_LENGTH, local.x));
+  const closestZ = Math.max(-WALL_MODEL_HALF_WIDTH, Math.min(WALL_MODEL_HALF_WIDTH, local.z));
+  const dx = local.x - closestX;
+  const dz = local.z - closestZ;
+  return dx * dx + dz * dz <= radius * radius;
+}
+
+/** SAT overlap for two rotated wall rectangles, including a small seam tolerance. */
+export function doWallFootprintsOverlap(
+  first: OrientedWallFootprint,
+  second: OrientedWallFootprint,
+  clearance = 0.025,
+): boolean {
+  const firstCos = Math.cos(first.rotationY);
+  const firstSin = Math.sin(first.rotationY);
+  const secondCos = Math.cos(second.rotationY);
+  const secondSin = Math.sin(second.rotationY);
+  const firstAxes = [
+    { x: firstCos, z: -firstSin },
+    { x: firstSin, z: firstCos },
+  ];
+  const secondAxes = [
+    { x: secondCos, z: -secondSin },
+    { x: secondSin, z: secondCos },
+  ];
+  const deltaX = second.x - first.x;
+  const deltaZ = second.z - first.z;
+
+  for (let axisIndex = 0; axisIndex < 4; axisIndex++) {
+    const axis = axisIndex < 2 ? firstAxes[axisIndex] : secondAxes[axisIndex - 2];
+    const firstRadius =
+      WALL_MODEL_HALF_LENGTH * Math.abs(axis.x * firstAxes[0].x + axis.z * firstAxes[0].z) +
+      WALL_MODEL_HALF_WIDTH * Math.abs(axis.x * firstAxes[1].x + axis.z * firstAxes[1].z);
+    const secondRadius =
+      WALL_MODEL_HALF_LENGTH * Math.abs(axis.x * secondAxes[0].x + axis.z * secondAxes[0].z) +
+      WALL_MODEL_HALF_WIDTH * Math.abs(axis.x * secondAxes[1].x + axis.z * secondAxes[1].z);
+    if (Math.abs(deltaX * axis.x + deltaZ * axis.z) > firstRadius + secondRadius + clearance) return false;
+  }
+  return true;
+}
+
+function isWallFootprintBlockedByTerrain(
+  placement: OrientedWallFootprint,
+  rects: TerrainBlockedRect[],
+  discs: TerrainBlockedDisc[],
+  bridges: TerrainPassableBridge[],
+): boolean {
+  for (const disc of discs) {
+    if (isPointOnBridge(disc.x, disc.z, bridges)) continue;
+    if (doesCircleOverlapWallFootprint(placement, disc.x, disc.z, disc.radius)) return true;
+  }
+
+  // Sample the complete rotated footprint on a coarse regular grid. Centreline
+  // sampling handles long strips; this grid catches water/cliffs across wall depth.
+  const longSteps = Math.max(1, Math.ceil((WALL_MODEL_HALF_LENGTH * 2) / WALL_TERRAIN_SAMPLE_STEP));
+  const widthSteps = Math.max(2, Math.ceil((WALL_MODEL_HALF_WIDTH * 2) / WALL_TERRAIN_SAMPLE_STEP));
+  const cos = Math.cos(placement.rotationY);
+  const sin = Math.sin(placement.rotationY);
+  for (let xIndex = 0; xIndex <= longSteps; xIndex++) {
+    const localX = -WALL_MODEL_HALF_LENGTH + (xIndex / longSteps) * WALL_MODEL_HALF_LENGTH * 2;
+    for (let zIndex = 0; zIndex <= widthSteps; zIndex++) {
+      const localZ = -WALL_MODEL_HALF_WIDTH + (zIndex / widthSteps) * WALL_MODEL_HALF_WIDTH * 2;
+      const worldX = placement.x + localX * cos + localZ * sin;
+      const worldZ = placement.z - localX * sin + localZ * cos;
+      if (isPointInTerrainObstacle(worldX, worldZ, rects, [], bridges)) return true;
+    }
+  }
+  return false;
+}
+
+/** Route validator shared by throttled preview and authoritative click commit. */
 export function isWallChainPreviewObstructed(
-  placements: readonly { x: number; z: number }[],
-  footprintSize: number,
+  placements: readonly { x: number; z: number; rotationY?: number }[],
+  _footprintSize: number,
   buildings: readonly BuildingEntity[],
   nodes: readonly ResourceNode[],
   terrainRects: TerrainBlockedRect[] = [],
@@ -901,6 +1010,7 @@ export function isWallChainPreviewObstructed(
   bridges: TerrainPassableBridge[] = [],
   pathPoints: readonly { x: number; z: number }[] = [],
   connectedEndpointWallIds: readonly string[] = [],
+  reusableTerrainCandidates?: TerrainObstacleQueryCandidates,
 ): boolean {
   if (placements.length === 0) return false;
 
@@ -908,11 +1018,15 @@ export function isWallChainPreviewObstructed(
   let maxX = Number.NEGATIVE_INFINITY;
   let minZ = Number.POSITIVE_INFINITY;
   let maxZ = Number.NEGATIVE_INFINITY;
-  for (const point of placements) {
-    minX = Math.min(minX, point.x);
-    maxX = Math.max(maxX, point.x);
-    minZ = Math.min(minZ, point.z);
-    maxZ = Math.max(maxZ, point.z);
+  for (const placement of placements) {
+    const cos = Math.cos(placement.rotationY ?? 0);
+    const sin = Math.sin(placement.rotationY ?? 0);
+    const extentX = Math.abs(cos) * WALL_MODEL_HALF_LENGTH + Math.abs(sin) * WALL_MODEL_HALF_WIDTH;
+    const extentZ = Math.abs(sin) * WALL_MODEL_HALF_LENGTH + Math.abs(cos) * WALL_MODEL_HALF_WIDTH;
+    minX = Math.min(minX, placement.x - extentX);
+    maxX = Math.max(maxX, placement.x + extentX);
+    minZ = Math.min(minZ, placement.z - extentZ);
+    maxZ = Math.max(maxZ, placement.z + extentZ);
   }
   for (const point of pathPoints) {
     minX = Math.min(minX, point.x);
@@ -920,19 +1034,19 @@ export function isWallChainPreviewObstructed(
     minZ = Math.min(minZ, point.z);
     maxZ = Math.max(maxZ, point.z);
   }
-  const halfFootprint = footprintSize * 0.55;
+
   const terrainCandidates = filterTerrainObstaclesToBounds(
     { minX, maxX, minZ, maxZ },
     terrainRects,
     terrainDiscs,
     bridges,
-    halfFootprint,
+    0.02,
+    reusableTerrainCandidates,
   );
   terrainRects = terrainCandidates.rects;
   terrainDiscs = terrainCandidates.discs;
   bridges = terrainCandidates.bridges;
 
-  // Sample the continuous path so narrow rivers/cliffs cannot hide between pieces.
   for (let index = 0; index < pathPoints.length - 1; index++) {
     const start = pathPoints[index];
     const end = pathPoints[index + 1];
@@ -945,53 +1059,47 @@ export function isWallChainPreviewObstructed(
     }
   }
 
+  const wallFootprint: OrientedWallFootprint = { x: 0, z: 0, rotationY: 0 };
   for (const placement of placements) {
     if (Math.abs(placement.x) > 90 || Math.abs(placement.z) > 90) return true;
+    wallFootprint.x = placement.x;
+    wallFootprint.z = placement.z;
+    wallFootprint.rotationY = placement.rotationY ?? 0;
     if (
       isPointInTerrainObstacle(placement.x, placement.z, terrainRects, terrainDiscs, bridges) ||
-      isPointInTerrainObstacle(placement.x + halfFootprint, placement.z, terrainRects, terrainDiscs, bridges) ||
-      isPointInTerrainObstacle(placement.x - halfFootprint, placement.z, terrainRects, terrainDiscs, bridges) ||
-      isPointInTerrainObstacle(placement.x, placement.z + halfFootprint, terrainRects, terrainDiscs, bridges) ||
-      isPointInTerrainObstacle(placement.x, placement.z - halfFootprint, terrainRects, terrainDiscs, bridges)
-    ) {
-      return true;
-    }
+      isWallFootprintBlockedByTerrain(wallFootprint, terrainRects, terrainDiscs, bridges)
+    ) return true;
   }
 
   for (const building of buildings) {
     if (building.hp <= 0 || connectedEndpointWallIds.includes(building.id)) continue;
-    const minDistance = building.buildingDef.isWall
-      ? Math.max(2.15, (footprintSize + building.buildingDef.size) * 0.72)
-      : footprintSize + building.buildingDef.size;
-    // Reject entities outside the chain's expanded AABB before iterating pieces.
-    const nearestX = building.x < minX ? minX : building.x > maxX ? maxX : building.x;
-    const nearestZ = building.z < minZ ? minZ : building.z > maxZ ? maxZ : building.z;
-    const broadDx = building.x - nearestX;
-    const broadDz = building.z - nearestZ;
-    if (broadDx * broadDx + broadDz * broadDz >= minDistance * minDistance) continue;
-
-    const minDistanceSq = minDistance * minDistance;
     for (const placement of placements) {
-      const dx = placement.x - building.x;
-      const dz = placement.z - building.z;
-      if (dx * dx + dz * dz < minDistanceSq) return true;
+      wallFootprint.x = placement.x;
+      wallFootprint.z = placement.z;
+      wallFootprint.rotationY = placement.rotationY ?? 0;
+      if (building.buildingDef.isWall) {
+        if (doWallFootprintsOverlap(wallFootprint, {
+          x: building.x,
+          z: building.z,
+          rotationY: building.rotationY ?? 0,
+        })) return true;
+      } else if (doesCircleOverlapWallFootprint(
+        wallFootprint,
+        building.x,
+        building.z,
+        Math.max(0, building.buildingDef.size),
+      )) return true;
     }
   }
 
   for (const node of nodes) {
     if (node.amount <= 0) continue;
-    const minDistance = footprintSize + getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
-    const nearestX = node.x < minX ? minX : node.x > maxX ? maxX : node.x;
-    const nearestZ = node.z < minZ ? minZ : node.z > maxZ ? maxZ : node.z;
-    const broadDx = node.x - nearestX;
-    const broadDz = node.z - nearestZ;
-    if (broadDx * broadDx + broadDz * broadDz >= minDistance * minDistance) continue;
-
-    const minDistanceSq = minDistance * minDistance;
+    const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
     for (const placement of placements) {
-      const dx = placement.x - node.x;
-      const dz = placement.z - node.z;
-      if (dx * dx + dz * dz < minDistanceSq) return true;
+      wallFootprint.x = placement.x;
+      wallFootprint.z = placement.z;
+      wallFootprint.rotationY = placement.rotationY ?? 0;
+      if (doesCircleOverlapWallFootprint(wallFootprint, node.x, node.z, nodeRadius)) return true;
     }
   }
 

@@ -12,6 +12,9 @@ import {
   createCollisionResolutionScratch,
   filterTerrainObstaclesToBounds,
   isPointInTerrainObstacle,
+  doesCircleOverlapWallFootprint,
+  doWallFootprintsOverlap,
+  filterTerrainObstaclesToBounds,
 } from './collision';
 
 function makeUnit(
@@ -235,6 +238,42 @@ test('wall preview broad-phase detects terrain, building and resource blockers',
     ),
     true,
   );
+});
+
+test('wall footprint uses model-sized oriented rectangles for nearby structure checks', () => {
+  const horizontal = { x: 0, z: 0, rotationY: 0 };
+  assert.equal(doesCircleOverlapWallFootprint(horizontal, 0, 1.0, 0.3), false);
+  assert.equal(doesCircleOverlapWallFootprint(horizontal, 2.3, 0, 0.9), true);
+
+  const vertical = { x: 0, z: 0, rotationY: -Math.PI / 2 };
+  assert.equal(doesCircleOverlapWallFootprint(vertical, 1.2, 0, 0.7), true);
+  assert.equal(doesCircleOverlapWallFootprint(vertical, 1.45, 0, 0.7), false);
+});
+
+test('wall footprint SAT catches crossing walls and leaves separated parallel walls clear', () => {
+  assert.equal(doWallFootprintsOverlap(
+    { x: 0, z: 0, rotationY: 0 },
+    { x: 0, z: 0, rotationY: Math.PI / 2 },
+  ), true);
+  assert.equal(doWallFootprintsOverlap(
+    { x: 0, z: 0, rotationY: 0 },
+    { x: 0, z: 1.5, rotationY: 0 },
+  ), false);
+});
+
+test('terrain candidate filtering reuses arrays and removes stale values', () => {
+  const reusable = { rects: [] as any[], discs: [] as any[], bridges: [] as any[] };
+  const rect = { x1: -2, z1: 0, x2: 2, z2: 0, kind: 'water' as const };
+  const first = filterTerrainObstaclesToBounds(
+    { minX: -1, maxX: 1, minZ: -1, maxZ: 1 }, [rect], [], [], 0, reusable,
+  );
+  assert.equal(first, reusable);
+  assert.deepEqual(first.rects, [rect]);
+  const second = filterTerrainObstaclesToBounds(
+    { minX: 40, maxX: 42, minZ: 40, maxZ: 42 }, [rect], [], [], 0, reusable,
+  );
+  assert.equal(second, reusable);
+  assert.deepEqual(second.rects, []);
 });
 
 test('wall preview allows explicitly snapped endpoint walls at tight turns only', async () => {

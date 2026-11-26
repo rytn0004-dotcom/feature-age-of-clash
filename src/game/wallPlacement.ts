@@ -4,6 +4,11 @@ import type { Resources } from '../types/game';
 export const WALL_PREVIEW_DETAILED_SEGMENT_LIMIT = 8;
 /** Wall ghost geometry and collision preview are intentionally capped at 10 Hz. */
 export const WALL_PREVIEW_REFRESH_INTERVAL_MS = 100;
+/** Measured outer footprint of the shared wall base / buttresses in local model space. */
+export const WALL_MODEL_HALF_LENGTH = 1.5;
+export const WALL_MODEL_HALF_WIDTH = 0.575;
+/** Terrain edge samples supplement the continuous centreline sweep. */
+export const WALL_TERRAIN_SAMPLE_STEP = 0.5;
 /** Maximum distance used to gently nudge a clicked wall start outside nearby blockers. */
 export const WALL_START_SEARCH_MAX_OFFSET = 4;
 
@@ -115,11 +120,26 @@ export function clipWallChainPointsToSegmentCount(
   points: readonly WallStartPoint[],
   segmentLimit: number,
   segmentSpacing: number,
+  reusablePoints?: WallStartPoint[],
 ): WallStartPoint[] {
+  const result = reusablePoints ?? [];
+  let writeIndex = 0;
+  const writePoint = (x: number, z: number) => {
+    const point = result[writeIndex] ?? { x, z };
+    point.x = x;
+    point.z = z;
+    result[writeIndex] = point;
+    writeIndex++;
+  };
+
   const safeLimit = Math.max(0, Math.floor(Number.isFinite(segmentLimit) ? segmentLimit : 0));
-  if (points.length === 0) return [];
-  const result: WallStartPoint[] = [{ x: points[0].x, z: points[0].z }];
+  if (points.length === 0) {
+    result.length = 0;
+    return result;
+  }
+  writePoint(points[0].x, points[0].z);
   if (points.length < 2 || safeLimit === 0 || !Number.isFinite(segmentSpacing) || segmentSpacing <= 0) {
+    result.length = writeIndex;
     return result;
   }
 
@@ -134,7 +154,7 @@ export function clipWallChainPointsToSegmentCount(
 
     const sectionCount = Math.max(1, Math.ceil(length / segmentSpacing));
     if (remaining >= sectionCount) {
-      result.push({ x: end.x, z: end.z });
+      writePoint(end.x, end.z);
       remaining -= sectionCount;
       if (remaining === 0) break;
       continue;
@@ -142,13 +162,11 @@ export function clipWallChainPointsToSegmentCount(
 
     if (remaining > 0) {
       const fraction = remaining / sectionCount;
-      result.push({
-        x: start.x + dx * fraction,
-        z: start.z + dz * fraction,
-      });
+      writePoint(start.x + dx * fraction, start.z + dz * fraction);
     }
     break;
   }
 
+  result.length = writeIndex;
   return result;
 }

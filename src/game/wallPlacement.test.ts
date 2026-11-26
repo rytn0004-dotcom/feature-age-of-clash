@@ -143,6 +143,22 @@ test('wall start search reuses one candidate object and returns a detached resul
   assert.notEqual(result.point, candidateReference, 'the returned point must not mutate with later searches');
 });
 
+test('wall route clipping reuses output arrays and point objects', () => {
+  const reusable: Array<{ x: number; z: number }> = [];
+  const first = clipWallChainPointsToSegmentCount(
+    [{ x: 0, z: 0 }, { x: 10, z: 0 }], 2, 2.7, reusable,
+  );
+  const firstRecord = first[0];
+  assert.equal(first, reusable);
+  assert.deepEqual(first, [{ x: 0, z: 0 }, { x: 5, z: 0 }]);
+  const second = clipWallChainPointsToSegmentCount(
+    [{ x: 4, z: 6 }, { x: 4, z: 12 }], 1, 2.7, reusable,
+  );
+  assert.equal(second, reusable);
+  assert.equal(second[0], firstRecord);
+  assert.deepEqual(second, [{ x: 4, z: 6 }, { x: 4, z: 8 }]);
+});
+
 test('wall route clipping stops at the last affordable segment boundary without leaving a gap', () => {
   const clipped = clipWallChainPointsToSegmentCount(
     [{ x: 0, z: 0 }, { x: 10, z: 0 }],
