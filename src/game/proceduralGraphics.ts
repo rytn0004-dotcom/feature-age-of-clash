@@ -7981,6 +7981,45 @@ const sharedWildBoarHoofMat = new THREE.MeshStandardMaterial({ color: 0x292524, 
 const sharedWildBoarEyeMat = new THREE.MeshStandardMaterial({ color: 0x17120f, roughness: 0.3 });
 const sharedWildBoarEyeGeo = new THREE.SphereGeometry(0.035, 6, 5);
 
+// Aurochs reuse the boar animation rig and shared low-poly body primitives,
+// but use a heavier shoulder profile, a broader skull and long swept horns.
+const sharedAurochsBodyGeo = new THREE.SphereGeometry(0.58, 14, 10);
+const sharedAurochsHeadGeo = new THREE.SphereGeometry(0.38, 12, 9);
+const sharedAurochsEarGeo = new THREE.ConeGeometry(0.095, 0.25, 6);
+const sharedAurochsLegGeo = new THREE.CylinderGeometry(0.145, 0.12, 0.52, 8);
+const sharedAurochsHoofGeo = new THREE.CylinderGeometry(0.13, 0.15, 0.11, 7);
+const sharedAurochsManeGeo = new THREE.ConeGeometry(0.07, 0.22, 5);
+const sharedAurochsTailGeo = new THREE.CylinderGeometry(0.03, 0.045, 0.42, 6);
+const sharedAurochsHornCurve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0, 0, 0),
+  new THREE.Vector3(0.015, 0.12, 0.11),
+  new THREE.Vector3(0.035, 0.29, 0.23),
+  new THREE.Vector3(0.12, 0.43, 0.25),
+  new THREE.Vector3(0.25, 0.44, 0.17),
+]);
+const sharedAurochsHornGeo = new THREE.TubeGeometry(sharedAurochsHornCurve, 12, 0.062, 7, false);
+const sharedAurochsFurMat = new THREE.MeshStandardMaterial({
+  color: 0x4b3023,
+  map: resFurMaps.map,
+  normalMap: resFurMaps.normalMap,
+  normalScale: new THREE.Vector2(0.7, 0.7),
+  roughness: 0.94,
+});
+const sharedAurochsManeMat = new THREE.MeshStandardMaterial({
+  color: 0x2d1c16,
+  map: resFurMaps.map,
+  roughness: 0.98,
+});
+const sharedAurochsMuzzleMat = new THREE.MeshStandardMaterial({ color: 0x6e4634, roughness: 0.92 });
+const sharedAurochsHornMat = new THREE.MeshStandardMaterial({
+  color: 0xe8d7ae,
+  roughness: 0.62,
+  metalness: 0.02,
+});
+const sharedAurochsEarInnerMat = new THREE.MeshStandardMaterial({ color: 0x855345, roughness: 0.96 });
+const sharedAurochsHoofMat = new THREE.MeshStandardMaterial({ color: 0x211b18, roughness: 0.7 });
+const sharedAurochsEyeMat = new THREE.MeshStandardMaterial({ color: 0x160f0c, roughness: 0.25 });
+
 export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group {
   const group = new THREE.Group();
   group.name = 'wildBoarResource';
@@ -8151,6 +8190,134 @@ export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group 
   if (hasBadge) {
     const badge = createBadgeSprite('野生野豬', '🐗', `${amount}`, 1, false, true, '高風險圍獵・採集倍率 ×1.42');
     badge.position.set(0, 2.45, 0);
+    group.add(badge);
+    group.userData.badgeSprite = badge;
+  }
+  return group;
+}
+
+/** Distinct high-risk wild cattle: heavy hump, long outward-curving horns and a shared quadruped rig. */
+export function createAurochsMesh(amount = 1800, hasBadge = false): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'aurochsResource';
+  addContactShadow(group, 1.58);
+
+  const bodyPivot = new THREE.Group();
+  bodyPivot.position.set(0, 0.82, 0);
+  group.add(bodyPivot);
+
+  const body = new THREE.Mesh(sharedAurochsBodyGeo, sharedAurochsFurMat);
+  body.scale.set(1.82, 1.12, 1.12);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  bodyPivot.add(body);
+
+  const shoulder = new THREE.Mesh(sharedAurochsBodyGeo, sharedAurochsFurMat);
+  shoulder.position.set(0.26, 0.15, 0);
+  shoulder.scale.set(1.08, 1.36, 1.18);
+  shoulder.castShadow = true;
+  bodyPivot.add(shoulder);
+
+  const neckMane = new THREE.Mesh(sharedAurochsBodyGeo, sharedAurochsManeMat);
+  neckMane.position.set(0.55, 0.2, 0);
+  neckMane.scale.set(0.64, 1.2, 1.02);
+  neckMane.castShadow = true;
+  bodyPivot.add(neckMane);
+
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0.92, 0.12, 0);
+  bodyPivot.add(headPivot);
+
+  const head = new THREE.Mesh(sharedAurochsHeadGeo, sharedAurochsFurMat);
+  head.position.set(0.12, 0.06, 0);
+  head.scale.set(1.36, 1.2, 1.16);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  const muzzle = new THREE.Mesh(sharedWildBoarSnoutGeo, sharedAurochsMuzzleMat);
+  muzzle.position.set(0.48, -0.1, 0);
+  muzzle.scale.set(1.12, 1.12, 1.12);
+  muzzle.castShadow = true;
+  headPivot.add(muzzle);
+
+  // The matching horns are separate meshes so the mirror transform never
+  // introduces negative instance matrices or extra draw calls in the mane.
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(sharedAurochsHornGeo, sharedAurochsHornMat);
+    horn.position.set(0.08, 0.34, side * 0.22);
+    horn.scale.z = side;
+    horn.castShadow = true;
+    headPivot.add(horn);
+  }
+
+  createVisualInstanceBatch(
+    headPivot,
+    sharedAurochsEarGeo,
+    sharedAurochsFurMat,
+    [-1, 1].map((side) => ({
+      position: [-0.1, 0.05, side * 0.34],
+      rotation: [side * 0.32, 0, 0.14],
+      scale: [1.0, 0.82, 0.8],
+    })),
+    'instancedAurochsEars',
+    true,
+    false,
+  );
+
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarEyeGeo,
+    sharedAurochsEyeMat,
+    [-1, 1].map((side) => ({ position: [0.25, 0.16, side * 0.345] })),
+    'instancedAurochsEyes',
+  );
+
+  createVisualInstanceBatch(
+    bodyPivot,
+    sharedAurochsManeGeo,
+    sharedAurochsManeMat,
+    Array.from({ length: 11 }, (_, index) => ({
+      position: [-0.36 + index * 0.14, 0.88 - Math.abs(index - 5) * 0.045, 0],
+      rotation: [0, 0, -0.16],
+      scale: [0.92, 1.15 + (index % 3) * 0.12, 0.9],
+    })),
+    'instancedAurochsShoulderMane',
+    true,
+    false,
+  );
+
+  const makeLeg = (lx: number, lz: number): THREE.Group => {
+    const leg = new THREE.Group();
+    leg.position.set(lx, 0.5, lz);
+    const upper = new THREE.Mesh(sharedAurochsLegGeo, sharedAurochsFurMat);
+    upper.position.y = -0.19;
+    upper.castShadow = true;
+    const hoof = new THREE.Mesh(sharedAurochsHoofGeo, sharedAurochsHoofMat);
+    hoof.position.y = -0.45;
+    leg.add(upper, hoof);
+    group.add(leg);
+    return leg;
+  };
+
+  const blLeg = makeLeg(-0.56, -0.43);
+  const brLeg = makeLeg(-0.56, 0.43);
+  const flLeg = makeLeg(0.58, -0.43);
+  const frLeg = makeLeg(0.58, 0.43);
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.94, 0.0, 0);
+  bodyPivot.add(tailPivot);
+  const tail = new THREE.Mesh(sharedAurochsTailGeo, sharedAurochsFurMat);
+  tail.position.set(-0.05, -0.2, 0);
+  tail.rotation.z = -0.68;
+  tailPivot.add(tail);
+
+  const animParts: WildBoarAnimParts = { bodyPivot, headPivot, tailPivot, flLeg, frLeg, blLeg, brLeg };
+  group.userData.wildBoarAnimParts = animParts;
+
+  if (hasBadge) {
+    const badge = createBadgeSprite('野生原牛', '🦬', `${amount}`, 1, false, true, '大型猛獸・多人圍獵・衝鋒反擊');
+    badge.position.set(0, 2.95, 0);
     group.add(badge);
     group.userData.badgeSprite = badge;
   }
