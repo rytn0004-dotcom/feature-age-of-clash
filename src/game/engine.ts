@@ -164,6 +164,7 @@ import {
   getWildlifeMaxHealth,
   isDangerousWildlifeSubtype,
   isHuntableWildlifeSubtype,
+  canUnitHuntDangerousWildlife,
   advanceStarRelicChannel,
   pickStarRelicSite,
   resolveStarRelicDelivery,
@@ -4123,22 +4124,36 @@ export class RtsEngine {
   }
 
   public issueGatherOrder(nodeId: string, queue = false) {
-    const workers = this.selectedUnitIds
-      .map((id) => this.units.find((u) => u.id === id))
-      .filter((u): u is UnitEntity => !!u && this.isHumanControlled(u.faction) && u.unitDef.category === 'worker');
-
-    if (workers.length === 0) return;
-
     const node = this.resourceNodes.find((n) => n.id === nodeId);
     if (!node) return;
 
-    const eligibleWorkers = workers.filter((w) => canUnitGatherNode(w.unitDef, node));
-    if (eligibleWorkers.length === 0) {
+    const selectedUnits = this.selectedUnitIds
+      .map((id) => this.units.find((unit) => unit.id === id))
+      .filter((unit): unit is UnitEntity =>
+        !!unit &&
+        unit.hp > 0 &&
+        !unit.garrisonedInBuildingId &&
+        this.isHumanControlled(unit.faction)
+      );
+    if (selectedUnits.length === 0) return;
+
+    // Workers handle the normal economy. Ground combat units can be explicitly
+    // assigned to dangerous wildlife so the player can organize a real hunting party.
+    const eligibleUnits = selectedUnits.filter((unit) =>
+      canUnitGatherNode(unit.unitDef, node) &&
+      (
+        unit.unitDef.category === 'worker' ||
+        canUnitHuntDangerousWildlife(unit.unitDef, node.subtype)
+      )
+    );
+    if (eligibleUnits.length === 0) {
       sound.playInvalid();
       if (node.subtype === 'deep_fish') {
         this.addFloatingText(node.x, 2.5, node.z, '⛵ 深海魚群距離海岸太遠，村民無法採集！請建造【碼頭】並訓練【漁船】捕撈！', '#f59e0b');
+      } else if (isDangerousWildlifeSubtype(node.subtype)) {
+        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 狩獵大型野獸需要村民或非海軍地面軍隊；攻城器與漁船無法參與。', '#f59e0b');
       } else {
-        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 漁船無法前往陸地資源點！', '#f59e0b');
+        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 一般資源需要村民採集；漁船只能捕撈魚群。', '#f59e0b');
       }
       return;
     }
@@ -4147,23 +4162,26 @@ export class RtsEngine {
     this.spawnCommandIndicator(node.x, node.z, 'gather');
     const meta = this.getResourceDisplayMeta(node);
 
-    eligibleWorkers.forEach((worker) => {
+    eligibleUnits.forEach((unit) => {
       if (queue) {
-        if (!worker.commandQueue) worker.commandQueue = [];
-        worker.commandQueue.push({ type: 'gather', nodeId });
-        worker.currentActionText = (worker.currentActionText || '') + ' ⋯佇列';
+        if (!unit.commandQueue) unit.commandQueue = [];
+        unit.commandQueue.push({ type: 'gather', nodeId });
+        unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
-      worker.commandQueue = undefined;
-      worker.queuedGatherStopAfterDeposit = false;
-      worker.targetResourceNodeId = nodeId;
-      worker.targetEntityId = undefined;
-      worker.targetBuildingId = undefined;
-      worker.waypoints = undefined;
-      worker.pathGoal = undefined;
-      worker.pathCooldown = 0;
-      worker.state = 'gathering';
-      worker.currentActionText = `${meta.icon} 前往${meta.action}`;
+      unit.commandQueue = undefined;
+      unit.queuedGatherStopAfterDeposit = false;
+      unit.targetResourceNodeId = nodeId;
+      unit.targetEntityId = undefined;
+      unit.targetBuildingId = undefined;
+      unit.targetX = undefined;
+      unit.targetZ = undefined;
+      unit.attackMoveGoal = null;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.state = 'gathering';
+      unit.currentActionText = `${meta.icon} 前往${meta.action}`;
     });
   }
 
