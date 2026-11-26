@@ -547,6 +547,19 @@ test('mapGenerator: produces varied terrain features and abundant diverse resour
   const lakes = generateMapLayout('twin_lakes', 'abundant', spawns);
   assert.ok(lakes.waterDiscs.length >= 2, 'Twin Lakes should include two lakes');
 
+  for (const preset of ['river_valley', 'highland_basin', 'twin_lakes'] as const) {
+    const layout = generateMapLayout(preset, 'standard', spawns);
+    const aurochs = layout.resourceNodes.filter((node) => node.subtype === 'aurochs');
+    assert.ok(aurochs.length > 0, `${preset} should place at least one contested aurochs range`);
+    for (const animal of aurochs) {
+      assert.equal(animal.maxAmount, 1800);
+      assert.ok(
+        spawns.every((spawn) => Math.hypot(animal.x - spawn.x, animal.z - spawn.z) >= 23.5),
+        `${preset} aurochs must remain outside every Town Center's safe food ring`,
+      );
+    }
+  }
+
   const riverAbundant = generateMapLayout('river_valley', 'abundant', spawns);
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'berry'), 'Map should spawn berry bushes');
   assert.ok(riverAbundant.resourceNodes.some((n) => n.subtype === 'hunt'), 'Map should spawn deer herds');
@@ -558,6 +571,54 @@ test('mapGenerator: produces varied terrain features and abundant diverse resour
   assert.ok(
     riverAbundant.resourceNodes.length > river.resourceNodes.length,
     'Abundant richness should spawn more resource nodes than standard'
+  );
+});
+
+test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from automatic gathering', async () => {
+  const {
+    getFoodGatherMultiplier,
+    getWildlifeMaxHealth,
+    isDangerousWildlifeSubtype,
+    isHuntableWildlifeSubtype,
+    findBestFoodResourceNode,
+    findBalancedResourceNode,
+  } = await import('./rules');
+
+  assert.equal(getWildlifeMaxHealth('aurochs'), 360);
+  assert.equal(getWildlifeMaxHealth('boar'), 200);
+  assert.equal(getWildlifeMaxHealth('hunt'), 32);
+  assert.equal(isDangerousWildlifeSubtype('aurochs'), true);
+  assert.equal(isDangerousWildlifeSubtype('boar'), true);
+  assert.equal(isDangerousWildlifeSubtype('hunt'), false);
+  assert.equal(isHuntableWildlifeSubtype('aurochs'), true);
+  assert.equal(getFoodGatherMultiplier('aurochs'), 1.55);
+
+  const aurochs: ResourceNode = {
+    id: 'aurochs-test',
+    resourceType: 'food',
+    subtype: 'aurochs',
+    x: 1,
+    z: 0,
+    amount: 1800,
+    maxAmount: 1800,
+  };
+  const berry: ResourceNode = {
+    id: 'berry-test',
+    resourceType: 'food',
+    subtype: 'berry',
+    x: 5,
+    z: 0,
+    amount: 350,
+    maxAmount: 350,
+  };
+
+  assert.equal(findBestFoodResourceNode(0, 0, [aurochs], 36), null);
+  assert.equal(findBestFoodResourceNode(0, 0, [aurochs], 36, false, false, true)?.id, 'aurochs-test');
+  assert.equal(findBalancedResourceNode(0, 0, [aurochs], 'food'), null);
+  assert.equal(
+    findBalancedResourceNode(0, 0, [aurochs, berry], 'food')?.id,
+    'berry-test',
+    'routine worker reassignment must leave dangerous wildlife to coordinated hunters',
   );
 });
 
