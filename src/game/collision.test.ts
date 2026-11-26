@@ -9,6 +9,8 @@ import {
   getResourceColliderRadius,
   getUnitCollisionFirstDisplacementShare,
   createCollisionResolutionScratch,
+  filterTerrainObstaclesToBounds,
+  isPointInTerrainObstacle,
 } from './collision';
 
 function makeUnit(
@@ -359,4 +361,46 @@ test('wildlife collision radii reserve enough space for large hunted animals', (
   assert.equal(getResourceColliderRadius('food', 'hunt'), 0.58);
   assert.equal(getResourceColliderRadius('food', 'boar'), 0.92);
   assert.equal(getResourceColliderRadius('food', 'aurochs'), 1.5);
+});
+
+
+test('terrain obstacle AABB filtering preserves exact collision results throughout its query bounds', () => {
+  const rects = [
+    { x1: -20, z1: 0, x2: 20, z2: 0, kind: 'water' as const, halfWidth: 3 },
+    { x1: 35, z1: 35, x2: 50, z2: 35, kind: 'cliff' as const },
+  ];
+  const discs = [
+    { x: 4, z: 3, radius: 2, kind: 'water' as const },
+    { x: 60, z: 60, radius: 8, kind: 'cliff' as const },
+  ];
+  const bridges = [
+    { x: 0, z: 0, halfWidth: 2, halfLength: 7, angle: Math.PI / 4 },
+    { x: 90, z: 90, halfWidth: 4, halfLength: 9, angle: 0 },
+  ];
+  const bounds = { minX: -6, maxX: 8, minZ: -5, maxZ: 7 };
+  const filtered = filterTerrainObstaclesToBounds(bounds, rects, discs, bridges, 1.6);
+
+  assert.ok(filtered.rects.includes(rects[0]));
+  assert.ok(!filtered.rects.includes(rects[1]));
+  assert.ok(filtered.discs.includes(discs[0]));
+  assert.ok(!filtered.discs.includes(discs[1]));
+  assert.ok(filtered.bridges.includes(bridges[0]));
+  assert.ok(!filtered.bridges.includes(bridges[1]));
+
+  for (let x = bounds.minX - 1.6; x <= bounds.maxX + 1.6; x += 0.37) {
+    for (let z = bounds.minZ - 1.6; z <= bounds.maxZ + 1.6; z += 0.41) {
+      assert.equal(
+        isPointInTerrainObstacle(x, z, filtered.rects, filtered.discs, filtered.bridges),
+        isPointInTerrainObstacle(x, z, rects, discs, bridges),
+        `filtered terrain query must be exact at (${x.toFixed(2)}, ${z.toFixed(2)})`,
+      );
+    }
+  }
+});
+
+test('terrain obstacle AABB filtering rejects invalid bounds without throwing', () => {
+  assert.deepEqual(
+    filterTerrainObstaclesToBounds({ minX: 2, maxX: 1, minZ: 0, maxZ: 1 }, [], [], []),
+    { rects: [], discs: [], bridges: [] },
+  );
 });

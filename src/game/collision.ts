@@ -542,6 +542,92 @@ export function isPointOnBridge(x: number, z: number, bridges: TerrainPassableBr
 /**
  * Checks whether a coordinate is inside deep water or impassable cliff terrain.
  */
+
+export interface TerrainObstacleQueryBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export interface TerrainObstacleQueryCandidates {
+  rects: TerrainBlockedRect[];
+  discs: TerrainBlockedDisc[];
+  bridges: TerrainPassableBridge[];
+}
+
+/**
+ * Conservative broad phase for repeated point-in-terrain queries.
+ * Every obstacle whose collision envelope can touch the expanded AABB is kept;
+ * exact point/segment/bridge checks remain unchanged in isPointInTerrainObstacle.
+ */
+export function filterTerrainObstaclesToBounds(
+  bounds: TerrainObstacleQueryBounds,
+  rects: readonly TerrainBlockedRect[] = [],
+  discs: readonly TerrainBlockedDisc[] = [],
+  bridges: readonly TerrainPassableBridge[] = [],
+  padding = 0,
+): TerrainObstacleQueryCandidates {
+  if (
+    !Number.isFinite(bounds.minX) ||
+    !Number.isFinite(bounds.maxX) ||
+    !Number.isFinite(bounds.minZ) ||
+    !Number.isFinite(bounds.maxZ) ||
+    bounds.minX > bounds.maxX ||
+    bounds.minZ > bounds.maxZ
+  ) return { rects: [], discs: [], bridges: [] };
+
+  const pad = Number.isFinite(padding) ? Math.max(0, padding) : 0;
+  const minX = bounds.minX - pad;
+  const maxX = bounds.maxX + pad;
+  const minZ = bounds.minZ - pad;
+  const maxZ = bounds.maxZ + pad;
+  const rectCandidates: TerrainBlockedRect[] = [];
+  const discCandidates: TerrainBlockedDisc[] = [];
+  const bridgeCandidates: TerrainPassableBridge[] = [];
+
+  for (const rect of rects) {
+    const halfWidth = Math.max(
+      0,
+      Number.isFinite(rect.halfWidth)
+        ? rect.halfWidth!
+        : rect.kind === 'water' ? 9.8 : 2.6,
+    );
+    if (
+      Math.max(rect.x1, rect.x2) + halfWidth < minX ||
+      Math.min(rect.x1, rect.x2) - halfWidth > maxX ||
+      Math.max(rect.z1, rect.z2) + halfWidth < minZ ||
+      Math.min(rect.z1, rect.z2) - halfWidth > maxZ
+    ) continue;
+    rectCandidates.push(rect);
+  }
+
+  for (const disc of discs) {
+    if (!Number.isFinite(disc.x) || !Number.isFinite(disc.z) || !Number.isFinite(disc.radius) || disc.radius < 0) continue;
+    const dx = disc.x < minX ? minX - disc.x : disc.x > maxX ? disc.x - maxX : 0;
+    const dz = disc.z < minZ ? minZ - disc.z : disc.z > maxZ ? disc.z - maxZ : 0;
+    if (dx * dx + dz * dz <= disc.radius * disc.radius) discCandidates.push(disc);
+  }
+
+  for (const bridge of bridges) {
+    if (
+      !Number.isFinite(bridge.x) ||
+      !Number.isFinite(bridge.z) ||
+      !Number.isFinite(bridge.halfWidth) ||
+      !Number.isFinite(bridge.halfLength) ||
+      bridge.halfWidth < 0 ||
+      bridge.halfLength < 0
+    ) continue;
+    // The oriented bridge rectangle is fully enclosed by this radius.
+    const radius = Math.hypot(bridge.halfWidth, bridge.halfLength);
+    const dx = bridge.x < minX ? minX - bridge.x : bridge.x > maxX ? bridge.x - maxX : 0;
+    const dz = bridge.z < minZ ? minZ - bridge.z : bridge.z > maxZ ? bridge.z - maxZ : 0;
+    if (dx * dx + dz * dz <= radius * radius) bridgeCandidates.push(bridge);
+  }
+
+  return { rects: rectCandidates, discs: discCandidates, bridges: bridgeCandidates };
+}
+
 export function isPointInTerrainObstacle(
   x: number,
   z: number,
@@ -754,6 +840,34 @@ export function isWallChainPreviewObstructed(
 ): boolean {
   if (placements.length === 0) return false;
 
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (const point of placements) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+  for (const point of pathPoints) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minZ = Math.min(minZ, point.z);
+    maxZ = Math.max(maxZ, point.z);
+  }
+  const halfFootprint = footprintSize * 0.55;
+  const terrainCandidates = filterTerrainObstaclesToBounds(
+    { minX, maxX, minZ, maxZ },
+    terrainRects,
+    terrainDiscs,
+    bridges,
+    halfFootprint,
+  );
+  terrainRects = terrainCandidates.rects;
+  terrainDiscs = terrainCandidates.discs;
+  bridges = terrainCandidates.bridges;
+
   // Sample the continuous path so narrow rivers/cliffs cannot hide between pieces.
   for (let index = 0; index < pathPoints.length - 1; index++) {
     const start = pathPoints[index];
@@ -767,7 +881,6 @@ export function isWallChainPreviewObstructed(
     }
   }
 
-  const halfFootprint = footprintSize * 0.55;
   for (const placement of placements) {
     if (Math.abs(placement.x) > 90 || Math.abs(placement.z) > 90) return true;
     if (
@@ -786,6 +899,13 @@ export function isWallChainPreviewObstructed(
     const minDistance = building.buildingDef.isWall
       ? Math.max(2.15, (footprintSize + building.buildingDef.size) * 0.72)
       : footprintSize + building.buildingDef.size;
+    // Reject entities outside the chain's expanded AABB before iterating pieces.
+    const nearestX = building.x < minX ? minX : building.x > maxX ? maxX : building.x;
+    const nearestZ = building.z < minZ ? minZ : building.z > maxZ ? maxZ : building.z;
+    const broadDx = building.x - nearestX;
+    const broadDz = building.z - nearestZ;
+    if (broadDx * broadDx + broadDz * broadDz >= minDistance * minDistance) continue;
+
     const minDistanceSq = minDistance * minDistance;
     for (const placement of placements) {
       const dx = placement.x - building.x;
@@ -797,6 +917,12 @@ export function isWallChainPreviewObstructed(
   for (const node of nodes) {
     if (node.amount <= 0) continue;
     const minDistance = footprintSize + getResourceColliderRadius(node.resourceType, node.subtype) + 0.5;
+    const nearestX = node.x < minX ? minX : node.x > maxX ? maxX : node.x;
+    const nearestZ = node.z < minZ ? minZ : node.z > maxZ ? maxZ : node.z;
+    const broadDx = node.x - nearestX;
+    const broadDz = node.z - nearestZ;
+    if (broadDx * broadDx + broadDz * broadDz >= minDistance * minDistance) continue;
+
     const minDistanceSq = minDistance * minDistance;
     for (const placement of placements) {
       const dx = placement.x - node.x;

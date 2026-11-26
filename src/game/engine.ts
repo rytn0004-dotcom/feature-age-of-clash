@@ -222,6 +222,7 @@ import {
   createCollisionResolutionScratch,
   type CollisionResolutionScratch,
   getBuildingCollisionRadius,
+  filterTerrainObstaclesToBounds,
   getResourceColliderRadius,
   getUnitColliderRadius,
   isPlacementLocationValid,
@@ -5726,6 +5727,18 @@ export class RtsEngine {
         const startObstacles = this.getTerrainNavObstacles();
         const wallFootprint = DEFAULT_BUILDINGS.wall.size;
         const maxSearchOffset = WALL_START_SEARCH_MAX_OFFSET;
+        const localTerrainObstacles = filterTerrainObstaclesToBounds(
+          {
+            minX: inputPoint.x - maxSearchOffset,
+            maxX: inputPoint.x + maxSearchOffset,
+            minZ: inputPoint.z - maxSearchOffset,
+            maxZ: inputPoint.z + maxSearchOffset,
+          },
+          startObstacles?.rects,
+          startObstacles?.discs,
+          startObstacles?.bridges,
+          wallFootprint * 0.55,
+        );
 
         // Only entities that can intersect the bounded start-search area are
         // passed to every ring probe. This changes up to 160 full-map scans
@@ -5758,9 +5771,9 @@ export class RtsEngine {
             startValidationBuildings,
             startValidationNodes,
             true,
-            startObstacles?.rects,
-            startObstacles?.discs,
-            startObstacles?.bridges,
+            localTerrainObstacles.rects,
+            localTerrainObstacles.discs,
+            localTerrainObstacles.bridges,
             'wall',
           ),
           maxSearchOffset,
