@@ -7,6 +7,7 @@ import {
   advanceUnitAttackWindup,
   getUnitAttackTiming,
 } from './unitAttackTiming';
+import { consumeCombatTargetScanCooldown } from './combatTargetScan';
 import {
   BOMBARD_CANNON_SPLASH_RADIUS,
   getBombardCannonSplashDamage,
@@ -8085,10 +8086,21 @@ export class RtsEngine {
         }
       }
 
+      // Spread nearby-enemy acquisition over a short deterministic cadence. Attack
+      // execution and target-locked retargeting remain on their existing simulation clocks.
+      const canAcquireNearbyTarget =
+        unit.unitDef.category !== 'worker' &&
+        (unit.state === 'idle' ||
+          (unit.state === 'moving' && (!!unit.wallPatrolRoute || !!unit.attackMoveGoal)))
+          ? consumeCombatTargetScanCooldown(unit, dt)
+          : false;
+      let canScanCombatTarget = canAcquireNearbyTarget;
+
       // Behavior by state
       switch (unit.state) {
         case 'moving':
-          if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker') {
+          if (unit.wallPatrolRoute && unit.unitDef.category !== 'worker' && canScanCombatTarget) {
+            canScanCombatTarget = false;
             const patrolThreat = this.selectNearbyCombatTarget(unit, 10);
             if (patrolThreat) {
               unit.targetEntityId = patrolThreat.id;
@@ -8098,7 +8110,8 @@ export class RtsEngine {
               break;
             }
           }
-          if (unit.attackMoveGoal && unit.unitDef.category !== 'worker') {
+          if (unit.attackMoveGoal && unit.unitDef.category !== 'worker' && canScanCombatTarget) {
+            canScanCombatTarget = false;
             const enemy = this.selectNearbyCombatTarget(
               unit,
               Math.max(13, Math.min(24, unit.unitDef.stats.range + 2)),
@@ -8141,7 +8154,8 @@ export class RtsEngine {
             break;
           }
           // Auto acquire nearby hostile enemies with 1v1 counter-matchup scoring (or resume attackMoveGoal if set!)
-          if (unit.unitDef.category !== 'worker') {
+          if (unit.unitDef.category !== 'worker' && canScanCombatTarget) {
+            canScanCombatTarget = false;
             const enemy = this.selectNearbyCombatTarget(
               unit,
               Math.max(14, Math.min(24, unit.unitDef.stats.range + 2)),

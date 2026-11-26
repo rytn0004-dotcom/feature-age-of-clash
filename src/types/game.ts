@@ -348,6 +348,8 @@ export interface UnitEntity extends EntityCommon {
   slowUntil?: number;
   slowFactor?: number;
   attackMoveGoal?: { x: number; z: number } | null;
+  /** Staggered local enemy-acquisition scan timer; separate from attack and weapon cooldowns. */
+  combatTargetScanCooldown?: number;
   /** Target-locked short retreat waypoint used by Mongol Mangudai hit-and-run combat. */
   kitingRetreatGoal?: { x: number; z: number; targetId: string };
   /** Current battlefield morale; lazily initialized to 100 for legacy saves. */
