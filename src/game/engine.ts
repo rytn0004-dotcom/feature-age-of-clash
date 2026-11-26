@@ -4155,7 +4155,7 @@ export class RtsEngine {
       if (node.subtype === 'deep_fish') {
         this.addFloatingText(node.x, 2.5, node.z, '⛵ 深海魚群距離海岸太遠，村民無法採集！請建造【碼頭】並訓練【漁船】捕撈！', '#f59e0b');
       } else if (isDangerousWildlifeSubtype(node.subtype)) {
-        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 狩獵大型野獸需要村民或非海軍地面軍隊；攻城器與漁船無法參與。', '#f59e0b');
+        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 狩獵大型野獸需要村民或近戰、遠程、騎兵；攻城器、漁船與正在組裝的部隊無法參與。', '#f59e0b');
       } else {
         this.addFloatingText(node.x, 2.5, node.z, '⚠️ 一般資源需要村民採集；漁船只能捕撈魚群。', '#f59e0b');
       }
