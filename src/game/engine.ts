@@ -129,6 +129,7 @@ import {
   shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
+  shouldAiStartNextAgeLandmark,
   getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
   calculateWallChainCost,
@@ -13510,6 +13511,28 @@ export class RtsEngine {
       const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
       const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
       const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
+      const nextAgeLandmark: LandmarkType | null =
+        aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
+      const nextAgeLandmarkActive = !!nextAgeLandmark && (
+        !!this.landmarksByFaction[aiId]?.includes(nextAgeLandmark) ||
+        aiBuildings.some((building) => building.buildingType === nextAgeLandmark)
+      );
+      const nextAgeCost = nextAgeLandmark && !nextAgeLandmarkActive
+        ? DEFAULT_BUILDINGS[nextAgeLandmark].cost
+        : null;
+      const reserveFood = nextAgeCost?.food || 0;
+      const reserveGold = nextAgeCost?.gold || 0;
+      const startNextAgeLandmark = shouldAiStartNextAgeLandmark({
+        age: aiAge,
+        gameTime: this.stats.gameDuration,
+        workerCount: aiWorkers.length,
+        minimumWorkers: ageUpReadiness.minimumWorkers,
+        minimumGameTime: ageUpReadiness.minimumGameTime,
+        landmarkActive: nextAgeLandmarkActive,
+        resources: aiRes,
+        ageUpCost: nextAgeCost,
+        underAttack,
+      });
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
         if (needsHouse && aiRes.wood >= DEFAULT_BUILDINGS.house.cost.wood) {
@@ -13521,28 +13544,13 @@ export class RtsEngine {
             anchorZ,
             toCenterAngle + Math.PI * 0.55 + (aiBuildings.length % 5) * 0.35
           );
-        } else if (buildCmd?.type === 'advance_age' && aiAge < 4) {
-          const lmByAge: Record<number, LandmarkType> = {
-            1: (buildCmd.targetId as LandmarkType) || 'landmark_barracks',
-            2: 'landmark_citadel',
-            3: 'landmark_arsenal',
-          };
-          const lmType = lmByAge[aiAge];
-          if (lmType && !this.landmarksByFaction[aiId]?.includes(lmType)) {
-            this.tryAiConstructBuilding(aiId, lmType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.5);
-          }
-        } else if (
-          personality !== 'easy' &&
-          aiAge === 1 &&
-          aiActiveWorkers.length >= (personality === 'hard' ? 4 : 5) &&
-          aiRes.food >= 400 &&
-          aiRes.gold >= 200 &&
-          !this.landmarksByFaction[aiId]?.includes('landmark_barracks')
-        ) {
-          // Fallback age-up when rule priority loses to eco spam
+        } else if (startNextAgeLandmark && nextAgeLandmark) {
+          // Age advancement is a strategic milestone, not just another build candidate.
+          // Once the full cost and difficulty gate are met, do not let optional camps,
+          // extra barracks or low-priority tech buildings consume the landmark window.
           this.tryAiConstructBuilding(
             aiId,
-            'landmark_barracks',
+            nextAgeLandmark,
             aiActiveWorkers,
             anchorX,
             anchorZ,
@@ -13722,18 +13730,7 @@ export class RtsEngine {
 
       // 4. Context-aware counter-tech & economic research from surplus resources (never spend landmark reserve).
       const researched = this.getResearchedTechs(aiId);
-      const nextAgeLandmark: LandmarkType | null =
-        aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
-      const nextAgeLandmarkActive = !!nextAgeLandmark && (
-        !!this.landmarksByFaction[aiId]?.includes(nextAgeLandmark) ||
-        aiBuildings.some((building) => building.buildingType === nextAgeLandmark)
-      );
-      // A started landmark has already committed its cost; do not reserve it twice.
-      const nextAgeCost = nextAgeLandmark && !nextAgeLandmarkActive
-        ? DEFAULT_BUILDINGS[nextAgeLandmark].cost
-        : null;
-      const reserveFood = nextAgeCost?.food || 0;
-      const reserveGold = nextAgeCost?.gold || 0;
+      // The landmark reserve was resolved before the build planner so age-up can win the construction queue.
       const enemyComposition = {
         melee: 0,
         ranged: 0,
