@@ -111,6 +111,7 @@ export const HUD: React.FC<HUDProps> = ({
   const [showEconomyPanel, setShowEconomyPanel] = useState(false);
   const [isEconomyPinned, setIsEconomyPinned] = useState(false);
   const [economyNetRates, setEconomyNetRates] = useState<EconomyNetRates | null>(null);
+  const [pendingConstructionCancelId, setPendingConstructionCancelId] = useState<string | null>(null);
   const economySnapshotsRef = useRef<EconomyResourceSnapshot[]>([]);
 
   useEffect(() => {
@@ -191,6 +192,23 @@ export const HUD: React.FC<HUDProps> = ({
   const selectedBuilding = engine.selectedBuildingId
     ? engine.buildings.find((b) => b.id === engine.selectedBuildingId)
     : null;
+
+  useEffect(() => {
+    if (!pendingConstructionCancelId) return;
+    if (
+      !selectedBuilding ||
+      selectedBuilding.id !== pendingConstructionCancelId ||
+      selectedBuilding.isConstructed ||
+      !engine.isHumanControlled(selectedBuilding.faction)
+    ) {
+      setPendingConstructionCancelId(null);
+    }
+  }, [
+    engine,
+    pendingConstructionCancelId,
+    selectedBuilding?.id,
+    selectedBuilding?.isConstructed,
+  ]);
 
   const [, setBuildingTimingRefresh] = useState(0);
   useEffect(() => {
@@ -2513,18 +2531,63 @@ export const HUD: React.FC<HUDProps> = ({
                     </div>
                   )}
                   {!selectedBuilding.isConstructed && constructionRefund && engine.isHumanControlled(selectedBuilding.faction) && (
-                    <button
-                      data-cancel-construction="true"
-                      disabled={isSpectator}
-                      onClick={() => engine.cancelBuildingConstruction(selectedBuilding.id)}
-                      title="取消施工；僅按目前 HP 低於該施工進度應有 HP 的比例扣除退款，未受損時全額退款"
-                      className="flex w-full flex-wrap items-center justify-between gap-1 rounded-md border border-rose-500/40 bg-rose-950/30 px-2 py-1.5 text-[10px] font-bold text-rose-200 transition-colors hover:border-rose-400 hover:bg-rose-950/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    <div
+                      data-construction-cancel-panel="true"
+                      className="space-y-1.5 rounded-md border border-rose-500/35 bg-rose-950/20 p-2"
                     >
-                      <span>✕ 取消施工並拆除地基</span>
-                      <span className="font-mono text-emerald-300">
-                        退款 食 {constructionRefund.food} · 木 {constructionRefund.wood} · 金 {constructionRefund.gold} · 石 {constructionRefund.stone}
-                      </span>
-                    </button>
+                      {pendingConstructionCancelId === selectedBuilding.id ? (
+                        <>
+                          <div className="space-y-1 text-[10px]">
+                            <div className="font-black text-rose-200">⚠️ 再確認一次：拆除這座施工中的地基？</div>
+                            <div className="text-slate-300">
+                              目前施工 {Math.round(selectedBuilding.buildProgress * 100)}% · HP {Math.ceil(selectedBuilding.hp)} / {selectedBuilding.maxHp}
+                            </div>
+                            <div className="font-mono font-bold text-emerald-300">
+                              預計退還 食 {constructionRefund.food} · 木 {constructionRefund.wood} · 金 {constructionRefund.gold} · 石 {constructionRefund.stone}
+                            </div>
+                            <div className="leading-relaxed text-amber-200/90">
+                              退款會在確認當下重新計算。只有目前 HP 低於施工進度應有 HP 的受損部分會扣除退款；未受損仍全額退還。
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              data-cancel-construction-confirm="true"
+                              disabled={isSpectator}
+                              onClick={() => {
+                                engine.cancelBuildingConstruction(selectedBuilding.id);
+                                setPendingConstructionCancelId(null);
+                              }}
+                              className="flex-1 rounded-md border border-rose-400/70 bg-rose-700/70 px-2 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              確認拆除並退款
+                            </button>
+                            <button
+                              type="button"
+                              data-cancel-construction-dismiss="true"
+                              onClick={() => setPendingConstructionCancelId(null)}
+                              className="rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-[10px] font-bold text-slate-200 transition-colors hover:bg-slate-700"
+                            >
+                              保留工地
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          data-cancel-construction="true"
+                          disabled={isSpectator}
+                          onClick={() => setPendingConstructionCancelId(selectedBuilding.id)}
+                          title="先檢視退款與受損扣款，再次確認後才拆除施工地基"
+                          className="flex w-full flex-wrap items-center justify-between gap-1 rounded-md border border-rose-500/40 bg-rose-950/30 px-2 py-1.5 text-[10px] font-bold text-rose-200 transition-colors hover:border-rose-400 hover:bg-rose-950/70 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <span>⚠ 檢視取消施工退款</span>
+                          <span className="font-mono text-emerald-300">
+                            預計退還 食 {constructionRefund.food} · 木 {constructionRefund.wood} · 金 {constructionRefund.gold} · 石 {constructionRefund.stone}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   {/* Building Combat & Defense Stats Inspection */}
