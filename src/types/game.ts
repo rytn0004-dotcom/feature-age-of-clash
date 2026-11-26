@@ -321,6 +321,11 @@ export interface UnitEntity extends EntityCommon {
   targetGarrisonBuildingId?: string;
   garrisonedInBuildingId?: string;
   attackCooldown: number;
+  /** Target-locked pre-attack telegraph; cancelled when the unit moves or loses range. */
+  attackWindupRemaining?: number;
+  attackWindupTargetId?: string;
+  /** Brief post-attack recovery that prevents immediate follow-up pursuit/strikes. */
+  attackRecoveryRemaining?: number;
   /** Shared simulation-time cooldown for incidental attacks on wild deer. */
   wildlifeHuntReadyAt?: number;
   abilityCooldown: number;

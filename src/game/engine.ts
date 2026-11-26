@@ -3,6 +3,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, takeNextUnitCommand } from './commandQueue';
 import { createUnitLodHighDetailSet } from './unitLodSelection';
+import {
+  advanceUnitAttackWindup,
+  getUnitAttackTiming,
+} from './unitAttackTiming';
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
@@ -4074,6 +4078,7 @@ export class RtsEngine {
     }
 
     playerUnits.forEach((unit) => {
+      this.cancelUnitAttackWindup(unit);
       this.clearFormationMovement(unit);
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
@@ -7886,6 +7891,12 @@ export class RtsEngine {
       if (unit.attackCooldown > 0) {
         unit.attackCooldown -= dt * attackRateBuff * attackRateSlow * moraleModifiers.attackRateMultiplier * suppressionModifiers.attackRateMultiplier;
       }
+      if ((unit.attackRecoveryRemaining ?? 0) > 0) {
+        unit.attackRecoveryRemaining = Math.max(0, (unit.attackRecoveryRemaining ?? 0) - dt);
+      }
+      if (unit.state !== 'attacking' && unit.unitDefId !== 'mongol_mangudai' && unit.attackWindupTargetId) {
+        this.cancelUnitAttackWindup(unit);
+      }
       if (unit.abilityCooldown > 0) unit.abilityCooldown -= dt;
       if (unit.pathCooldown && unit.pathCooldown > 0) unit.pathCooldown -= dt;
       if (unit.hitFlashTimer && unit.hitFlashTimer > 0) unit.hitFlashTimer = Math.max(0, unit.hitFlashTimer - dt);
@@ -8375,8 +8386,9 @@ export class RtsEngine {
     }
 
     this.moveUnitAlongPath(unit, unit.targetX, unit.targetZ, dt);
-    // Mangudai can fire while galloping, preserving the civilization's defining hit-and-run role.
-    if (unit.unitDefId === 'mongol_mangudai' && unit.attackCooldown <= 0) {
+    // Mangudai can fire while galloping, but their target-locked windup is
+    // still interrupted if the target leaves the firing envelope.
+    if (unit.unitDefId === 'mongol_mangudai' && (unit.attackCooldown <= 0 || unit.attackWindupTargetId)) {
       let nearestTarget: UnitEntity | null = null;
       let bestDistance = unit.unitDef.stats.range + 1.1;
       for (const enemy of this.units) {
@@ -8387,13 +8399,47 @@ export class RtsEngine {
           bestDistance = distance;
         }
       }
-      if (nearestTarget) {
-        unit.attackCooldown = 1 / Math.max(0.35, unit.unitDef.stats.attackRate);
-        (unit as any)._attackSwing = 0.36;
-        this.spawnProjectile(
-          unit.x, 1.45, unit.z, nearestTarget.id, 'arrow',
-          unit.unitDef.stats.attack, unit.unitDef.visual.color, unit.id
+
+      if (!nearestTarget) {
+        this.cancelUnitAttackWindup(unit);
+      } else if (unit.attackCooldown <= 0) {
+        const timing = getUnitAttackTiming('ranged');
+        if (
+          unit.attackWindupTargetId !== nearestTarget.id ||
+          !Number.isFinite(unit.attackWindupRemaining)
+        ) {
+          this.cancelUnitAttackWindup(unit);
+          unit.attackWindupTargetId = nearestTarget.id;
+          unit.attackWindupRemaining = timing.windupSeconds;
+          (unit as any)._attackSwingDuration = timing.windupSeconds + 0.14;
+          (unit as any)._attackSwing = timing.windupSeconds + 0.14;
+        }
+
+        const windup = advanceUnitAttackWindup(
+          unit.attackWindupRemaining ?? timing.windupSeconds,
+          dt,
+          nearestTarget.hp > 0 &&
+            !nearestTarget.garrisonedInBuildingId &&
+            getDistance(unit.x, unit.z, nearestTarget.x, nearestTarget.z) <= unit.unitDef.stats.range + 1.1,
         );
+        if (windup.cancelled) {
+          this.cancelUnitAttackWindup(unit);
+        } else {
+          unit.attackWindupRemaining = windup.remainingSeconds;
+          if (windup.ready) {
+            unit.attackWindupTargetId = undefined;
+            unit.attackWindupRemaining = undefined;
+            unit.attackCooldown = Math.max(
+              0,
+              1 / Math.max(0.35, unit.unitDef.stats.attackRate) - timing.windupSeconds,
+            );
+            unit.attackRecoveryRemaining = timing.recoverySeconds;
+            this.spawnProjectile(
+              unit.x, 1.45, unit.z, nearestTarget.id, 'arrow',
+              unit.unitDef.stats.attack, unit.unitDef.visual.color, unit.id
+            );
+          }
+        }
       }
     }
     if (!unit.currentActionText || unit.currentActionText.includes('待命')) {
@@ -8635,8 +8681,17 @@ export class RtsEngine {
     unit.morale = Math.min(100, (unit.morale ?? 100) + recoveryRate * dt);
   }
 
+  private cancelUnitAttackWindup(unit: UnitEntity): void {
+    if (!unit.attackWindupTargetId && unit.attackWindupRemaining === undefined) return;
+    unit.attackWindupTargetId = undefined;
+    unit.attackWindupRemaining = undefined;
+    (unit as any)._attackSwing = 0;
+    (unit as any)._attackSwingDuration = undefined;
+  }
+
   private stepUnitAttacking(unit: UnitEntity, dt: number) {
     if (!unit.targetEntityId) {
+      this.cancelUnitAttackWindup(unit);
       this.clearFormationTacticalState(unit);
       if (!this.tryDequeueCommand(unit)) {
         unit.state = 'idle';
@@ -8654,10 +8709,12 @@ export class RtsEngine {
       !unit.unitDef.isNaval
     ) {
       if (getDistance(unit.x, unit.z, targetUnit.x, targetUnit.z) <= 7.0) {
+        this.cancelUnitAttackWindup(unit);
         this.boardTransport(targetUnit, [unit]);
         unit.targetEntityId = undefined;
         return;
       }
+      this.cancelUnitAttackWindup(unit);
       this.moveUnitAlongPath(unit, targetUnit.x, targetUnit.z, dt);
       unit.currentActionText = '登船中';
       return;
@@ -8695,6 +8752,7 @@ export class RtsEngine {
     }
 
     if (!target || target.hp <= 0 || (target.type === 'unit' && (target as UnitEntity).garrisonedInBuildingId)) {
+      this.cancelUnitAttackWindup(unit);
       unit.kitingRetreatGoal = undefined;
       this.clearFormationTacticalState(unit);
       unit.targetEntityId = undefined;
@@ -8725,6 +8783,10 @@ export class RtsEngine {
       return;
     }
 
+    if (unit.attackWindupTargetId && unit.attackWindupTargetId !== target.id) {
+      this.cancelUnitAttackWindup(unit);
+    }
+
     const targetName =
       target.type === 'unit'
         ? (target as UnitEntity).unitDef.name.split(' ')[0]
@@ -8743,6 +8805,19 @@ export class RtsEngine {
         : getBuildingCollisionRadius(target as BuildingEntity);
     const effectiveDist = Math.max(0, dist - targetRadius);
     const tacticalSlot = this.resolveFormationTacticalSlot(unit, target, targetRadius);
+
+    if (unit.unitDefId !== 'mongol_mangudai' && (unit.attackRecoveryRemaining ?? 0) > 0) {
+      // A completed swing creates a small commitment window. The unit may be
+      // manually redirected (which changes its state), but autonomous chase
+      // waits so a retreating opponent has time to disengage or counter.
+      this.cancelUnitAttackWindup(unit);
+      unit.stuckDuration = 0;
+      unit.stuckAccumulator = 0;
+      unit.velocity = { x: 0, z: 0 };
+      (unit as any)._desiredYaw = Math.atan2(target.x - unit.x, target.z - unit.z);
+      unit.currentActionText = '⚔️ 攻擊後搖 · 重新蓄勢';
+      return;
+    }
 
     // Mangudai use short, target-locked retreat paths against melee/cavalry threats.
     // Coordinated formations retain their assigned tactical slots instead of kiting independently.
@@ -8785,13 +8860,17 @@ export class RtsEngine {
     } else {
       unit.kitingRetreatGoal = undefined;
     }
-    if (kitingRetreating) unit.currentActionText = '🏹 游擊後撤 · 保持射程';
+    if (kitingRetreating) {
+      this.cancelUnitAttackWindup(unit);
+      unit.currentActionText = '🏹 游擊後撤 · 保持射程';
+    }
 
     if (
       tacticalSlot &&
       !kitingRetreating &&
       getDistance(unit.x, unit.z, tacticalSlot.x, tacticalSlot.z) > 0.9
     ) {
+      this.cancelUnitAttackWindup(unit);
       this.moveUnitAlongPath(unit, tacticalSlot.x, tacticalSlot.z, dt);
       const roleLabel =
         tacticalSlot.role === 'frontline'
@@ -8806,6 +8885,7 @@ export class RtsEngine {
     }
 
     if (effectiveDist > range) {
+      this.cancelUnitAttackWindup(unit);
       if (!kitingRetreating) {
         this.moveUnitAlongPath(unit, tacticalSlot?.x ?? target.x, tacticalSlot?.z ?? target.z, dt);
       }
@@ -8819,10 +8899,45 @@ export class RtsEngine {
       (unit as any)._desiredYaw = Math.atan2(target.x - unit.x, target.z - unit.z);
 
       if (unit.attackCooldown <= 0) {
-        unit.attackCooldown = 1 / unit.unitDef.stats.attackRate;
-        (unit as any)._attackSwing = 0.36;
+        const timing = getUnitAttackTiming(unit.unitDef.category);
+        if (
+          unit.attackWindupTargetId !== target.id ||
+          !Number.isFinite(unit.attackWindupRemaining)
+        ) {
+          unit.attackWindupTargetId = target.id;
+          unit.attackWindupRemaining = timing.windupSeconds;
+          (unit as any)._attackSwingDuration = timing.windupSeconds + 0.14;
+          (unit as any)._attackSwing = timing.windupSeconds + 0.14;
+        }
 
-        if (unit.unitDef.stats.range > 2.5) {
+        const windup = advanceUnitAttackWindup(
+          unit.attackWindupRemaining ?? timing.windupSeconds,
+          dt,
+          unit.state === 'attacking' &&
+            unit.targetEntityId === target.id &&
+            target.hp > 0 &&
+            effectiveDist <= range,
+        );
+        if (windup.cancelled) {
+          this.cancelUnitAttackWindup(unit);
+        } else {
+          unit.attackWindupRemaining = windup.remainingSeconds;
+          if (!windup.ready) {
+            unit.currentActionText = `⚔️ 攻擊前搖 · ${targetName}`;
+            return;
+          }
+
+          unit.attackWindupTargetId = undefined;
+          unit.attackWindupRemaining = undefined;
+          // Include the windup in the nominal attack cycle, then apply the
+          // short recovery lock after the release.
+          unit.attackCooldown = Math.max(
+            0,
+            1 / Math.max(0.35, unit.unitDef.stats.attackRate) - timing.windupSeconds,
+          );
+          unit.attackRecoveryRemaining = timing.recoverySeconds;
+
+          if (unit.unitDef.stats.range > 2.5) {
           const pType = unit.unitDef.visual.projectileType || 'arrow';
           this.spawnProjectile(
             unit.x,
@@ -8943,6 +9058,7 @@ export class RtsEngine {
             unit.kills++;
             this.awardUnitXp(unit, 35);
           }
+        }
         }
       }
     }
@@ -12278,7 +12394,8 @@ export class RtsEngine {
     if (swingTimer > 0) {
       const next = Math.max(0, swingTimer - dt);
       (unit as any)._attackSwing = next;
-      const p = 1 - next / 0.36; // 0 -> 1
+      const swingDuration = Math.max(0.12, Number((unit as any)._attackSwingDuration) || 0.36);
+      const p = Math.max(0, Math.min(1, 1 - next / swingDuration)); // 0 -> 1
       if (p < 0.28) {
         const w = 0.5 - 0.5 * Math.cos((p / 0.28) * Math.PI);
         swingTargetArm = 0.65 * w;
