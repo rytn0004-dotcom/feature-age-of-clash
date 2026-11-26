@@ -346,6 +346,8 @@ import {
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
   selectConstructionHandoffWorker,
+  CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
+  getActiveConstructionHandoffFailureIds,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -480,8 +482,8 @@ export class RtsEngine {
   private combatBuildingLookupLength = -1;
   /** Rebuilt once per simulation step; avoids one full unit scan per active builder. */
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
-  /** Workers that already failed every approach slot for one construction target. */
-  private constructionApproachFailedWorkersByBuilding = new Map<string, Set<string>>();
+  /** Per-worker route failure cooldowns, scoped to one construction target. */
+  private constructionApproachFailedWorkersByBuilding = new Map<string, Map<string, number>>();
   /** Buildings kept intact for a short, real-time cancellation undo window. */
   private pendingConstructionCancellations = new Map<string, { expiresAt: number; timerId: number }>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -1512,6 +1514,7 @@ export class RtsEngine {
     this.units = [];
     this.buildings = [];
     this.activeConstructionWorkerCountByBuilding.clear();
+    this.constructionApproachFailedWorkersByBuilding.clear();
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
@@ -9768,12 +9771,19 @@ export class RtsEngine {
    * garrison reservations, or another active target.
    */
   private handoffBlockedConstructionTarget(unit: UnitEntity, building: BuildingEntity): boolean {
-    let failedWorkerIds = this.constructionApproachFailedWorkersByBuilding.get(building.id);
-    if (!failedWorkerIds) {
-      failedWorkerIds = new Set<string>();
-      this.constructionApproachFailedWorkersByBuilding.set(building.id, failedWorkerIds);
+    let failedWorkerRetryAtById = this.constructionApproachFailedWorkersByBuilding.get(building.id);
+    if (!failedWorkerRetryAtById) {
+      failedWorkerRetryAtById = new Map<string, number>();
+      this.constructionApproachFailedWorkersByBuilding.set(building.id, failedWorkerRetryAtById);
     }
-    failedWorkerIds.add(unit.id);
+    failedWorkerRetryAtById.set(
+      unit.id,
+      this.simTime + CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
+    );
+    const failedWorkerIds = getActiveConstructionHandoffFailureIds(
+      failedWorkerRetryAtById,
+      this.simTime,
+    );
 
     const candidates = this.units.map((candidate) => ({
       id: candidate.id,
@@ -9799,9 +9809,9 @@ export class RtsEngine {
     );
 
     if (replacementIndex < 0) {
-      // Keep the current assignment intact, but back off long enough to avoid
-      // a tight retry loop. Newly idle workers can be considered next time.
-      this.constructionApproachFailedWorkersByBuilding.delete(building.id);
+      // Keep the current assignment and the per-worker failure cooldowns. Clearing
+      // them here would immediately select a previously blocked villager again.
+      // A newly idle worker can still be selected, and expired failures are retried.
       unit.buildApproachRetryAt = this.simTime + BUILD_APPROACH_BLOCKED_RETRY_SECONDS;
       unit.velocity = { x: 0, z: 0 };
       unit.currentActionText = '🧭 工地暫時無法抵達，稍後重新嘗試';

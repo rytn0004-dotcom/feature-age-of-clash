@@ -5,6 +5,23 @@ export interface ConstructionApproachPoint {
 
 export const CONSTRUCTION_APPROACH_DIRECTION_COUNT = 8;
 
+/** A failed route is temporarily excluded, then retried if the battlefield changes. */
+export const CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS = 30;
+
+/** Remove expired worker failures and return the workers still cooling down. */
+export function getActiveConstructionHandoffFailureIds(
+  retryAtByWorkerId: Map<string, number>,
+  now: number,
+): Set<string> {
+  if (!Number.isFinite(now)) return new Set(retryAtByWorkerId.keys());
+
+  for (const [workerId, retryAt] of retryAtByWorkerId) {
+    if (!Number.isFinite(retryAt) || retryAt <= now) retryAtByWorkerId.delete(workerId);
+  }
+
+  return new Set(retryAtByWorkerId.keys());
+}
+
 /**
  * Returns a stable point on a construction work ring.
  * The caller can advance candidateIndex after a blocked route without letting the

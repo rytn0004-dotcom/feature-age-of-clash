@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CONSTRUCTION_APPROACH_DIRECTION_COUNT,
+  CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
+  getActiveConstructionHandoffFailureIds,
   assignWorkersToConstructionTargets,
   accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
@@ -11,6 +13,27 @@ import {
   selectConstructionApproachCandidateIndex,
   selectConstructionHandoffWorker,
 } from './constructionApproach';
+
+test('construction handoff failures cool down, expire, and allow a fresh route attempt', () => {
+  const retryAtByWorkerId = new Map<string, number>([
+    ['previously-blocked', 30],
+    ['cooldown-finished', 9],
+    ['invalid-deadline', Number.NaN],
+  ]);
+
+  assert.equal(CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS, 30);
+  assert.deepEqual([...getActiveConstructionHandoffFailureIds(retryAtByWorkerId, 10)], [
+    'previously-blocked',
+  ]);
+  assert.equal(retryAtByWorkerId.has('cooldown-finished'), false);
+  assert.equal(retryAtByWorkerId.has('invalid-deadline'), false);
+  assert.deepEqual([...getActiveConstructionHandoffFailureIds(retryAtByWorkerId, 30)], []);
+
+  retryAtByWorkerId.set('safe-on-invalid-clock', 60);
+  assert.deepEqual([...getActiveConstructionHandoffFailureIds(retryAtByWorkerId, Number.NaN)], [
+    'safe-on-invalid-clock',
+  ]);
+});
 
 test('construction approach candidates stay on one stable work ring', () => {
   const center = { x: 12, z: -7 };
