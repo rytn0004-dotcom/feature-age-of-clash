@@ -5,7 +5,7 @@ import { sound } from '../game/audio';
 
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { isPlacementLocationValid } from '../game/collision';
-import { getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
+import { canUnitHuntDangerousWildlife, getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
 
 interface GameCanvasProps {
   onEngineReady: (engine: RtsEngine) => void;
@@ -386,14 +386,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         if (unit.unitDef.category === 'worker') {
           hasWorkersSelected = true;
         } else if (
-          !unit.unitDef.isNaval &&
+          canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
           unit.state !== 'assembling' &&
-          !unit.fieldAssemblyProjectId &&
-          (
-            unit.unitDef.category === 'melee' ||
-            unit.unitDef.category === 'ranged' ||
-            unit.unitDef.category === 'cavalry'
-          )
+          !unit.fieldAssemblyProjectId
         ) {
           hasGroundCombatHuntersSelected = true;
         }
@@ -682,14 +677,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         hasNavalBoatSelected = true;
       }
       if (
-        !unit.unitDef.isNaval &&
-        unit.state !== 'assembling' &&
-        !unit.fieldAssemblyProjectId &&
-        (
-          unit.unitDef.category === 'melee' ||
-          unit.unitDef.category === 'ranged' ||
-          unit.unitDef.category === 'cavalry'
-        )
+        canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
+          unit.state !== 'assembling' &&
+          !unit.fieldAssemblyProjectId
       ) {
         hasGroundCombatHuntersSelected = true;
       }
