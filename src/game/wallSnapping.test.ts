@@ -12,6 +12,8 @@ import {
 import type { WallSnapBuilding } from './wallSnapping';
 import { WALL_MODEL_HALF_WIDTH } from './wallPlacement';
 import { layoutWallChain } from './rules';
+import { isWallChainPreviewObstructed } from './collision';
+import type { BuildingEntity } from '../types/game';
 
 function makeWall(
   id: string,
@@ -83,6 +85,45 @@ test('wall snapping targets both side-face midpoints and builds a clean 90-degre
   assert.ok(
     placements[0].z - 1.5 <= positive.point.z,
     'the first perpendicular module must touch/overlap the existing wall side rather than leave a gap',
+  );
+
+  const collisionWall = {
+    id: wall.id,
+    x: wall.x,
+    z: wall.z,
+    rotationY: wall.rotationY,
+    hp: wall.hp,
+    buildingDef: { isWall: true, size: 1.6 },
+  } as unknown as BuildingEntity;
+  assert.equal(
+    isWallChainPreviewObstructed(
+      placements,
+      1.6,
+      [collisionWall],
+      [],
+      [],
+      [],
+      [],
+      [positive.point, bendEnd],
+      [],
+    ),
+    true,
+    'the exact checker sees the physical junction overlap when the side anchor is not connected',
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(
+      placements,
+      1.6,
+      [collisionWall],
+      [],
+      [],
+      [],
+      [],
+      [positive.point, bendEnd],
+      [wall.id],
+    ),
+    false,
+    'the exact checker permits the 90-degree branch when its snapped parent wall is explicitly connected',
   );
 
   const index = new WallEndpointIndex<WallSnapBuilding>();
