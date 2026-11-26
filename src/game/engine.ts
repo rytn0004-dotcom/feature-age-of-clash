@@ -140,6 +140,7 @@ import {
   canUnitGatherNode,
   computeAiWorkerAllocation,
   getAiMilitaryProductionCap,
+  isAiMilitaryArmyUnit,
   shouldAiQueueMilitaryUnit,
   shouldAiQueueWorker,
   selectAiWorkerResourceType,
@@ -13144,7 +13145,9 @@ export class RtsEngine {
         (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'
       );
       const aiActiveWorkers = aiWorkers.filter((u) => !u.garrisonedInBuildingId);
-      const aiArmy = aiUnits.filter((u) => u.unitDef.category !== 'worker' && !u.garrisonedInBuildingId);
+      const aiArmy = aiUnits.filter(
+        (unit) => isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category) && !unit.garrisonedInBuildingId
+      );
       const aiBuildings = (buildingsByFaction.get(aiId) || []).filter((building) => building.hp > 0);
       const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
       const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
@@ -13615,7 +13618,11 @@ export class RtsEngine {
       for (const building of aiBuildings) {
         for (const queuedUnitId of building.queue) {
           const queuedDef = this.findUnitDef(queuedUnitId, aiId);
-          if (queuedDef && queuedDef.category in queuedRoleCounts) {
+          if (
+            queuedUnitId !== 'transport_boat' &&
+            queuedDef &&
+            queuedDef.category in queuedRoleCounts
+          ) {
             queuedRoleCounts[queuedDef.category as keyof typeof queuedRoleCounts]++;
           }
           // Mangudai are cavalry for combat counters and mounted archers for composition planning.
@@ -13633,7 +13640,7 @@ export class RtsEngine {
       };
       const maximumArmyCount = getAiMilitaryProductionCap(activeRules);
       let committedMilitaryCount =
-        aiUnits.filter((unit) => unit.unitDef.category !== 'worker').length +
+        aiUnits.filter((unit) => isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category)).length +
         queuedRoleCounts.melee +
         queuedRoleCounts.ranged +
         queuedRoleCounts.cavalry +

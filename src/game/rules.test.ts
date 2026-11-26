@@ -21,6 +21,7 @@ import {
   getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
   getAiMilitaryProductionCap,
+  isAiMilitaryArmyUnit,
   shouldAiQueueMilitaryUnit,
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
@@ -144,6 +145,14 @@ test('AI age-up: reserves are not protected before the workforce/time gates or w
     false,
     'the AI must build its minimum defense force before pausing optional production'
   );
+});
+
+test('AI army strength: transport ships and fishing boats are not counted as combat units', () => {
+  assert.equal(isAiMilitaryArmyUnit('transport_boat', 'special'), false);
+  assert.equal(isAiMilitaryArmyUnit('fishing_boat', 'worker'), false);
+  assert.equal(isAiMilitaryArmyUnit('war_galley', 'ranged'), true);
+  assert.equal(isAiMilitaryArmyUnit('mongol_lancer', 'cavalry'), true);
+  assert.equal(isAiMilitaryArmyUnit('fantasy_treant', 'special'), true);
 });
 
 test('AI military production: active rule caps include already queued units', () => {

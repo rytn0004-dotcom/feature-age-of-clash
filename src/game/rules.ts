@@ -1124,6 +1124,15 @@ export function shouldAiDeferOptionalMilitaryProduction(input: {
 }
 
 /**
+ * Returns whether a unit should contribute to combat army strength.
+ * Transport ships are special production units but do not fight; fishing boats
+ * are workers and are excluded by category.
+ */
+export function isAiMilitaryArmyUnit(unitDefId: string, category: string): boolean {
+  return category !== 'worker' && unitDefId !== 'transport_boat';
+}
+
+/**
  * Finds the broadest configured army ceiling among enabled military training rules.
  * The largest threshold is intentional: specialized siege rules may allow a larger
  * force than the regular melee/ranged role targets.
