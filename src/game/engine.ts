@@ -10621,18 +10621,26 @@ export class RtsEngine {
           const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
           if (parts) {
             const moving = step.actualSpeed > 0.28;
-            const phase = this.simTime * (moving ? 12.5 : 1.7);
-            const stride = moving ? Math.sin(phase) * 0.58 : 0;
+            // Aurochs carry more mass: slower, deeper strides and a pronounced
+            // head-down charge make their movement distinct from a wild boar.
+            const gaitRate = isAurochs ? 8.7 : 12.5;
+            const strideAmplitude = isAurochs ? 0.46 : 0.58;
+            const phase = this.simTime * (moving ? gaitRate : 1.7);
+            const stride = moving ? Math.sin(phase) * strideAmplitude : 0;
             parts.flLeg.rotation.z = stride;
             parts.brLeg.rotation.z = stride * 0.92;
             parts.frLeg.rotation.z = -stride;
             parts.blLeg.rotation.z = -stride * 0.92;
-            const bob = moving ? Math.abs(Math.sin(phase * 2)) * 0.025 : Math.sin(phase) * 0.012;
+            const bob = moving
+              ? Math.abs(Math.sin(phase * 2)) * (isAurochs ? 0.016 : 0.025)
+              : Math.sin(phase) * (isAurochs ? 0.008 : 0.012);
             const idleBodyHeight = isAurochs ? 0.82 : 0.72;
             parts.bodyPivot.position.y += (idleBodyHeight + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
-            const headTilt = step.isCharging ? -0.13 : step.isReturning ? 0.075 : Math.sin(this.simTime * 1.4) * 0.025;
+            const headTilt = step.isCharging
+              ? isAurochs ? -0.25 : -0.13
+              : step.isReturning ? 0.075 : Math.sin(this.simTime * 1.4) * 0.025;
             parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
-            parts.tailPivot.rotation.y = Math.sin(this.simTime * 4.4) * 0.26;
+            parts.tailPivot.rotation.y = Math.sin(this.simTime * (isAurochs ? 2.8 : 4.4)) * (isAurochs ? 0.16 : 0.26);
           }
         }
 
