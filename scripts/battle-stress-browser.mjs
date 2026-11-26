@@ -608,10 +608,16 @@ async function main() {
           (() => {
             const e = window.__rtsEngine;
             e.__wallPreviewTestTimes = [];
+            e.__wallPreviewValidationCount = 0;
             e.__wallPreviewOriginal = e.updateWallPlacementPreview.bind(e);
+            e.__wallValidationOriginal = e.validateWallPlacementSection.bind(e);
             e.updateWallPlacementPreview = function(x, z) {
               this.__wallPreviewTestTimes.push({ time: performance.now(), x, z });
               return this.__wallPreviewOriginal(x, z);
+            };
+            e.validateWallPlacementSection = function(...args) {
+              this.__wallPreviewValidationCount += 1;
+              return this.__wallValidationOriginal(...args);
             };
             return true;
           })()
@@ -640,12 +646,14 @@ async function main() {
           return {
             calls: calls.length,
             minimumIntervalMs,
+            validationCalls: e?.__wallPreviewValidationCount ?? -1,
             latestPointerMatched: !!last && !!expected && Math.hypot(last.x - expected.x, last.z - expected.z) < 0.03,
             pointerMoves: ${moveCount},
           };
         })()`);
         assert.ok(burst.calls > 0, "Real pointer movement did not update the wall preview.");
         assert.ok(burst.calls < moveCount, "Wall preview did not coalesce the pointer-move burst.");
+        assert.equal(burst.validationCalls, 0, "Pointer movement must not run full wall collision validation.");
         if (burst.minimumIntervalMs !== null) {
           assert.ok(burst.minimumIntervalMs >= 75, "Wall preview exceeded its 10 Hz cadence guard.");
         }
@@ -695,17 +703,37 @@ async function main() {
             const e = window.__rtsEngine;
             return {
               calls: e.__wallPreviewTestTimes?.length ?? -1,
+              validationCalls: e.__wallPreviewValidationCount ?? -1,
               cursorIsEmpty: e.wallPlacementCursor === null,
             };
           })()
         `);
         assert.equal(afterRestart.calls, race.callsBeforeRestart, "A delayed preview from the old wall session leaked into the new session.");
+        assert.equal(afterRestart.validationCalls, 0, "A stale hover callback must not run collision validation.");
         assert.equal(afterRestart.cursorIsEmpty, true, "The new wall session inherited an old cursor.");
+
+        // Start again and complete a real click-driven segment. Hover remains
+        // validation-free; one explicit confirmation invokes the exact checker once.
+        await send("Input.dispatchMouseEvent", { type: "mousePressed", x: startPoint.x, y: startPoint.y, button: "left", buttons: 1, clickCount: 1 }, sessionId);
+        await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: startPoint.x, y: startPoint.y, button: "left", buttons: 0, clickCount: 1 }, sessionId);
+        await send("Input.dispatchMouseEvent", { type: "mousePressed", x: lastX, y: lastY, button: "left", buttons: 1, clickCount: 1 }, sessionId);
+        await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: lastX, y: lastY, button: "left", buttons: 0, clickCount: 1 }, sessionId);
+        const confirmation = await evaluate(`(() => {
+          const e = window.__rtsEngine;
+          return {
+            validationCalls: e.__wallPreviewValidationCount ?? -1,
+            placementEnded: e.placementBuildingType !== 'wall',
+          };
+        })()`);
+        assert.equal(confirmation.validationCalls, 1, "One final left-click must run the full wall collision validator exactly once.");
+        assert.equal(confirmation.placementEnded, true, "The final confirmation should close the wall placement session.");
         wallInteraction = {
           pointerMoves: moveCount,
           dispatchMs,
           coalescedPreviewCalls: burst.calls,
           minimumPreviewIntervalMs: burst.minimumIntervalMs,
+          hoverValidationCalls: burst.validationCalls,
+          confirmValidationCalls: confirmation.validationCalls,
           latestPointerMatched: burst.latestPointerMatched,
           staleSessionIgnored: true,
         };
@@ -728,7 +756,10 @@ async function main() {
               e.playerResources.stone = saved.stone;
             }
             if (e.__wallPreviewOriginal) e.updateWallPlacementPreview = e.__wallPreviewOriginal;
+            if (e.__wallValidationOriginal) e.validateWallPlacementSection = e.__wallValidationOriginal;
             delete e.__wallPreviewOriginal;
+            delete e.__wallValidationOriginal;
+            delete e.__wallPreviewValidationCount;
             delete e.__wallPreviewTestTimes;
             return true;
           })()
@@ -795,7 +826,7 @@ async function main() {
           "    const column = index % wallCount;",
           "    const row = Math.floor(index / wallCount);",
           "    const worker = e.addUnit(workerDef, factionId, startX + column * spacing, centerZ + (row % 2 === 0 ? 1 : -1) * (14 + Math.floor(row / 2) * 2.2), 'construction-stress-worker-' + index);",
-          "    worker.hp = 0;",
+          "    worker.hp = 1;",
           "    const mesh = e.unitMeshes.get(worker.id);",
           "    if (mesh) mesh.visible = false;",
           "    workerIds.push(worker.id);",
@@ -872,7 +903,7 @@ async function main() {
             "    const active = index < workerCount;",
             "    unit.x = startX + column * spacing;",
             "    unit.z = centerZ + (row % 2 === 0 ? 1 : -1) * (14 + Math.floor(row / 2) * 2.2);",
-            "    unit.hp = active ? unit.maxHp : 0;",
+            "    unit.hp = active ? unit.maxHp : 1;",
             "    unit.faction = factionId;",
             "    unit.state = active ? 'building' : 'idle';",
             "    unit.targetBuildingId = active ? wallIds[column] : undefined;",
