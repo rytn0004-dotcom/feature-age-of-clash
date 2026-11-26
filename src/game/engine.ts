@@ -6382,12 +6382,15 @@ export class RtsEngine {
         geometry.setAttribute('position', position);
       }
       const values = position.array as Float32Array;
-      previewPoints.forEach((point, index) => {
+      // Pointer-driven previews run every display frame. Use an indexed loop
+      // here instead of allocating a forEach callback on every mouse update.
+      for (let index = 0; index < previewPoints.length; index++) {
+        const point = previewPoints[index];
         const offset = index * 3;
         values[offset] = point.x;
         values[offset + 1] = 0.13;
         values[offset + 2] = point.z;
-      });
+      }
       position.needsUpdate = true;
       geometry.setDrawRange(0, previewPoints.length);
       (line.material as THREE.LineBasicMaterial).color.setHex(
