@@ -395,7 +395,6 @@ import {
   assignWorkersToConstructionTargets,
   ConstructionApproachSpatialIndex,
   CONSTRUCTION_APPROACH_PREFERRED_SPACING,
-  getConstructionApproachPoint,
   writeConstructionApproachPoint,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
@@ -560,6 +559,8 @@ export class RtsEngine {
   private constructionApproachSpatialCandidatesScratch: UnitEntity[] = [];
   private constructionApproachIndexPointScratch = { x: 0, z: 0 };
   private constructionApproachIndexCenterScratch = { x: 0, z: 0 };
+  /** Reused output for the active builder's current approach waypoint. */
+  private constructionApproachDestinationScratch = { x: 0, z: 0 };
   /** Local spatial-query output and exclusion IDs reused by blocked construction handoffs. */
   private constructionHandoffQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -10723,11 +10724,16 @@ export class RtsEngine {
       }
       unit.buildApproachRetryAt = undefined;
 
-      const approach = getConstructionApproachPoint(
-        { x: bldg.x, z: bldg.z },
+      const approachCenter = this.constructionApproachIndexCenterScratch;
+      approachCenter.x = bldg.x;
+      approachCenter.z = bldg.z;
+      const approach = writeConstructionApproachPoint(
+        approachCenter,
         Math.min(workRingRad, buildReach - 0.25),
         unit.buildApproachAngle ?? 0,
         unit.buildApproachIndex ?? 0,
+        BUILD_APPROACH_CANDIDATE_COUNT,
+        this.constructionApproachDestinationScratch,
       );
       this.moveUnitAlongPath(unit, approach.x, approach.z, dt);
       if (!unit.waypoints?.length) {
