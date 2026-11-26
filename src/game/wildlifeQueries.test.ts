@@ -63,14 +63,14 @@ test('wildlife interactions keep idle units as threats but only active non-worke
   const idle = makeUnit('idle', 1, 0);
   const worker = makeUnit('worker', 2, 0, { category: 'worker', state: 'attacking' });
   const naval = makeUnit('naval', 2.5, 0, { isNaval: true, state: 'attacking' });
-  const active = makeUnit('active', 3, 0, { state: 'attacking', range: 2 });
-  const attackMoving = makeUnit('attack-moving', 4, 0, { attackMoveGoal: { x: 8, z: 0 } });
+  const active = makeUnit('active', 3, 0, { state: 'attacking', range: 4 });
+  const attackMoving = makeUnit('attack-moving', 4, 0, { range: 5, attackMoveGoal: { x: 8, z: 0 } });
   const dead = makeUnit('dead', 0.5, 0, { hp: 0, state: 'attacking' });
   const scratch = makeScratch();
 
   collectWildlifeUnitInteractions([idle, worker, naval, active, attackMoving, dead], 0, 0, 18, scratch);
 
-  assert.equal(scratch.nearestThreat?.x, 0.5);
+  assert.equal(scratch.nearestThreat?.x, 1);
   assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['active', 'attack-moving']);
 });
 
