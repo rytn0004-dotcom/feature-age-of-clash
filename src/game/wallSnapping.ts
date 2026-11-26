@@ -210,6 +210,127 @@ export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
   }
 }
 
+/**
+ * Reusable spatial index for repairable wall lookup. All constructed walls are
+ * indexed once; HP, breach state, and faction are checked live so damage and
+ * repairs never require rebuilding the spatial buckets.
+ */
+export class WallRepairIndex<T extends WallSnapBuilding = WallSnapBuilding> {
+  private buckets = new Map<string, Array<{ wall: T; order: number }>>();
+  private rebuilds = 0;
+  private indexedWalls = 0;
+
+  public rebuild(walls: readonly T[]): void {
+    this.buckets.clear();
+    this.indexedWalls = 0;
+
+    for (let order = 0; order < walls.length; order++) {
+      const wall = walls[order];
+      if (
+        !wall.buildingDef.isWall ||
+        !wall.isConstructed ||
+        !Number.isFinite(wall.x) ||
+        !Number.isFinite(wall.z) ||
+        !Number.isFinite(wall.hp) ||
+        wall.hp <= 0
+      ) {
+        continue;
+      }
+
+      const cellX = Math.floor(wall.x / WALL_REPAIR_SNAP_RADIUS);
+      const cellZ = Math.floor(wall.z / WALL_REPAIR_SNAP_RADIUS);
+      const key = `${cellX},${cellZ}`;
+      const bucket = this.buckets.get(key);
+      const entry = { wall, order };
+      if (bucket) bucket.push(entry);
+      else this.buckets.set(key, [entry]);
+      this.indexedWalls++;
+    }
+
+    this.rebuilds++;
+  }
+
+  public clear(): void {
+    this.buckets.clear();
+    this.indexedWalls = 0;
+  }
+
+  public findNearest(
+    point: { x: number; z: number },
+    snapRadius = WALL_REPAIR_SNAP_RADIUS,
+    factionId?: string,
+  ): T | null {
+    if (
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.z) ||
+      !Number.isFinite(snapRadius) ||
+      snapRadius < 0
+    ) {
+      return null;
+    }
+
+    const radiusSquared = snapRadius * snapRadius;
+    const minCellX = Math.floor((point.x - snapRadius) / WALL_REPAIR_SNAP_RADIUS);
+    const maxCellX = Math.floor((point.x + snapRadius) / WALL_REPAIR_SNAP_RADIUS);
+    const minCellZ = Math.floor((point.z - snapRadius) / WALL_REPAIR_SNAP_RADIUS);
+    const maxCellZ = Math.floor((point.z + snapRadius) / WALL_REPAIR_SNAP_RADIUS);
+    let nearest: T | null = null;
+    let nearestDistanceSquared = radiusSquared;
+    let nearestOrder = -1;
+
+    // Only buckets intersecting the repair radius are visited, irrespective of
+    // how many unrelated buildings exist elsewhere on the map.
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = this.buckets.get(`${cellX},${cellZ}`);
+        if (!bucket) continue;
+
+        for (const { wall, order } of bucket) {
+          if (
+            (factionId !== undefined && wall.faction !== factionId) ||
+            !wall.buildingDef.isWall ||
+            !wall.isConstructed ||
+            !Number.isFinite(wall.hp) ||
+            wall.hp <= 0 ||
+            !Number.isFinite(wall.maxHp) ||
+            (!wall.wallBreached && wall.hp >= wall.maxHp)
+          ) {
+            continue;
+          }
+
+          const dx = point.x - wall.x;
+          const dz = point.z - wall.z;
+          const distanceSquared = dx * dx + dz * dz;
+          // Preserve the existing scan's last-in-roster tie behaviour.
+          if (
+            distanceSquared <= nearestDistanceSquared &&
+            (
+              nearest === null ||
+              distanceSquared < nearestDistanceSquared ||
+              (distanceSquared === nearestDistanceSquared && order > nearestOrder)
+            )
+          ) {
+            nearest = wall;
+            nearestDistanceSquared = distanceSquared;
+            nearestOrder = order;
+          }
+        }
+      }
+    }
+
+    return nearest;
+  }
+
+  /** Exposed for deterministic regression tests and lightweight diagnostics. */
+  public get rebuildCount(): number {
+    return this.rebuilds;
+  }
+
+  public get indexedWallCount(): number {
+    return this.indexedWalls;
+  }
+}
+
 /** One-shot convenience helper for callers that do not need a persistent index. */
 export function findNearestWallEndpoint<T extends WallSnapBuilding>(
   point: { x: number; z: number },

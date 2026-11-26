@@ -379,8 +379,8 @@ import {
   WALL_START_SEARCH_MAX_OFFSET,
 } from './wallPlacement';
 import {
-  findNearestRepairableWall,
   WallEndpointIndex,
+  WallRepairIndex,
   isWallChainPointTooClose,
   planWallChainExtension,
   type WallEndpointSnap,
@@ -777,6 +777,7 @@ export class RtsEngine {
   private wallPlacementGhostTemplate: THREE.Group | null = null;
   private wallPlacementSnapTargetId: string | null = null;
   private wallEndpointIndex = new WallEndpointIndex<BuildingEntity>();
+  private wallRepairIndex = new WallRepairIndex<BuildingEntity>();
   private wallEndpointIndexDirty = true;
   private wallEndpointIndexBuildingSource: BuildingEntity[] | null = null;
   private wallEndpointIndexBuildingCount = -1;
@@ -1605,6 +1606,7 @@ export class RtsEngine {
     this.constructionApproachOccupiedPointPool.length = 0;
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
+    this.wallRepairIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
     this.wallEndpointIndexBuildingCount = -1;
@@ -5602,39 +5604,47 @@ export class RtsEngine {
     materials.forEach((material) => material.dispose());
   }
 
-  private findWallPlacementSnap(
-    point: WallChainPoint,
-  ): WallEndpointSnap<BuildingEntity> | null {
+  /** Refresh both reusable wall spatial indexes only when wall topology changes. */
+  private refreshWallSpatialIndexesIfNeeded(): void {
     const shouldRefresh =
       this.wallEndpointIndexDirty ||
       this.wallEndpointIndexBuildingSource !== this.buildings ||
       this.wallEndpointIndexBuildingCount !== this.buildings.length ||
       this.wallEndpointIndexFaction !== this.humanPlayerId;
 
-    if (shouldRefresh) {
-      const walls = this.buildings.filter(
-        (building) =>
-          building.faction === this.humanPlayerId &&
-          building.buildingDef.isWall &&
-          building.hp > 0 &&
-          building.isConstructed
-      );
-      this.wallEndpointIndex.rebuild(walls);
-      this.wallEndpointIndexDirty = false;
-      this.wallEndpointIndexBuildingSource = this.buildings;
-      this.wallEndpointIndexBuildingCount = this.buildings.length;
-      this.wallEndpointIndexFaction = this.humanPlayerId;
-    }
+    if (!shouldRefresh) return;
 
+    const ownedConstructedWalls = this.buildings.filter(
+      (building) =>
+        building.faction === this.humanPlayerId &&
+        building.buildingDef.isWall &&
+        building.hp > 0 &&
+        building.isConstructed
+    );
+    this.wallEndpointIndex.rebuild(ownedConstructedWalls);
+    // Repair lookup indexes all constructed walls once; faction and damage state
+    // are checked live per query, so combat/repair updates do not rebuild buckets.
+    this.wallRepairIndex.rebuild(this.buildings);
+
+    this.wallEndpointIndexDirty = false;
+    this.wallEndpointIndexBuildingSource = this.buildings;
+    this.wallEndpointIndexBuildingCount = this.buildings.length;
+    this.wallEndpointIndexFaction = this.humanPlayerId;
+  }
+
+  private findWallPlacementSnap(
+    point: WallChainPoint,
+  ): WallEndpointSnap<BuildingEntity> | null {
+    this.refreshWallSpatialIndexesIfNeeded();
     return this.wallEndpointIndex.findNearest(point);
   }
 
   public getNearestRepairableWallAt(x: number, z: number): BuildingEntity | null {
-    // Pass the existing roster directly; the query filters faction/wall state
-    // without allocating a fresh filtered array on every pointer movement.
-    return findNearestRepairableWall(
+    // The reusable grid limits each pointer query to nearby wall buckets instead
+    // of scanning every building in the match.
+    this.refreshWallSpatialIndexesIfNeeded();
+    return this.wallRepairIndex.findNearest(
       { x, z },
-      this.buildings,
       undefined,
       this.humanPlayerId,
     ) as BuildingEntity | null;

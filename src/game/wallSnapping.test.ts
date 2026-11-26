@@ -6,6 +6,7 @@ import {
   isWallChainPointTooClose,
   planWallChainExtension,
   WallEndpointIndex,
+  WallRepairIndex,
   WALL_ENDPOINT_SNAP_RADIUS,
 } from './wallSnapping';
 import type { WallSnapBuilding } from './wallSnapping';
@@ -335,4 +336,56 @@ test('wall extension: Shift-queued unfinished segments remain one extendable cha
   assert.equal(plan.totalSize, 3);
   assert.deepEqual(plan.newIndices, [1, 2]);
   assert.deepEqual(plan.existingAssignments.map((entry) => entry.index), [0]);
+});
+
+
+test('repair spatial index queries nearby buckets and observes live damage state without rebuilding', () => {
+  const healthy = makeWall('healthy', 0.15, { faction: 'player' });
+  const damaged = makeWall('damaged', 0.7, { faction: 'player', hp: 120 });
+  const enemyDamaged = makeWall('enemy-damaged', 0.05, { faction: 'enemy', hp: 60 });
+  const distant = makeWall('distant', 100, { faction: 'player', hp: 80 });
+  const unfinished = makeWall('unfinished', 0.1, {
+    faction: 'player',
+    isConstructed: false,
+    hp: 40,
+  });
+  const nonWall = makeWall('non-wall', 0.1, {
+    faction: 'player',
+    buildingDef: { isWall: false },
+    hp: 40,
+  });
+
+  const index = new WallRepairIndex<WallSnapBuilding>();
+  index.rebuild([healthy, damaged, enemyDamaged, distant, unfinished, nonWall]);
+
+  assert.equal(index.indexedWallCount, 4, 'only live constructed walls enter the spatial buckets');
+  assert.equal(index.findNearest({ x: 0, z: 0 }, undefined, 'player')?.id, 'damaged');
+  assert.equal(index.findNearest({ x: 0, z: 0 }, undefined, 'enemy')?.id, 'enemy-damaged');
+
+  damaged.hp = damaged.maxHp;
+  assert.equal(
+    index.findNearest({ x: 0, z: 0 }, undefined, 'player'),
+    null,
+    'a repaired wall is filtered using its current HP without rebuilding',
+  );
+
+  healthy.wallBreached = true;
+  assert.equal(
+    index.findNearest({ x: 0, z: 0 }, undefined, 'player')?.id,
+    'healthy',
+    'a newly breached wall becomes eligible through its live state',
+  );
+  assert.equal(index.rebuildCount, 1, 'pointer queries reuse the same index');
+});
+
+test('repair spatial index preserves roster order for equal-distance targets and rejects invalid queries', () => {
+  const first = makeWall('first', -1, { faction: 'player', hp: 100 });
+  const second = makeWall('second', 1, { faction: 'player', hp: 100 });
+  const index = new WallRepairIndex<WallSnapBuilding>();
+  index.rebuild([first, second]);
+
+  assert.equal(index.findNearest({ x: 0, z: 0 }, undefined, 'player')?.id, 'second');
+  assert.equal(index.findNearest({ x: Number.NaN, z: 0 }, undefined, 'player'), null);
+  assert.equal(index.findNearest({ x: 0, z: 0 }, Number.NaN, 'player'), null);
+  assert.equal(index.findNearest({ x: 0, z: 0 }, -1, 'player'), null);
 });
