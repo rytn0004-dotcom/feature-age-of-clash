@@ -257,10 +257,11 @@ test('wall endpoint spatial index finds candidates across cell boundaries withou
   assert.equal(close?.side, 'end');
   assert.ok((close?.distance ?? Infinity) < 0.05);
 
-  // The query sits in the neighboring spatial cell, but remains within the
-  // snap radius of the same endpoint.
-  const acrossBoundary = index.findNearest({ x: 319.75, z: 1.5 });
+  // The query sits in the neighboring spatial cell to the right of the
+  // endpoint, but remains within its snap radius.
+  const acrossBoundary = index.findNearest({ x: 322.95, z: 1.5 });
   assert.equal(acrossBoundary?.wall.id, 'boundary-wall');
+  assert.equal(acrossBoundary?.side, 'end');
   assert.ok(Math.abs((acrossBoundary?.distance ?? 0) - 1.6) < 1e-9);
   assert.equal(index.rebuildCount, 1);
   assert.equal(index.endpointCount, (160 + 1) * 2);
