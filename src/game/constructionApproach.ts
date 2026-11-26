@@ -8,6 +8,18 @@ export const CONSTRUCTION_APPROACH_DIRECTION_COUNT = 8;
 /** A failed route is temporarily excluded, then retried if the battlefield changes. */
 export const CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS = 30;
 
+/** Record a failure once per cooldown; repeated polls must not extend the deadline. */
+export function recordConstructionHandoffFailure(
+  retryAtByWorkerId: Map<string, number>,
+  workerId: string,
+  now: number,
+): void {
+  if (!workerId || !Number.isFinite(now)) return;
+  const retryAt = retryAtByWorkerId.get(workerId);
+  if (Number.isFinite(retryAt) && retryAt! > now) return;
+  retryAtByWorkerId.set(workerId, now + CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS);
+}
+
 /** Remove expired worker failures and return the workers still cooling down. */
 export function getActiveConstructionHandoffFailureIds(
   retryAtByWorkerId: Map<string, number>,

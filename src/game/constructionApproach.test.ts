@@ -4,6 +4,7 @@ import {
   CONSTRUCTION_APPROACH_DIRECTION_COUNT,
   CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
   getActiveConstructionHandoffFailureIds,
+  recordConstructionHandoffFailure,
   assignWorkersToConstructionTargets,
   accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
@@ -33,6 +34,19 @@ test('construction handoff failures cool down, expire, and allow a fresh route a
   assert.deepEqual([...getActiveConstructionHandoffFailureIds(retryAtByWorkerId, Number.NaN)], [
     'safe-on-invalid-clock',
   ]);
+});
+
+test('repeated blocked-route polls do not extend a worker cooldown indefinitely', () => {
+  const retryAtByWorkerId = new Map<string, number>();
+  recordConstructionHandoffFailure(retryAtByWorkerId, 'worker-a', 5);
+  assert.equal(retryAtByWorkerId.get('worker-a'), 35);
+
+  recordConstructionHandoffFailure(retryAtByWorkerId, 'worker-a', 20);
+  assert.equal(retryAtByWorkerId.get('worker-a'), 35, 'an active cooldown keeps its original deadline');
+  assert.deepEqual([...getActiveConstructionHandoffFailureIds(retryAtByWorkerId, 34.99)], ['worker-a']);
+
+  recordConstructionHandoffFailure(retryAtByWorkerId, 'worker-a', 35);
+  assert.equal(retryAtByWorkerId.get('worker-a'), 65, 'a fresh failure after expiry starts a new cooldown');
 });
 
 test('construction approach candidates stay on one stable work ring', () => {

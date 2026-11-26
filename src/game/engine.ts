@@ -346,8 +346,8 @@ import {
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
   selectConstructionHandoffWorker,
-  CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
   getActiveConstructionHandoffFailureIds,
+  recordConstructionHandoffFailure,
 } from './constructionApproach';
 
 type ParticleKind = 'hit' | 'spark' | 'wood' | 'gold' | 'stone' | 'leaf' | 'meat' | 'dust' | 'smoke' | 'ember';
@@ -9776,10 +9776,7 @@ export class RtsEngine {
       failedWorkerRetryAtById = new Map<string, number>();
       this.constructionApproachFailedWorkersByBuilding.set(building.id, failedWorkerRetryAtById);
     }
-    failedWorkerRetryAtById.set(
-      unit.id,
-      this.simTime + CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS,
-    );
+    recordConstructionHandoffFailure(failedWorkerRetryAtById, unit.id, this.simTime);
     const failedWorkerIds = getActiveConstructionHandoffFailureIds(
       failedWorkerRetryAtById,
       this.simTime,
