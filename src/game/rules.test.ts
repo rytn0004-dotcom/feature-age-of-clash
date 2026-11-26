@@ -2480,6 +2480,66 @@ test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter 
     }
   );
   assert.equal(aggDoctrine?.tech.id, 'med_doctrine_crusade');
+
+  // 6. The AI also values upgrades for the army it actually fields, not only
+  // enemy counters. This prevents spending an entire research slot on a role
+  // that is absent from its own frontline.
+  const heavyDraw = findTechDef('med_heavy_draw')!;
+  const crusaderCharge = findTechDef('med_crusader_charge')!;
+  const rosterContext = {
+    resources: { food: 800, wood: 800, gold: 800, stone: 500 },
+    reserveFood: 0,
+    reserveGold: 0,
+    age: 3,
+    workerCount: 8,
+    aiPersonality: 'standard' as const,
+    enemyComposition: { melee: 0, ranged: 0, cavalry: 0, siege: 0, fortificationCount: 0 },
+  };
+  const rangedRosterPick = evaluateAiTechChoice(
+    [
+      { buildingId: 'archery', tech: heavyDraw },
+      { buildingId: 'castle', tech: crusaderCharge },
+    ],
+    {
+      ...rosterContext,
+      ownComposition: { melee: 3, ranged: 9, cavalry: 1, siege: 0, worker: 8, special: 0 },
+    },
+  );
+  assert.equal(rangedRosterPick?.tech.id, 'med_heavy_draw');
+
+  const cavalryRosterPick = evaluateAiTechChoice(
+    [
+      { buildingId: 'archery', tech: heavyDraw },
+      { buildingId: 'castle', tech: crusaderCharge },
+    ],
+    {
+      ...rosterContext,
+      ownComposition: { melee: 2, ranged: 1, cavalry: 9, siege: 0, worker: 8, special: 0 },
+    },
+  );
+  assert.equal(cavalryRosterPick?.tech.id, 'med_crusader_charge');
+
+  // Five Mangudai count as five cavalry and five ranged for role planning,
+  // but must contribute only five unique bodies when a technology covers both.
+  const mountedArcherPick = evaluateAiTechChoice(
+    [
+      { buildingId: 'archery', tech: findTechDef('mon_composite_bow')! },
+      { buildingId: 'castle', tech: crusaderCharge },
+    ],
+    {
+      ...rosterContext,
+      ownComposition: {
+        melee: 0,
+        ranged: 5,
+        cavalry: 5,
+        siege: 0,
+        worker: 7,
+        special: 0,
+        mongolMountedArchers: 5,
+      },
+    },
+  );
+  assert.equal(mountedArcherPick?.tech.id, 'mon_composite_bow');
 });
 
 test('population-cap-8-house-and-scout: initial TC cap 8, House +5, queued reservation, hotkey E, and Age II stable scout parity', async () => {
