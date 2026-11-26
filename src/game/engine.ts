@@ -138,6 +138,8 @@ import {
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   computeAiWorkerAllocation,
+  getAiMilitaryProductionCap,
+  shouldAiQueueMilitaryUnit,
   shouldAiQueueWorker,
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
@@ -12890,7 +12892,13 @@ export class RtsEngine {
 
     const builder =
       aiWorkers.find((w) => w.hp > 0 && w.state === 'idle') ||
-      aiWorkers.find((w) => w.hp > 0 && w.state !== 'building' && w.state !== 'returning_resource');
+      aiWorkers.find(
+        (w) =>
+          w.hp > 0 &&
+          w.state !== 'building' &&
+          w.state !== 'returning_resource' &&
+          w.state !== 'garrisoning'
+      );
     if (!builder) return false;
 
     const spot = this.findSafeAiBuildSpot(anchorX, anchorZ, bType, preferredAngle, minDist, maxDist);
@@ -13493,7 +13501,7 @@ export class RtsEngine {
 
       // Role counters include units already in production queues. Without queued reservations,
       // the AI can request the same missing role every decision tick and overfill one unit type.
-      const queuedRoleCounts = { melee: 0, ranged: 0, cavalry: 0, siege: 0 };
+      const queuedRoleCounts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, special: 0 };
       let queuedMongolMountedArchers = 0;
       for (const building of aiBuildings) {
         for (const queuedUnitId of building.queue) {
@@ -13514,6 +13522,14 @@ export class RtsEngine {
         cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
         siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
       };
+      const maximumArmyCount = getAiMilitaryProductionCap(activeRules);
+      let committedMilitaryCount =
+        aiArmy.length +
+        queuedRoleCounts.melee +
+        queuedRoleCounts.ranged +
+        queuedRoleCounts.cavalry +
+        queuedRoleCounts.siege +
+        queuedRoleCounts.special;
       const ownTechComposition = {
         ...roleCounts,
         worker: aiWorkers.length,
@@ -13913,6 +13929,31 @@ export class RtsEngine {
         ageUpCost: nextAgeCost,
         underAttack,
       });
+      const hasAvailableLandmarkBuilder = aiActiveWorkers.some(
+        (worker) =>
+          worker.hp > 0 &&
+          worker.state !== 'building' &&
+          worker.state !== 'returning_resource' &&
+          worker.state !== 'garrisoning'
+      );
+      if (
+        aiTC &&
+        hasAnyBuildingInProgress &&
+        startNextAgeLandmark &&
+        nextAgeLandmark &&
+        hasAvailableLandmarkBuilder
+      ) {
+        // A strategic age-up may proceed beside an optional structure. The existing
+        // project keeps its builders; only a separate free worker is redirected.
+        this.tryAiConstructBuilding(
+          aiId,
+          nextAgeLandmark,
+          aiActiveWorkers,
+          anchorX,
+          anchorZ,
+          toCenterAngle + 0.5
+        );
+      }
       if (aiTC && aiActiveWorkers.length > 0 && !hasAnyBuildingInProgress) {
         const buildCmd = plan.buildAction;
         if (needsHouse && aiRes.wood >= DEFAULT_BUILDINGS.house.cost.wood) {
@@ -14250,11 +14291,24 @@ export class RtsEngine {
             ) {
               continue;
             }
-          } else if (deferOptionalMilitaryProduction) {
-            continue;
+          } else {
+            const isSupportVessel = targetId === 'transport_boat' || targetId === 'fishing_boat';
+            if (
+              deferOptionalMilitaryProduction ||
+              (!isSupportVessel &&
+                !shouldAiQueueMilitaryUnit(committedMilitaryCount, 0, maximumArmyCount))
+            ) {
+              continue;
+            }
           }
           const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
-          if (isVillagerTrain && queued) queuedWorkerCount++;
+          if (queued) {
+            if (isVillagerTrain) {
+              queuedWorkerCount++;
+            } else if (targetId !== 'transport_boat' && targetId !== 'fishing_boat') {
+              committedMilitaryCount++;
+            }
+          }
         }
       }
 

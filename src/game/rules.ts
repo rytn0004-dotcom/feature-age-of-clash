@@ -1124,6 +1124,50 @@ export function shouldAiDeferOptionalMilitaryProduction(input: {
 }
 
 /**
+ * Finds the broadest configured army ceiling among enabled military training rules.
+ * The largest threshold is intentional: specialized siege rules may allow a larger
+ * force than the regular melee/ranged role targets.
+ */
+export function getAiMilitaryProductionCap(rules: readonly AiRule[]): number | null {
+  let maximum: number | null = null;
+  for (const rule of rules) {
+    if (!rule.enabled || rule.action.type !== 'train_unit') continue;
+    for (const condition of rule.conditions) {
+      if (
+        condition.field !== 'armyCount' ||
+        condition.operator !== '<' ||
+        !Number.isFinite(condition.value)
+      ) continue;
+      const candidate = Math.max(0, Math.floor(condition.value));
+      maximum = maximum === null ? candidate : Math.max(maximum, candidate);
+    }
+  }
+  return maximum;
+}
+
+/**
+ * Queue reservations count as committed army strength. Invalid counts fail closed
+ * so corrupt mod data cannot create an unbounded production loop.
+ */
+export function shouldAiQueueMilitaryUnit(
+  activeArmyCount: number,
+  queuedArmyCount: number,
+  maximumArmyCount: number | null,
+): boolean {
+  if (maximumArmyCount === null) return true;
+  if (
+    !Number.isFinite(activeArmyCount) ||
+    !Number.isFinite(queuedArmyCount) ||
+    !Number.isFinite(maximumArmyCount)
+  ) return false;
+
+  const active = Math.max(0, Math.floor(activeArmyCount));
+  const queued = Math.max(0, Math.floor(queuedArmyCount));
+  const maximum = Math.max(0, Math.floor(maximumArmyCount));
+  return active + queued < maximum;
+}
+
+/**
  * Computes desired worker allocation across food/wood/gold/stone based on current Age,
  * resource deficits, and active gather_priority script mode.
  */

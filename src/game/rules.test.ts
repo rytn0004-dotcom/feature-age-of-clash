@@ -20,6 +20,8 @@ import {
   shouldAiStartNextAgeLandmark,
   getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
+  getAiMilitaryProductionCap,
+  shouldAiQueueMilitaryUnit,
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
@@ -142,6 +144,18 @@ test('AI age-up: reserves are not protected before the workforce/time gates or w
     false,
     'the AI must build its minimum defense force before pausing optional production'
   );
+});
+
+test('AI military production: active rule caps include already queued units', () => {
+  const cap = getAiMilitaryProductionCap(DEFAULT_AI_RULES);
+  assert.equal(cap, 24, 'the siege production rule defines the broadest standard army ceiling');
+
+  assert.equal(shouldAiQueueMilitaryUnit(18, 5, cap), true);
+  assert.equal(shouldAiQueueMilitaryUnit(19, 5, cap), false);
+  assert.equal(shouldAiQueueMilitaryUnit(24, 0, cap), false);
+  assert.equal(shouldAiQueueMilitaryUnit(40, 0, null), true, 'custom rule sets without a cap remain unrestricted');
+  assert.equal(shouldAiQueueMilitaryUnit(Number.NaN, 0, cap), false);
+  assert.equal(shouldAiQueueMilitaryUnit(10, Number.POSITIVE_INFINITY, cap), false);
 });
 
 test('progression: military production buildings unlock at the intended ages', async () => {
