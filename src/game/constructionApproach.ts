@@ -48,12 +48,17 @@ export function getActiveConstructionHandoffFailureIds(
  * The caller can advance candidateIndex after a blocked route without letting the
  * destination orbit around the worker as its position changes.
  */
-export function getConstructionApproachPoint(
+/**
+ * Writes a stable work-ring point into caller-owned storage. Hot construction
+ * paths use this form to avoid creating one object per candidate/worker.
+ */
+export function writeConstructionApproachPoint(
   center: ConstructionApproachPoint,
   radius: number,
   preferredAngle: number,
   candidateIndex: number,
-  candidateCount = CONSTRUCTION_APPROACH_DIRECTION_COUNT
+  candidateCount: number,
+  output: ConstructionApproachPoint,
 ): ConstructionApproachPoint {
   const safeCount = Number.isInteger(candidateCount) && candidateCount > 0
     ? candidateCount
@@ -62,10 +67,26 @@ export function getConstructionApproachPoint(
   const safeRadius = Number.isFinite(radius) ? Math.max(0, radius) : 0;
   const safeAngle = Number.isFinite(preferredAngle) ? preferredAngle : 0;
   const angle = safeAngle + (safeIndex * Math.PI * 2) / safeCount;
-  return {
-    x: center.x + Math.cos(angle) * safeRadius,
-    z: center.z + Math.sin(angle) * safeRadius,
-  };
+  output.x = center.x + Math.cos(angle) * safeRadius;
+  output.z = center.z + Math.sin(angle) * safeRadius;
+  return output;
+}
+
+export function getConstructionApproachPoint(
+  center: ConstructionApproachPoint,
+  radius: number,
+  preferredAngle: number,
+  candidateIndex: number,
+  candidateCount = CONSTRUCTION_APPROACH_DIRECTION_COUNT
+): ConstructionApproachPoint {
+  return writeConstructionApproachPoint(
+    center,
+    radius,
+    preferredAngle,
+    candidateIndex,
+    candidateCount,
+    { x: 0, z: 0 },
+  );
 }
 
 export interface ConstructionWorkerPosition {
@@ -457,14 +478,22 @@ export function selectConstructionApproachCandidateIndex(
   const safeSpacing = Number.isFinite(preferredSpacing) ? Math.max(0, preferredSpacing) : 0;
   let bestIndex = 0;
   let bestScore = Number.POSITIVE_INFINITY;
+  const candidatePoint = { x: 0, z: 0 };
 
   for (let index = 0; index < safeCount; index++) {
-    const candidate = getConstructionApproachPoint(center, radius, preferredAngle, index, safeCount);
-    const travelDistance = Math.hypot(worker.x - candidate.x, worker.z - candidate.z);
+    writeConstructionApproachPoint(
+      center,
+      radius,
+      preferredAngle,
+      index,
+      safeCount,
+      candidatePoint,
+    );
+    const travelDistance = Math.hypot(worker.x - candidatePoint.x, worker.z - candidatePoint.z);
     let congestionPenalty = 0;
 
     for (const occupied of occupiedPoints) {
-      const separation = Math.hypot(candidate.x - occupied.x, candidate.z - occupied.z);
+      const separation = Math.hypot(candidatePoint.x - occupied.x, candidatePoint.z - occupied.z);
       if (separation < safeSpacing) {
         const overlap = safeSpacing - separation;
         congestionPenalty += overlap * overlap * 5;
