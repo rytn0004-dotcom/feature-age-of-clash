@@ -936,7 +936,7 @@ async function main() {
             "  e.rebuildCombatEntityLookups?.();",
             "  e.rebuildCombatSpatialIndex?.();",
             "  e.rebuildActiveConstructionWorkerCounts?.();",
-            "  return { workerCount, startSimTime: e.simTime, wallCount: walls.length, activeWorkers: workers.filter((unit) => unit.hp > 0).length };",
+            "  return { workerCount, startSimTime: e.simTime, wallCount: walls.length, activeWorkers: workers.filter((unit) => unit.hp > 0 && unit.state === 'building' && !!unit.targetBuildingId).length };",
             "})()",
           ].join("\n"));
           assert.equal(prepared.activeWorkers, workerCount, "Construction worker roster setup mismatch.");
