@@ -2675,8 +2675,8 @@ export class RtsEngine {
       amount,
       maxAmount: amount,
     };
-    if (resolvedSubtype === 'boar' || resolvedSubtype === 'hunt') {
-      node.animalMaxHp = resolvedSubtype === 'boar' ? 200 : 32;
+    if (isHuntableWildlifeSubtype(resolvedSubtype)) {
+      node.animalMaxHp = getWildlifeMaxHealth(resolvedSubtype);
       node.animalHp = node.animalMaxHp;
       node.animalAlive = true;
     }
@@ -2696,6 +2696,8 @@ export class RtsEngine {
       mesh = createDeerMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'boar') {
       mesh = createWildBoarMesh(amount, hasBadge);
+    } else if (resolvedSubtype === 'aurochs') {
+      mesh = createAurochsMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'shore_fish') {
       mesh = createShoreFishMesh(amount, hasBadge);
     } else if (resolvedSubtype === 'deep_fish') {
@@ -2720,7 +2722,7 @@ export class RtsEngine {
     if (mesh.userData.treeWind) this.windAnimatedNodeMeshes.add(mesh);
     if (resolvedSubtype === 'hunt') attachDeerAssetLod(mesh);
     if (isFishAnimationSubtype(resolvedSubtype)) attachFishAssetLod(mesh);
-    if (resolvedSubtype === 'boar' || resolvedSubtype === 'hunt') this.updateWildlifeOverheadBadge(node, mesh);
+    if (isHuntableWildlifeSubtype(resolvedSubtype)) this.updateWildlifeOverheadBadge(node, mesh);
     if (type === 'wood' && nodeTier === 'standard') {
       const variantSeed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
       attachKayKitTreeLod(mesh, variantSeed % 2 === 0 ? 'A' : 'B');
@@ -4102,6 +4104,8 @@ export class RtsEngine {
         return { icon: '🦌', action: '狩獵山羌', name: '山羌肉' };
       case 'boar':
         return { icon: '🐗', action: '圍獵野豬', name: '野豬肉' };
+      case 'aurochs':
+        return { icon: '🦬', action: '多人圍獵原牛', name: '原牛肉' };
       case 'shore_fish':
       case 'deep_fish':
         return { icon: '🐟', action: '捕魚', name: '魚群' };
@@ -8895,7 +8899,7 @@ export class RtsEngine {
       .filter((node) => {
         if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) return false;
         if (!canUnitGatherNode(worker.unitDef, node)) return false;
-        if (node.subtype === 'boar' && !options.allowDangerousHunt) return false;
+        if (isDangerousWildlifeSubtype(node.subtype) && !options.allowDangerousHunt) return false;
         if (!options.allowDeepFish && node.subtype === 'deep_fish') return false;
         if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') return false;
         if (options.excludedNodeIds?.has(node.id)) return false;
@@ -9020,26 +9024,29 @@ export class RtsEngine {
       shore_fish: '沿岸魚',
       hunt: '山羌肉',
       boar: '野豬肉',
+      aurochs: '原牛肉',
       berry: '漿果',
       farm: '農田',
       food: '糧食',
     };
     const rLabel = labelMap[node.subtype || node.resourceType] || '資源';
-    const huntingLive = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const huntingLive = isHuntableWildlifeSubtype(node.subtype) && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
     unit.currentActionText = huntingLive
-      ? node.subtype === 'boar'
-        ? `🐗 圍獵野豬 (${Math.ceil(node.animalHp ?? 200)} HP)`
-        : `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
+      ? node.subtype === 'aurochs'
+        ? `🦬 多人圍獵原牛 (${Math.ceil(node.animalHp ?? 360)} HP)`
+        : node.subtype === 'boar'
+          ? `🐗 圍獵野豬 (${Math.ceil(node.animalHp ?? 200)} HP)`
+          : `🦌 狩獵山羌 (${Math.ceil(node.animalHp ?? 32)} HP)`
       : `⛏️ 採集${rLabel} (${curAmt}/${cap})`;
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
     const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
-    const isLiveBoar = node.subtype === 'boar' && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const isLiveDangerousWildlife = isDangerousWildlifeSubtype(node.subtype) && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
     const fallbackAngle = unit.id.split('').reduce(
       (sum, char, index) => sum + char.charCodeAt(0) * (index + 1),
       0,
     ) * 0.017453292519943295;
-    const rangedBoarPlan = isLiveBoar && unit.unitDef.category === 'ranged'
+    const rangedBoarPlan = isLiveDangerousWildlife && unit.unitDef.category === 'ranged'
       ? getWildBoarRangedHuntPlan(
           unit.x,
           unit.z,
@@ -9059,7 +9066,8 @@ export class RtsEngine {
     }
 
     if (rangedBoarPlan) {
-      unit.currentActionText = '🏹 遠程掩護野豬 (' + Math.ceil(node.animalHp ?? 200) + ' HP)';
+      const targetName = node.subtype === 'aurochs' ? '原牛' : '野豬';
+      unit.currentActionText = `🏹 遠程掩護${targetName} (${Math.ceil(node.animalHp ?? getWildlifeMaxHealth(node.subtype))} HP)`;
     }
 
     const gatherRange = rangedBoarPlan?.maxRange ?? (
@@ -9093,12 +9101,14 @@ export class RtsEngine {
 
       // Living wildlife must be killed before its meat reserve can be gathered.
       if (
-        (node.subtype === 'hunt' || node.subtype === 'boar') &&
+        isHuntableWildlifeSubtype(node.subtype) &&
         node.animalAlive !== false &&
         (node.animalHp === undefined || node.animalHp > 0)
       ) {
         const isBoar = node.subtype === 'boar';
-        const maxHp = isBoar ? 200 : 32;
+        const isAurochs = node.subtype === 'aurochs';
+        const isDangerousWildlife = isDangerousWildlifeSubtype(node.subtype);
+        const maxHp = getWildlifeMaxHealth(node.subtype);
         if (node.animalHp === undefined) {
           node.animalMaxHp = maxHp;
           node.animalHp = maxHp;
@@ -9108,11 +9118,13 @@ export class RtsEngine {
         let hitCd = (unit as any)._huntHitCd || 0;
         hitCd -= dt;
         if (hitCd <= 0) {
-          const dmg = isVillager ? (isBoar ? 18 : 16) : Math.max(1, unit.unitDef.stats.attack);
+          const dmg = isVillager
+            ? isAurochs ? 14 : isBoar ? 18 : 16
+            : Math.max(1, unit.unitDef.stats.attack);
           node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
           hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
           this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
-          if (isBoar) triggerWildBoarAggression(node, unit.id, this.simTime);
+          if (isDangerousWildlife) triggerWildBoarAggression(node, unit.id, this.simTime);
           else triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
         }
         (unit as any)._huntHitCd = hitCd;
@@ -9125,7 +9137,7 @@ export class RtsEngine {
           node.animalAggroTargetId = undefined;
           node.animalAggroUntil = 0;
           node.animalAttackCooldown = 0;
-          this.addFloatingText(node.x, 1.8, node.z, isBoar ? '野豬倒地' : '山羌倒地', '#fca5a5');
+          this.addFloatingText(node.x, 1.8, node.z, isAurochs ? '原牛倒地' : isBoar ? '野豬倒地' : '山羌倒地', '#fca5a5');
           const nm = this.nodeMeshes.get(node.id);
           if (nm) {
             nm.position.y = 0;
@@ -9143,7 +9155,7 @@ export class RtsEngine {
         (unit as any)._gatherFxTimer = 0;
         (unit as any)._gatherNodeType = node.subtype || node.resourceType;
         const pKind: ParticleKind =
-          node.subtype === 'boar' || node.subtype === 'hunt'
+          isHuntableWildlifeSubtype(node.subtype)
             ? node.animalAlive === false
               ? 'meat'
               : 'hit'
@@ -9186,6 +9198,8 @@ export class RtsEngine {
                   ? '🦌'
                   : node.subtype === 'boar'
                   ? '🐗'
+                  : node.subtype === 'aurochs'
+                  ? '🦬'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '🌲'
@@ -9210,6 +9224,10 @@ export class RtsEngine {
                   ? node.animalAlive === false
                     ? '野豬屍體'
                     : '野生野豬'
+                  : node.subtype === 'aurochs'
+                  ? node.animalAlive === false
+                    ? '原牛屍體'
+                    : '野生原牛'
                   : node.resourceType === 'wood'
                   ? isRich
                     ? '遠古神木'
@@ -9223,8 +9241,8 @@ export class RtsEngine {
                     ? '精良石脈'
                     : '石礦'
                   : '農田';
-              const isLiveHunt = (node.subtype === 'hunt' || node.subtype === 'boar') && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
-              const animalMaxHp = node.animalMaxHp || (node.subtype === 'boar' ? 200 : 32);
+              const isLiveHunt = isHuntableWildlifeSubtype(node.subtype) && node.animalAlive !== false && (node.animalHp ?? 1) > 0;
+              const animalMaxHp = node.animalMaxHp || getWildlifeMaxHealth(node.subtype);
               const badgeAmt = isLiveHunt
                 ? `${Math.ceil(node.animalHp || 0)}/${animalMaxHp} HP`
                 : `${curNodeAmt}/${node.maxAmount}`;
@@ -10512,10 +10530,12 @@ export class RtsEngine {
 
     for (const node of this.resourceNodes) {
       const isBoar = node.subtype === 'boar';
-      if ((!isBoar && node.subtype !== 'hunt') || node.amount <= 0) continue;
+      const isAurochs = node.subtype === 'aurochs';
+      const isDangerousWildlife = isDangerousWildlifeSubtype(node.subtype);
+      if ((!isDangerousWildlife && node.subtype !== 'hunt') || node.amount <= 0) continue;
       const mesh = this.nodeMeshes.get(node.id);
-      const maxHp = isBoar ? 200 : 32;
-      if (isBoar) {
+      const maxHp = getWildlifeMaxHealth(node.subtype);
+      if (isDangerousWildlife) {
         // Preserve the initial map position as the habitat anchor even after the boar moves.
         node.animalHomeX ??= node.x;
         node.animalHomeZ ??= node.z;
@@ -10527,12 +10547,12 @@ export class RtsEngine {
 
       if (!node.animalAlive) {
         if (mesh) {
-          if (isBoar) {
+          if (isDangerousWildlife) {
             mesh.position.set(node.x, 0, node.z);
             mesh.rotation.x = 0.55;
             const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
             if (parts) {
-              parts.bodyPivot.position.y = 0.58;
+              parts.bodyPivot.position.y = isAurochs ? 0.68 : 0.58;
               parts.headPivot.rotation.z = -0.32;
             }
           } else {
@@ -10553,7 +10573,7 @@ export class RtsEngine {
         continue;
       }
 
-      if (isBoar) {
+      if (isDangerousWildlife) {
         // All deliberate hunters (workers and military) deal damage through
         // stepUnitGathering after receiving this node's explicit gather order.
         // Do not let unrelated attack-move units wound wildlife just by passing nearby.
@@ -10589,7 +10609,8 @@ export class RtsEngine {
             parts.frLeg.rotation.z = -stride;
             parts.blLeg.rotation.z = -stride * 0.92;
             const bob = moving ? Math.abs(Math.sin(phase * 2)) * 0.025 : Math.sin(phase) * 0.012;
-            parts.bodyPivot.position.y += (0.72 + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
+            const idleBodyHeight = isAurochs ? 0.82 : 0.72;
+            parts.bodyPivot.position.y += (idleBodyHeight + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
             const headTilt = step.isCharging ? -0.13 : step.isReturning ? 0.075 : Math.sin(this.simTime * 1.4) * 0.025;
             parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
             parts.tailPivot.rotation.y = Math.sin(this.simTime * 4.4) * 0.26;
@@ -10598,15 +10619,23 @@ export class RtsEngine {
 
         if (target && getDistance(node.x, node.z, target.x, target.z) <= 2.4 &&
           (node.animalAttackCooldown || 0) <= this.simTime) {
-          const rawDamage = target.unitDef.category === 'worker' ? 22 : 15;
+          const rawDamage = isAurochs
+            ? target.unitDef.category === 'worker' ? 30 : 21
+            : target.unitDef.category === 'worker' ? 22 : 15;
           const damage = calculateDamage(rawDamage, target.unitDef.stats.defense);
           target.hp = Math.max(0, target.hp - damage);
           target.lastDamagedTime = performance.now();
           target.hitFlashTimer = 0.13;
           target.recoilTimer = 0.2;
-          node.animalAttackCooldown = this.simTime + 1.25;
-          this.spawnParticleBurst(target.x, 1.05, target.z, 'hit', 5);
-          this.addFloatingText(target.x, 2.0, target.z, `-${damage} 野豬衝撞`, '#fb923c');
+          node.animalAttackCooldown = this.simTime + (isAurochs ? 1.55 : 1.25);
+          this.spawnParticleBurst(target.x, 1.05, target.z, 'hit', isAurochs ? 7 : 5);
+          this.addFloatingText(
+            target.x,
+            2.0,
+            target.z,
+            `-${damage} ${isAurochs ? '原牛衝鋒' : '野豬衝撞'}`,
+            '#fb923c',
+          );
         }
         continue;
       }
@@ -12254,7 +12283,7 @@ export class RtsEngine {
         tgtLLeg = 0.18;
         tgtRLeg = -0.18;
         tgtLKnee = 0.22;
-      } else if (gSub === 'berry' || gSub === 'farm' || gSub === 'hunt') {
+      } else if (gSub === 'berry' || gSub === 'farm' || gSub === 'hunt' || gSub === 'aurochs' || gSub === 'boar') {
         // Low crouching forage / harvest rhythm
         const harvest = 0.5 + 0.5 * Math.sin(t * 7.2);
         tgtRArm = -0.45 - harvest * 0.62;
@@ -13171,7 +13200,7 @@ export class RtsEngine {
       // Routine economy assignment excludes offshore fish and aggressive boars.
       // Boars remain available to explicit/coordinated hunting orders.
       const landNodes = this.resourceNodes.filter(
-        (rn) => rn.subtype !== 'deep_fish' && rn.subtype !== 'boar'
+        (rn) => rn.subtype !== 'deep_fish' && !isDangerousWildlifeSubtype(rn.subtype)
       );
       const availableResourceTypes = Array.from(
         new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
