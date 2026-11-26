@@ -26,6 +26,7 @@ import {
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
+  isAiWorkerEligibleForEconomicReassignment,
   shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
   selectSiegeEscortAssignments,
@@ -4314,4 +4315,62 @@ test('AI worker allocation stays finite when save or mod stock values are corrup
   const values = Object.values(allocation);
   assert.ok(values.every((value) => Number.isSafeInteger(value) && value >= 0));
   assert.equal(values.reduce((total, value) => total + value, 0), 7);
+});
+
+
+test('AI economy rebalancing never interrupts cargo, queued work, or wildlife hunts', () => {
+  const worker = {
+    state: 'gathering',
+    targetResourceNodeId: 'wood-node',
+  };
+  const woodNode = { amount: 200, subtype: 'wood' };
+
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, woodNode), true);
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, carryingResource: { amount: 12 } },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, carryingResource: { amount: Number.NaN } },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, commandQueue: [{ type: 'build', buildingId: 'wall-1' }] },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, queuedGatherStopAfterDeposit: true },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, targetEntityId: 'deer-1' },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(
+    isAiWorkerEligibleForEconomicReassignment(
+      { ...worker, state: 'returning_resource' },
+      woodNode,
+    ),
+    false,
+  );
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 0, subtype: 'wood' }), false);
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: Number.NaN, subtype: 'wood' }), false);
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'boar' }), false);
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'aurochs' }), false);
+  assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'hunt' }), false);
 });

@@ -1358,6 +1358,50 @@ export function selectAiWorkerResourceType(
   return recipient;
 }
 
+/**
+ * Rebalancing may only take over a plain, uncommitted resource-gathering task.
+ * Cargo, queued commands and explicit wildlife hunts must finish uninterrupted.
+ */
+export function isAiWorkerEligibleForEconomicReassignment(
+  worker: {
+    state: string;
+    targetResourceNodeId?: string;
+    targetEntityId?: string;
+    targetBuildingId?: string;
+    targetGarrisonBuildingId?: string;
+    fieldAssemblyProjectId?: string;
+    carryingResource?: { amount: number };
+    commandQueue?: readonly unknown[];
+    queuedGatherStopAfterDeposit?: boolean;
+  },
+  targetNode: Pick<ResourceNode, 'amount' | 'subtype'> | null | undefined,
+): boolean {
+  if (
+    worker.state !== 'gathering' ||
+    !worker.targetResourceNodeId ||
+    worker.targetEntityId ||
+    worker.targetBuildingId ||
+    worker.targetGarrisonBuildingId ||
+    worker.fieldAssemblyProjectId ||
+    !!worker.commandQueue?.length ||
+    !!worker.queuedGatherStopAfterDeposit ||
+    !targetNode ||
+    !Number.isFinite(targetNode.amount) ||
+    targetNode.amount <= 0 ||
+    isHuntableWildlifeSubtype(targetNode.subtype)
+  ) {
+    return false;
+  }
+
+  const carriedAmount = worker.carryingResource?.amount;
+  if (
+    worker.carryingResource &&
+    (!Number.isFinite(carriedAmount) || (carriedAmount ?? 0) > 0)
+  ) return false;
+
+  return true;
+}
+
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,

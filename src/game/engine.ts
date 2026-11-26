@@ -152,6 +152,7 @@ import {
   selectAiWorkerResourceType,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
+  isAiWorkerEligibleForEconomicReassignment,
   shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
@@ -14224,9 +14225,10 @@ export class RtsEngine {
       const rebalanceReadyAt = this.aiWorkerRebalanceReadyAt.get(aiId) || 0;
       if (workerReassignment && this.stats.gameDuration >= rebalanceReadyAt) {
         const reassignable = aiEconomicWorkers.find((worker) => {
-          if (worker.state !== 'gathering' || !worker.targetResourceNodeId) return false;
+          if (!worker.targetResourceNodeId) return false;
           const node = resourceNodeById.get(worker.targetResourceNodeId);
-          return node?.resourceType === workerReassignment.from;
+          return isAiWorkerEligibleForEconomicReassignment(worker, node) &&
+            node?.resourceType === workerReassignment.from;
         });
         if (reassignable && reassignable.targetResourceNodeId) {
           const previousNodeId = reassignable.targetResourceNodeId;
