@@ -3662,6 +3662,13 @@ export interface AiTechDecisionContext {
     siege: number;
     fortificationCount: number;
   };
+  /** Active plus queued combat composition; lets research keep pace with the AI's own army plan. */
+  ownComposition?: {
+    melee: number;
+    ranged: number;
+    cavalry: number;
+    siege: number;
+  };
 }
 
 /**
@@ -3804,6 +3811,34 @@ export function evaluateAiTechChoice(
     if (tech.effect.attackRateMultiplier) score += 16;
     if (tech.effect.hpMultiplier) score += 14;
     if (tech.effect.trainTimeMultiplier) score += isAggressiveAi ? 20 : 10;
+
+    // 6. Match targeted military upgrades to the AI's own actual force mix.
+    // Counters include queued production at the call site, so research follows
+    // the army the AI is actually building instead of treating all upgrades alike.
+    const ownComposition = ctx.ownComposition;
+    const targetedCount = (tech.targetCategories || []).reduce((total, category) => {
+      if (category === 'melee') return total + Math.max(0, ownComposition?.melee || 0);
+      if (category === 'ranged') return total + Math.max(0, ownComposition?.ranged || 0);
+      if (category === 'cavalry') return total + Math.max(0, ownComposition?.cavalry || 0);
+      if (category === 'siege') return total + Math.max(0, ownComposition?.siege || 0);
+      return total;
+    }, 0);
+    const isMilitaryTargetedTech = (tech.targetCategories || []).some((category) =>
+      category === 'melee' || category === 'ranged' || category === 'cavalry' || category === 'siege'
+    );
+    const hasDirectCombatBenefit =
+      !!tech.effect.attackBonus ||
+      !!tech.effect.defenseBonus ||
+      !!tech.effect.rangedDefenseBonus ||
+      !!tech.effect.hpMultiplier ||
+      !!tech.effect.attackRateMultiplier ||
+      !!tech.effect.speedMultiplier ||
+      !!tech.effect.rangeBonus ||
+      !!tech.effect.bonusVsCategory ||
+      !!tech.effect.hpRegenPerSec;
+    if (isMilitaryTargetedTech && hasDirectCombatBenefit && targetedCount > 0) {
+      score += Math.min(24, 5 + targetedCount * 1.6);
+    }
 
     // Slight cost-efficiency tie-breaker
     const totalCost = (tech.cost.food || 0) + (tech.cost.wood || 0) + (tech.cost.gold || 0) + (tech.cost.stone || 0);
