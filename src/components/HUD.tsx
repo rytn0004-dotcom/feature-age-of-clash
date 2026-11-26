@@ -493,6 +493,27 @@ export const HUD: React.FC<HUDProps> = ({
           dynCtx.beginPath();
           dynCtx.arc(mx, my, 2.5, 0, Math.PI * 2);
           dynCtx.fill();
+        } else if (node.subtype === 'boar') {
+          dynCtx.fillStyle = '#ea580c';
+          dynCtx.beginPath();
+          dynCtx.arc(mx, my, 3.2, 0, Math.PI * 2);
+          dynCtx.fill();
+          dynCtx.strokeStyle = '#431407';
+          dynCtx.lineWidth = 1;
+          dynCtx.stroke();
+        } else if (node.subtype === 'aurochs') {
+          // A larger diamond marks the high-value, high-risk group-hunting objective.
+          dynCtx.fillStyle = '#e11d48';
+          dynCtx.beginPath();
+          dynCtx.moveTo(mx, my - 4.4);
+          dynCtx.lineTo(mx + 4.4, my);
+          dynCtx.lineTo(mx, my + 4.4);
+          dynCtx.lineTo(mx - 4.4, my);
+          dynCtx.closePath();
+          dynCtx.fill();
+          dynCtx.strokeStyle = '#4c0519';
+          dynCtx.lineWidth = 1;
+          dynCtx.stroke();
         } else if (node.subtype === 'shore_fish') {
           dynCtx.fillStyle = '#38bdf8';
           dynCtx.beginPath();
