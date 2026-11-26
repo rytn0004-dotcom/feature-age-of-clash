@@ -10,6 +10,8 @@ import {
   WALL_ENDPOINT_SNAP_RADIUS,
 } from './wallSnapping';
 import type { WallSnapBuilding } from './wallSnapping';
+import { WALL_MODEL_HALF_WIDTH } from './wallPlacement';
+import { layoutWallChain } from './rules';
 
 function makeWall(
   id: string,
@@ -42,6 +44,52 @@ test('wall snapping attaches to the nearest exposed endpoint with exact coordina
   assert.equal(snap.side, 'end');
   assert.deepEqual(snap.point, { x: 1.35, z: 0 });
   assert.ok(snap.distance < WALL_ENDPOINT_SNAP_RADIUS);
+});
+
+test('wall snapping targets both side-face midpoints and builds a clean 90-degree branch', () => {
+  const wall = makeWall('wall-midpoint', 0);
+  const positive = findNearestWallEndpoint(
+    { x: 0.08, z: WALL_MODEL_HALF_WIDTH + 0.12 },
+    [wall],
+  );
+
+  assert.ok(positive);
+  assert.equal(positive.wall.id, wall.id);
+  assert.equal(positive.side, 'side-positive');
+  assert.ok(Math.abs(positive.point.x) < 1e-9);
+  assert.ok(Math.abs(positive.point.z - WALL_MODEL_HALF_WIDTH) < 1e-9);
+  assert.ok(positive.distance < WALL_ENDPOINT_SNAP_RADIUS);
+
+  const negative = findNearestWallEndpoint(
+    { x: -0.08, z: -WALL_MODEL_HALF_WIDTH - 0.12 },
+    [wall],
+  );
+  assert.ok(negative);
+  assert.equal(negative.side, 'side-negative');
+  assert.ok(Math.abs(negative.point.x) < 1e-9);
+  assert.ok(Math.abs(negative.point.z + WALL_MODEL_HALF_WIDTH) < 1e-9);
+
+  // A side branch is a new chain, not a renumbering of the parent wall chain.
+  assert.equal(planWallChainExtension([wall], positive, 1, 'start', 'branch-chain'), null);
+
+  // The first module is laid perpendicular to the existing horizontal wall.
+  // Its rear edge reaches past the side anchor, so the two wall meshes meet.
+  const bendEnd = { x: positive.point.x, z: positive.point.z + 5.4 };
+  const placements = layoutWallChain([positive.point, bendEnd]);
+  assert.equal(placements.length, 2);
+  assert.ok(Math.abs(placements[0].rotationY + Math.PI / 2) < 1e-9);
+  assert.ok(Math.abs(placements[0].x - positive.point.x) < 1e-9);
+  assert.ok(Math.abs((placements[0].z - 1.5) - (positive.point.z - 0.15)) < 1e-9);
+  assert.ok(
+    placements[0].z - 1.5 <= positive.point.z,
+    'the first perpendicular module must touch/overlap the existing wall side rather than leave a gap',
+  );
+
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild([wall]);
+  assert.equal(index.endpointCount, 2, 'the chain still exposes only its two outer endpoints');
+  assert.equal(index.sideAnchorCount, 2, 'one wall segment exposes both long-side midpoints');
+  assert.equal(index.findNearest({ x: 0, z: WALL_MODEL_HALF_WIDTH })?.side, 'side-positive');
 });
 
 test('wall snapping does not target internal seams of a continuous chain', () => {
