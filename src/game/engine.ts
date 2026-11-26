@@ -484,6 +484,9 @@ export class RtsEngine {
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Per-worker route failure cooldowns, scoped to one construction target. */
   private constructionApproachFailedWorkersByBuilding = new Map<string, Map<string, number>>();
+  /** Reused worker snapshots and exclusion IDs for blocked construction handoffs. */
+  private constructionHandoffCandidates: Array<Parameters<typeof selectConstructionHandoffWorker>[0][number]> = [];
+  private constructionHandoffExcludedWorkerIds = new Set<string>();
   /** Buildings kept intact for a short, real-time cancellation undo window. */
   private pendingConstructionCancellations = new Map<string, { expiresAt: number; timerId: number }>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -1515,6 +1518,8 @@ export class RtsEngine {
     this.buildings = [];
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
+    this.constructionHandoffCandidates.length = 0;
+    this.constructionHandoffExcludedWorkerIds.clear();
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
@@ -9780,25 +9785,46 @@ export class RtsEngine {
     const failedWorkerIds = getActiveConstructionHandoffFailureIds(
       failedWorkerRetryAtById,
       this.simTime,
+      this.constructionHandoffExcludedWorkerIds,
     );
 
-    const candidates = this.units.map((candidate) => ({
-      id: candidate.id,
-      x: candidate.x,
-      z: candidate.z,
-      hp: candidate.hp,
-      faction: candidate.faction,
-      category: candidate.unitDef.category,
-      state: candidate.state,
-      targetBuildingId: candidate.targetBuildingId,
-      targetResourceNodeId: candidate.targetResourceNodeId,
-      targetEntityId: candidate.targetEntityId,
-      targetGarrisonBuildingId: candidate.targetGarrisonBuildingId,
-      garrisonedInBuildingId: candidate.garrisonedInBuildingId,
-      fieldAssemblyProjectId: candidate.fieldAssemblyProjectId,
-      queuedCommandCount: candidate.commandQueue?.length ?? 0,
-      hasCarriedResource: !!candidate.carryingResource,
-    }));
+    // Materialize the lightweight selector records only once per roster slot.
+    // Blocked construction can be polled repeatedly, so reusing these records
+    // avoids allocating one object per unit on every handoff attempt.
+    const candidates = this.constructionHandoffCandidates;
+    for (let index = 0; index < this.units.length; index++) {
+      const source = this.units[index];
+      let candidate = candidates[index];
+      if (!candidate) {
+        candidate = {
+          id: '',
+          x: 0,
+          z: 0,
+          hp: 0,
+          faction: '',
+          category: '',
+          state: '',
+        };
+        candidates[index] = candidate;
+      }
+      candidate.id = source.id;
+      candidate.x = source.x;
+      candidate.z = source.z;
+      candidate.hp = source.hp;
+      candidate.faction = source.faction;
+      candidate.category = source.unitDef.category;
+      candidate.state = source.state;
+      candidate.targetBuildingId = source.targetBuildingId;
+      candidate.targetResourceNodeId = source.targetResourceNodeId;
+      candidate.targetEntityId = source.targetEntityId;
+      candidate.targetGarrisonBuildingId = source.targetGarrisonBuildingId;
+      candidate.garrisonedInBuildingId = source.garrisonedInBuildingId;
+      candidate.fieldAssemblyProjectId = source.fieldAssemblyProjectId;
+      candidate.queuedCommandCount = source.commandQueue?.length ?? 0;
+      candidate.hasCarriedResource = !!source.carryingResource;
+    }
+    candidates.length = this.units.length;
+
     const replacementIndex = selectConstructionHandoffWorker(
       candidates,
       { x: building.x, z: building.z, faction: building.faction },
@@ -14610,6 +14636,8 @@ export class RtsEngine {
     this.clearPendingConstructionCancellations();
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
+    this.constructionHandoffCandidates.length = 0;
+    this.constructionHandoffExcludedWorkerIds.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
