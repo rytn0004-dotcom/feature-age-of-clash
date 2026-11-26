@@ -12159,9 +12159,13 @@ export class RtsEngine {
     this.rebuildCombatEntityLookups();
     const unitsById = this.combatUnitLookupById;
     const buildingsById = this.combatBuildingLookupById;
-    const remaining: Projectile[] = [];
+    // Stable in-place compaction avoids allocating a new projectile array on
+    // every frame while shells/arrows are in flight.
+    const activeProjectiles = this.projectiles;
+    let retainedProjectileCount = 0;
 
-    for (const proj of this.projectiles) {
+    for (let projectileIndex = 0; projectileIndex < activeProjectiles.length; projectileIndex++) {
+      const proj = activeProjectiles[projectileIndex];
       const targetUnit = unitsById.get(proj.targetEntityId);
       const targetBldg = buildingsById.get(proj.targetEntityId);
       const target = targetUnit || targetBldg;
@@ -12308,11 +12312,11 @@ export class RtsEngine {
             entry.mesh.lookAt(target.x, 1, target.z);
           }
         }
-        remaining.push(proj);
+        activeProjectiles[retainedProjectileCount++] = proj;
       }
     }
 
-    this.projectiles = remaining;
+    activeProjectiles.length = retainedProjectileCount;
   }
 
   private addFloatingText(x: number, y: number, z: number, text: string, color: string) {
@@ -12329,15 +12333,17 @@ export class RtsEngine {
   }
 
   private updateFloatingTexts(dt: number) {
-    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-      const txt = this.floatingTexts[i];
+    const activeTexts = this.floatingTexts;
+    let retainedTextCount = 0;
+    for (let readIndex = 0; readIndex < activeTexts.length; readIndex++) {
+      const txt = activeTexts[readIndex];
       txt.lifespan -= dt;
       txt.y += dt * 1.5;
       txt.opacity = Math.max(0, txt.lifespan / 1.0);
-      if (txt.lifespan <= 0) {
-        this.floatingTexts.splice(i, 1);
-      }
+      if (txt.lifespan <= 0) continue;
+      activeTexts[retainedTextCount++] = txt;
     }
+    activeTexts.length = retainedTextCount;
   }
 
   private updateSelectionVisuals() {
