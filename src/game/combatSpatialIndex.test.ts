@@ -11,6 +11,7 @@ import {
   createCombatSpatialIndex,
   type CombatSpatialCandidates,
   queryCombatSpatialIndex,
+  queryCombatSpatialBuildings,
   queryCombatSpatialUnits,
   rebuildCombatSpatialIndexInPlace,
 } from './combatSpatialIndex';
@@ -400,4 +401,38 @@ test('combat spatial unit query preserves infinite-range and invalid-input seman
   assert.deepEqual(queryCombatSpatialUnits(index, 0, 0, Infinity, output).map((unit) => unit.id), ['alive']);
   assert.deepEqual(queryCombatSpatialUnits(index, Number.POSITIVE_INFINITY, 0, 5, output), []);
   assert.deepEqual(queryCombatSpatialUnits(index, 0, 0, -1, output), []);
+});
+
+test('combat spatial building query visits only building buckets and reuses its output', () => {
+  const units = Array.from({ length: 160 }, (_, index) => ({
+    id: 'unit-' + index,
+    x: (index % 16) * 16,
+    z: Math.floor(index / 16) * 16,
+    hp: 100,
+  }));
+  const buildings = [
+    { id: 'near-a', x: 15.8, z: 0, hp: 500 },
+    { id: 'near-b', x: 18, z: 3, hp: 600 },
+    { id: 'dead', x: 16, z: 1, hp: 0 },
+    { id: 'far', x: 45, z: 0, hp: 700 },
+  ];
+  const index = createCombatSpatialIndex(units, buildings, 16);
+  const output: typeof buildings = [];
+  const identity = output;
+
+  assert.equal(queryCombatSpatialBuildings(index, 16, 0, 4, output), identity);
+  assert.deepEqual(output.map((building) => building.id), ['near-a', 'near-b']);
+  assert.deepEqual(
+    output.map((building) => building.id).sort(),
+    queryCombatSpatialIndex(index, 16, 0, 4).buildings.map((building) => building.id).sort(),
+  );
+
+  buildings[0].hp = 0;
+  queryCombatSpatialBuildings(index, 16, 0, 4, output);
+  assert.equal(output, identity);
+  assert.deepEqual(output.map((building) => building.id), ['near-b']);
+
+  assert.deepEqual(queryCombatSpatialBuildings(index, 0, 0, Infinity, output).map((building) => building.id), ['near-b', 'far']);
+  assert.deepEqual(queryCombatSpatialBuildings(index, Number.NaN, 0, 4, output), []);
+  assert.deepEqual(queryCombatSpatialBuildings(index, 0, 0, -1, output), []);
 });

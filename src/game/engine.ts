@@ -33,6 +33,7 @@ import {
   countNearbyCombatForces,
   createCombatSpatialIndex,
   queryCombatSpatialIndex,
+  queryCombatSpatialBuildings,
   queryCombatSpatialUnits,
   rebuildCombatSpatialIndexInPlace,
   type CombatSpatialCandidates,
@@ -561,10 +562,7 @@ export class RtsEngine {
     units: [],
     buildings: [],
   };
-  private wildlifeBuildingQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
-    units: [],
-    buildings: [],
-  };
+  private wildlifeBuildingQueryScratch: BuildingEntity[] = [];
   private wildlifeUnitInteractionScratch: WildlifeUnitInteractionScratch<UnitEntity> = {
     nearestThreat: null,
     attackers: [],
@@ -10792,13 +10790,13 @@ export class RtsEngine {
         }
       }
       const nearbyBuildings = this.combatSpatialIndex
-        ? queryCombatSpatialIndex(
+        ? queryCombatSpatialBuildings(
             this.combatSpatialIndex,
             cx,
             cz,
             maxBuildingCollisionRadius + 0.7,
             this.wildlifeBuildingQueryScratch,
-          ).buildings
+          )
         : this.buildings;
       for (const building of nearbyBuildings) {
         if (building.hp <= 0) continue;

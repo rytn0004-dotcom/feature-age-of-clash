@@ -231,6 +231,57 @@ export function queryCombatSpatialIndex<
 }
 
 
+/** Returns nearby living buildings only, without visiting unit buckets. */
+export function queryCombatSpatialBuildings<
+  Unit extends CombatSpatialUnit,
+  Building extends CombatSpatialBuilding,
+>(
+  index: CombatSpatialIndex<Unit, Building>,
+  x: number,
+  z: number,
+  radius: number,
+  output: Building[] = [],
+): Building[] {
+  output.length = 0;
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(z) ||
+    (!Number.isFinite(radius) && radius !== Infinity) ||
+    radius < 0
+  ) {
+    return output;
+  }
+
+  if (radius === Infinity) {
+    for (const building of index.buildings) {
+      if (building.hp > 0) output.push(building);
+    }
+    return output;
+  }
+
+  const radiusSquared = radius * radius;
+  const minCellX = Math.floor((x - radius) / index.cellSize);
+  const maxCellX = Math.floor((x + radius) / index.cellSize);
+  const minCellZ = Math.floor((z - radius) / index.cellSize);
+  const maxCellZ = Math.floor((z + radius) / index.cellSize);
+
+  for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      const bucket = index.buildingBuckets.get(cellX + ':' + cellZ);
+      if (!bucket) continue;
+      for (const building of bucket) {
+        if (building.hp <= 0) continue;
+        const dx = building.x - x;
+        const dz = building.z - z;
+        if (dx * dx + dz * dz <= radiusSquared) output.push(building);
+      }
+    }
+  }
+
+  return output;
+}
+
 /** Returns nearby living units only, without scanning building buckets. */
 export function queryCombatSpatialUnits<
   Unit extends CombatSpatialUnit,
