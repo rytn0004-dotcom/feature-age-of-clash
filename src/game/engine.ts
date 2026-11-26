@@ -13128,6 +13128,7 @@ export class RtsEngine {
       // Role counters include units already in production queues. Without queued reservations,
       // the AI can request the same missing role every decision tick and overfill one unit type.
       const queuedRoleCounts = { melee: 0, ranged: 0, cavalry: 0, siege: 0 };
+      let queuedMongolMountedArchers = 0;
       for (const building of aiBuildings) {
         for (const queuedUnitId of building.queue) {
           const queuedDef = this.findUnitDef(queuedUnitId, aiId);
@@ -13135,6 +13136,7 @@ export class RtsEngine {
             queuedRoleCounts[queuedDef.category as keyof typeof queuedRoleCounts]++;
           }
           // Mangudai are cavalry for combat counters and mounted archers for composition planning.
+          if (queuedUnitId === 'mongol_mangudai') queuedMongolMountedArchers++;
           if (queuedDef && queuedDef.category !== 'ranged' && isMongolRangedSupportUnit(queuedUnitId, queuedDef.category)) {
             queuedRoleCounts.ranged++;
           }
@@ -13145,6 +13147,14 @@ export class RtsEngine {
         ranged: aiUnits.filter((unit) => isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category)).length + queuedRoleCounts.ranged,
         cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
         siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
+      };
+      const ownTechComposition = {
+        ...roleCounts,
+        worker: aiWorkers.length,
+        special: aiArmy.filter((unit) => unit.unitDef.category === 'special').length,
+        mongolMountedArchers:
+          aiUnits.filter((unit) => unit.hp > 0 && unit.unitDefId === 'mongol_mangudai').length +
+          queuedMongolMountedArchers,
       };
 
       const snapshot = {
@@ -13786,6 +13796,7 @@ export class RtsEngine {
         age: aiAge,
         workerCount: aiWorkers.length,
         aiPersonality: participant.aiPersonality,
+        ownComposition: ownTechComposition,
         enemyComposition,
       });
       if (chosenTech) {
