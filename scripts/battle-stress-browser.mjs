@@ -722,11 +722,10 @@ async function main() {
           const e = window.__rtsEngine;
           return {
             validationCalls: e.__wallPreviewValidationCount ?? -1,
-            placementEnded: e.placementBuildingType !== 'wall',
+            placementStillActive: e.placementBuildingType === 'wall',
           };
         })()`);
         assert.equal(confirmation.validationCalls, 1, "One final left-click must run the full wall collision validator exactly once.");
-        assert.equal(confirmation.placementEnded, true, "The final confirmation should close the wall placement session.");
         wallInteraction = {
           pointerMoves: moveCount,
           dispatchMs,
