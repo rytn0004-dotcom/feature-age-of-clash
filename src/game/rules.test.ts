@@ -17,6 +17,7 @@ import {
   shouldPrioritizeAiFieldEngineering,
   resolveAiKnightUnitId,
   shouldAiSaveForNextAge,
+  shouldAiStartNextAgeLandmark,
   getAiAgeUpReadinessTargets,
   shouldAiDeferOptionalMilitaryProduction,
   selectAiWorkerResourceType,
@@ -86,6 +87,34 @@ test('AI age-up: protects the landmark budget after it can afford the cost until
     'optional army production must not spend the landmark reserve after the stock threshold is reached'
   );
   assert.equal(shouldAiSaveForNextAge({ ...ready, landmarkActive: true }), false);
+});
+
+test('AI age-up: starts each next landmark immediately once the full age gate and cost are satisfied', () => {
+  const ready = {
+    age: 2,
+    gameTime: 130,
+    workerCount: 8,
+    minimumWorkers: 7,
+    minimumGameTime: 90,
+    landmarkActive: false,
+    resources: { food: 1500, wood: 220, gold: 700, stone: 120 },
+    ageUpCost: { food: 1200, wood: 0, gold: 600, stone: 0 },
+    underAttack: 0,
+  };
+  assert.equal(shouldAiStartNextAgeLandmark(ready), true);
+  assert.equal(shouldAiStartNextAgeLandmark({
+    ...ready,
+    age: 3,
+    ageUpCost: { food: 2400, wood: 0, gold: 1200, stone: 0 },
+  }), false, 'a higher age must not start without the complete imperial landmark budget');
+  assert.equal(shouldAiStartNextAgeLandmark({
+    ...ready,
+    resources: { ...ready.resources, gold: 599 },
+  }), false, 'age-up must not spend resources before the exact cost is affordable');
+  assert.equal(shouldAiStartNextAgeLandmark({ ...ready, underAttack: 1 }), false);
+  assert.equal(shouldAiStartNextAgeLandmark({ ...ready, landmarkActive: true }), false);
+  assert.equal(shouldAiStartNextAgeLandmark({ ...ready, workerCount: 6 }), false);
+  assert.equal(shouldAiStartNextAgeLandmark({ ...ready, gameTime: 89 }), false);
 });
 
 test('AI age-up: reserves are not protected before the workforce/time gates or while emergency defense is needed', () => {
