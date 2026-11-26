@@ -282,6 +282,7 @@ import {
 } from './movementDiagnostics';
 import {
   findNarrowPassageOnRoute,
+  hasFormationShieldWallComposition,
   getFormationCohesionSpeedScale,
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
@@ -631,6 +632,7 @@ export class RtsEngine {
   private movementGroupSequence = 0;
   private formationRegroupByGroup = new Map<string, FormationRegroupRuntimeState>();
   private formationTacticalMembersByGroup = new Map<string, FormationTacticalMember[]>();
+  private formationTacticalShieldWallByGroup = new Map<string, boolean>();
   private formationPassageCacheByGroup = new Map<
     string,
     { grid: NavGrid; scannedAt: number; passage: FormationNarrowPassage | null }
@@ -7549,6 +7551,7 @@ export class RtsEngine {
   private refreshFormationRegroupState(): void {
     this.formationRegroupByGroup.clear();
     this.formationTacticalMembersByGroup.clear();
+    this.formationTacticalShieldWallByGroup.clear();
     const membersByGroup = new Map<string, FormationMovementMember[]>();
     const stalledUnitsByGroup = groupStalledFormationUnits(this.units);
 
@@ -7582,8 +7585,12 @@ export class RtsEngine {
       this.formationTacticalMembersByGroup.set(groupId, tacticalMembers);
     }
 
-    for (const tacticalMembers of this.formationTacticalMembersByGroup.values()) {
+    for (const [groupId, tacticalMembers] of this.formationTacticalMembersByGroup) {
       tacticalMembers.sort((a, b) => a.id.localeCompare(b.id));
+      this.formationTacticalShieldWallByGroup.set(
+        groupId,
+        hasFormationShieldWallComposition(tacticalMembers),
+      );
     }
 
     for (const [groupId, members] of membersByGroup) {
@@ -7831,9 +7838,7 @@ export class RtsEngine {
     }
 
     const targetAnchor = { x: target.x, z: target.z };
-    const shieldWallComposition =
-      members.filter((member) => member.category === 'melee').length >= 2 &&
-      members.some((member) => member.category === 'ranged');
+    const shieldWallComposition = this.formationTacticalShieldWallByGroup.get(groupId) ?? false;
     if (
       shieldWallComposition !== !!unit.formationTacticalShieldWall ||
       shouldRefreshFormationTacticalSlot(

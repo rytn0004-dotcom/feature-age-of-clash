@@ -8,6 +8,7 @@ import {
   getFormationMoveProgress,
   getFormationNarrowPassageTrafficScale,
   getFormationTacticalSlot,
+  hasFormationShieldWallComposition,
   groupStalledFormationUnits,
   measureFormationRegroup,
   shouldRefreshFormationTacticalSlot,
@@ -341,4 +342,27 @@ test('AI cavalry: disengages only when wounded and locally outnumbered', () => {
   assert.equal(shouldAiCavalryDisengage({ ...base, personality: 'defensive' }), true);
   assert.equal(shouldAiCavalryDisengage({ ...base, personality: 'hard' }), false);
   assert.equal(shouldAiCavalryDisengage({ ...base, maxHp: 0 }), false);
+});
+
+test('combat tactics: shield-wall composition requires two melee screen units and ranged support', () => {
+  assert.equal(hasFormationShieldWallComposition([]), false);
+  assert.equal(hasFormationShieldWallComposition([
+    { id: 'inf-01', category: 'melee' },
+    { id: 'archer-01', category: 'ranged' },
+  ]), false);
+  assert.equal(hasFormationShieldWallComposition([
+    { id: 'inf-01', category: 'melee' },
+    { id: 'inf-02', category: 'melee' },
+  ]), false);
+  assert.equal(hasFormationShieldWallComposition([
+    { id: 'inf-01', category: 'melee' },
+    { id: 'inf-02', category: 'melee' },
+    { id: 'archer-01', category: 'ranged' },
+  ]), true);
+  assert.equal(hasFormationShieldWallComposition([
+    { id: 'cav-01', category: 'cavalry' },
+    { id: 'inf-01', category: 'melee' },
+    { id: 'archer-01', category: 'ranged' },
+    { id: 'inf-02', category: 'melee' },
+  ]), true);
 });

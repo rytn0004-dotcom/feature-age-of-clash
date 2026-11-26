@@ -367,6 +367,20 @@ export interface FormationTacticalMember {
   category: UnitCategory;
 }
 
+/** True when a group has at least two melee units available to screen ranged allies. */
+export function hasFormationShieldWallComposition(
+  members: readonly FormationTacticalMember[],
+): boolean {
+  let meleeCount = 0;
+  let hasRanged = false;
+  for (const member of members) {
+    if (member.category === 'melee') meleeCount++;
+    else if (member.category === 'ranged') hasRanged = true;
+    if (meleeCount >= 2 && hasRanged) return true;
+  }
+  return false;
+}
+
 export interface FormationTacticalSlot {
   x: number;
   z: number;
