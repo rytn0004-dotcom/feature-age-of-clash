@@ -219,6 +219,10 @@ import {
 } from './rules';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
 import {
+  createResourceNodeCandidateScratch,
+  insertResourceNodeCandidate,
+} from './resourceNodeSelection';
+import {
   createCollisionResolutionScratch,
   type CollisionResolutionScratch,
   getBuildingCollisionRadius,
@@ -536,6 +540,8 @@ export class RtsEngine {
   /** Separate unit-only outputs keep nested casualty-shock and rout queries re-entrant. */
   private moraleShockQueryScratch: UnitEntity[] = [];
   private moraleRoutQueryScratch: UnitEntity[] = [];
+  /** Fixed top-K pool reused by worker resource-node preselection. */
+  private resourceNodeCandidateScratch = createResourceNodeCandidateScratch<ResourceNode>(12);
   /** Reused local candidates for wildlife threat, attacker, and nearby-building queries. */
   private wildlifeUnitQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -9167,32 +9173,35 @@ export class RtsEngine {
       excludedNodeIds?: ReadonlySet<string>;
     } = {}
   ): ResourceNode | null {
-    const candidates = this.resourceNodes
-      .filter((node) => {
-        if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) return false;
-        if (!canUnitGatherNode(worker.unitDef, node)) return false;
-        if (isDangerousWildlifeSubtype(node.subtype) && !options.allowDangerousHunt) return false;
-        if (!options.allowDeepFish && node.subtype === 'deep_fish') return false;
-        if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') return false;
-        if (options.excludedNodeIds?.has(node.id)) return false;
-        return getDistance(worker.x, worker.z, node.x, node.z) <= maxDistance;
-      })
-      .map((node) => {
-        const approachDistance = getDistance(worker.x, worker.z, node.x, node.z);
-        const assigned = Math.max(0, options.assignedCounts?.get(node.id) || 0);
-        const sourceBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
-        const richBonus = node.nodeTier === 'rich' ? 4 : 0;
-        return {
-          node,
-          approachDistance,
-          assigned,
-          preScore: approachDistance + assigned * 5.5 - sourceBonus - richBonus,
-        };
-      })
-      .sort((a, b) => a.preScore - b.preScore || a.node.id.localeCompare(b.node.id))
-      .slice(0, 12);
+    // Preselect only the best 12 candidates in-place. The old filter -> map ->
+    // sort -> slice chain allocated four collections on every worker retarget.
+    const candidates = this.resourceNodeCandidateScratch;
+    let candidateCount = 0;
+    for (const node of this.resourceNodes) {
+      if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) continue;
+      if (!canUnitGatherNode(worker.unitDef, node)) continue;
+      if (isDangerousWildlifeSubtype(node.subtype) && !options.allowDangerousHunt) continue;
+      if (!options.allowDeepFish && node.subtype === 'deep_fish') continue;
+      if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
+      if (options.excludedNodeIds?.has(node.id)) continue;
 
-    if (candidates.length === 0) return null;
+      const approachDistance = getDistance(worker.x, worker.z, node.x, node.z);
+      if (!(approachDistance <= maxDistance)) continue;
+      const assigned = Math.max(0, options.assignedCounts?.get(node.id) || 0);
+      const sourceBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
+      const richBonus = node.nodeTier === 'rich' ? 4 : 0;
+      const preScore = approachDistance + assigned * 5.5 - sourceBonus - richBonus;
+      candidateCount = insertResourceNodeCandidate(
+        candidates,
+        candidateCount,
+        node,
+        approachDistance,
+        assigned,
+        preScore,
+      );
+    }
+
+    if (candidateCount === 0) return null;
 
     const researchedTechs = this.getResearchedTechs(worker.faction);
     const hasStarOath = (this.starOathUntil[worker.faction] || 0) > this.simTime;
@@ -9202,8 +9211,10 @@ export class RtsEngine {
     let best: ResourceNode | null = null;
     let bestScore = -Infinity;
 
-    for (const candidate of candidates) {
+    for (let index = 0; index < candidateCount; index++) {
+      const candidate = candidates[index];
       const node = candidate.node;
+      if (!node) continue;
       const routeDistance = this.estimateResourceDeliveryTravelDistance(worker.faction, worker, node);
       const oneWayDistance = routeDistance !== null && Number.isFinite(routeDistance)
         ? routeDistance
