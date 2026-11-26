@@ -6,6 +6,7 @@ import {
   resolveUnitResourceCollisions,
   resolveUnitUnitCollisions,
   getUnitColliderRadius,
+  getResourceColliderRadius,
   getUnitCollisionFirstDisplacementShare,
   createCollisionResolutionScratch,
 } from './collision';
@@ -352,4 +353,10 @@ test('collision scratch: clears stale entries and buckets when all entities beco
   assert.equal(scratch.unitIndex.buckets.size, 0);
   assert.equal(scratch.unitIndex.entries.length, 1);
   assert.equal(scratch.unitIndex.entries[0], undefined);
+});
+
+test('wildlife collision radii reserve enough space for large hunted animals', () => {
+  assert.equal(getResourceColliderRadius('food', 'hunt'), 0.58);
+  assert.equal(getResourceColliderRadius('food', 'boar'), 0.92);
+  assert.equal(getResourceColliderRadius('food', 'aurochs'), 1.5);
 });
