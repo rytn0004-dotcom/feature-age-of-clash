@@ -40,7 +40,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     cursorCss?: string;
     badgeText: string;
     tone: 'gather' | 'build' | 'attack' | 'rally' | 'select';
-    iconKind?: 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison' | 'contested';
+    iconKind?: 'wood' | 'hunt' | 'boar' | 'aurochs' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison' | 'contested';
   } | null>(null);
 
   useEffect(() => {
@@ -686,6 +686,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       hunt: makeCursor(
         `<path d='M6 17 C6 10 14 7 22 9 C27 11 28 19 23 23 C17 27 7 24 6 17 Z' fill='%23dc2626' stroke='%237f1d1d' stroke-width='1.8'/><path d='M9 17 C9 12 15 10 21 11.5 C24.5 12.5 25 18 21.5 21 C16.5 23.5 10 21.5 9 17 Z' fill='%23ef4444'/><circle cx='15.5' cy='15.5' r='3' fill='%23fef2f2' stroke='%23fca5a5' stroke-width='1'/><path d='M19 14 L23 16' stroke='%23fecaca' stroke-width='1.5' stroke-linecap='round'/>`
       ),
+      boar: makeCursor(
+        `<path d='M5 18 C5 11 11 8 18 9 C24 10 27 16 23 21 C19 25 9 24 5 18 Z' fill='%237c3f25' stroke='%23301b13' stroke-width='1.8'/><path d='M8 11 L4 6 L11 9 M20 9 L27 5 L24 13' fill='none' stroke='%23e8d7ae' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/>`
+      ),
+      aurochs: makeCursor(
+        `<path d='M5 18 C5 11 11 8 18 9 C24 10 27 16 23 21 C19 25 9 24 5 18 Z' fill='%234b3023' stroke='%23211610' stroke-width='1.8'/><path d='M10 10 C6 4 3 4 2 7 M20 10 C24 4 28 4 30 7' fill='none' stroke='%23e8d7ae' stroke-width='2.4' stroke-linecap='round'/>`
+      ),
       berry: makeCursor(
         `<path d='M16 5 C19 4 22 6 20 9 C18 10 15 8 16 5 Z' fill='%2322c55e' stroke='%2314532d' stroke-width='1.2'/><path d='M13 6 C10 5 8 8 11 10 C13 10.5 14.5 8 13 6 Z' fill='%234ade80' stroke='%2314532d' stroke-width='1.2'/><circle cx='12' cy='16' r='5.2' fill='%239333ea' stroke='%233b0764' stroke-width='1.3'/><circle cx='20' cy='16' r='5.2' fill='%23c026d3' stroke='%234a044e' stroke-width='1.3'/><circle cx='16' cy='22' r='5.5' fill='%23a21caf' stroke='%233b0764' stroke-width='1.3'/><circle cx='10.3' cy='14.2' r='1.5' fill='%23fdf4ff'/><circle cx='18.3' cy='14.2' r='1.5' fill='%23fdf4ff'/><circle cx='14.3' cy='20.2' r='1.6' fill='%23fdf4ff'/>`
       ),
@@ -809,7 +815,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
     if (hit.hitType === 'resource' && hit.resource) {
       const r = hit.resource;
-      const sub = (r.subtype || r.resourceType) as 'wood' | 'hunt' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone';
+      const sub = (r.subtype || r.resourceType) as 'wood' | 'hunt' | 'boar' | 'aurochs' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone';
       const actionMap: Record<string, { action: string; label: string }> = {
         wood: { action: '伐木', label: '森林原木' },
         gold: { action: '開採金礦', label: '黃金礦脈' },
@@ -818,6 +824,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         shore_fish: { action: '捕撈沿岸魚', label: '沿岸魚群' },
         berry: { action: '採集漿果', label: '野生漿果' },
         hunt: { action: '狩獵山羌', label: '野生山羌' },
+        boar: { action: '圍獵野豬', label: '野生野豬' },
+        aurochs: { action: '多人圍獵原牛', label: '野生原牛' },
         farm: { action: '農田耕作', label: '豐饒農田' },
         food: { action: '採集糧食', label: '糧食資源' },
       };
@@ -944,6 +952,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             <path d="M18.4 6.2 C20.2 8.2 20.5 10.6 19.2 12.8" stroke="#ffffff" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         );
+      case 'boar':
+        return <span className="text-lg leading-none" aria-hidden="true">🐗</span>;
+      case 'aurochs':
+        return <span className="text-lg leading-none" aria-hidden="true">🦬</span>;
       case 'hunt':
         // Bespoke Vibrant Red Bone-In Steak Icon
         return (
