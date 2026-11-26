@@ -581,6 +581,7 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
     isDangerousWildlifeSubtype,
     isHuntableWildlifeSubtype,
     canUnitHuntDangerousWildlife,
+    shouldAiOrganizeWildlifeHunt,
     findBestFoodResourceNode,
     findBalancedResourceNode,
   } = await import('./rules');
@@ -607,6 +608,25 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
   assert.equal(canUnitHuntDangerousWildlife(siegeDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(fishingBoatDef, 'aurochs'), false);
   assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'hunt'), false);
+
+  const safeHuntWindow = {
+    gameTime: 240,
+    food: 280,
+    armyCount: 12,
+    availableHunters: 5,
+    enemyDistance: 44,
+    underAttack: false,
+    hasActiveHuntParty: false,
+  };
+  assert.equal(shouldAiOrganizeWildlifeHunt(safeHuntWindow), true);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, gameTime: 90 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, food: 700 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, armyCount: 8 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, availableHunters: 3 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, enemyDistance: 18 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, enemyDistance: Number.NaN }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, underAttack: true }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, hasActiveHuntParty: true }), false);
 
   const aurochs: ResourceNode = {
     id: 'aurochs-test',
