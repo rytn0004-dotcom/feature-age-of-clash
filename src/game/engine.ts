@@ -14249,9 +14249,7 @@ export class RtsEngine {
           const previousCount = nodeWorkerCounts.get(previousNodeId) || 0;
           nodeWorkerCounts.set(previousNodeId, Math.max(0, previousCount - 1));
 
-          if (assignWorkerToType(reassignable, workerReassignment.to)) {
-            // The shared retry deadline was set before the destination search.
-          } else {
+          if (!assignWorkerToType(reassignable, workerReassignment.to)) {
             // A failed reassignment must leave the old gatherer / node counts intact.
             activeCounts[workerReassignment.from]++;
             nodeWorkerCounts.set(previousNodeId, previousCount);
