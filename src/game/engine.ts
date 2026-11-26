@@ -6297,6 +6297,13 @@ export class RtsEngine {
       this.wallPlacementPreviewGhosts.push(ghost);
       group.add(ghost);
     }
+    // Resource balances can fall while a long preview is active. Drop no-longer
+    // affordable detailed clones instead of retaining dozens of hidden models
+    // until the user exits placement mode; the shared template/material pool stays.
+    if (this.wallPlacementPreviewGhosts.length > detailedPreviewLimit) {
+      const unusedGhosts = this.wallPlacementPreviewGhosts.splice(detailedPreviewLimit);
+      for (const ghost of unusedGhosts) group.remove(ghost);
+    }
     const fixedGhostsPlaced = Math.min(this.wallPlacementPreviewFixedGhostsPlaced, this.wallPlacementPreviewFixedPlacementCount);
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
       const ghost = this.wallPlacementPreviewGhosts[index];
