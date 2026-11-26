@@ -484,9 +484,17 @@ export class RtsEngine {
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Per-worker route failure cooldowns, scoped to one construction target. */
   private constructionApproachFailedWorkersByBuilding = new Map<string, Map<string, number>>();
-  /** Reused worker snapshots and exclusion IDs for blocked construction handoffs. */
-  private constructionHandoffCandidates: Array<Parameters<typeof selectConstructionHandoffWorker>[0][number]> = [];
+  /** Local spatial-query output and exclusion IDs reused by blocked construction handoffs. */
+  private constructionHandoffQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
+    units: [],
+    buildings: [],
+  };
   private constructionHandoffExcludedWorkerIds = new Set<string>();
+  private constructionHandoffTargetScratch: { x: number; z: number; faction: string } = {
+    x: 0,
+    z: 0,
+    faction: '',
+  };
   /** Buildings kept intact for a short, real-time cancellation undo window. */
   private pendingConstructionCancellations = new Map<string, { expiresAt: number; timerId: number }>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
@@ -1518,7 +1526,8 @@ export class RtsEngine {
     this.buildings = [];
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
-    this.constructionHandoffCandidates.length = 0;
+    this.constructionHandoffQueryScratch.units.length = 0;
+    this.constructionHandoffQueryScratch.buildings.length = 0;
     this.constructionHandoffExcludedWorkerIds.clear();
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
@@ -9793,49 +9802,42 @@ export class RtsEngine {
       this.simTime,
       this.constructionHandoffExcludedWorkerIds,
     );
+    // A selected worker is under direct player attention; do not silently
+    // redirect it to a different construction site while the player is issuing orders.
+    for (const selectedId of this.selectedUnitIds) failedWorkerIds.add(selectedId);
 
-    // Materialize the lightweight selector records only once per roster slot.
-    // Blocked construction can be polled repeatedly, so reusing these records
-    // avoids allocating one object per unit on every handoff attempt.
-    const candidates = this.constructionHandoffCandidates;
-    for (let index = 0; index < this.units.length; index++) {
-      const source = this.units[index];
-      let candidate = candidates[index];
-      if (!candidate) {
-        candidate = {
-          id: '',
-          x: 0,
-          z: 0,
-          hp: 0,
-          faction: '',
-          category: '',
-          state: '',
-        };
-        candidates[index] = candidate;
-      }
-      candidate.id = source.id;
-      candidate.x = source.x;
-      candidate.z = source.z;
-      candidate.hp = source.hp;
-      candidate.faction = source.faction;
-      candidate.category = source.unitDef.category;
-      candidate.state = source.state;
-      candidate.targetBuildingId = source.targetBuildingId;
-      candidate.targetResourceNodeId = source.targetResourceNodeId;
-      candidate.targetEntityId = source.targetEntityId;
-      candidate.targetGarrisonBuildingId = source.targetGarrisonBuildingId;
-      candidate.garrisonedInBuildingId = source.garrisonedInBuildingId;
-      candidate.fieldAssemblyProjectId = source.fieldAssemblyProjectId;
-      candidate.queuedCommandCount = source.commandQueue?.length ?? 0;
-      candidate.hasCarriedResource = !!source.carryingResource;
+    // The combat index is published after movement/collision each frame. Query
+    // nearby workers first, expanding only when no eligible worker is found.
+    // A small snapshot margin covers movement between the index build and this
+    // construction recovery step; the selector applies the live exact radius.
+    if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+    const target = this.constructionHandoffTargetScratch;
+    target.x = building.x;
+    target.z = building.z;
+    target.faction = building.faction;
+
+    const candidates = this.constructionHandoffQueryScratch.units;
+    let replacementIndex = -1;
+    let searchRadius = 16;
+    const maxSearchRadius = 256;
+    const snapshotMovementMargin = 2;
+    while (true) {
+      queryCombatSpatialIndex(
+        this.combatSpatialIndex!,
+        building.x,
+        building.z,
+        searchRadius + snapshotMovementMargin,
+        this.constructionHandoffQueryScratch,
+      );
+      replacementIndex = selectConstructionHandoffWorker(
+        candidates,
+        target,
+        failedWorkerIds,
+        searchRadius,
+      );
+      if (replacementIndex >= 0 || searchRadius >= maxSearchRadius) break;
+      searchRadius = Math.min(maxSearchRadius, searchRadius * 2);
     }
-    candidates.length = this.units.length;
-
-    const replacementIndex = selectConstructionHandoffWorker(
-      candidates,
-      { x: building.x, z: building.z, faction: building.faction },
-      failedWorkerIds,
-    );
 
     if (replacementIndex < 0) {
       // Keep the current assignment and the per-worker failure cooldowns. Clearing
@@ -9847,7 +9849,7 @@ export class RtsEngine {
       return false;
     }
 
-    const replacement = this.units[replacementIndex];
+    const replacement = candidates[replacementIndex];
     replacement.targetBuildingId = building.id;
     replacement.targetResourceNodeId = undefined;
     replacement.targetEntityId = undefined;
