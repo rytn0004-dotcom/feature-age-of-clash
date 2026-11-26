@@ -445,14 +445,14 @@ export interface BuildingEntity extends EntityCommon {
 export interface ResourceNode {
   id: string;
   resourceType: ResourceType;
-  subtype?: 'farm' | 'berry' | 'hunt' | 'boar' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
+  subtype?: 'farm' | 'berry' | 'hunt' | 'boar' | 'aurochs' | 'shore_fish' | 'deep_fish' | 'wood' | 'gold' | 'stone';
   /** Quality tier of the resource deposit: 'rich' mid-map veins yield +35% faster gathering and larger reserves */
   nodeTier?: 'standard' | 'rich';
   x: number;
   z: number;
   amount: number;
   maxAmount: number;
-  /** Living hunt animals (山羌): HP while alive; carcass when animalHp <= 0 */
+  /** Living wildlife (山羌、野豬、原牛): HP while alive; carcass when animalHp <= 0 */
   animalHp?: number;
   animalMaxHp?: number;
   animalAlive?: boolean;
@@ -465,7 +465,7 @@ export interface ResourceNode {
   animalFleeCooldown?: number;
   /** Remains disarmed until nearby threats leave the re-arm radius; prevents endless flee refreshes. */
   animalPanicSuppressed?: boolean;
-  /** Aggressor identity and leash time for dangerous wildlife such as wild boars. */
+  /** Aggressor identity and leash time for dangerous wildlife such as wild boars and aurochs. */
   animalAggroTargetId?: string;
   animalAggroUntil?: number;
   /** Original habitat center; the boar returns here after disengaging from a hunt. */
