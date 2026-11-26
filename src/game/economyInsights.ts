@@ -92,3 +92,56 @@ export function estimateDeliveredResourcePerMinute(
   if (!Number.isFinite(cycleSeconds) || cycleSeconds <= 0) return 0;
   return (carryCapacity / cycleSeconds) * 60;
 }
+
+export interface ResourceDropOffBuildingCandidate {
+  id: string;
+  faction: string;
+  isConstructed: boolean;
+  hp: number;
+  buildingType: string;
+  x: number;
+  z: number;
+}
+
+/**
+ * Pick the nearest valid drop-off in one pass, avoiding a filtered building
+ * array and a second distance loop for every worker/resource-node candidate.
+ * Equal distances preserve original building insertion order.
+ */
+export function selectNearestResourceDropOffBuilding<T extends ResourceDropOffBuildingCandidate>(
+  buildings: readonly T[],
+  faction: string,
+  resourceType: ResourceType,
+  isNaval: boolean,
+  originX: number,
+  originZ: number,
+): T | null {
+  if (!Number.isFinite(originX) || !Number.isFinite(originZ)) return null;
+
+  let nearest: T | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const building of buildings) {
+    if (
+      building.faction !== faction ||
+      !building.isConstructed ||
+      building.hp <= 0
+    ) continue;
+
+    const type = building.buildingType;
+    const eligible = isNaval
+      ? type === 'dock'
+      : type === 'town_center' ||
+        (resourceType === 'food' && (type === 'dock' || type === 'granary' || type === 'farm')) ||
+        (resourceType === 'wood' && type === 'lumber_camp') ||
+        ((resourceType === 'gold' || resourceType === 'stone') && type === 'mining_camp');
+    if (!eligible) continue;
+
+    const distance = Math.hypot(originX - building.x, originZ - building.z);
+    if (distance < nearestDistance) {
+      nearest = building;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}

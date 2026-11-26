@@ -221,7 +221,10 @@ import {
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
 } from './rules';
-import { estimateDeliveredResourcePerMinute } from './economyInsights';
+import {
+  estimateDeliveredResourcePerMinute,
+  selectNearestResourceDropOffBuilding,
+} from './economyInsights';
 import {
   createResourceNodeCandidateScratch,
   insertResourceNodeCandidate,
@@ -2791,30 +2794,17 @@ export class RtsEngine {
   ): number | null {
     const isNaval = !!worker.unitDef.isNaval || worker.unitDef.id === 'fishing_boat';
     const resourceType = node.resourceType;
-    const dropOffs = this.buildings.filter((building) => {
-      if (building.faction !== faction || !building.isConstructed || building.hp <= 0) return false;
-      if (isNaval) return building.buildingType === 'dock';
-      if (building.buildingType === 'town_center') return true;
-      if (resourceType === 'food') {
-        return ['dock', 'granary', 'farm'].includes(building.buildingType);
-      }
-      if (resourceType === 'wood') return building.buildingType === 'lumber_camp';
-      return (resourceType === 'gold' || resourceType === 'stone') && building.buildingType === 'mining_camp';
-    });
-    if (dropOffs.length === 0) return null;
-
-    // stepUnitReturning chooses the closest valid drop-off from the worker's
-    // current gathering position. The node stance is a stable estimate of it.
-    let nearest = dropOffs[0];
-    let nearestDistance = getDistance(node.x, node.z, nearest.x, nearest.z);
-    for (let index = 1; index < dropOffs.length; index++) {
-      const candidate = dropOffs[index];
-      const distance = getDistance(node.x, node.z, candidate.x, candidate.z);
-      if (distance < nearestDistance) {
-        nearest = candidate;
-        nearestDistance = distance;
-      }
-    }
+    // One deterministic scan replaces a per-candidate filter allocation and
+    // a second pass over the filtered drop-off list.
+    const nearest = selectNearestResourceDropOffBuilding(
+      this.buildings,
+      faction,
+      resourceType,
+      isNaval,
+      node.x,
+      node.z,
+    );
+    if (!nearest) return null;
 
     const grid = isNaval ? this.getWaterNavGrid() : this.getNavGrid();
     let cache = this.economyDeliveryRouteCache.get(grid);

@@ -4,6 +4,7 @@ import {
   calculateAgeResourceShortfall,
   calculateEconomyNetRates,
   getResourceHealthStatus,
+  selectNearestResourceDropOffBuilding,
 } from './economyInsights';
 
 test('economy net flow uses simulated game time and includes all stock changes', () => {
@@ -61,4 +62,51 @@ test('delivered gathering rate accounts for round-trip storage travel and carry 
     'Faster workers should spend less simulated time walking.',
   );
   assert.equal(estimateDeliveredResourcePerMinute(0, 15, 1.5, 10), 0);
+});
+
+
+test('nearest resource drop-off selection applies resource/faction rules in one stable pass', () => {
+  const buildings = [
+    { id: 'tc-far', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'town_center', x: 10, z: 0 },
+    { id: 'farm-near', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'farm', x: 2, z: 0 },
+    { id: 'dock-near', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'dock', x: 1, z: 0 },
+    { id: 'camp-near', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'lumber_camp', x: 0.5, z: 0 },
+    { id: 'enemy-tc', faction: 'red', isConstructed: true, hp: 100, buildingType: 'town_center', x: 0.1, z: 0 },
+    { id: 'unfinished-tc', faction: 'blue', isConstructed: false, hp: 100, buildingType: 'town_center', x: 0.2, z: 0 },
+    { id: 'destroyed-tc', faction: 'blue', isConstructed: true, hp: 0, buildingType: 'town_center', x: 0.3, z: 0 },
+  ];
+
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', false, 0, 0)?.id,
+    'dock-near',
+  );
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'wood', false, 0, 0)?.id,
+    'camp-near',
+  );
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'gold', false, 0, 0)?.id,
+    'tc-far',
+    'gold can use the town center when no mining camp exists',
+  );
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', true, 0, 0)?.id,
+    'dock-near',
+    'naval workers must return to a dock only',
+  );
+});
+
+test('nearest resource drop-off selection keeps first insertion on equal distances', () => {
+  const buildings = [
+    { id: 'first', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'town_center', x: 2, z: 0 },
+    { id: 'second', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'town_center', x: -2, z: 0 },
+  ];
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', false, 0, 0)?.id,
+    'first',
+  );
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', false, Number.NaN, 0),
+    null,
+  );
 });

@@ -687,7 +687,7 @@ export const MEDIEVAL_UNITS: UnitDefinition[] = [
     name: '帝國重型火砲 (Bombard Cannon)',
     factionPack: 'medieval',
     category: 'siege',
-    description: '【時代 IV 帝王火器】配備精鑄青銅砲管與黑火藥砲彈，超遠距離一擊轟塌城堡與奇觀地標。',
+    description: '【時代 IV 帝王火器】高射速重型青銅火砲，穿透建築護甲持續轟擊，爆炸破片能壓制密集步兵與守軍。',
     stats: {
       maxHp: 145,
       attack: 36,
