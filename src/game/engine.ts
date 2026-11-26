@@ -13878,31 +13878,6 @@ export class RtsEngine {
       }
 
       // 3. Base Expansion, Orphaned Construction Resume, Defenses & Landmark Age Advancement
-      const incompleteBuildings = aiBuildings.filter((b) => !b.isConstructed);
-      for (const inc of incompleteBuildings) {
-        const activeBuilders = aiActiveWorkers.filter(
-          (w) => w.state === 'building' && w.targetBuildingId === inc.id
-        );
-        if (activeBuilders.length === 0 && aiActiveWorkers.length > 0) {
-          const resumeCandidates = aiActiveWorkers
-            .filter((w) => w.state !== 'building' && w.state !== 'returning_resource')
-            .sort((a, b) => getDistance(a.x, a.z, inc.x, inc.z) - getDistance(b.x, b.z, inc.x, inc.z))
-            .slice(0, Math.min(2, aiActiveWorkers.length));
-          resumeCandidates.forEach((w) => {
-            w.targetBuildingId = inc.id;
-            w.targetResourceNodeId = undefined;
-            w.targetEntityId = undefined;
-            w.waypoints = undefined;
-            w.pathGoal = undefined;
-            w.state = 'building';
-            w.currentActionText = `🔨 復工建造${inc.buildingDef.name.split(' ')[0]}`;
-          });
-        }
-      }
-
-      const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
-      const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
-      const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
       const ageUpReadiness = getAiAgeUpReadinessTargets(activeRules, aiAge, {
         minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
         minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
@@ -13929,6 +13904,46 @@ export class RtsEngine {
         ageUpCost: nextAgeCost,
         underAttack,
       });
+
+      const incompleteBuildings = aiBuildings.filter((b) => !b.isConstructed);
+      for (const inc of incompleteBuildings) {
+        const activeBuilders = aiActiveWorkers.filter(
+          (w) => w.state === 'building' && w.targetBuildingId === inc.id
+        );
+        if (activeBuilders.length === 0 && aiActiveWorkers.length > 0) {
+          const availableResumeWorkers = aiActiveWorkers.filter(
+            (worker) =>
+              worker.hp > 0 &&
+              worker.state !== 'building' &&
+              worker.state !== 'returning_resource' &&
+              worker.state !== 'garrisoning'
+          );
+          // When a landmark can start now, keep one healthy worker uncommitted
+          // so orphaned optional construction cannot consume the age-up builder.
+          const reservedLandmarkBuilder = startNextAgeLandmark ? 1 : 0;
+          const resumeWorkerLimit = Math.min(
+            2,
+            Math.max(0, availableResumeWorkers.length - reservedLandmarkBuilder)
+          );
+          const resumeCandidates = availableResumeWorkers
+            .sort((a, b) => getDistance(a.x, a.z, inc.x, inc.z) - getDistance(b.x, b.z, inc.x, inc.z))
+            .slice(0, resumeWorkerLimit);
+          resumeCandidates.forEach((w) => {
+            w.targetBuildingId = inc.id;
+            w.targetResourceNodeId = undefined;
+            w.targetEntityId = undefined;
+            w.waypoints = undefined;
+            w.pathGoal = undefined;
+            w.state = 'building';
+            w.currentActionText = `🔨 復工建造${inc.buildingDef.name.split(' ')[0]}`;
+          });
+        }
+      }
+
+      const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
+      const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
+      const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
+
       const hasAvailableLandmarkBuilder = aiActiveWorkers.some(
         (worker) =>
           worker.hp > 0 &&
