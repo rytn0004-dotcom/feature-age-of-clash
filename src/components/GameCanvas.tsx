@@ -640,42 +640,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     lastHoverCheckRef.current = now;
 
     const hit = engine.raycastInteractive(e.clientX, e.clientY);
-    const hasSelectedUnits = engine.selectedUnitIds.length > 0;
-    const hasWorkersSelected = engine.selectedUnitIds.some((uid) => {
-      const u = engine.units.find((unit) => unit.id === uid);
-      return !!u && u.hp > 0 && u.unitDef.category === 'worker' && engine.isHumanControlled(u.faction);
-    });
-    const hasNavalBoatSelected = engine.selectedUnitIds.some((uid) => {
-      const u = engine.units.find((unit) => unit.id === uid);
-      return (
-        !!u &&
-        u.hp > 0 &&
-        (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat') &&
-        engine.isHumanControlled(u.faction)
-      );
-    });
-    const hasLandWorkersSelected = engine.selectedUnitIds.some((uid) => {
-      const u = engine.units.find((unit) => unit.id === uid);
-      return (
-        !!u &&
-        u.hp > 0 &&
-        u.unitDef.category === 'worker' &&
-        !u.unitDef.isNaval &&
-        u.unitDefId !== 'fishing_boat' &&
-        engine.isHumanControlled(u.faction)
-      );
-    });
-    const hasGroundCombatHuntersSelected = engine.selectedUnitIds.some((uid) => {
-      const u = engine.units.find((unit) => unit.id === uid);
-      return (
-        !!u &&
-        u.hp > 0 &&
-        !u.unitDef.isNaval &&
-        u.unitDef.category !== 'worker' &&
-        u.unitDef.category !== 'siege' &&
-        engine.isHumanControlled(u.faction)
-      );
-    });
+    const selectedIds = new Set(engine.selectedUnitIds);
+    const hasSelectedUnits = selectedIds.size > 0;
+    let hasWorkersSelected = false;
+    let hasNavalBoatSelected = false;
+    let hasLandWorkersSelected = false;
+    let hasGroundCombatHuntersSelected = false;
+
+    // Resolve the selection once per throttled hover update. Repeated
+    // units.find() calls made large control groups cost O(selected × roster)
+    // and were duplicated across four separate eligibility checks.
+    for (const unit of engine.units) {
+      if (!selectedIds.has(unit.id) || unit.hp <= 0 || !engine.isHumanControlled(unit.faction)) continue;
+
+      if (unit.unitDef.category === 'worker') {
+        hasWorkersSelected = true;
+        if (!unit.unitDef.isNaval && unit.unitDefId !== 'fishing_boat') {
+          hasLandWorkersSelected = true;
+        }
+      }
+      if (!!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat') {
+        hasNavalBoatSelected = true;
+      }
+      if (
+        !unit.unitDef.isNaval &&
+        unit.unitDef.category !== 'worker' &&
+        unit.unitDef.category !== 'siege'
+      ) {
+        hasGroundCombatHuntersSelected = true;
+      }
+    }
 
     const selBldg =
       engine.selectedBuildingId && !hasSelectedUnits
