@@ -1401,6 +1401,32 @@ export function getWildlifeMaxHealth(subtype?: ResourceNode['subtype'] | string)
   return 32;
 }
 
+export interface AiWildlifeHuntReadiness {
+  gameTime: number;
+  food: number;
+  armyCount: number;
+  availableHunters: number;
+  enemyDistance: number;
+  underAttack: boolean;
+  hasActiveHuntParty: boolean;
+}
+
+/** AI only commits a multi-unit hunting party when its economy needs food and the front is quiet. */
+export function shouldAiOrganizeWildlifeHunt(state: AiWildlifeHuntReadiness): boolean {
+  return Number.isFinite(state.gameTime) &&
+    state.gameTime >= 150 &&
+    Number.isFinite(state.food) &&
+    state.food <= 420 &&
+    Number.isFinite(state.armyCount) &&
+    state.armyCount >= 9 &&
+    Number.isFinite(state.availableHunters) &&
+    state.availableHunters >= 4 &&
+    !Number.isNaN(state.enemyDistance) &&
+    state.enemyDistance >= 32 &&
+    !state.underAttack &&
+    !state.hasActiveHuntParty;
+}
+
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
 
