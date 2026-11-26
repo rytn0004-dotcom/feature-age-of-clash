@@ -754,6 +754,7 @@ export class RtsEngine {
 
   // Placement mode
   public placementBuildingType: BuildingType | null = null;
+  private wallPlacementSessionToken = 0;
   private placementGhostMesh: THREE.Group | null = null;
   public wallPlacementPoints: WallChainPoint[] = [];
   private wallPlacementCursor: WallChainPoint | null = null;
@@ -5522,6 +5523,11 @@ export class RtsEngine {
     return true;
   }
 
+  /** Monotonic token used to reject delayed previews from an earlier placement session. */
+  public getWallPlacementSessionToken(): number {
+    return this.wallPlacementSessionToken;
+  }
+
   public startPlacement(type: BuildingType) {
     const bDef = DEFAULT_BUILDINGS[type];
     const currentAge = this.ageByFaction[this.humanPlayerId] || 1;
@@ -6709,6 +6715,7 @@ export class RtsEngine {
   }
 
   public cancelPlacement() {
+    this.wallPlacementSessionToken += 1;
     this.placementBuildingType = null;
     this.wallPlacementPoints = [];
     this.wallPlacementCursor = null;

@@ -22,7 +22,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
   const dragStartRef = useRef<{ x: number; y: number; shiftKey: boolean } | null>(null);
   const lastClickedUnitRef = useRef<{ id: string; defId: string; time: number } | null>(null);
   const lastHoverCheckRef = useRef(0);
-  const wallPreviewPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const wallPreviewPointerRef = useRef<{ clientX: number; clientY: number }>({ clientX: 0, clientY: 0 });
+  const wallPreviewPointerValidRef = useRef(false);
+  const wallPreviewPointerSessionRef = useRef(0);
   const wallPreviewTimerRef = useRef<number | null>(null);
   const lastWallPreviewRefreshRef = useRef(0);
   const lastWallInfoRefreshRef = useRef(0);
@@ -45,13 +47,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     iconKind?: 'wood' | 'hunt' | 'boar' | 'aurochs' | 'berry' | 'shore_fish' | 'deep_fish' | 'farm' | 'gold' | 'stone' | 'build' | 'attack' | 'rally' | 'select' | 'garrison' | 'contested';
   } | null>(null);
 
+  const clearPendingWallPreview = () => {
+    if (wallPreviewTimerRef.current !== null) {
+      window.clearTimeout(wallPreviewTimerRef.current);
+      wallPreviewTimerRef.current = null;
+    }
+    wallPreviewPointerValidRef.current = false;
+  };
+
   useEffect(() => {
     return () => {
-      if (wallPreviewTimerRef.current !== null) {
-        window.clearTimeout(wallPreviewTimerRef.current);
-        wallPreviewTimerRef.current = null;
-      }
-      wallPreviewPointerRef.current = null;
+      clearPendingWallPreview();
     };
   }, []);
 
@@ -332,6 +338,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       e.preventDefault();
       if (engine.isSpectatorMode) return;
       if (engine.placementBuildingType) {
+        clearPendingWallPreview();
         engine.cancelPlacement();
         setWallPlacementInfo(null);
         return;
@@ -492,11 +499,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           if (engine.placementBuildingType === 'wall') {
             // A click is authoritative: discard a delayed hover update and use
             // the exact click coordinates inside handleWallPlacementClick().
-            if (wallPreviewTimerRef.current !== null) {
-              window.clearTimeout(wallPreviewTimerRef.current);
-              wallPreviewTimerRef.current = null;
-            }
-            wallPreviewPointerRef.current = null;
+            clearPendingWallPreview();
             const result = engine.handleWallPlacementClick(worldPoint.x, worldPoint.z, e.shiftKey);
             setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
             lastWallInfoRefreshRef.current = performance.now();
@@ -548,7 +551,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     // Wall mode uses a live polyline preview; other buildings keep the single-footprint ghost.
     if (engine.placementBuildingType === 'wall') {
       if (hoverHint) setHoverHint(null);
-      wallPreviewPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
+      wallPreviewPointerRef.current.clientX = e.clientX;
+      wallPreviewPointerRef.current.clientY = e.clientY;
+      wallPreviewPointerValidRef.current = true;
+      wallPreviewPointerSessionRef.current = engine.getWallPlacementSessionToken();
       // Keep only the latest pointer and cap expensive world projection,
       // snapping, collision preview and scene updates at 10 Hz. Click commits
       // bypass this timer and always use their exact pointer coordinates.
@@ -559,7 +565,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           wallPreviewTimerRef.current = null;
           const activeEngine = engineRef.current;
           const latestPointer = wallPreviewPointerRef.current;
-          if (!activeEngine || activeEngine.placementBuildingType !== 'wall' || !latestPointer) return;
+          if (
+            !activeEngine ||
+            activeEngine.placementBuildingType !== 'wall' ||
+            !wallPreviewPointerValidRef.current ||
+            wallPreviewPointerSessionRef.current !== activeEngine.getWallPlacementSessionToken()
+          ) return;
           const latestPoint = activeEngine.screenToWorld(latestPointer.clientX, latestPointer.clientY);
           if (!latestPoint) return;
           activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
@@ -1062,12 +1073,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
   return (
     <div
+      data-game-canvas-root="true"
       className={`relative w-full h-full overflow-hidden select-none ${hoverHint?.cursorClass || 'cursor-default'}`}
       style={hoverHint?.cursorCss ? { cursor: hoverHint.cursorCss } : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => {
+        clearPendingWallPreview();
         setHoverHint(null);
         engineRef.current?.clearWallRepairPreview();
       }}

@@ -543,7 +543,173 @@ async function main() {
         "Wall resource broad-phase candidate count is invalid.",
       );
 
-      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, wallPlacement, exceptionCount: exceptions.length });
+      let wallInteraction = null;
+      if (count === counts[0]) {
+        const setup = await evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            const root = document.querySelector('[data-game-canvas-root="true"]');
+            if (!e || !root || typeof e.startPlacement !== "function") return null;
+            const rect = root.getBoundingClientRect();
+            const factionId = e.humanPlayerId;
+            const resources = e.playerResources;
+            const saved = {
+              age: e.ageByFaction?.[factionId],
+              playerAge: e.playerAge,
+              food: resources?.food,
+              wood: resources?.wood,
+              gold: resources?.gold,
+              stone: resources?.stone,
+            };
+            if (e.ageByFaction) e.ageByFaction[factionId] = Math.max(4, saved.age || 1);
+            e.playerAge = Math.max(4, e.playerAge || 1);
+            if (resources) {
+              resources.food = Math.max(5000, resources.food || 0);
+              resources.wood = Math.max(5000, resources.wood || 0);
+              resources.gold = Math.max(5000, resources.gold || 0);
+              resources.stone = Math.max(5000, resources.stone || 0);
+            }
+            e.startPlacement('wall');
+            return {
+              started: e.placementBuildingType === 'wall',
+              bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+              saved,
+              factionId,
+            };
+          })()
+        `);
+        assert.ok(setup && setup.started, "Could not enter wall placement for pointer interaction regression.");
+        const candidatePoints = [
+          [0.50, 0.58], [0.38, 0.52], [0.62, 0.52],
+          [0.50, 0.72], [0.30, 0.68], [0.70, 0.68],
+          [0.42, 0.38], [0.58, 0.38], [0.50, 0.48],
+        ];
+        let startPoint = null;
+        for (const [fx, fy] of candidatePoints) {
+          const x = Math.round(setup.bounds.left + setup.bounds.width * fx);
+          const y = Math.round(setup.bounds.top + setup.bounds.height * fy);
+          await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 }, sessionId);
+          await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 }, sessionId);
+          const state = await evaluate(`(() => {
+            const e = window.__rtsEngine;
+            const info = e?.getWallPlacementPreviewInfo?.();
+            return info ? { pointCount: info.pointCount, cursor: e.wallPlacementCursor } : null;
+          })()`);
+          if (state?.pointCount > 0) {
+            startPoint = { x, y };
+            break;
+          }
+        }
+        assert.ok(startPoint, "No safe wall start point could be selected through pointer input.");
+
+        const patched = await evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            e.__wallPreviewTestTimes = [];
+            e.__wallPreviewOriginal = e.updateWallPlacementPreview.bind(e);
+            e.updateWallPlacementPreview = function(x, z) {
+              this.__wallPreviewTestTimes.push({ time: performance.now(), x, z });
+              return this.__wallPreviewOriginal(x, z);
+            };
+            return true;
+          })()
+        `);
+        assert.equal(patched, true);
+
+        const moveCount = 36;
+        const moveStart = Date.now();
+        let lastX = startPoint.x;
+        let lastY = startPoint.y;
+        for (let index = 0; index < moveCount; index++) {
+          lastX = Math.round(setup.bounds.left + Math.min(setup.bounds.width - 40, (startPoint.x - setup.bounds.left) + 35 + index * 3));
+          lastY = Math.round(setup.bounds.top + Math.min(setup.bounds.height - 80, (startPoint.y - setup.bounds.top) + Math.sin(index / 5) * 26));
+          await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: lastX, y: lastY }, sessionId);
+        }
+        const dispatchMs = Date.now() - moveStart;
+        await sleep(160);
+        const burst = await evaluate(`(() => {
+          const e = window.__rtsEngine;
+          const calls = e?.__wallPreviewTestTimes || [];
+          const expected = e?.screenToWorld(${lastX}, ${lastY});
+          const last = calls[calls.length - 1];
+          const minimumIntervalMs = calls.length > 1
+            ? Math.min(...calls.slice(1).map((call, index) => call.time - calls[index].time))
+            : null;
+          return {
+            calls: calls.length,
+            minimumIntervalMs,
+            latestPointerMatched: !!last && !!expected && Math.hypot(last.x - expected.x, last.z - expected.z) < 0.03,
+            pointerMoves: ${moveCount},
+          };
+        })()`);
+        assert.ok(burst.calls > 0, "Real pointer movement did not update the wall preview.");
+        assert.ok(burst.calls < moveCount, "Wall preview did not coalesce the pointer-move burst.");
+        if (burst.minimumIntervalMs !== null) {
+          assert.ok(burst.minimumIntervalMs >= 75, "Wall preview exceeded its 10 Hz cadence guard.");
+        }
+        assert.equal(burst.latestPointerMatched, true, "Wall preview did not consume the latest pointer position.");
+
+        await send("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: Math.min(setup.bounds.left + setup.bounds.width - 40, lastX + 11),
+          y: lastY + 7,
+        }, sessionId);
+        const beforeRestart = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
+        await evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            e.cancelPlacement();
+            e.startPlacement('wall');
+            return { session: e.getWallPlacementSessionToken(), cursor: e.wallPlacementCursor };
+          })()
+        `);
+        await sleep(150);
+        const afterRestart = await evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            return {
+              calls: e.__wallPreviewTestTimes?.length ?? -1,
+              cursorIsEmpty: e.wallPlacementCursor === null,
+            };
+          })()
+        `);
+        assert.equal(afterRestart.calls, beforeRestart, "A delayed preview from the old wall session leaked into the new session.");
+        assert.equal(afterRestart.cursorIsEmpty, true, "The new wall session inherited an old cursor.");
+        wallInteraction = {
+          pointerMoves: moveCount,
+          dispatchMs,
+          coalescedPreviewCalls: burst.calls,
+          minimumPreviewIntervalMs: burst.minimumIntervalMs,
+          latestPointerMatched: burst.latestPointerMatched,
+          staleSessionIgnored: true,
+        };
+
+        await evaluate(`
+          (() => {
+            const e = window.__rtsEngine;
+            const saved = ${JSON.stringify(setup.saved)};
+            const factionId = ${JSON.stringify(setup.factionId)};
+            e.cancelPlacement();
+            if (e.ageByFaction) {
+              if (saved.age === undefined) delete e.ageByFaction[factionId];
+              else e.ageByFaction[factionId] = saved.age;
+            }
+            e.playerAge = saved.playerAge;
+            if (e.playerResources) {
+              e.playerResources.food = saved.food;
+              e.playerResources.wood = saved.wood;
+              e.playerResources.gold = saved.gold;
+              e.playerResources.stone = saved.stone;
+            }
+            if (e.__wallPreviewOriginal) e.updateWallPlacementPreview = e.__wallPreviewOriginal;
+            delete e.__wallPreviewOriginal;
+            delete e.__wallPreviewTestTimes;
+            return true;
+          })()
+        `);
+      }
+
+      report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, wallPlacement, wallInteraction, exceptionCount: exceptions.length });
       console.log("[browser-stress] " + count + " units: " +
         telemetry.fps.toFixed(1) + " FPS, avg " + telemetry.frameAverageMs.toFixed(2) + " ms, P95 " + telemetry.p95Ms.toFixed(2) +
         " ms, sim " + telemetry.simulationAverageMs.toFixed(2) + " ms (units " + telemetry.unitUpdateAverageMs.toFixed(2) +
