@@ -665,6 +665,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         engine.isHumanControlled(u.faction)
       );
     });
+    const hasGroundCombatHuntersSelected = engine.selectedUnitIds.some((uid) => {
+      const u = engine.units.find((unit) => unit.id === uid);
+      return (
+        !!u &&
+        u.hp > 0 &&
+        !u.unitDef.isNaval &&
+        u.unitDef.category !== 'worker' &&
+        u.unitDef.category !== 'siege' &&
+        engine.isHumanControlled(u.faction)
+      );
+    });
 
     const selBldg =
       engine.selectedBuildingId && !hasSelectedUnits
@@ -830,8 +841,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         food: { action: '採集糧食', label: '糧食資源' },
       };
       const meta = actionMap[sub] || { action: '採集資源', label: '資源點' };
+      const isDangerousWildlife = sub === 'boar' || sub === 'aurochs';
+      const hasGatherCommandSelection =
+        hasWorkersSelected ||
+        (isDangerousWildlife && hasGroundCombatHuntersSelected) ||
+        (hasNavalBoatSelected && (sub === 'shore_fish' || sub === 'deep_fish'));
 
-      if (hasWorkersSelected) {
+      if (hasGatherCommandSelection) {
         if (sub === 'deep_fish') {
           if (hasNavalBoatSelected) {
             setHoverHint({
@@ -853,7 +869,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
               iconKind: sub,
             });
           }
-        } else if (hasNavalBoatSelected && !hasLandWorkersSelected && sub !== 'shore_fish') {
+        } else if (
+          hasNavalBoatSelected &&
+          !hasLandWorkersSelected &&
+          !(isDangerousWildlife && hasGroundCombatHuntersSelected) &&
+          sub !== 'shore_fish'
+        ) {
           setHoverHint({
             x: e.clientX,
             y: e.clientY,
