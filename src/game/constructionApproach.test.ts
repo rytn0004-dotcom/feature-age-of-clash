@@ -363,6 +363,44 @@ test('blocked construction hands off only to the nearest unassigned idle worker'
   );
 });
 
+test('blocked construction handoff never steals idle workers with an existing intent', () => {
+  const candidates = [
+    { id: 'move-target', x: 0.5, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', targetX: 0.5 },
+    { id: 'attack-move', x: 0.6, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', attackMoveGoal: { x: 20, z: 0 } },
+    { id: 'formation', x: 0.7, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', formationGroupId: 'workers-east' },
+    { id: 'path-pending', x: 0.8, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', waypoints: [{ x: 5, z: 0 }] },
+    { id: 'queued-gather', x: 0.9, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle', commandQueue: [{ type: 'move' }] },
+    { id: 'safe-idle', x: 3, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+  ];
+
+  assert.equal(
+    selectConstructionHandoffWorker(candidates, { x: 0, z: 0, faction: 'blue' }),
+    5,
+    'workers with an existing movement, formation, path, or queued intent must remain untouched',
+  );
+});
+
+test('blocked construction handoff chooses the nearest eligible worker inside the proven search radius', () => {
+  const candidates = [
+    { id: 'outside-nearby-ring', x: 12, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+    { id: 'inside-ring', x: 7, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+    { id: 'closer-but-over-radius', x: 20, z: 0, hp: 100, faction: 'blue', category: 'worker', state: 'idle' },
+  ];
+
+  assert.equal(
+    selectConstructionHandoffWorker(candidates, { x: 0, z: 0, faction: 'blue' }, new Set(), 8),
+    1,
+  );
+  assert.equal(
+    selectConstructionHandoffWorker(candidates, { x: 0, z: 0, faction: 'blue' }, new Set(), 6),
+    -1,
+  );
+  assert.equal(
+    selectConstructionHandoffWorker(candidates, { x: 0, z: 0, faction: 'blue' }, new Set(), Number.NaN),
+    -1,
+  );
+});
+
 test('blocked construction handoff safely declines when all idle workers are excluded or invalid', () => {
   const candidates = [
     { id: 'dead', x: 1, z: 0, hp: 0, faction: 'blue', category: 'worker', state: 'idle' },
