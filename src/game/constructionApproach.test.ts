@@ -529,3 +529,30 @@ test('construction approach spatial index rebuild drops stale buckets and suppor
   assert.deepEqual(index.collect(0, 0, 1, output), []);
   assert.deepEqual(index.collect(262144, -262144, 1, output).map((item) => item.id), ['replacement']);
 });
+
+
+test('construction approach query radius covers every reservation that can affect a ring candidate', () => {
+  const index = new ConstructionApproachSpatialIndex<{ id: string; x: number; z: number }>();
+  const candidateRadius = 5.25;
+  const preferredSpacing = 1.35;
+  const angle = Math.PI / 4;
+  const candidate = { x: Math.cos(angle) * candidateRadius, z: Math.sin(angle) * candidateRadius };
+  const reservation = {
+    id: 'boundary-reservation',
+    x: candidate.x + Math.cos(angle) * (preferredSpacing - 0.01),
+    z: candidate.z + Math.sin(angle) * (preferredSpacing - 0.01),
+  };
+  index.beginRebuild();
+  index.insert(reservation);
+
+  const output: typeof reservation[] = [];
+  const possibleInfluenceRadius = candidateRadius + preferredSpacing;
+  assert.deepEqual(
+    index.collect(0, 0, possibleInfluenceRadius, output).map((item) => item.id),
+    ['boundary-reservation'],
+  );
+  assert.ok(
+    Math.hypot(reservation.x - candidate.x, reservation.z - candidate.z) < preferredSpacing,
+    'reservation is close enough to affect the candidate score',
+  );
+});

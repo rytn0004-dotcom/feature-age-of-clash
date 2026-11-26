@@ -10352,8 +10352,11 @@ export class RtsEngine {
       return point;
     };
 
-    const maximumWorkerReach = Math.max(2.2, this.maxBuildingCollisionRadius + 1.55);
-    const queryRadius = candidateRadius + CONSTRUCTION_APPROACH_PREFERRED_SPACING + maximumWorkerReach;
+    // Any reserved point close enough to affect a candidate is at most
+    // candidateRadius + preferredSpacing from this building centre. The
+    // index stores the planned point itself, so no worker path-length margin
+    // is needed here.
+    const queryRadius = candidateRadius + CONSTRUCTION_APPROACH_PREFERRED_SPACING;
     const candidates = this.constructionApproachSpatialIndex.collect(
       building.x,
       building.z,
