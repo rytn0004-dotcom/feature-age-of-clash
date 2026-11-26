@@ -14644,7 +14644,8 @@ export class RtsEngine {
     this.clearPendingConstructionCancellations();
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
-    this.constructionHandoffCandidates.length = 0;
+    this.constructionHandoffQueryScratch.units.length = 0;
+    this.constructionHandoffQueryScratch.buildings.length = 0;
     this.constructionHandoffExcludedWorkerIds.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
