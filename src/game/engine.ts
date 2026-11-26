@@ -3737,9 +3737,10 @@ export class RtsEngine {
   }
   public selectControlGroup(groupNum: number, centerCamera = false) {
     if (groupNum < 1 || groupNum > 9) return;
-    const ids = (this.controlGroups[groupNum] || []).filter((uid) =>
-      this.units.some((u) => u.id === uid && u.hp > 0 && this.isHumanControlled(u.faction))
-    );
+    const ids = (this.controlGroups[groupNum] || []).filter((uid) => {
+      const unit = this.getUnitById(uid);
+      return !!unit && unit.hp > 0 && this.isHumanControlled(unit.faction);
+    });
     this.controlGroups[groupNum] = ids;
     if (ids.length === 0) return;
 
@@ -7799,6 +7800,26 @@ export class RtsEngine {
       this.resourceNodeLookupSource = this.resourceNodes;
       this.resourceNodeLookupLength = this.resourceNodes.length;
     }
+  }
+
+  /**
+   * Resolve stable entity IDs through match-scoped maps. The maps rebuild only
+   * when a roster array or its membership changes, not when entities move or
+   * take damage. This keeps selection, commands and raycast hit resolution O(1).
+   */
+  public getUnitById(unitId: string): UnitEntity | undefined {
+    this.rebuildCombatEntityLookups();
+    return this.combatUnitLookupById.get(unitId);
+  }
+
+  public getBuildingById(buildingId: string): BuildingEntity | undefined {
+    this.rebuildCombatEntityLookups();
+    return this.combatBuildingLookupById.get(buildingId);
+  }
+
+  public getResourceNodeById(nodeId: string): ResourceNode | undefined {
+    this.rebuildResourceNodeLookup();
+    return this.resourceNodeLookupById.get(nodeId);
   }
 
   /**

@@ -448,7 +448,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         getBuildingMaxGarrison(hit.building) > 0
       ) {
         const hasGarrisonableSelected = engine.selectedUnitIds.some((uid) => {
-          const u = engine.units.find((unit) => unit.id === uid);
+          const u = engine.getUnitById(uid);
           return !!u && u.hp > 0 && u.unitDef.category !== 'siege' && engine.isHumanControlled(u.faction);
         });
         if (hasGarrisonableSelected) {
@@ -600,7 +600,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     // Hovering near a damaged friendly wall previews the restored piece and snaps
     // the subsequent worker right-click to that exact wall segment.
     const hasRepairWorkers = engine.selectedUnitIds.some((uid) => {
-      const unit = engine.units.find((entry) => entry.id === uid);
+      const unit = engine.getUnitById(uid);
       return !!unit && unit.hp > 0 && unit.unitDef.category === 'worker' && engine.isHumanControlled(unit.faction);
     });
     const repairHoverPoint = engine.screenToWorld(e.clientX, e.clientY);
@@ -809,7 +809,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       if (hasSelectedUnits && b.isConstructed && !engine.isHostileToPlayer(b)) {
         const gMax = getBuildingMaxGarrison(b);
         const hasGarrisonableSelected = engine.selectedUnitIds.some((uid) => {
-          const u = engine.units.find((unit) => unit.id === uid);
+          const u = engine.getUnitById(uid);
           return !!u && u.hp > 0 && u.unitDef.category !== 'siege' && engine.isHumanControlled(u.faction);
         });
         if (gMax > 0 && hasGarrisonableSelected) {

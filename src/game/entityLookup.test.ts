@@ -80,3 +80,26 @@ test('entity index: rebuilds the same map, removes stale IDs and preserves first
   rebuildEntityIdIndex(index, []);
   assert.equal(index.size, 0);
 });
+
+
+test('entity index: resolves large selected-ID batches in selection order after roster changes', () => {
+  const oldRoster = Array.from({ length: 400 }, (_, index) => ({
+    id: `old-${index}`,
+    hp: 100,
+  }));
+  const index = createEntityIdIndex(oldRoster);
+  const currentRoster = [
+    { id: 'unit-399', hp: 100 },
+    { id: 'unit-010', hp: 80 },
+    { id: 'unit-200', hp: 0 },
+  ];
+
+  rebuildEntityIdIndex(index, currentRoster);
+  const selectedIds = ['unit-010', 'missing', 'unit-399', 'unit-200'];
+  const resolvedIds = selectedIds
+    .map((id) => index.get(id)?.id)
+    .filter((id): id is string => !!id);
+
+  assert.deepEqual(resolvedIds, ['unit-010', 'unit-399', 'unit-200']);
+  assert.equal(index.has('old-010'), false, 'roster rebuild removes stale IDs');
+});
