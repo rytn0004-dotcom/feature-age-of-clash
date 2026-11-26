@@ -649,12 +649,25 @@ async function main() {
         }
         assert.equal(burst.latestPointerMatched, true, "Wall preview did not consume the latest pointer position.");
 
+        const beforeProbe = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
+        await send("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: Math.max(setup.bounds.left + 20, lastX - 17),
+          y: lastY + 4,
+        }, sessionId);
+        await waitFor(
+          async () => (await evaluate(`(() => (window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1) > ${beforeProbe})()`)),
+          3000,
+          "wall preview immediate pointer update before cancellation race",
+        );
+        const beforeRestart = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
+        // This second move lands inside the newly refreshed 100 ms window, so
+        // cancellation happens while its delayed callback is still pending.
         await send("Input.dispatchMouseEvent", {
           type: "mouseMoved",
           x: Math.min(setup.bounds.left + setup.bounds.width - 40, lastX + 11),
           y: lastY + 7,
         }, sessionId);
-        const beforeRestart = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
         await evaluate(`
           (() => {
             const e = window.__rtsEngine;
