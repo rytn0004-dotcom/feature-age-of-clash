@@ -161,7 +161,9 @@ export function updateDeerVisualLod(
   const simplifiedVisual = root.userData.deerAssetLod as THREE.Group | undefined;
   if (!detailedVisual || !simplifiedVisual) return;
 
-  root.updateMatrixWorld(true);
+  // Only the root transform is required for projected-size LOD. Recursively
+  // updating every animated child before the renderer visits it is redundant.
+  root.updateWorldMatrix(true, false);
   root.getWorldPosition(deerLodWorldCenter);
   root.getWorldScale(deerLodWorldScale);
   deerLodWorldCenter.y += 0.82 * deerLodWorldScale.y;
@@ -256,7 +258,9 @@ export function updateTreeVisualLod(
   const simplifiedVisual = root.userData.treeAssetLod as THREE.Group | undefined;
   if (!detailedVisual || !simplifiedVisual) return;
 
-  root.updateMatrixWorld(true);
+  // Only the root transform is required for projected-size LOD. Recursively
+  // updating every animated child before the renderer visits it is redundant.
+  root.updateWorldMatrix(true, false);
   root.getWorldPosition(treeLodWorldCenter);
   root.getWorldScale(treeLodWorldScale);
   treeLodWorldCenter.y += 2.0 * treeLodWorldScale.y;
@@ -423,7 +427,9 @@ export function updateFishVisualLod(
   const simplifiedVisual = root.userData.fishAssetLod as THREE.Group | undefined;
   if (!detailedVisual || !simplifiedVisual) return;
 
-  root.updateMatrixWorld(true);
+  // Only the root transform is required for projected-size LOD. Recursively
+  // updating every animated child before the renderer visits it is redundant.
+  root.updateWorldMatrix(true, false);
   root.getWorldPosition(fishLodWorldCenter);
   root.getWorldScale(fishLodWorldScale);
   fishLodWorldCenter.y += 0.45 * fishLodWorldScale.y;
