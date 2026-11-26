@@ -97,7 +97,8 @@ test('wall preview refresh is capped at ten updates per second', () => {
   assert.equal(WALL_PREVIEW_REFRESH_INTERVAL_MS, 100);
 });
 
-test('wall preview switches to instanced low-detail rendering only after the detail limit', () => {
+test('wall preview caps full 3D wall models at eight segments', () => {
+  assert.equal(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT, 8);
   assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT - 1), false);
   assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT), false);
   assert.equal(shouldUseInstancedWallPreview(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT + 1), true);
