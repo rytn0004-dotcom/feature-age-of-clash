@@ -4323,7 +4323,7 @@ test('AI economy rebalancing never interrupts cargo, queued work, or wildlife hu
     state: 'gathering',
     targetResourceNodeId: 'wood-node',
   };
-  const woodNode = { amount: 200, subtype: 'wood' };
+  const woodNode: Pick<ResourceNode, 'amount' | 'subtype'> = { amount: 200, subtype: 'wood' };
 
   assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, woodNode), true);
   assert.equal(
