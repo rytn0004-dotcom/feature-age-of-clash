@@ -49,6 +49,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
   }
 
   let nearestDistance = detectRadius;
+  let nearestThreatId: string | null = null;
   for (const unit of candidates) {
     if (
       unit.hp <= 0 ||
@@ -61,8 +62,12 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
     }
 
     const distance = Math.hypot(unit.x - animalX, unit.z - animalZ);
-    if (distance < nearestDistance) {
+    if (
+      distance < nearestDistance ||
+      (distance === nearestDistance && nearestThreatId !== null && unit.id < nearestThreatId)
+    ) {
       nearestDistance = distance;
+      nearestThreatId = unit.id;
       const nearest = reusableNearest ?? { x: unit.x, z: unit.z, d: distance };
       nearest.x = unit.x;
       nearest.z = unit.z;
@@ -131,4 +136,63 @@ export function tryConsumeWildlifeHunterAttack(
   const safeRate = Number.isFinite(attackRate) ? Math.max(0.35, attackRate) : 1;
   unit.wildlifeHuntReadyAt = simTime + Math.max(0.5, 1 / safeRate);
   return true;
+}
+
+export interface WildlifeHunterAttackUnit extends WildlifeInteractionUnit, WildlifeHunterCooldown {
+  unitDef: {
+    category: string;
+    isNaval?: boolean;
+    stats: { range?: number; attack?: number; attackRate?: number };
+  };
+}
+
+export interface WildlifeAnimalHealth {
+  animalAlive?: boolean;
+  animalHp?: number;
+}
+
+/**
+ * Applies one simulation slice of wildlife attacks and stops as soon as the
+ * animal dies. Later hunters must not spend their shared cooldown or emit
+ * duplicate hit/death effects against an already-dead animal.
+ */
+export function applyWildlifeHunterAttacks<Unit extends WildlifeHunterAttackUnit>(
+  animal: WildlifeAnimalHealth,
+  attackers: readonly Unit[],
+  simTime: number,
+  onHit: (attacker: Unit, damage: number) => void,
+  onKill: () => void,
+): number {
+  const initialHp = animal.animalHp;
+  if (
+    animal.animalAlive === false ||
+    !Number.isFinite(initialHp) ||
+    (initialHp ?? 0) <= 0 ||
+    !Number.isFinite(simTime)
+  ) {
+    return 0;
+  }
+
+  let remainingHp = initialHp as number;
+  let appliedAttacks = 0;
+  for (const attacker of attackers) {
+    if (remainingHp <= 0) break;
+    if (!isActiveWildlifeHunter(attacker)) continue;
+    if (!tryConsumeWildlifeHunterAttack(attacker, simTime, attacker.unitDef.stats.attackRate || 1)) continue;
+
+    const rawDamage = attacker.unitDef.stats.attack;
+    const damage = Math.max(1, Number.isFinite(rawDamage) ? rawDamage as number : 1);
+    remainingHp = Math.max(0, remainingHp - damage);
+    animal.animalHp = remainingHp;
+    appliedAttacks++;
+    onHit(attacker, damage);
+
+    if (remainingHp <= 0) {
+      animal.animalAlive = false;
+      onKill();
+      break;
+    }
+  }
+
+  return appliedAttacks;
 }
