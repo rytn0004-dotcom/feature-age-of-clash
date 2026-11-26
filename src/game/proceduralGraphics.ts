@@ -1719,7 +1719,7 @@ function addMongolCorralHorses(parent: THREE.Group, materials: MongolBuildingMat
     addPart(horseBarrelGeo, materials.horseCoat, [0, 0.88, 0]);
     addPart(horseNeckGeo, materials.horseCoat, [0, 1.0, 0.52], [1, 1, 1], [0.48, 0, 0]);
     addPart(horseMuzzleGeo, materials.horseCoat, [0, 1.44, 0.77], [1, 1, 1], [0.48, 0, 0]);
-    addPart(new THREE.BoxGeometry(0.08, 0.48, 0.14), materials.horseMane, [0, 1.26, 0.54], [1, 1, 1], [0.48, 0, 0]);
+    addPart(mongolCorralHorseManeGeo, materials.horseMane, [0, 1.26, 0.54], [1, 1, 1], [0.48, 0, 0]);
     addPart(horseTailGeo, materials.horseMane, [0, 0.98, -0.66]);
 
     // Straight planted legs read clearly at RTS camera height and avoid idle skeletal overhead.
@@ -1731,9 +1731,9 @@ function addMongolCorralHorses(parent: THREE.Group, materials: MongolBuildingMat
     }
 
     // Unmounted saddle, bedroll and girth identify the horses as working steppe mounts.
-    addPart(new THREE.BoxGeometry(0.56, 0.14, 0.58), materials.horseTack, [0, 1.12, -0.04]);
-    addPart(new THREE.BoxGeometry(0.46, 0.12, 0.46), materials.timber, [0, 1.2, -0.04]);
-    addPart(new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8), materials.rope, [0, 1.24, -0.32], [1, 1, 1], [0, 0, Math.PI / 2]);
+    addPart(mongolCorralHorseSaddleClothGeo, materials.horseTack, [0, 1.12, -0.04]);
+    addPart(mongolCorralHorseSaddleGeo, materials.timber, [0, 1.2, -0.04]);
+    addPart(mongolCorralHorseBedrollGeo, materials.rope, [0, 1.24, -0.32], [1, 1, 1], [0, 0, Math.PI / 2]);
   };
 
   addHorse(-1.12, -0.1, 0.34, 0.68);
@@ -9561,6 +9561,12 @@ const horseTailGeo = makeTubeGeo([
 const horseLegUpperGeo = new THREE.CylinderGeometry(0.086, 0.056, 0.34, 8);
 const horseLegLowerGeo = new THREE.CylinderGeometry(0.052, 0.04, 0.28, 8);
 const horseHoofGeo = new THREE.CylinderGeometry(0.045, 0.056, 0.075, 8);
+// Shared static tack geometries: building instances must not allocate fresh
+// saddle, mane or bedroll buffers every time a horse corral is instantiated.
+const mongolCorralHorseManeGeo = new THREE.BoxGeometry(0.08, 0.48, 0.14);
+const mongolCorralHorseSaddleClothGeo = new THREE.BoxGeometry(0.56, 0.14, 0.58);
+const mongolCorralHorseSaddleGeo = new THREE.BoxGeometry(0.46, 0.12, 0.46);
+const mongolCorralHorseBedrollGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8);
 
 // Shared Siege Spoked Wheel Builder
 function makeSiegeWheel(
