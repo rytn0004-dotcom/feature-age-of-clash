@@ -342,6 +342,7 @@ import {
   accumulateActiveConstructionWorkerCount,
   assignWorkersToConstructionTargets,
   getConstructionApproachPoint,
+  writeConstructionApproachPoint,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
@@ -484,6 +485,9 @@ export class RtsEngine {
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Per-worker route failure cooldowns, scoped to one construction target. */
   private constructionApproachFailedWorkersByBuilding = new Map<string, Map<string, number>>();
+  /** Reused work-ring reservations; valid only during the synchronous slot-selection call. */
+  private constructionApproachOccupiedPointsScratch: Array<{ x: number; z: number }> = [];
+  private constructionApproachOccupiedPointPool: Array<{ x: number; z: number }> = [];
   /** Local spatial-query output and exclusion IDs reused by blocked construction handoffs. */
   private constructionHandoffQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -1529,6 +1533,8 @@ export class RtsEngine {
     this.constructionHandoffQueryScratch.units.length = 0;
     this.constructionHandoffQueryScratch.buildings.length = 0;
     this.constructionHandoffExcludedWorkerIds.clear();
+    this.constructionApproachOccupiedPointsScratch.length = 0;
+    this.constructionApproachOccupiedPointPool.length = 0;
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
@@ -8064,7 +8070,12 @@ export class RtsEngine {
     if (goalShifted) {
       unit.stuckDuration = 0;
       unit.stuckAccumulator = 0;
-      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+      if (unit.lastProgressCheckPos) {
+        unit.lastProgressCheckPos.x = unit.x;
+        unit.lastProgressCheckPos.z = unit.z;
+      } else {
+        unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+      }
     }
 
     unit.pathRecoveryCooldown = Math.max(0, (unit.pathRecoveryCooldown || 0) - dt);
@@ -8077,7 +8088,12 @@ export class RtsEngine {
       } else {
         unit.stuckDuration = 0;
       }
-      unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+      if (unit.lastProgressCheckPos) {
+        unit.lastProgressCheckPos.x = unit.x;
+        unit.lastProgressCheckPos.z = unit.z;
+      } else {
+        unit.lastProgressCheckPos = { x: unit.x, z: unit.z };
+      }
       unit.stuckAccumulator = 0;
     }
 
@@ -8115,7 +8131,12 @@ export class RtsEngine {
         );
       }
       unit.waypoints = nextWaypoints;
-      unit.pathGoal = { x: goalX, z: goalZ };
+      if (unit.pathGoal) {
+        unit.pathGoal.x = goalX;
+        unit.pathGoal.z = goalZ;
+      } else {
+        unit.pathGoal = { x: goalX, z: goalZ };
+      }
       // Failed routes wait longer before being retried; this avoids an A* loop
       // when terrain fully separates a unit from its destination.
       unit.pathCooldown = nextWaypoints.length > 0 ? 0.4 : 0.85;
@@ -9679,7 +9700,21 @@ export class RtsEngine {
     unit: UnitEntity,
     building: BuildingEntity,
   ): Array<{ x: number; z: number }> {
-    const occupied: Array<{ x: number; z: number }> = [];
+    const occupied = this.constructionApproachOccupiedPointsScratch;
+    const pointPool = this.constructionApproachOccupiedPointPool;
+    occupied.length = 0;
+    let pointIndex = 0;
+
+    const nextPoint = (): { x: number; z: number } => {
+      let point = pointPool[pointIndex];
+      if (!point) {
+        point = { x: 0, z: 0 };
+        pointPool[pointIndex] = point;
+      }
+      pointIndex++;
+      return point;
+    };
+
     for (const other of this.units) {
       if (
         other.id === unit.id ||
@@ -9693,7 +9728,10 @@ export class RtsEngine {
         continue;
       }
 
-      const otherBuilding = this.buildings.find((candidate) => candidate.id === other.targetBuildingId);
+      // The lookup is rebuilt at the start of updateUnits, immediately before
+      // construction orders are advanced. Avoid a nested buildings.find scan
+      // for every worker on long wall chains.
+      const otherBuilding = this.combatBuildingLookupById.get(other.targetBuildingId);
       if (!otherBuilding) continue;
       const sameStructure = otherBuilding.id === building.id;
       const sameWallChain = !!building.wallChainId &&
@@ -9701,6 +9739,7 @@ export class RtsEngine {
         !!otherBuilding.buildingDef.isWall;
       if (!sameStructure && !sameWallChain) continue;
 
+      const point = nextPoint();
       if (
         other.buildApproachBuildingId === otherBuilding.id &&
         Number.isFinite(other.buildApproachAngle) &&
@@ -9712,17 +9751,21 @@ export class RtsEngine {
         );
         const otherReach = Math.max(2.2, otherBuildingRadius + 1.55);
         const otherWorkRadius = Math.min(otherBuildingRadius + 0.95, otherReach - 0.25);
-        occupied.push(getConstructionApproachPoint(
+        writeConstructionApproachPoint(
           { x: otherBuilding.x, z: otherBuilding.z },
           otherWorkRadius,
           other.buildApproachAngle!,
           other.buildApproachIndex!,
-        ));
+          BUILD_APPROACH_CANDIDATE_COUNT,
+          point,
+        );
       } else {
         // A builder already inside its work ring has no reservation fields;
         // its live position is the most accurate occupancy hint.
-        occupied.push({ x: other.x, z: other.z });
+        point.x = other.x;
+        point.z = other.z;
       }
+      occupied.push(point);
     }
     return occupied;
   }
@@ -14647,6 +14690,8 @@ export class RtsEngine {
     this.constructionHandoffQueryScratch.units.length = 0;
     this.constructionHandoffQueryScratch.buildings.length = 0;
     this.constructionHandoffExcludedWorkerIds.clear();
+    this.constructionApproachOccupiedPointsScratch.length = 0;
+    this.constructionApproachOccupiedPointPool.length = 0;
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
