@@ -277,7 +277,7 @@ test('terrain candidate filtering reuses arrays and removes stale values', () =>
 
 test('wall preview allows explicitly snapped endpoint walls at tight turns only', async () => {
   const { isWallChainPreviewObstructed } = await import('./collision');
-  const corner = [{ x: 1.35, z: 1.35 }];
+  const corner = [{ x: 1.35, z: 1.35, rotationY: -Math.PI / 2 }];
   const snappedAnchor = makeBuilding('snapped-anchor', 0, 0, 'wall', 1.6);
   const unrelatedWall = makeBuilding('unrelated-wall', 0, 0, 'wall', 1.6);
 

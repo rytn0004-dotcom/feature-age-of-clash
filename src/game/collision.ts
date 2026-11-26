@@ -912,14 +912,6 @@ interface OrientedWallFootprint {
   rotationY: number;
 }
 
-function wallLocalPoint(footprint: OrientedWallFootprint, x: number, z: number): { x: number; z: number } {
-  const dx = x - footprint.x;
-  const dz = z - footprint.z;
-  const cos = Math.cos(footprint.rotationY);
-  const sin = Math.sin(footprint.rotationY);
-  return { x: dx * cos - dz * sin, z: dx * sin + dz * cos };
-}
-
 /** True when a circle touches the actual rotated rectangular wall footprint. */
 export function doesCircleOverlapWallFootprint(
   footprint: OrientedWallFootprint,
@@ -928,15 +920,20 @@ export function doesCircleOverlapWallFootprint(
   radius: number,
 ): boolean {
   if (!Number.isFinite(radius) || radius < 0) return false;
-  const local = wallLocalPoint(footprint, x, z);
-  const closestX = Math.max(-WALL_MODEL_HALF_LENGTH, Math.min(WALL_MODEL_HALF_LENGTH, local.x));
-  const closestZ = Math.max(-WALL_MODEL_HALF_WIDTH, Math.min(WALL_MODEL_HALF_WIDTH, local.z));
-  const dx = local.x - closestX;
-  const dz = local.z - closestZ;
-  return dx * dx + dz * dz <= radius * radius;
+  const dx = x - footprint.x;
+  const dz = z - footprint.z;
+  const cos = Math.cos(footprint.rotationY);
+  const sin = Math.sin(footprint.rotationY);
+  const localX = dx * cos - dz * sin;
+  const localZ = dx * sin + dz * cos;
+  const closestX = Math.max(-WALL_MODEL_HALF_LENGTH, Math.min(WALL_MODEL_HALF_LENGTH, localX));
+  const closestZ = Math.max(-WALL_MODEL_HALF_WIDTH, Math.min(WALL_MODEL_HALF_WIDTH, localZ));
+  const gapX = localX - closestX;
+  const gapZ = localZ - closestZ;
+  return gapX * gapX + gapZ * gapZ <= radius * radius;
 }
 
-/** SAT overlap for two rotated wall rectangles, including a small seam tolerance. */
+/** SAT overlap for two rotated wall rectangles without allocating axis arrays. */
 export function doWallFootprintsOverlap(
   first: OrientedWallFootprint,
   second: OrientedWallFootprint,
@@ -946,26 +943,37 @@ export function doWallFootprintsOverlap(
   const firstSin = Math.sin(first.rotationY);
   const secondCos = Math.cos(second.rotationY);
   const secondSin = Math.sin(second.rotationY);
-  const firstAxes = [
-    { x: firstCos, z: -firstSin },
-    { x: firstSin, z: firstCos },
-  ];
-  const secondAxes = [
-    { x: secondCos, z: -secondSin },
-    { x: secondSin, z: secondCos },
-  ];
   const deltaX = second.x - first.x;
   const deltaZ = second.z - first.z;
 
   for (let axisIndex = 0; axisIndex < 4; axisIndex++) {
-    const axis = axisIndex < 2 ? firstAxes[axisIndex] : secondAxes[axisIndex - 2];
+    let axisX: number;
+    let axisZ: number;
+    if (axisIndex === 0) {
+      axisX = firstCos;
+      axisZ = -firstSin;
+    } else if (axisIndex === 1) {
+      axisX = firstSin;
+      axisZ = firstCos;
+    } else if (axisIndex === 2) {
+      axisX = secondCos;
+      axisZ = -secondSin;
+    } else {
+      axisX = secondSin;
+      axisZ = secondCos;
+    }
+
+    const firstAxisX = axisX * firstCos + axisZ * -firstSin;
+    const firstAxisZ = axisX * firstSin + axisZ * firstCos;
+    const secondAxisX = axisX * secondCos + axisZ * -secondSin;
+    const secondAxisZ = axisX * secondSin + axisZ * secondCos;
     const firstRadius =
-      WALL_MODEL_HALF_LENGTH * Math.abs(axis.x * firstAxes[0].x + axis.z * firstAxes[0].z) +
-      WALL_MODEL_HALF_WIDTH * Math.abs(axis.x * firstAxes[1].x + axis.z * firstAxes[1].z);
+      WALL_MODEL_HALF_LENGTH * Math.abs(firstAxisX) +
+      WALL_MODEL_HALF_WIDTH * Math.abs(firstAxisZ);
     const secondRadius =
-      WALL_MODEL_HALF_LENGTH * Math.abs(axis.x * secondAxes[0].x + axis.z * secondAxes[0].z) +
-      WALL_MODEL_HALF_WIDTH * Math.abs(axis.x * secondAxes[1].x + axis.z * secondAxes[1].z);
-    if (Math.abs(deltaX * axis.x + deltaZ * axis.z) > firstRadius + secondRadius + clearance) return false;
+      WALL_MODEL_HALF_LENGTH * Math.abs(secondAxisX) +
+      WALL_MODEL_HALF_WIDTH * Math.abs(secondAxisZ);
+    if (Math.abs(deltaX * axisX + deltaZ * axisZ) > firstRadius + secondRadius + clearance) return false;
   }
   return true;
 }
