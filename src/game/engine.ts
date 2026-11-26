@@ -13609,10 +13609,6 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'tower', aiActiveWorkers, anchorX, anchorZ, toCenterAngle);
           } else if (aiAge >= 3 && aiCastles === 0 && aiRes.stone >= 650 && aiRes.wood >= 200) {
             this.tryAiConstructBuilding(aiId, 'castle', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.15);
-          } else if (aiAge < 4 && aiAge === 2 && aiRes.food >= 1200 && aiRes.gold >= 600) {
-            this.tryAiConstructBuilding(aiId, 'landmark_citadel', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.4);
-          } else if (aiAge < 4 && aiAge === 3 && aiRes.food >= 2400 && aiRes.gold >= 1200) {
-            this.tryAiConstructBuilding(aiId, 'landmark_arsenal', aiActiveWorkers, anchorX, anchorZ, toCenterAngle - 0.4);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
           } else if (
