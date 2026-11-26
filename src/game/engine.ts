@@ -4144,7 +4144,10 @@ export class RtsEngine {
       canUnitGatherNode(unit.unitDef, node) &&
       (
         unit.unitDef.category === 'worker' ||
-        canUnitHuntDangerousWildlife(unit.unitDef, node.subtype)
+        (
+          canUnitHuntDangerousWildlife(unit.unitDef, node.subtype) &&
+          (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
+        )
       )
     );
     if (eligibleUnits.length === 0) {
@@ -4175,9 +4178,18 @@ export class RtsEngine {
       unit.targetResourceNodeId = nodeId;
       unit.targetEntityId = undefined;
       unit.targetBuildingId = undefined;
+      unit.targetGarrisonBuildingId = undefined;
       unit.targetX = undefined;
       unit.targetZ = undefined;
       unit.attackMoveGoal = null;
+      unit.formationGroupId = undefined;
+      unit.wallPatrolRoute = undefined;
+      unit.wallPatrolIndex = undefined;
+      unit.buildApproachBuildingId = undefined;
+      unit.buildApproachIndex = undefined;
+      unit.buildApproachAngle = undefined;
+      unit.buildApproachRetryAt = undefined;
+      unit.buildApproachRecoveryCount = undefined;
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
