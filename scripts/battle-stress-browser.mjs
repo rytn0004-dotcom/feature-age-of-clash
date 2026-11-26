@@ -19,6 +19,8 @@ const report = {
   map,
   note: "Headless Chromium measurements; no hardware-independent FPS threshold is applied.",
   scenarios: [],
+  constructionStress: [],
+  constructionStressNote: "Live RtsEngine construction runs in an isolated open corridor with resources/terrain disabled; pathfinding still uses the live navigation grid and wall/building collision data. Headless Chromium uses SwiftShader, not player GPU hardware.",
 };
 
 async function waitFor(operation, timeoutMs, label) {
@@ -731,6 +733,280 @@ async function main() {
             return true;
           })()
         `);
+      }
+
+
+      if (count === counts[counts.length - 1]) {
+        const constructionSetup = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const factionId = 'stress_medieval';",
+          "  const participant = e?.participants?.find((entry) => entry.id === factionId);",
+          "  const workerDef = e?.findUnitDef?.('villager', factionId);",
+          "  if (!e || !participant || !workerDef || workerDef.category !== 'worker') return { error: 'Missing medieval villager definition or stress faction.' };",
+          "  const centerCandidates = [0, 22, -22, 44, -44, 66, -66];",
+          "  const centerZ = centerCandidates.find((z) => !e.buildings.some((building) => building.hp > 0 && Math.abs(building.x) < 46 && building.z >= z - 5 && building.z <= z + 34)) ?? 0;",
+          "  for (const entry of e.participants) entry.controller = 'human';",
+          "  e.humanPlayerId = factionId;",
+          "  e.humanTeam = participant.team;",
+          "  e.observedFactionId = factionId;",
+          "  const keepAliveByFaction = new Map();",
+          "  for (const entry of e.participants) {",
+          "    const unit = e.units.find((candidate) => candidate.faction === entry.id && candidate.hp > 0);",
+          "    if (unit) keepAliveByFaction.set(entry.id, unit);",
+          "  }",
+          "  for (const unit of e.units) {",
+          "    const keep = keepAliveByFaction.get(unit.faction);",
+          "    if (keep === unit) {",
+          "      unit.hp = Math.max(1, unit.maxHp || 1);",
+          "      unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false };",
+          "      unit.state = 'idle';",
+          "      unit.targetBuildingId = undefined;",
+          "      unit.targetResourceNodeId = undefined;",
+          "      unit.targetEntityId = undefined;",
+          "      unit.targetGarrisonBuildingId = undefined;",
+          "      unit.attackMoveGoal = null;",
+          "      unit.commandQueue = undefined;",
+          "      const mesh = e.unitMeshes.get(unit.id);",
+          "      if (mesh) mesh.visible = true;",
+          "    } else {",
+          "      unit.hp = 0;",
+          "      unit.state = 'idle';",
+          "      const mesh = e.unitMeshes.get(unit.id);",
+          "      if (mesh) mesh.visible = false;",
+          "    }",
+          "  }",
+          "  e.getTerrainNavObstacles = () => ({ rects: [], discs: [], bridges: [] });",
+          "  for (const node of e.resourceNodes) node.amount = 0;",
+          "  const wallCount = 32;",
+          "  const spacing = 2.7;",
+          "  const startX = -((wallCount - 1) * spacing) / 2;",
+          "  const chainId = 'construction-stress-long-wall';",
+          "  const wallIds = [];",
+          "  for (let index = 0; index < wallCount; index++) {",
+          "    const wall = e.addBuilding('wall', factionId, startX + index * spacing, centerZ, false, 0, false);",
+          "    wall.wallChainId = chainId;",
+          "    wall.wallChainIndex = index;",
+          "    wall.wallChainSize = wallCount;",
+          "    wallIds.push(wall.id);",
+          "  }",
+          "  const workerIds = [];",
+          "  for (let index = 0; index < 200; index++) {",
+          "    const column = index % wallCount;",
+          "    const row = Math.floor(index / wallCount);",
+          "    const worker = e.addUnit(workerDef, factionId, startX + column * spacing, centerZ + 14 + row * 2.2, 'construction-stress-worker-' + index);",
+          "    worker.hp = 0;",
+          "    const mesh = e.unitMeshes.get(worker.id);",
+          "    if (mesh) mesh.visible = false;",
+          "    workerIds.push(worker.id);",
+          "  }",
+          "  const metrics = { indexRebuilds: 0, indexQueries: 0, reservationCandidateTotal: 0, maxCandidatesPerQuery: 0, retrySchedules: 0, approachIndexChanges: 0, pathRecoveryEvents: 0 };",
+          "  e.__constructionStressMetrics = metrics;",
+          "  const originalOccupiedQuery = e.getOccupiedConstructionApproachPoints.bind(e);",
+          "  e.getOccupiedConstructionApproachPoints = function(...args) {",
+          "    const points = originalOccupiedQuery(...args);",
+          "    const current = this.__constructionStressMetrics;",
+          "    if (current) {",
+          "      current.indexQueries += 1;",
+          "      current.reservationCandidateTotal += points.length;",
+          "      current.maxCandidatesPerQuery = Math.max(current.maxCandidatesPerQuery, points.length);",
+          "    }",
+          "    return points;",
+          "  };",
+          "  const originalIndexRebuild = e.rebuildActiveConstructionWorkerCounts.bind(e);",
+          "  e.rebuildActiveConstructionWorkerCounts = function(...args) {",
+          "    if (this.__constructionStressMetrics) this.__constructionStressMetrics.indexRebuilds += 1;",
+          "    return originalIndexRebuild(...args);",
+          "  };",
+          "  const originalStepBuilding = e.stepUnitBuilding.bind(e);",
+          "  e.stepUnitBuilding = function(unit, dt) {",
+          "    const previousIndex = unit.buildApproachIndex;",
+          "    const previousRetryAt = unit.buildApproachRetryAt;",
+          "    const previousRecoveryCount = unit.pathRecoveryCount || 0;",
+          "    const result = originalStepBuilding(unit, dt);",
+          "    const current = this.__constructionStressMetrics;",
+          "    if (current) {",
+          "      if (previousIndex !== undefined && unit.buildApproachIndex !== undefined && previousIndex !== unit.buildApproachIndex) current.approachIndexChanges += 1;",
+          "      if (Number.isFinite(unit.buildApproachRetryAt) && unit.buildApproachRetryAt !== previousRetryAt) current.retrySchedules += 1;",
+          "      current.pathRecoveryEvents += Math.max(0, (unit.pathRecoveryCount || 0) - previousRecoveryCount);",
+          "    }",
+          "    return result;",
+          "  };",
+          "  e.gameSpeed = 2;",
+          "  e.performanceOverlayVisible = true;",
+          "  e.navGridDirty = true;",
+          "  e.waterNavGridDirty = true;",
+          "  e.rebuildCombatEntityLookups?.();",
+          "  e.rebuildCombatSpatialIndex?.();",
+          "  return { factionId, centerZ, wallCount, wallIds, workerIds, gameSpeed: e.gameSpeed, terrainObstaclesDisabled: true };",
+          "})()",
+        ].join("\n"));
+        assert.ok(constructionSetup && !constructionSetup.error, constructionSetup?.error || "Construction stress scenario setup failed.");
+        assert.equal(constructionSetup.wallIds.length, 32, "Expected a 32-segment construction chain.");
+        assert.equal(constructionSetup.workerIds.length, 200, "Expected 200 reusable stress workers.");
+
+        for (const workerCount of [50, 100, 200]) {
+          const prepared = await evaluate([
+            "(() => {",
+            "  const e = window.__rtsEngine;",
+            "  const factionId = " + JSON.stringify(constructionSetup.factionId) + ";",
+            "  const workerIds = " + JSON.stringify(constructionSetup.workerIds) + ";",
+            "  const wallIds = " + JSON.stringify(constructionSetup.wallIds) + ";",
+            "  const workerCount = " + workerCount + ";",
+            "  const wallCount = wallIds.length;",
+            "  const startX = -((wallCount - 1) * 2.7) / 2;",
+            "  const centerZ = " + constructionSetup.centerZ + ";",
+            "  const spacing = 2.7;",
+            "  const walls = wallIds.map((id) => e.buildings.find((building) => building.id === id));",
+            "  for (const wall of walls) {",
+            "    wall.isConstructed = false;",
+            "    wall.buildProgress = 0.1;",
+            "    wall.hp = Math.max(1, Math.round(wall.maxHp * 0.1));",
+            "    wall.wallBreached = false;",
+            "  }",
+            "  const workers = workerIds.map((id) => e.units.find((unit) => unit.id === id));",
+            "  for (let index = 0; index < workers.length; index++) {",
+            "    const unit = workers[index];",
+            "    const column = index % wallCount;",
+            "    const row = Math.floor(index / wallCount);",
+            "    const active = index < workerCount;",
+            "    unit.x = startX + column * spacing;",
+            "    unit.z = centerZ + 14 + row * 2.2;",
+            "    unit.hp = active ? unit.maxHp : 0;",
+            "    unit.faction = factionId;",
+            "    unit.state = active ? 'building' : 'idle';",
+            "    unit.targetBuildingId = active ? wallIds[column] : undefined;",
+            "    unit.targetResourceNodeId = undefined;",
+            "    unit.targetEntityId = undefined;",
+            "    unit.targetGarrisonBuildingId = undefined;",
+            "    unit.targetX = undefined;",
+            "    unit.targetZ = undefined;",
+            "    unit.attackMoveGoal = null;",
+            "    unit.commandQueue = undefined;",
+            "    unit.buildApproachBuildingId = undefined;",
+            "    unit.buildApproachIndex = undefined;",
+            "    unit.buildApproachAngle = undefined;",
+            "    unit.buildApproachRetryAt = undefined;",
+            "    unit.buildApproachRecoveryCount = undefined;",
+            "    unit.waypoints = undefined;",
+            "    unit.pathGoal = undefined;",
+            "    unit.pathCooldown = 0;",
+            "    unit.pathRecoveryCount = 0;",
+            "    unit.pathRecoveryCooldown = 0;",
+            "    unit.stuckDuration = 0;",
+            "    unit.stuckAccumulator = 0;",
+            "    unit.velocity = { x: 0, z: 0 };",
+            "    unit.currentActionText = active ? '🔨 準備前往城牆施工' : '壓測待命';",
+            "    const mesh = e.unitMeshes.get(unit.id);",
+            "    if (mesh) { mesh.visible = active; mesh.position.set(unit.x, 0, unit.z); }",
+            "  }",
+            "  e.__constructionStressMetrics = { indexRebuilds: 0, indexQueries: 0, reservationCandidateTotal: 0, maxCandidatesPerQuery: 0, retrySchedules: 0, approachIndexChanges: 0, pathRecoveryEvents: 0 };",
+            "  e.pathSearchTiming = { sampleCount: 0, aiSampleCount: 0, emptyPathCount: 0, aiEmptyPathCount: 0, totalMs: 0, maxMs: 0 };",
+            "  e.navGridDirty = true;",
+            "  e.rebuildCombatEntityLookups?.();",
+            "  e.rebuildCombatSpatialIndex?.();",
+            "  e.rebuildActiveConstructionWorkerCounts?.();",
+            "  return { workerCount, startSimTime: e.simTime, wallCount: walls.length, activeWorkers: workers.filter((unit) => unit.hp > 0).length };",
+            "})()",
+          ].join("\n"));
+          assert.equal(prepared.activeWorkers, workerCount, "Construction worker roster setup mismatch.");
+
+          const snapshotExpression = [
+            "(() => {",
+            "  const e = window.__rtsEngine;",
+            "  const workerIds = " + JSON.stringify(constructionSetup.workerIds.slice(0, workerCount)) + ";",
+            "  const wallIds = " + JSON.stringify(constructionSetup.wallIds) + ";",
+            "  const workers = workerIds.map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+            "  const walls = wallIds.map((id) => e.buildings.find((building) => building.id === id)).filter(Boolean);",
+            "  const metrics = e.__constructionStressMetrics || {};",
+            "  const worksiteWorkers = workers.filter((unit) => unit.state === 'building' && /建造.*\\(\\d+%\\)/.test(unit.currentActionText || '')).length;",
+            "  const retryingWorkers = workers.filter((unit) => Number.isFinite(unit.buildApproachRetryAt) && unit.buildApproachRetryAt > e.simTime).length;",
+            "  return {",
+            "    simTime: e.simTime,",
+            "    gameState: e.gameState,",
+            "    completedWalls: walls.filter((wall) => wall.isConstructed || wall.buildProgress >= 0.999999).length,",
+            "    wallCount: walls.length,",
+            "    idleWorkers: workers.filter((unit) => unit.state === 'idle').length,",
+            "    worksiteWorkers,",
+            "    retryingWorkers,",
+            "    pathSearches: e.pathSearchTiming?.sampleCount || 0,",
+            "    failedPathSearches: e.pathSearchTiming?.emptyPathCount || 0,",
+            "    pathSearchTotalMs: e.pathSearchTiming?.totalMs || 0,",
+            "    indexRebuilds: metrics.indexRebuilds || 0,",
+            "    indexQueries: metrics.indexQueries || 0,",
+            "    reservationCandidateTotal: metrics.reservationCandidateTotal || 0,",
+            "    averageCandidatesPerQuery: (metrics.reservationCandidateTotal || 0) / Math.max(1, metrics.indexQueries || 0),",
+            "    maxCandidatesPerQuery: metrics.maxCandidatesPerQuery || 0,",
+            "    retrySchedules: metrics.retrySchedules || 0,",
+            "    approachIndexChanges: metrics.approachIndexChanges || 0,",
+            "    pathRecoveryEvents: metrics.pathRecoveryEvents || 0",
+            "  };",
+            "})()",
+          ].join("\n");
+          let current = await evaluate(snapshotExpression);
+          let previous = current;
+          let idleWorkerSeconds = 0;
+          let nonWorksiteWorkerSeconds = 0;
+          let retryWorkerSeconds = 0;
+          const startedAt = Date.now();
+          const timeoutMs = 60000;
+          while (
+            current.completedWalls < current.wallCount &&
+            current.gameState === "playing" &&
+            Date.now() - startedAt < timeoutMs
+          ) {
+            await sleep(250);
+            current = await evaluate(snapshotExpression);
+            const deltaSimSeconds = Math.max(0, current.simTime - previous.simTime);
+            idleWorkerSeconds += deltaSimSeconds * current.idleWorkers;
+            nonWorksiteWorkerSeconds += deltaSimSeconds * Math.max(0, workerCount - current.worksiteWorkers);
+            retryWorkerSeconds += deltaSimSeconds * current.retryingWorkers;
+            previous = current;
+          }
+
+          const elapsedWallMs = Date.now() - startedAt;
+          const elapsedGameSeconds = Math.max(0, current.simTime - prepared.startSimTime);
+          const stage = {
+            workerCount,
+            wallSegments: current.wallCount,
+            completedWallSegments: current.completedWalls,
+            completed: current.completedWalls === current.wallCount,
+            elapsedGameSeconds,
+            elapsedWallMs,
+            pathSearchCalls: current.pathSearches,
+            pathSearchAverageMs: current.pathSearches > 0 ? current.pathSearchTotalMs / current.pathSearches : 0,
+            failedPathSearches: current.failedPathSearches,
+            constructionIndexRebuilds: current.indexRebuilds,
+            reservationIndexQueries: current.indexQueries,
+            reservationCandidates: current.reservationCandidateTotal,
+            averageReservationCandidatesPerQuery: current.averageCandidatesPerQuery,
+            maxReservationCandidatesPerQuery: current.maxCandidatesPerQuery,
+            retrySchedules: current.retrySchedules,
+            approachIndexChanges: current.approachIndexChanges,
+            pathRecoveryEvents: current.pathRecoveryEvents,
+            idleWorkerSeconds,
+            idleWorkerPercent: elapsedGameSeconds > 0 ? idleWorkerSeconds / (elapsedGameSeconds * workerCount) : 0,
+            nonWorksiteWorkerSeconds,
+            retryWorkerSeconds,
+            finalIdleWorkers: current.idleWorkers,
+            finalRetryingWorkers: current.retryingWorkers,
+            renderer: "headless Chromium / SwiftShader",
+          };
+          report.constructionStress.push(stage);
+          assert.equal(stage.completed, true, workerCount + " villagers did not complete the full 32-segment wall within " + timeoutMs + "ms.");
+          assert.ok(stage.pathSearchCalls > 0, "Construction scenario recorded no live A* path searches.");
+          assert.ok(stage.reservationIndexQueries > 0, "Construction scenario recorded no planned-slot index queries.");
+          assert.ok(stage.constructionIndexRebuilds > 0, "Construction scenario did not rebuild the construction reservation index.");
+          assert.ok(Number.isFinite(stage.idleWorkerPercent) && stage.idleWorkerPercent >= 0 && stage.idleWorkerPercent <= 1, "Invalid worker idle-time ratio.");
+          assert.ok(Number.isFinite(stage.elapsedGameSeconds) && stage.elapsedGameSeconds > 0, "Invalid wall completion game time.");
+          console.log("[construction-stress] " + workerCount + " villagers: " +
+            stage.elapsedGameSeconds.toFixed(2) + " game seconds, " +
+            stage.pathSearchCalls + " A* searches (" + stage.failedPathSearches + " empty), " +
+            stage.reservationIndexQueries + " reservation queries, avg " +
+            stage.averageReservationCandidatesPerQuery.toFixed(2) + " candidates, " +
+            stage.retrySchedules + " retry schedules, " +
+            stage.idleWorkerPercent.toFixed(1) + "% idle worker time.");
+        }
       }
 
       report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, wallPlacement, wallInteraction, exceptionCount: exceptions.length });
