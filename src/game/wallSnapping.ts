@@ -1,4 +1,5 @@
 import { WALL_SEGMENT_SPACING } from './rules';
+import { WALL_MODEL_HALF_WIDTH } from './wallPlacement';
 
 export interface WallSnapBuilding {
   id: string;
@@ -17,11 +18,13 @@ export interface WallSnapBuilding {
   buildingDef: { isWall?: boolean };
 }
 
+export type WallSnapSide = 'start' | 'end' | 'side-positive' | 'side-negative';
+
 export interface WallEndpointSnap<T extends WallSnapBuilding = WallSnapBuilding> {
   point: { x: number; z: number };
   wall: T;
   distance: number;
-  side: 'start' | 'end';
+  side: WallSnapSide;
 }
 
 /** Distance at which a new wall endpoint magnetically joins an existing chain. */
@@ -42,7 +45,7 @@ export function isWallChainPointTooClose(
 interface WallAnchor<T extends WallSnapBuilding> {
   point: { x: number; z: number };
   wall: T;
-  side: 'start' | 'end';
+  side: WallSnapSide;
   order: number;
 }
 
@@ -62,12 +65,28 @@ function getWallEndpoint(wall: WallSnapBuilding, side: 'start' | 'end') {
 }
 
 /**
+ * Midpoint of one exposed long face. A new perpendicular wall starts at the
+ * outer face so its first modular piece meets the existing wall without a gap.
+ */
+function getWallSideMidpoint(wall: WallSnapBuilding, side: 'side-positive' | 'side-negative') {
+  const yaw = wall.rotationY ?? 0;
+  const sign = side === 'side-positive' ? 1 : -1;
+  const normalX = Math.sin(yaw);
+  const normalZ = Math.cos(yaw);
+  return {
+    x: wall.x + normalX * WALL_MODEL_HALF_WIDTH * sign,
+    z: wall.z + normalZ * WALL_MODEL_HALF_WIDTH * sign,
+  };
+}
+
+/**
  * Only expose the two outer endpoints of each contiguous wall-chain run.
  * This prevents the cursor from snapping to interior seams where a new piece
  * would overlap an existing segment instead of extending the fortification.
  */
 function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): WallAnchor<T>[] {
   const groups = new Map<string, T[]>();
+  const sideWalls: T[] = [];
   const anchors: WallAnchor<T>[] = [];
   const addAnchor = (wall: T, side: 'start' | 'end') => {
     anchors.push({
@@ -79,6 +98,7 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
   };
   for (const wall of walls) {
     if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed) continue;
+    sideWalls.push(wall);
     const key = wall.wallChainId ? `chain:${wall.wallChainId}` : `segment:${wall.id}`;
     const group = groups.get(key) ?? [];
     group.push(wall);
@@ -112,6 +132,19 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
       run.push(wall);
     }
     flushRun();
+  }
+
+  // Side anchors are generated for every individual segment, not just the
+  // chain's outer ends. This allows a wall to branch from a segment midpoint.
+  for (const wall of sideWalls) {
+    for (const side of ['side-positive', 'side-negative'] as const) {
+      anchors.push({
+        point: getWallSideMidpoint(wall, side),
+        wall,
+        side,
+        order: anchors.length,
+      });
+    }
   }
   return anchors;
 }
@@ -206,7 +239,12 @@ export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
   }
 
   public get endpointCount(): number {
-    return this.anchors.length;
+    return this.anchors.reduce((count, anchor) =>
+      count + (anchor.side === 'start' || anchor.side === 'end' ? 1 : 0), 0);
+  }
+
+  public get sideAnchorCount(): number {
+    return this.anchors.length - this.endpointCount;
   }
 }
 
@@ -400,7 +438,12 @@ export function planWallChainExtension<T extends WallSnapBuilding>(
   attachAt: 'start' | 'end',
   fallbackChainId: string
 ): WallChainExtensionPlan<T> | null {
-  if (!Number.isInteger(newSegmentCount) || newSegmentCount <= 0 || !fallbackChainId) return null;
+  if (
+    !Number.isInteger(newSegmentCount) ||
+    newSegmentCount <= 0 ||
+    !fallbackChainId ||
+    (snap.side !== 'start' && snap.side !== 'end')
+  ) return null;
 
   const chainId = snap.wall.wallChainId;
   const members = walls.filter((wall) =>
