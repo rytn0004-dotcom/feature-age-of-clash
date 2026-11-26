@@ -13169,6 +13169,11 @@ export class RtsEngine {
         unit.targetZ === undefined &&
         !unit.attackMoveGoal &&
         !unit.wallPatrolRoute?.length &&
+        !unit.formationGroupId &&
+        !unit.pathGoal &&
+        !unit.waypoints?.length &&
+        !unit.targetGarrisonBuildingId &&
+        !unit.fieldAssemblyProjectId &&
         !unit.garrisonedInBuildingId &&
         !unit.commandQueue?.length &&
         (!unit.lastDamagedTime || performance.now() - unit.lastDamagedTime > 12_000)
@@ -13197,6 +13202,8 @@ export class RtsEngine {
           const enemyNearby = aiHostileUnits.some((enemy) =>
             enemy.hp > 0 && !enemy.garrisonedInBuildingId &&
             getDistance(enemy.x, enemy.z, node.x, node.z) < 28
+          ) || aiHostileBuildings.some((building) =>
+            building.hp > 0 && getDistance(building.x, building.z, node.x, node.z) < 24
           );
           if (enemyNearby) continue;
 
