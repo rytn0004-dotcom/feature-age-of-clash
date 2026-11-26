@@ -8,6 +8,7 @@ import {
   assignWorkersToConstructionTargets,
   accumulateActiveConstructionWorkerCount,
   getConstructionApproachPoint,
+  writeConstructionApproachPoint,
   isActiveConstructionWorkerWithinReach,
   shouldDeferBlockedWallConstructionTarget,
   deferBlockedWallConstructionCommand,
@@ -72,6 +73,32 @@ test('repeated blocked-route polls do not extend a worker cooldown indefinitely'
 
   recordConstructionHandoffFailure(retryAtByWorkerId, 'worker-a', 35);
   assert.equal(retryAtByWorkerId.get('worker-a'), 65, 'a fresh failure after expiry starts a new cooldown');
+});
+
+test('construction approach point writer reuses caller-owned storage', () => {
+  const output = { x: 99, z: 99 };
+  const first = writeConstructionApproachPoint(
+    { x: 4, z: -3 },
+    2,
+    Math.PI / 4,
+    0,
+    8,
+    output,
+  );
+  assert.equal(first, output);
+  assert.ok(Math.abs(output.x - (4 + Math.SQRT2)) < 1e-9);
+  assert.ok(Math.abs(output.z - (-3 + Math.SQRT2)) < 1e-9);
+
+  const second = writeConstructionApproachPoint(
+    { x: 4, z: -3 },
+    2,
+    Math.PI / 4,
+    1,
+    8,
+    output,
+  );
+  assert.equal(second, output);
+  assert.notEqual(output.x, 4 + Math.SQRT2);
 });
 
 test('construction approach candidates stay on one stable work ring', () => {
