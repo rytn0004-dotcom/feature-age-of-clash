@@ -276,6 +276,7 @@ import {
   applyBuildingConstructionVisuals,
   applyBuildingDamageVisuals,
   updateBuildingAgeVisuals,
+  updateBuildingAgeEvolutionTransition,
   applyWallBreachVisuals,
   updateGateDoorAnimation,
   applyTerrainBiomeMaterial,
@@ -601,6 +602,8 @@ export class RtsEngine {
   private buildingMeshes = new Map<string, THREE.Group>();
   /** Building meshes with animated flags/crystals only; static buildings are omitted from the per-tick animation pass. */
   private animatedBuildingMeshes = new Set<THREE.Group>();
+  /** Only buildings currently revealing a new era ornament are visited for transition easing. */
+  private ageEvolutionTransitionMeshes = new Set<THREE.Group>();
   private nodeMeshes = new Map<string, THREE.Group>();
   /** Static membership index for tree-only ambient animation; excludes animals and resource nodes. */
   private windAnimatedNodeMeshes = new Set<THREE.Group>();
@@ -1520,6 +1523,7 @@ export class RtsEngine {
     this.unitMeshes.clear();
     this.buildingMeshes.clear();
     this.animatedBuildingMeshes.clear();
+    this.ageEvolutionTransitionMeshes.clear();
     this.nodeMeshes.clear();
     this.windAnimatedNodeMeshes.clear();
     this.fishAnimatedNodeMeshes.clear();
@@ -5160,6 +5164,7 @@ export class RtsEngine {
       this.scene.remove(mesh);
       this.buildingMeshes.delete(building.id);
       this.animatedBuildingMeshes.delete(mesh);
+      this.ageEvolutionTransitionMeshes.delete(mesh);
     }
 
     this.navGridDirty = true;
@@ -6942,6 +6947,12 @@ export class RtsEngine {
           entry.obj.position.y = entry.baseY + Math.sin(this.simTime * 2.8 + flagIdx) * 0.14;
           flagIdx++;
         }
+      }
+    });
+
+    this.ageEvolutionTransitionMeshes.forEach((bMesh) => {
+      if (!bMesh.parent || !updateBuildingAgeEvolutionTransition(bMesh, dt)) {
+        this.ageEvolutionTransitionMeshes.delete(bMesh);
       }
     });
     if (this.rallyFlagMesh) {
@@ -11305,6 +11316,7 @@ export class RtsEngine {
         if (mesh) {
           this.buildingMeshes.delete(bldg.id);
           this.animatedBuildingMeshes.delete(mesh);
+          this.ageEvolutionTransitionMeshes.delete(mesh);
           const badge = mesh.userData.bldgBadge as THREE.Object3D | undefined;
           if (badge) badge.visible = false;
           const scaf = mesh.getObjectByName('scaffoldGroup');
@@ -14670,7 +14682,9 @@ export class RtsEngine {
     for (const building of this.buildings) {
       if (building.faction !== faction || building.hp <= 0) continue;
       const buildingMesh = this.buildingMeshes.get(building.id);
-      if (buildingMesh) updateBuildingAgeVisuals(buildingMesh, targetAge);
+      if (buildingMesh && updateBuildingAgeVisuals(buildingMesh, targetAge)) {
+        this.ageEvolutionTransitionMeshes.add(buildingMesh);
+      }
     }
     this.refreshFactionUnitMeshes(faction);
     if (!this.landmarksByFaction[faction]) this.landmarksByFaction[faction] = [];
@@ -14861,6 +14875,7 @@ export class RtsEngine {
     this.constructionHandoffExcludedWorkerIds.clear();
     this.constructionApproachOccupiedPointsScratch.length = 0;
     this.constructionApproachOccupiedPointPool.length = 0;
+    this.ageEvolutionTransitionMeshes.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;
     this.wallEndpointIndexBuildingSource = null;
