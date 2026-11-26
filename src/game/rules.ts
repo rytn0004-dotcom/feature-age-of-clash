@@ -1383,6 +1383,18 @@ export function isHuntableWildlifeSubtype(subtype?: ResourceNode['subtype'] | st
   return subtype === 'hunt' || isDangerousWildlifeSubtype(subtype);
 }
 
+/** Ground combat units may join deliberate hunts, but workers remain the only
+ * units eligible for ordinary economy nodes and naval units never hunt land animals. */
+export function canUnitHuntDangerousWildlife(
+  unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,
+  subtype?: ResourceNode['subtype'] | string,
+): boolean {
+  return isDangerousWildlifeSubtype(subtype) &&
+    !unitDef.isNaval &&
+    unitDef.category !== 'worker' &&
+    unitDef.category !== 'siege';
+}
+
 export function getWildlifeMaxHealth(subtype?: ResourceNode['subtype'] | string): number {
   if (subtype === 'aurochs') return 360;
   if (subtype === 'boar') return 200;
