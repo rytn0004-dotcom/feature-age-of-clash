@@ -127,7 +127,7 @@ export function selectNearestResourceDropOffBuilding<T extends ResourceDropOffBu
   if (!Number.isFinite(originX) || !Number.isFinite(originZ)) return null;
 
   let nearest: T | null = null;
-  let nearestDistance = Number.POSITIVE_INFINITY;
+  let nearestDistanceSquared = Number.POSITIVE_INFINITY;
   for (const building of buildings) {
     if (
       building.faction !== faction ||
@@ -144,10 +144,15 @@ export function selectNearestResourceDropOffBuilding<T extends ResourceDropOffBu
         ((resourceType === 'gold' || resourceType === 'stone') && type === 'mining_camp');
     if (!eligible) continue;
 
-    const distance = Math.hypot(originX - building.x, originZ - building.z);
-    if (distance < nearestDistance) {
+    const dx = originX - building.x;
+    const dz = originZ - building.z;
+    const distanceSquared = dx * dx + dz * dz;
+    if (distanceSquared < nearestDistanceSquared) {
       nearest = building;
-      nearestDistance = distance;
+      nearestDistanceSquared = distanceSquared;
+      // An exact-position depot is the best possible result. Returning now
+      // also preserves first-insertion tie behavior for duplicate locations.
+      if (distanceSquared === 0) return building;
     }
   }
 

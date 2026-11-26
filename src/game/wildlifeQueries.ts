@@ -48,7 +48,8 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
     return output;
   }
 
-  let nearestDistance = detectRadius;
+  const detectRadiusSquared = detectRadius * detectRadius;
+  let nearestDistanceSquared = detectRadiusSquared;
   let nearestThreatId: string | null = null;
   for (const unit of candidates) {
     if (
@@ -61,13 +62,19 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
       continue;
     }
 
-    const distance = Math.hypot(unit.x - animalX, unit.z - animalZ);
+    // Most candidates only need a squared-distance comparison. Calculate the
+    // square root only when a new nearest threat is selected and its true
+    // distance is written to the reusable flee vector.
+    const dx = unit.x - animalX;
+    const dz = unit.z - animalZ;
+    const distanceSquared = dx * dx + dz * dz;
     if (
-      distance < nearestDistance ||
-      (distance === nearestDistance && nearestThreatId !== null && unit.id < nearestThreatId)
+      distanceSquared < nearestDistanceSquared ||
+      (distanceSquared === nearestDistanceSquared && nearestThreatId !== null && unit.id < nearestThreatId)
     ) {
-      nearestDistance = distance;
+      nearestDistanceSquared = distanceSquared;
       nearestThreatId = unit.id;
+      const distance = Math.sqrt(distanceSquared);
       const nearest = reusableNearest ?? { x: unit.x, z: unit.z, d: distance };
       nearest.x = unit.x;
       nearest.z = unit.z;
@@ -78,7 +85,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
     if (isActiveWildlifeHunter(unit)) {
       const range = unit.unitDef.stats.range || 1.5;
       const attackDistance = Math.max(2.4, range + 0.5);
-      if (distance <= attackDistance) output.attackers.push(unit);
+      if (distanceSquared <= attackDistance * attackDistance) output.attackers.push(unit);
     }
   }
 

@@ -74,6 +74,30 @@ test('wildlife interactions keep idle units as threats but only active non-worke
   assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['active', 'attack-moving']);
 });
 
+test('wildlife squared-distance checks preserve flee and hunter range boundaries', () => {
+  const boundary = makeUnit('boundary', 18, 0);
+  const atHunterReach = makeUnit('at-range-edge', 2.5, 0, {
+    state: 'attacking',
+    range: 2,
+  });
+  const outsideHunterReach = makeUnit('outside-range-edge', 2.5001, 0, {
+    state: 'attacking',
+    range: 2,
+  });
+  const scratch = makeScratch();
+
+  collectWildlifeUnitInteractions(
+    [boundary, outsideHunterReach, atHunterReach],
+    0,
+    0,
+    18,
+    scratch,
+  );
+
+  assert.deepEqual(scratch.nearestThreat, { x: 2.5, z: 0, d: 2.5 });
+  assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['at-range-edge']);
+});
+
 test('wildlife interaction query radius expands only for active hunters', () => {
   const idleLongRange = makeUnit('idle', 0, 0, { range: 60 });
   const activeLongRange = makeUnit('active', 0, 0, { state: 'attacking', range: 60 });
