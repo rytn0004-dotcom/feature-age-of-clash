@@ -64,7 +64,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
     const distance = Math.hypot(unit.x - animalX, unit.z - animalZ);
     if (
       distance < nearestDistance ||
-      (distance === nearestDistance && nearestThreatId !== null && unit.id.localeCompare(nearestThreatId) < 0)
+      (distance === nearestDistance && nearestThreatId !== null && unit.id < nearestThreatId)
     ) {
       nearestDistance = distance;
       nearestThreatId = unit.id;
