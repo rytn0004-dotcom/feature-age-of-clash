@@ -1356,6 +1356,7 @@ export const FOOD_GATHER_MULTIPLIERS: Record<string, number> = {
   shore_fish: 1.32,
   hunt: 1.15,
   boar: 1.42,
+  aurochs: 1.55,
   berry: 1.0,
   farm: 1.0,
   food: 1.0,
@@ -1366,10 +1367,27 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   shore_fish: 4,
   hunt: 3,
   boar: 1,
+  aurochs: 1,
   berry: 2,
   farm: 2,
   food: 1,
 };
+
+/** Wildlife that can seriously injure an isolated gatherer is never auto-assigned by default. */
+export function isDangerousWildlifeSubtype(subtype?: ResourceNode['subtype'] | string): boolean {
+  return subtype === 'boar' || subtype === 'aurochs';
+}
+
+/** Living animal nodes whose meat can only be harvested after the animal is killed. */
+export function isHuntableWildlifeSubtype(subtype?: ResourceNode['subtype'] | string): boolean {
+  return subtype === 'hunt' || isDangerousWildlifeSubtype(subtype);
+}
+
+export function getWildlifeMaxHealth(subtype?: ResourceNode['subtype'] | string): number {
+  if (subtype === 'aurochs') return 360;
+  if (subtype === 'boar') return 200;
+  return 32;
+}
 
 export const RICH_NODE_GATHER_MULTIPLIER = 1.35;
 export const FARM_RESEED_WOOD_COST = 60;
@@ -1526,7 +1544,7 @@ export function findBalancedResourceNode(
     if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
     // Wild boars can injure isolated villagers; automatic economy dispatch
     // leaves them to deliberate hunting parties unless explicitly authorized.
-    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
+    if (isDangerousWildlifeSubtype(node.subtype) && !allowDangerousHunt) continue;
     const distance = getDistance(x, z, node.x, node.z);
     if (distance > maxDistance) continue;
 
@@ -1583,7 +1601,7 @@ export function findBestFoodResourceNode(
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
-    if (node.subtype === 'boar' && !allowDangerousHunt) continue;
+    if (isDangerousWildlifeSubtype(node.subtype) && !allowDangerousHunt) continue;
     if (!allowDeepFish && node.subtype === 'deep_fish') continue;
     if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);
