@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
+  CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
   DELETE_HOLD_DURATION_MS,
+  getConstructionCancellationUndoRemainingMs,
   getDeleteHoldProgress,
 } from './entityActions';
 import type { Resources } from '../types/game';
@@ -55,4 +57,14 @@ test('construction work adds new health without restoring damage already taken',
   assert.equal(applyConstructionWorkToHealth(80, 100, 0.5), 100);
   assert.equal(applyConstructionWorkToHealth(20, 100, -0.4), 20);
   assert.equal(applyConstructionWorkToHealth(20, 0, 0.4), 0);
+});
+
+
+test('construction cancellation undo window uses a bounded real-time deadline', () => {
+  assert.equal(CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS, 5000);
+  assert.equal(getConstructionCancellationUndoRemainingMs(6000, 1000), 5000);
+  assert.equal(getConstructionCancellationUndoRemainingMs(6000, 4250), 1750);
+  assert.equal(getConstructionCancellationUndoRemainingMs(6000, 7000), 0);
+  assert.equal(getConstructionCancellationUndoRemainingMs(Number.NaN, 1000), 0);
+  assert.equal(getConstructionCancellationUndoRemainingMs(6000, Number.NaN), 0);
 });

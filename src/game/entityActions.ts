@@ -1,6 +1,16 @@
 import type { Resources } from '../types/game';
 
 export const DELETE_HOLD_DURATION_MS = 3_000;
+export const CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS = 5_000;
+
+/** Remaining real-time undo window, clamped to a safe non-negative range. */
+export function getConstructionCancellationUndoRemainingMs(
+  expiresAt: number,
+  now: number,
+): number {
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(now)) return 0;
+  return Math.max(0, expiresAt - now);
+}
 
 /**
  * Refund construction cost according to damage, not completion progress.

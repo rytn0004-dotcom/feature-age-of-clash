@@ -8,6 +8,8 @@ import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
+  CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
+  getConstructionCancellationUndoRemainingMs,
   getDeleteHoldProgress,
 } from './entityActions';
 import { isFishAnimationSubtype } from './fishAnimationRegistry';
@@ -480,6 +482,8 @@ export class RtsEngine {
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Workers that already failed every approach slot for one construction target. */
   private constructionApproachFailedWorkersByBuilding = new Map<string, Set<string>>();
+  /** Buildings kept intact for a short, real-time cancellation undo window. */
+  private pendingConstructionCancellations = new Map<string, { expiresAt: number; timerId: number }>();
   /** Synchronous caller-owned query outputs; target selection consumes them immediately. */
   private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -1504,6 +1508,7 @@ export class RtsEngine {
       (this.projectilePool[entry.type] || this.projectilePool.arrow).push(entry.mesh);
     });
     this.projectileMeshes.clear();
+    this.clearPendingConstructionCancellations();
     this.units = [];
     this.buildings = [];
     this.activeConstructionWorkerCountByBuilding.clear();
@@ -4200,6 +4205,7 @@ export class RtsEngine {
 
   public issueBuildOrder(buildingId: string, queue = false) {
     const bldg = this.buildings.find((b) => b.id === buildingId);
+    if (bldg && this.isConstructionCancellationPending(bldg.id)) return;
     const isWallRepair = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     const isDamagedStructure = !!bldg && bldg.isConstructed && bldg.hp < bldg.maxHp;
     if (!bldg || (bldg.isConstructed && !isWallRepair && !isDamagedStructure) || bldg.hp <= 0) return;
@@ -4977,6 +4983,11 @@ export class RtsEngine {
 
   private removeBuildingEntity(building: BuildingEntity): boolean {
     if (!this.buildings.some((candidate) => candidate.id === building.id)) return false;
+    const pendingCancellation = this.pendingConstructionCancellations.get(building.id);
+    if (pendingCancellation) {
+      window.clearTimeout(pendingCancellation.timerId);
+      this.pendingConstructionCancellations.delete(building.id);
+    }
 
     // Demolition must not strand garrisoned units inside the removed building.
     const garrisonIds = new Set(building.garrisonedUnitIds || []);
@@ -5100,8 +5111,14 @@ export class RtsEngine {
     return true;
   }
 
-  /** Cancel an unfinished owned building and refund only its remaining HP value. */
-  public cancelBuildingConstruction(buildingId: string): boolean {
+  private clearPendingConstructionCancellations(): void {
+    for (const pending of this.pendingConstructionCancellations.values()) {
+      window.clearTimeout(pending.timerId);
+    }
+    this.pendingConstructionCancellations.clear();
+  }
+
+  private finalizeConstructionCancellation(buildingId: string): boolean {
     const building = this.buildings.find((candidate) => candidate.id === buildingId);
     if (
       !building ||
@@ -5109,9 +5126,12 @@ export class RtsEngine {
       building.isConstructed ||
       !this.isHumanControlled(building.faction)
     ) {
+      this.onSelectionChange?.();
       return false;
     }
 
+    // Refund against the live HP/progress at the end of the grace period, so
+    // any damage received while the undo option is visible is counted fairly.
     const refund = calculateConstructionCancellationRefund(
       building.buildingDef.cost,
       building.hp,
@@ -5133,12 +5153,113 @@ export class RtsEngine {
       building.x,
       2.8,
       building.z,
-      `↩️ 已取消施工 · 退還木材 ${refund.wood}、石料 ${refund.stone}`,
+      `↩️ 施工已取消 · 退還食物 ${refund.food}、木材 ${refund.wood}、黃金 ${refund.gold}、石料 ${refund.stone}`,
       '#86efac',
     );
     sound.playOrder();
     this.onSelectionChange?.();
     return true;
+  }
+
+  /** Begin cancellation; the foundation remains recoverable for five real-time seconds. */
+  public cancelBuildingConstruction(buildingId: string): boolean {
+    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    if (
+      !building ||
+      building.hp <= 0 ||
+      building.isConstructed ||
+      !this.isHumanControlled(building.faction) ||
+      this.pendingConstructionCancellations.has(buildingId)
+    ) {
+      return false;
+    }
+
+    const expiresAt = performance.now() + CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS;
+    const timerId = window.setTimeout(() => {
+      this.pendingConstructionCancellations.delete(buildingId);
+      if (this.isDestroyed) return;
+      this.finalizeConstructionCancellation(buildingId);
+    }, CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS);
+    this.pendingConstructionCancellations.set(buildingId, { expiresAt, timerId });
+
+    this.addFloatingText(
+      building.x,
+      2.8,
+      building.z,
+      `⏳ 施工已暫停 · ${Math.ceil(CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS / 1000)} 秒內可撤銷`,
+      '#fbbf24',
+    );
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  /** Restore the still-present foundation and resume its original worker orders. */
+  public undoBuildingConstructionCancellation(buildingId: string): boolean {
+    const pending = this.pendingConstructionCancellations.get(buildingId);
+    if (!pending || getConstructionCancellationUndoRemainingMs(pending.expiresAt, performance.now()) <= 0) {
+      return false;
+    }
+
+    window.clearTimeout(pending.timerId);
+    this.pendingConstructionCancellations.delete(buildingId);
+    const building = this.buildings.find((candidate) => candidate.id === buildingId);
+    if (!building || building.hp <= 0 || building.isConstructed) {
+      this.onSelectionChange?.();
+      return false;
+    }
+
+    this.addFloatingText(
+      building.x,
+      2.8,
+      building.z,
+      '↩️ 已撤銷取消施工 · 原工地與村民命令已保留',
+      '#86efac',
+    );
+    sound.playOrder();
+    this.onSelectionChange?.();
+    return true;
+  }
+
+  public isConstructionCancellationPending(buildingId: string): boolean {
+    const pending = this.pendingConstructionCancellations.get(buildingId);
+    return !!pending &&
+      getConstructionCancellationUndoRemainingMs(pending.expiresAt, performance.now()) > 0;
+  }
+
+  public getPendingConstructionCancellationRemainingMs(buildingId: string): number {
+    const pending = this.pendingConstructionCancellations.get(buildingId);
+    return pending
+      ? getConstructionCancellationUndoRemainingMs(pending.expiresAt, performance.now())
+      : 0;
+  }
+
+  public getPendingConstructionCancellationEntries(): Array<{
+    buildingId: string;
+    buildingName: string;
+    x: number;
+    z: number;
+    remainingMs: number;
+  }> {
+    const entries: Array<{
+      buildingId: string;
+      buildingName: string;
+      x: number;
+      z: number;
+      remainingMs: number;
+    }> = [];
+    for (const [buildingId, pending] of this.pendingConstructionCancellations) {
+      const remainingMs = getConstructionCancellationUndoRemainingMs(pending.expiresAt, performance.now());
+      const building = this.buildings.find((candidate) => candidate.id === buildingId);
+      if (!building || building.hp <= 0 || building.isConstructed || remainingMs <= 0) continue;
+      entries.push({
+        buildingId,
+        buildingName: building.buildingDef.name.split(' ')[0],
+        x: building.x,
+        z: building.z,
+        remainingMs,
+      });
+    }
+    return entries.sort((a, b) => a.remainingMs - b.remainingMs);
   }
 
   /** Delete the current owned selection without refund; Delete must be held for three seconds. */
@@ -7402,7 +7523,12 @@ export class RtsEngine {
       }
 
       const building = this.combatBuildingLookupById.get(worker.targetBuildingId);
-      if (!building || building.hp <= 0 || building.faction !== worker.faction) continue;
+      if (
+        !building ||
+        building.hp <= 0 ||
+        building.faction !== worker.faction ||
+        this.isConstructionCancellationPending(building.id)
+      ) continue;
 
       const repairingWall =
         !!building.wallBreached &&
@@ -9742,6 +9868,11 @@ export class RtsEngine {
     }
 
     const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
+    if (bldg && this.isConstructionCancellationPending(bldg.id)) {
+      unit.velocity = { x: 0, z: 0 };
+      unit.currentActionText = '⏸ 工地取消倒數中';
+      return;
+    }
     const repairingWall = !!bldg?.wallBreached && !!bldg.buildingDef.isWall && bldg.isConstructed;
     const repairingStructure = !!bldg && bldg.isConstructed && !repairingWall && bldg.hp < bldg.maxHp;
     if (!bldg || bldg.hp <= 0 || (bldg.isConstructed && !repairingWall && !repairingStructure)) {
@@ -14469,6 +14600,7 @@ export class RtsEngine {
 
   public destroy() {
     this.isDestroyed = true;
+    this.clearPendingConstructionCancellations();
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
     this.wallEndpointIndex.clear();

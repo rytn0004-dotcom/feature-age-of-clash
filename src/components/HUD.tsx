@@ -193,6 +193,17 @@ export const HUD: React.FC<HUDProps> = ({
     ? engine.buildings.find((b) => b.id === engine.selectedBuildingId)
     : null;
 
+  const pendingConstructionCancellationCount = engine.getPendingConstructionCancellationEntries().length;
+  const [, setPendingUndoUiRefresh] = useState(0);
+  useEffect(() => {
+    if (pendingConstructionCancellationCount === 0) return;
+    const interval = window.setInterval(() => {
+      setPendingUndoUiRefresh((value) => value + 1);
+    }, 100);
+    return () => window.clearInterval(interval);
+  }, [engine, pendingConstructionCancellationCount]);
+  const pendingConstructionUndoEntries = engine.getPendingConstructionCancellationEntries();
+
   useEffect(() => {
     if (!pendingConstructionCancelId) return;
     if (
@@ -1325,6 +1336,32 @@ export const HUD: React.FC<HUDProps> = ({
 
       {/* ================= DYNAMIC ALERT BANNERS ================= */}
       <div className="fixed top-14 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-none">
+        {pendingConstructionUndoEntries.map((entry) => (
+          <div
+            key={entry.buildingId}
+            data-construction-cancellation-undo={entry.buildingId}
+            role="status"
+            className="flex items-center gap-3 rounded-xl border border-amber-300/70 bg-slate-950/95 px-4 py-2 text-white shadow-2xl pointer-events-auto"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-black text-amber-200">
+                ⏸ {entry.buildingName}施工已暫停 · {Math.max(1, Math.ceil(entry.remainingMs / 1000))} 秒內可撤銷
+              </div>
+              <div className="text-[10px] text-slate-300">
+                工地與村民命令暫時保留，倒數結束才拆除並退款
+              </div>
+            </div>
+            <button
+              type="button"
+              data-undo-construction-cancel={entry.buildingId}
+              disabled={isSpectator}
+              onClick={() => engine.undoBuildingConstructionCancellation(entry.buildingId)}
+              className="shrink-0 rounded-md border border-emerald-300/70 bg-emerald-700/80 px-3 py-1.5 text-[11px] font-black text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↩ 撤銷取消
+            </button>
+          </div>
+        ))}
         {/* 1. UNIFIED TACTICAL EVENT BROADCAST (Enemy spotted / Under attack / Resource depleted) */}
         {!isSpectator && (() => {
           const now = performance.now();
@@ -2546,7 +2583,7 @@ export const HUD: React.FC<HUDProps> = ({
                               預計退還 食 {constructionRefund.food} · 木 {constructionRefund.wood} · 金 {constructionRefund.gold} · 石 {constructionRefund.stone}
                             </div>
                             <div className="leading-relaxed text-amber-200/90">
-                              退款會在確認當下重新計算。只有目前 HP 低於施工進度應有 HP 的受損部分會扣除退款；未受損仍全額退還。
+                              確認後會先保留工地五秒供撤銷，施工暫停且資源不會先退還。倒數結束時才按當時 HP 與施工進度重新計算退款；未受損仍全額退還。
                             </div>
                           </div>
                           <div className="flex gap-1.5">
@@ -2555,12 +2592,13 @@ export const HUD: React.FC<HUDProps> = ({
                               data-cancel-construction-confirm="true"
                               disabled={isSpectator}
                               onClick={() => {
-                                engine.cancelBuildingConstruction(selectedBuilding.id);
-                                setPendingConstructionCancelId(null);
+                                if (engine.cancelBuildingConstruction(selectedBuilding.id)) {
+                                  setPendingConstructionCancelId(null);
+                                }
                               }}
                               className="flex-1 rounded-md border border-rose-400/70 bg-rose-700/70 px-2 py-1.5 text-[10px] font-black text-white transition-colors hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              確認拆除並退款
+                              確認取消（五秒內可撤銷）
                             </button>
                             <button
                               type="button"
@@ -2572,6 +2610,20 @@ export const HUD: React.FC<HUDProps> = ({
                             </button>
                           </div>
                         </>
+                      ) : engine.isConstructionCancellationPending(selectedBuilding.id) ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                          <span className="font-bold text-amber-200">
+                            ⏸ 取消倒數中 · {Math.max(1, Math.ceil(engine.getPendingConstructionCancellationRemainingMs(selectedBuilding.id) / 1000))} 秒
+                          </span>
+                          <button
+                            type="button"
+                            data-undo-selected-construction-cancel="true"
+                            onClick={() => engine.undoBuildingConstructionCancellation(selectedBuilding.id)}
+                            className="rounded-md border border-emerald-400/70 bg-emerald-800/70 px-2 py-1 font-black text-white hover:bg-emerald-700"
+                          >
+                            ↩ 保留工地
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"
