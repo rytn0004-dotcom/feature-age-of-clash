@@ -1693,6 +1693,7 @@ function addMongolCorralHorses(parent: THREE.Group, materials: MongolBuildingMat
   const addHorse = (centerX: number, centerZ: number, yaw: number, scale: number) => {
     const cos = Math.cos(yaw);
     const sin = Math.sin(yaw);
+    const platformTop = 0.28 + 0.018;
     const addPart = (
       geometry: THREE.BufferGeometry,
       material: THREE.Material,
@@ -1705,7 +1706,7 @@ function addMongolCorralHorses(parent: THREE.Group, materials: MongolBuildingMat
       const localZ = position[2] * scale;
       mesh.position.set(
         centerX + cos * localX + sin * localZ,
-        position[1] * scale,
+        platformTop + position[1] * scale,
         centerZ - sin * localX + cos * localZ,
       );
       mesh.rotation.set(rotation[0], yaw + rotation[1], rotation[2]);
