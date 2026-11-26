@@ -24,14 +24,23 @@ export function recordConstructionHandoffFailure(
 export function getActiveConstructionHandoffFailureIds(
   retryAtByWorkerId: Map<string, number>,
   now: number,
+  reusableResult: Set<string> = new Set<string>(),
 ): Set<string> {
-  if (!Number.isFinite(now)) return new Set(retryAtByWorkerId.keys());
+  // The engine supplies one caller-owned Set so repeated blocked-route checks
+  // do not allocate a fresh exclusion collection for every handoff attempt.
+  reusableResult.clear();
+
+  if (!Number.isFinite(now)) {
+    for (const workerId of retryAtByWorkerId.keys()) reusableResult.add(workerId);
+    return reusableResult;
+  }
 
   for (const [workerId, retryAt] of retryAtByWorkerId) {
     if (!Number.isFinite(retryAt) || retryAt <= now) retryAtByWorkerId.delete(workerId);
   }
 
-  return new Set(retryAtByWorkerId.keys());
+  for (const workerId of retryAtByWorkerId.keys()) reusableResult.add(workerId);
+  return reusableResult;
 }
 
 /**
