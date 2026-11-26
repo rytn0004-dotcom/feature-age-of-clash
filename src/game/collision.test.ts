@@ -8,6 +8,7 @@ import {
   getUnitColliderRadius,
   getResourceColliderRadius,
   getUnitCollisionFirstDisplacementShare,
+  extendMaximumBuildingCollisionRadius,
   createCollisionResolutionScratch,
   filterTerrainObstaclesToBounds,
   isPointInTerrainObstacle,
@@ -403,4 +404,21 @@ test('terrain obstacle AABB filtering rejects invalid bounds without throwing', 
     filterTerrainObstaclesToBounds({ minX: 2, maxX: 1, minZ: 0, maxZ: 1 }, [], [], []),
     { rects: [], discs: [], bridges: [] },
   );
+});
+
+test('wildlife broad-phase radius grows for oversized structures and remains conservative after removal', () => {
+  const stockMaximum = 4.52;
+  const oversizedWall = makeBuilding('oversized-wall', 0, 0, 'wall', 7.5);
+  const expanded = extendMaximumBuildingCollisionRadius(stockMaximum, oversizedWall);
+  assert.equal(expanded, 7.5);
+
+  const openGate = makeBuilding('open-gate', 0, 0, 'gate', 1.6, { gateOpen: true });
+  assert.equal(
+    extendMaximumBuildingCollisionRadius(expanded, openGate),
+    7.5,
+    'a removed, opened or breached large structure may leave a wider but safe query radius',
+  );
+
+  const invalidCurrent = extendMaximumBuildingCollisionRadius(Number.NaN, makeBuilding('town-center', 0, 0, 'town_center'));
+  assert.equal(invalidCurrent, 4.18);
 });

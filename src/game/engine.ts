@@ -233,6 +233,7 @@ import {
   createCollisionResolutionScratch,
   type CollisionResolutionScratch,
   getBuildingCollisionRadius,
+  extendMaximumBuildingCollisionRadius,
   filterTerrainObstaclesToBounds,
   getResourceColliderRadius,
   getUnitColliderRadius,
@@ -498,6 +499,10 @@ export class RtsEngine {
 
   public units: UnitEntity[] = [];
   public buildings: BuildingEntity[] = [];
+  // Conservative broad-phase radius for wildlife/building avoidance. Keep the
+  // largest radius seen during this match; removed/opened/breached structures
+  // may leave a harmlessly wider query, but never a missed obstacle.
+  private maxBuildingCollisionRadius = 4.52;
   private combatSpatialIndex: CombatSpatialIndex<UnitEntity, BuildingEntity> | null = null;
   /** Persistent collision maps, entries and candidates reused across simulation steps. */
   private collisionResolutionScratch: CollisionResolutionScratch = createCollisionResolutionScratch();
@@ -1572,6 +1577,7 @@ export class RtsEngine {
     this.clearPendingConstructionCancellations();
     this.units = [];
     this.buildings = [];
+    this.maxBuildingCollisionRadius = 4.52;
     this.activeConstructionWorkerCountByBuilding.clear();
     this.constructionApproachFailedWorkersByBuilding.clear();
     this.constructionHandoffQueryScratch.units.length = 0;
@@ -2668,6 +2674,10 @@ export class RtsEngine {
       ovooHornCooldown: type === 'ovoo_relay' ? 0 : undefined,
     };
     this.buildings.push(building);
+    this.maxBuildingCollisionRadius = extendMaximumBuildingCollisionRadius(
+      this.maxBuildingCollisionRadius,
+      building,
+    );
     if (type === 'wall') this.wallEndpointIndexDirty = true;
     this.navGridDirty = true;
     this.waterNavGridDirty = true;
@@ -10766,20 +10776,19 @@ export class RtsEngine {
     const DETECT = 18;
     let deerIdx = 0;
     const wildlifeInteractionQueryRadius = getWildlifeInteractionQueryRadius(this.units, DETECT);
-
-    let maxBuildingCollisionRadius = 0;
-    for (const building of this.buildings) {
-      if (building.hp <= 0) continue;
-      const radius = getBuildingCollisionRadius(building);
-      if (Number.isFinite(radius)) maxBuildingCollisionRadius = Math.max(maxBuildingCollisionRadius, radius);
-    }
+    // Updated only when buildings are added, instead of rescanning every
+    // building on every wildlife simulation slice.
+    const maxBuildingCollisionRadius = this.maxBuildingCollisionRadius;
 
     const isAnimalBlocked = (cx: number, cz: number): boolean => {
       if (Math.abs(cx) > 91 || Math.abs(cz) > 91) return true;
       if (this.mapLayout) {
         if (isPointInTerrainObstacle(cx, cz, this.mapLayout.waterRects, this.mapLayout.waterDiscs, this.mapLayout.bridges)) return true;
         for (const c of this.mapLayout.cliffDiscs) {
-          if (Math.hypot(cx - c.x, cz - c.z) <= c.radius + 0.75) return true;
+          const dx = cx - c.x;
+          const dz = cz - c.z;
+          const reach = c.radius + 0.75;
+          if (dx * dx + dz * dz <= reach * reach) return true;
         }
       }
       const nearbyBuildings = this.combatSpatialIndex
@@ -10794,7 +10803,11 @@ export class RtsEngine {
       for (const building of nearbyBuildings) {
         if (building.hp <= 0) continue;
         const radius = getBuildingCollisionRadius(building);
-        if (radius > 0 && Math.hypot(cx - building.x, cz - building.z) <= radius + 0.7) return true;
+        if (radius <= 0) continue;
+        const dx = cx - building.x;
+        const dz = cz - building.z;
+        const reach = radius + 0.7;
+        if (dx * dx + dz * dz <= reach * reach) return true;
       }
       return false;
     };
@@ -10816,7 +10829,8 @@ export class RtsEngine {
       this.addFloatingText(node.x, 1.8, node.z, label, '#fca5a5');
     };
 
-    for (const node of this.resourceNodes) {
+    for (let nodeIndex = 0; nodeIndex < this.resourceNodes.length; nodeIndex++) {
+      const node = this.resourceNodes[nodeIndex];
       const isBoar = node.subtype === 'boar';
       const isAurochs = node.subtype === 'aurochs';
       const isDangerousWildlife = isDangerousWildlifeSubtype(node.subtype);
@@ -10828,9 +10842,10 @@ export class RtsEngine {
         node.animalHomeX ??= node.x;
         node.animalHomeZ ??= node.z;
       }
-      // Health may already be initialized at spawn; movement state still needs its own initialization.
-      const wildlifeIndex = node.animalYaw === undefined ? this.resourceNodes.indexOf(node) : 0;
-      initializeWildlifeSimulationState(node, wildlifeIndex, maxHp);
+      // The indexed loop already provides a deterministic seed index. Avoid
+      // indexOf(node), which would rescan the entire resource roster for every
+      // newly initialized animal on the first wildlife update.
+      initializeWildlifeSimulationState(node, nodeIndex, maxHp);
       if (mesh) this.updateWildlifeOverheadBadge(node, mesh);
 
       if (!node.animalAlive) {

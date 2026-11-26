@@ -94,6 +94,20 @@ export function getBuildingCollisionRadius(
 }
 
 /**
+ * Extends a match-local, conservative broad-phase radius when a building is
+ * added. The maximum is intentionally monotonic: removals, open gates and
+ * breached walls may keep queries slightly wider, but can never hide a blocker.
+ */
+export function extendMaximumBuildingCollisionRadius(
+  currentMaximum: number,
+  building: Pick<BuildingEntity, 'buildingType' | 'buildingDef' | 'gateOpen' | 'wallBreached'>,
+): number {
+  const safeCurrent = Number.isFinite(currentMaximum) ? Math.max(0, currentMaximum) : 0;
+  const candidate = getBuildingCollisionRadius(building);
+  return Number.isFinite(candidate) ? Math.max(safeCurrent, candidate) : safeCurrent;
+}
+
+/**
  * Returns collision radius for a resource node matching its outer 3D geometry.
  */
 export function getResourceColliderRadius(
