@@ -57,6 +57,10 @@ export interface UnitStats {
   maxHp: number;
   attack: number;
   buildingAttack?: number; // Dedicated anti-building damage (torch / siege)
+  /** Independent attacks-per-second while striking structures. */
+  buildingAttackRate?: number;
+  /** Peak height of a siege projectile's parabolic flight arc. */
+  projectileArcHeight?: number;
   ignoresBuildingArmor?: boolean; // True for dedicated siege engines / treants
   defense: number;
   rangedDefense?: number; // Extra pierce armor vs arrows & tower volleys
@@ -555,6 +559,7 @@ export interface Projectile {
   speed: number;
   progress: number; // 0 to 1
   color: string;
+  arcHeight?: number;
 }
 
 export interface FloatingText {

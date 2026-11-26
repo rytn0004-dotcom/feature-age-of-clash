@@ -1647,6 +1647,31 @@ test('siege-and-garrison: anti-building armor blocks early soldiers while siege 
   const cannonUnit = mkUnitEnt('can1', cannonDef);
   const cannonVsTcDmg = calculateBuildingDamage(cannonUnit, tc, 3, ['shared_masonry']);
   assert.equal(cannonVsTcDmg, 120, 'Bombard Cannon must ignore masonry armor while retaining the ~50s town-center break point');
+
+  const catapultDef = byId('catapult');
+  const estimateBreakTime = (def: typeof catapultDef, age: 2 | 3 | 4) => {
+    const stats = applyCivilizationAndTechStats(def.stats, 'siege', 'medieval', [], age);
+    const attacker = {
+      unitDef: { ...def, stats },
+      unitDefId: def.id,
+      siegeChannelTime: 0,
+    };
+    const damage = calculateBuildingDamage(attacker, tc, 1, [], [], []);
+    const hitCount = Math.ceil(DEFAULT_BUILDINGS.town_center.maxHp / damage);
+    const reload = 1 / (stats.buildingAttackRate ?? stats.attackRate);
+    const flight = stats.range > 2.5 ? stats.range / 18 : 0;
+    return 0.42 + flight + Math.max(0, hitCount - 1) * reload;
+  };
+
+  const catapultTtk = estimateBreakTime(catapultDef, 3);
+  const cannonTtk = estimateBreakTime(cannonDef, 4);
+  const ramTtk = estimateBreakTime(ramDef, 2);
+  assert.ok(catapultTtk >= 88 && catapultTtk <= 93, `Age III catapult should take about 90s, got ${catapultTtk.toFixed(1)}s`);
+  assert.ok(cannonTtk >= 47 && cannonTtk <= 53, `Age IV bombard should take about 50s, got ${cannonTtk.toFixed(1)}s`);
+  assert.ok(ramTtk >= 92 && ramTtk <= 108, `Age II ram should take about 100s, got ${ramTtk.toFixed(1)}s`);
+  assert.ok((cannonDef.stats.attackRate || 0) > (catapultDef.stats.attackRate || 0));
+  assert.ok((cannonDef.stats.attack || 0) > (catapultDef.stats.attack || 0));
+  assert.ok((catapultDef.stats.projectileArcHeight || 0) > (cannonDef.stats.projectileArcHeight || 0));
 });
 
 test('economy-and-early-defense: 35/60s base gather rate, carry 15, Age I wall & tower unlock, and building combat stats inspection', async () => {

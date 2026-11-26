@@ -9003,9 +9003,13 @@ export class RtsEngine {
           unit.attackWindupRemaining = undefined;
           // Include the windup in the nominal attack cycle, then apply the
           // short recovery lock after the release.
+          const targetAttackRate = target.type === 'building'
+            ? unit.unitDef.stats.buildingAttackRate ?? unit.unitDef.stats.attackRate
+            : unit.unitDef.stats.attackRate;
+          const minimumAttackRate = unit.unitDef.category === 'siege' ? 0.05 : 0.35;
           unit.attackCooldown = Math.max(
             0,
-            1 / Math.max(0.35, unit.unitDef.stats.attackRate) - timing.windupSeconds,
+            1 / Math.max(minimumAttackRate, targetAttackRate) - timing.windupSeconds,
           );
           unit.attackRecoveryRemaining = timing.recoverySeconds;
 
@@ -9019,7 +9023,8 @@ export class RtsEngine {
             pType,
             unit.unitDef.stats.attack,
             unit.unitDef.visual.color,
-            unit.id
+            unit.id,
+            unit.unitDef.stats.projectileArcHeight,
           );
           if (this.isHumanControlled(unit.faction)) {
             const spatialGain = this.getSpatialAudioScale(unit.x, unit.z);
@@ -12048,7 +12053,8 @@ export class RtsEngine {
     type: Projectile['type'],
     damage: number,
     color: string,
-    attackerId?: string
+    attackerId?: string,
+    arcHeight?: number,
   ) {
     const id = `proj_${Date.now()}_${Math.random()}`;
     const proj: Projectile = {
@@ -12065,6 +12071,7 @@ export class RtsEngine {
       speed: 18,
       progress: 0,
       color,
+      arcHeight: arcHeight && arcHeight > 0 ? arcHeight : undefined,
     };
     if (attackerId) (proj as any).attackerId = attackerId;
     this.projectiles.push(proj);
@@ -12300,7 +12307,8 @@ export class RtsEngine {
         proj.currentX = proj.startX + (target.x - proj.startX) * proj.progress;
         proj.currentZ = proj.startZ + (target.z - proj.startZ) * proj.progress;
         // Parabolic arc for arrows and fireballs
-        const arc = Math.sin(proj.progress * Math.PI) * (proj.type === 'arrow' ? 3.5 : proj.type === 'slash' ? 0.6 : 1.2);
+        const defaultArcHeight = proj.type === 'arrow' ? 3.5 : proj.type === 'slash' ? 0.6 : 1.2;
+        const arc = Math.sin(proj.progress * Math.PI) * (proj.arcHeight ?? defaultArcHeight);
         proj.currentY = proj.startY + (1 - proj.startY) * proj.progress + arc;
 
         const entry = this.projectileMeshes.get(proj.id);

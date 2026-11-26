@@ -1260,6 +1260,7 @@ export function applyCivilizationAndTechStats(
   let rangedDefense = baseStats.rangedDefense || 0;
   let speed = baseStats.speed * (cfg.passiveBonuses.moveSpeedMultiplier || 1);
   let attackRate = baseStats.attackRate;
+  let buildingAttackRate = baseStats.buildingAttackRate;
   let gatherSpeed = baseStats.gatherSpeed * (cfg.passiveBonuses.gatherRateMultiplier || 1);
   let carryCapacity = baseStats.carryCapacity;
   let range = baseStats.range;
@@ -1275,6 +1276,7 @@ export function applyCivilizationAndTechStats(
     maxHp *= ageScale.hpMult;
     attack *= ageScale.atkMult;
     attackRate *= ageScale.rateMult;
+    if (buildingAttackRate !== undefined) buildingAttackRate *= ageScale.rateMult;
     defense += ageScale.defenseAdd;
     speed += ageScale.speedAdd;
     if (buildingAttack !== undefined && buildingAttack > 0) {
@@ -1288,6 +1290,7 @@ export function applyCivilizationAndTechStats(
         attack *= 1.1;
       } else if (cfg.id === 'anime') {
         attackRate *= 1.12;
+        if (buildingAttackRate !== undefined) buildingAttackRate *= 1.12;
         speed *= 1.06;
       } else if (cfg.id === 'fantasy') {
         maxHp *= 1.12;
@@ -1306,7 +1309,10 @@ export function applyCivilizationAndTechStats(
     if (tech.effect.defenseBonus) defense += tech.effect.defenseBonus;
     if (tech.effect.rangedDefenseBonus) rangedDefense += tech.effect.rangedDefenseBonus;
     if (tech.effect.speedMultiplier) speed *= tech.effect.speedMultiplier;
-    if (tech.effect.attackRateMultiplier) attackRate *= tech.effect.attackRateMultiplier;
+    if (tech.effect.attackRateMultiplier) {
+      attackRate *= tech.effect.attackRateMultiplier;
+      if (buildingAttackRate !== undefined) buildingAttackRate *= tech.effect.attackRateMultiplier;
+    }
     if (tech.effect.gatherMultiplier) gatherSpeed *= tech.effect.gatherMultiplier;
     if (tech.effect.carryCapacityBonus && carryCapacity > 0) {
       carryCapacity += tech.effect.carryCapacityBonus;
@@ -1335,6 +1341,9 @@ export function applyCivilizationAndTechStats(
     rangedDefense: baseStats.rangedDefense !== undefined || rangedDefense > 0 ? rangedDefense : undefined,
     speed: +speed.toFixed(2),
     attackRate: +attackRate.toFixed(2),
+    ...(buildingAttackRate !== undefined
+      ? { buildingAttackRate: +buildingAttackRate.toFixed(4) }
+      : {}),
     gatherSpeed: +gatherSpeed.toFixed(4),
     carryCapacity,
     range: +range.toFixed(2),
