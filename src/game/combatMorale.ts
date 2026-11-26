@@ -63,6 +63,62 @@ export interface MoraleRoutGoalInput {
 const clampMorale = (value: number): number =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value : 100));
 
+export interface MoraleRoutThreatCandidate {
+  id: string;
+  x: number;
+  z: number;
+  hp: number;
+  garrisonedInBuildingId?: string | null;
+}
+
+/** Selects the nearest eligible threat without allocating or sorting a candidate copy. */
+export function selectNearestMoraleRoutThreat<T extends MoraleRoutThreatCandidate>(
+  candidates: readonly T[],
+  sourceId: string,
+  originX: number,
+  originZ: number,
+  maxDistance: number,
+  isHostile: (candidate: T) => boolean,
+): T | null {
+  if (
+    !Number.isFinite(originX) ||
+    !Number.isFinite(originZ) ||
+    !Number.isFinite(maxDistance) ||
+    maxDistance <= 0
+  ) return null;
+
+  const maxDistanceSquared = maxDistance * maxDistance;
+  let nearest: T | null = null;
+  let nearestDistanceSquared = maxDistanceSquared;
+
+  for (const candidate of candidates) {
+    if (
+      candidate.id === sourceId ||
+      !Number.isFinite(candidate.hp) ||
+      candidate.hp <= 0 ||
+      candidate.garrisonedInBuildingId ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z) ||
+      !isHostile(candidate)
+    ) continue;
+
+    const dx = candidate.x - originX;
+    const dz = candidate.z - originZ;
+    const distanceSquared = dx * dx + dz * dz;
+    if (distanceSquared >= maxDistanceSquared) continue;
+
+    if (
+      distanceSquared < nearestDistanceSquared ||
+      (nearest && distanceSquared === nearestDistanceSquared && candidate.id < nearest.id)
+    ) {
+      nearest = candidate;
+      nearestDistanceSquared = distanceSquared;
+    }
+  }
+
+  return nearest;
+}
+
 /** Converts damage, attack angle and nearby losses into a bounded morale shock. */
 export function applyMoraleImpact(input: MoraleImpactInput): number {
   const current = clampMorale(input.morale);

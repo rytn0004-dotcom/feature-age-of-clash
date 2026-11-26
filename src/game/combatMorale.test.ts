@@ -4,6 +4,7 @@ import {
   applyMoraleImpact,
   getMoraleCombatModifiers,
   getMoraleRoutGoal,
+  selectNearestMoraleRoutThreat,
   shouldUnitRout,
 } from './combatMorale';
 
@@ -176,4 +177,40 @@ test('morale combat modifiers reuse immutable presets for every morale band', ()
     movementSpeedMultiplier: 0.76,
     attackRateMultiplier: 0.55,
   });
+});
+
+
+test('morale rout threat selection ignores invalid candidates and resolves equal-distance ties by stable ID', () => {
+  const hostileIds = new Set(['red-z', 'red-a', 'red-near']);
+  const candidates = [
+    { id: 'self', x: 0, z: 0, hp: 100 },
+    { id: 'dead', x: 0.5, z: 0, hp: 0 },
+    { id: 'sheltered', x: 0.25, z: 0, hp: 100, garrisonedInBuildingId: 'keep' },
+    { id: 'friend', x: 0.2, z: 0, hp: 100 },
+    { id: 'red-z', x: -3, z: 0, hp: 100 },
+    { id: 'red-a', x: 3, z: 0, hp: 100 },
+    { id: 'red-near', x: 0, z: 4, hp: 100 },
+    { id: 'red-far', x: 20, z: 0, hp: 100 },
+  ];
+  const isHostile = (candidate: (typeof candidates)[number]) => hostileIds.has(candidate.id);
+
+  assert.equal(
+    selectNearestMoraleRoutThreat(candidates, 'self', 0, 0, 24, isHostile)?.id,
+    'red-a',
+  );
+  assert.equal(
+    selectNearestMoraleRoutThreat([candidates[5], candidates[4]], 'self', 0, 0, 24, isHostile)?.id,
+    'red-a',
+    'equal-distance selection must not depend on spatial bucket traversal order',
+  );
+});
+
+test('morale rout threat selection rejects boundary, invalid and unbounded query inputs', () => {
+  const candidates = [
+    { id: 'boundary', x: 24, z: 0, hp: 100 },
+    { id: 'invalid', x: Number.NaN, z: 0, hp: 100 },
+  ];
+  assert.equal(selectNearestMoraleRoutThreat(candidates, 'self', 0, 0, 24, () => true), null);
+  assert.equal(selectNearestMoraleRoutThreat(candidates, 'self', Number.NaN, 0, 24, () => true), null);
+  assert.equal(selectNearestMoraleRoutThreat(candidates, 'self', 0, 0, Infinity, () => true), null);
 });
