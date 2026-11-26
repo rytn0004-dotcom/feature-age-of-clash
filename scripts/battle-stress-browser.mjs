@@ -649,33 +649,44 @@ async function main() {
         }
         assert.equal(burst.latestPointerMatched, true, "Wall preview did not consume the latest pointer position.");
 
-        const beforeProbe = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
-        await send("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: Math.max(setup.bounds.left + 20, lastX - 17),
-          y: lastY + 4,
-        }, sessionId);
-        await waitFor(
-          async () => (await evaluate(`(() => (window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1) > ${beforeProbe})()`)),
-          3000,
-          "wall preview immediate pointer update before cancellation race",
-        );
-        const beforeRestart = await evaluate(`(() => window.__rtsEngine?.__wallPreviewTestTimes?.length ?? -1)()`);
-        // This second move lands inside the newly refreshed 100 ms window, so
-        // cancellation happens while its delayed callback is still pending.
-        await send("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: Math.min(setup.bounds.left + setup.bounds.width - 40, lastX + 11),
-          y: lastY + 7,
-        }, sessionId);
-        await evaluate(`
+        // Dispatch a pointermove and cancel/restart in the same browser task.
+        // The zero-delay timer cannot run until this task yields, so this proves
+        // the cancellation guard against a callback that is definitely pending.
+        const race = await evaluate(`
           (() => {
             const e = window.__rtsEngine;
+            const root = document.querySelector('[data-game-canvas-root="true"]');
+            if (!e || !root) return null;
+            const originalSetTimeout = window.setTimeout;
+            let scheduledDelay = null;
+            window.setTimeout = function(callback, delay, ...args) {
+              if (scheduledDelay === null && Number.isFinite(delay) && delay >= 0 && delay <= 100) {
+                scheduledDelay = delay;
+              }
+              return originalSetTimeout.call(window, callback, delay, ...args);
+            };
+            root.dispatchEvent(new PointerEvent('pointermove', {
+              bubbles: true,
+              pointerId: 1,
+              pointerType: 'mouse',
+              isPrimary: true,
+              clientX: ${Math.min(setup.bounds.left + setup.bounds.width - 40, lastX + 11)},
+              clientY: ${lastY + 7},
+              buttons: 0,
+            }));
+            window.setTimeout = originalSetTimeout;
+            const callsBeforeRestart = e.__wallPreviewTestTimes?.length ?? -1;
             e.cancelPlacement();
             e.startPlacement('wall');
-            return { session: e.getWallPlacementSessionToken(), cursor: e.wallPlacementCursor };
+            return {
+              scheduledDelay,
+              callsBeforeRestart,
+              cursorIsEmpty: e.wallPlacementCursor === null,
+            };
           })()
         `);
+        assert.ok(race && race.scheduledDelay !== null, "Pointermove did not schedule the delayed wall preview.");
+        assert.equal(race.cursorIsEmpty, true, "Restarted wall session should begin without a cursor.");
         await sleep(150);
         const afterRestart = await evaluate(`
           (() => {
@@ -686,7 +697,7 @@ async function main() {
             };
           })()
         `);
-        assert.equal(afterRestart.calls, beforeRestart, "A delayed preview from the old wall session leaked into the new session.");
+        assert.equal(afterRestart.calls, race.callsBeforeRestart, "A delayed preview from the old wall session leaked into the new session.");
         assert.equal(afterRestart.cursorIsEmpty, true, "The new wall session inherited an old cursor.");
         wallInteraction = {
           pointerMoves: moveCount,
