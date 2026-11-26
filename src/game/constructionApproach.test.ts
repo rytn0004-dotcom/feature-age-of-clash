@@ -14,6 +14,7 @@ import {
   deferBlockedWallConstructionCommand,
   selectConstructionApproachCandidateIndex,
   selectConstructionHandoffWorker,
+  ConstructionApproachSpatialIndex,
 } from './constructionApproach';
 
 test('construction handoff failures cool down, expire, and allow a fresh route attempt', () => {
@@ -485,4 +486,46 @@ test('construction work-ring selection is deterministic and tolerates invalid sl
 
   assert.equal(first, second);
   assert.ok(first >= 0 && first < CONSTRUCTION_APPROACH_DIRECTION_COUNT);
+});
+
+
+test('construction approach spatial index only returns nearby planned work slots', () => {
+  const index = new ConstructionApproachSpatialIndex<{ id: string; x: number; z: number }>();
+  const items = [
+    { id: 'near-west', x: -0.5, z: 0 },
+    { id: 'near-east', x: 8.1, z: 0 },
+    { id: 'far-east', x: 42, z: 0 },
+    { id: 'near-north', x: 0, z: 7.9 },
+    { id: 'invalid', x: Number.NaN, z: 1 },
+  ];
+  index.beginRebuild();
+  for (const item of items) index.insert(item);
+
+  const output: typeof items = [{ id: 'stale', x: 0, z: 0 }];
+  const first = index.collect(0, 0, 9, output);
+  assert.equal(first, output, 'caller-owned output is reused');
+  assert.deepEqual(
+    new Set(first.map((item) => item.id)),
+    new Set(['near-west', 'near-east', 'near-north']),
+  );
+  assert.equal(index.size, 4, 'invalid coordinates are not indexed');
+
+  const second = index.collect(40, 0, 4, output);
+  assert.equal(second, output);
+  assert.deepEqual(second.map((item) => item.id), ['far-east']);
+});
+
+test('construction approach spatial index rebuild drops stale buckets and supports packed-key boundaries', () => {
+  const index = new ConstructionApproachSpatialIndex<{ id: string; x: number; z: number }>();
+  const previous = { id: 'previous', x: 0, z: 0 };
+  const replacement = { id: 'replacement', x: 262144, z: -262144 };
+  index.beginRebuild();
+  index.insert(previous);
+  index.beginRebuild();
+  index.insert(replacement);
+  assert.equal(index.size, 1);
+
+  const output: typeof previous[] = [];
+  assert.deepEqual(index.collect(0, 0, 1, output), []);
+  assert.deepEqual(index.collect(262144, -262144, 1, output).map((item) => item.id), ['replacement']);
 });

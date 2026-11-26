@@ -392,6 +392,8 @@ import { WallPlacementSpatialIndex } from './wallPlacementIndex';
 import {
   accumulateActiveConstructionWorkerCount,
   assignWorkersToConstructionTargets,
+  ConstructionApproachSpatialIndex,
+  CONSTRUCTION_APPROACH_PREFERRED_SPACING,
   getConstructionApproachPoint,
   writeConstructionApproachPoint,
   shouldDeferBlockedWallConstructionTarget,
@@ -552,6 +554,10 @@ export class RtsEngine {
   /** Reused work-ring reservations; valid only during the synchronous slot-selection call. */
   private constructionApproachOccupiedPointsScratch: Array<{ x: number; z: number }> = [];
   private constructionApproachOccupiedPointPool: Array<{ x: number; z: number }> = [];
+  /** One planned-slot index rebuilt with worker counts and reused by all builder updates. */
+  private constructionApproachSpatialIndex = new ConstructionApproachSpatialIndex<UnitEntity>();
+  private constructionApproachSpatialCandidatesScratch: UnitEntity[] = [];
+  private constructionApproachIndexPointScratch = { x: 0, z: 0 };
   /** Local spatial-query output and exclusion IDs reused by blocked construction handoffs. */
   private constructionHandoffQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -1638,6 +1644,8 @@ export class RtsEngine {
     this.constructionHandoffExcludedWorkerIds.clear();
     this.constructionApproachOccupiedPointsScratch.length = 0;
     this.constructionApproachOccupiedPointPool.length = 0;
+    this.constructionApproachSpatialIndex.beginRebuild();
+    this.constructionApproachSpatialCandidatesScratch.length = 0;
     // Drop cached wall endpoint references from the previous match immediately.
     this.wallEndpointIndex.clear();
     this.wallRepairIndex.clear();
@@ -7872,6 +7880,8 @@ export class RtsEngine {
   private rebuildActiveConstructionWorkerCounts(): void {
     const counts = this.activeConstructionWorkerCountByBuilding;
     counts.clear();
+    const approachIndex = this.constructionApproachSpatialIndex;
+    approachIndex.beginRebuild();
 
     for (const worker of this.units) {
       if (
@@ -7890,6 +7900,31 @@ export class RtsEngine {
         building.faction !== worker.faction ||
         this.isConstructionCancellationPending(building.id)
       ) continue;
+
+      const approachPoint = this.constructionApproachIndexPointScratch;
+      if (
+        worker.buildApproachBuildingId === building.id &&
+        Number.isFinite(worker.buildApproachAngle) &&
+        Number.isFinite(worker.buildApproachIndex)
+      ) {
+        const approachRadius = Math.max(
+          getBuildingCollisionRadius(building),
+          building.wallBreached && building.buildingDef.isWall ? building.buildingDef.size : 0,
+        );
+        const approachReach = Math.max(2.2, approachRadius + 1.55);
+        writeConstructionApproachPoint(
+          { x: building.x, z: building.z },
+          Math.min(approachRadius + 0.95, approachReach - 0.25),
+          worker.buildApproachAngle!,
+          worker.buildApproachIndex!,
+          BUILD_APPROACH_CANDIDATE_COUNT,
+          approachPoint,
+        );
+      } else {
+        approachPoint.x = worker.x;
+        approachPoint.z = worker.z;
+      }
+      approachIndex.insert(worker, approachPoint.x, approachPoint.z);
 
       const repairingWall =
         !!building.wallBreached &&
@@ -10300,6 +10335,7 @@ export class RtsEngine {
   private getOccupiedConstructionApproachPoints(
     unit: UnitEntity,
     building: BuildingEntity,
+    candidateRadius: number,
   ): Array<{ x: number; z: number }> {
     const occupied = this.constructionApproachOccupiedPointsScratch;
     const pointPool = this.constructionApproachOccupiedPointPool;
@@ -10316,7 +10352,16 @@ export class RtsEngine {
       return point;
     };
 
-    for (const other of this.units) {
+    const maximumWorkerReach = Math.max(2.2, this.maxBuildingCollisionRadius + 1.55);
+    const queryRadius = candidateRadius + CONSTRUCTION_APPROACH_PREFERRED_SPACING + maximumWorkerReach;
+    const candidates = this.constructionApproachSpatialIndex.collect(
+      building.x,
+      building.z,
+      queryRadius,
+      this.constructionApproachSpatialCandidatesScratch,
+    );
+
+    for (const other of candidates) {
       if (
         other.id === unit.id ||
         other.hp <= 0 ||
@@ -10601,7 +10646,7 @@ export class RtsEngine {
           { x: bldg.x, z: bldg.z },
           initialApproachRadius,
           unit.buildApproachAngle,
-          this.getOccupiedConstructionApproachPoints(unit, bldg),
+          this.getOccupiedConstructionApproachPoints(unit, bldg, initialApproachRadius),
           BUILD_APPROACH_CANDIDATE_COUNT,
         );
         unit.buildApproachRetryAt = undefined;
@@ -15595,6 +15640,8 @@ export class RtsEngine {
     this.constructionHandoffExcludedWorkerIds.clear();
     this.constructionApproachOccupiedPointsScratch.length = 0;
     this.constructionApproachOccupiedPointPool.length = 0;
+    this.constructionApproachSpatialIndex.beginRebuild();
+    this.constructionApproachSpatialCandidatesScratch.length = 0;
     this.ageEvolutionTransitionMeshes.clear();
     this.wallEndpointIndex.clear();
     this.wallEndpointIndexDirty = true;

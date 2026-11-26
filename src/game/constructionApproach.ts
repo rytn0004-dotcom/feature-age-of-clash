@@ -4,6 +4,7 @@ export interface ConstructionApproachPoint {
 }
 
 export const CONSTRUCTION_APPROACH_DIRECTION_COUNT = 8;
+export const CONSTRUCTION_APPROACH_PREFERRED_SPACING = 1.35;
 
 /** A failed route is temporarily excluded, then retried if the battlefield changes. */
 export const CONSTRUCTION_HANDOFF_FAILURE_COOLDOWN_SECONDS = 30;
@@ -470,7 +471,7 @@ export function selectConstructionApproachCandidateIndex(
   preferredAngle: number,
   occupiedPoints: readonly ConstructionApproachPoint[],
   candidateCount = CONSTRUCTION_APPROACH_DIRECTION_COUNT,
-  preferredSpacing = 1.35,
+  preferredSpacing = CONSTRUCTION_APPROACH_PREFERRED_SPACING,
 ): number {
   const safeCount = Number.isInteger(candidateCount) && candidateCount > 0
     ? candidateCount
@@ -508,4 +509,85 @@ export function selectConstructionApproachCandidateIndex(
   }
 
   return bestIndex;
+}
+
+
+export interface ConstructionApproachSpatialItem {
+  x: number;
+  z: number;
+}
+
+const CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE = 8;
+
+/**
+ * Per-simulation-step broad phase for occupied construction work points.
+ * Entries are indexed at planned slots, not at the builder's current position.
+ */
+export class ConstructionApproachSpatialIndex<T extends ConstructionApproachSpatialItem> {
+  private readonly buckets = new Map<number | string, T[]>();
+  private readonly reusableBuckets: T[][] = [];
+  private _size = 0;
+
+  public get size(): number {
+    return this._size;
+  }
+
+  public beginRebuild(): void {
+    for (const bucket of this.buckets.values()) {
+      bucket.length = 0;
+      this.reusableBuckets.push(bucket);
+    }
+    this.buckets.clear();
+    this._size = 0;
+  }
+
+  public insert(item: T, x = item.x, z = item.z): boolean {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    const cellX = Math.floor(x / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    const cellZ = Math.floor(z / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    const key = this.key(cellX, cellZ);
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = this.reusableBuckets.pop() ?? [];
+      this.buckets.set(key, bucket);
+    }
+    bucket.push(item);
+    this._size++;
+    return true;
+  }
+
+  /** Collect the conservative square around a work-ring centre into reusable storage. */
+  public collect(x: number, z: number, radius: number, output: T[]): T[] {
+    output.length = 0;
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(z) ||
+      !Number.isFinite(radius) ||
+      radius < 0
+    ) return output;
+
+    const minCellX = Math.floor((x - radius) / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    const maxCellX = Math.floor((x + radius) / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    const minCellZ = Math.floor((z - radius) / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    const maxCellZ = Math.floor((z + radius) / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = this.buckets.get(this.key(cellX, cellZ));
+        if (!bucket) continue;
+        for (const item of bucket) output.push(item);
+      }
+    }
+    return output;
+  }
+
+  private key(cellX: number, cellZ: number): number | string {
+    if (
+      Number.isInteger(cellX) && Number.isInteger(cellZ) &&
+      cellX >= -32768 && cellX <= 32767 &&
+      cellZ >= -32768 && cellZ <= 32767
+    ) {
+      return (cellX + 32768) * 65536 + (cellZ + 32768);
+    }
+    return `${cellX},${cellZ}`;
+  }
 }
