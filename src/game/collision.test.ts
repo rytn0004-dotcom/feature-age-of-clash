@@ -14,7 +14,6 @@ import {
   isPointInTerrainObstacle,
   doesCircleOverlapWallFootprint,
   doWallFootprintsOverlap,
-  filterTerrainObstaclesToBounds,
 } from './collision';
 
 function makeUnit(
