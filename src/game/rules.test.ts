@@ -2524,7 +2524,7 @@ test('strategic tech tree: prerequisites, mutually exclusive doctrines, counter 
   const mountedArcherPick = evaluateAiTechChoice(
     [
       { buildingId: 'archery', tech: findTechDef('mon_composite_bow')! },
-      { buildingId: 'castle', tech: crusaderCharge },
+      { buildingId: 'barracks', tech: findTechDef('mon_keshik_lamellar')! },
     ],
     {
       ...rosterContext,
