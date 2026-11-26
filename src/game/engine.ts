@@ -651,7 +651,6 @@ export class RtsEngine {
   private unitRoleSiegeBatch: THREE.InstancedMesh | null = null;
   private unitBuffRingBatch: THREE.InstancedMesh | null = null;
   private unitDecorationDummy = new THREE.Object3D();
-  private unitDecorationColor = new THREE.Color();
   private unitDecorationInstanceCursor = 0;
   private unitRoleCrestInstanceCursor = 0;
   private unitRoleSiegeInstanceCursor = 0;
@@ -2421,7 +2420,6 @@ export class RtsEngine {
       mesh.position.y + shadow.position.y * mesh.scale.y,
       mesh.position.z,
     );
-    this.unitDecorationDummy.rotation.set(0, 0, 0);
     const shadowScale = Math.abs(shadow.scale.x * rootScale);
     this.unitDecorationDummy.scale.set(shadowScale, shadowScale, shadowScale);
     this.unitDecorationDummy.updateMatrix();
@@ -2434,8 +2432,7 @@ export class RtsEngine {
     ringBatch.setMatrixAt(instanceIndex, this.unitDecorationDummy.matrix);
 
     const ringMaterial = factionRing.material as THREE.MeshBasicMaterial;
-    this.unitDecorationColor.copy(ringMaterial.color);
-    ringBatch.setColorAt(instanceIndex, this.unitDecorationColor);
+    ringBatch.setColorAt(instanceIndex, ringMaterial.color);
     this.unitDecorationInstanceCursor++;
   }
 
@@ -7149,8 +7146,10 @@ export class RtsEngine {
           mesh.visible = false;
           continue;
         }
-        mesh.visible = true;
-        mesh.position.set(unit.x, 0, unit.z);
+        if (!mesh.visible) mesh.visible = true;
+        if (mesh.position.x !== unit.x || mesh.position.y !== 0 || mesh.position.z !== unit.z) {
+          mesh.position.set(unit.x, 0, unit.z);
+        }
         this.animateUnitMesh(unit, mesh, dt);
         this.writeUnitDecorationInstances(mesh);
         this.writeUnitRoleAndBuffInstances(mesh);
