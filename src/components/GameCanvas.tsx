@@ -1101,7 +1101,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         >
           <div className="mb-1 text-sm font-black text-cyan-200">🧱 城牆連續規劃</div>
           <div>左鍵設定起點並預覽　·　Shift + 左鍵驗證並固定本段　·　左鍵驗證最後一段並建造</div>
-          <div className="mt-1 text-slate-300">右鍵／Esc 取消規劃</div>
+          <div className="mt-1 text-slate-300">靠近已建城牆的側面中點可吸附接出 90° 分支　·　右鍵／Esc 取消</div>
           <div className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px]">
             <span className="font-bold text-sky-300">● 青色：路線預覽，點擊時才驗證碰撞</span>
             <span className="font-bold text-amber-300">● 橘色：超出預算，不會建造</span>
@@ -1111,7 +1111,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
             <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-white/10 pt-2">
               <span>牆段 {wallPlacementInfo.segmentCount}</span>
               <span>長度 {wallPlacementInfo.distance.toFixed(1)}</span>
-              <span className={wallPlacementInfo.blocked ? 'text-rose-300' : wallPlacementInfo.affordableSegmentCount < wallPlacementInfo.segmentCount ? 'text-amber-300' : 'text-emerald-300'}>
+              <span className={wallPlacementInfo.blocked ? 'text-rose-300' : wallPlacementInfo.affordableSegmentCount < wallPlacementInfo.segmentCount ? 'text-amber-300' : 'text-sky-300'}>
                 {wallPlacementInfo.pointCount === 0
                   ? '等待起點'
                   : wallPlacementInfo.blocked
@@ -1124,7 +1124,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
                           ? `可負擔 ${wallPlacementInfo.affordableSegmentCount}/${wallPlacementInfo.segmentCount} 段，點擊只會建造青色預算範圍`
                           : '預覽完成，點擊時檢查碰撞'}
               </span>
-              {wallPlacementInfo.snapped && <span className="font-bold text-cyan-200">🔗 已吸附既有牆端</span>}
+              {wallPlacementInfo.snapped && <span className="font-bold text-cyan-200">🔗 已吸附既有城牆</span>}
               <span>🪵 {wallPlacementInfo.cost.wood}</span>
               <span>🪨 {wallPlacementInfo.cost.stone}</span>
               <span>可建 {wallPlacementInfo.affordableSegmentCount}/{wallPlacementInfo.segmentCount}</span>
