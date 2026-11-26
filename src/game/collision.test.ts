@@ -97,6 +97,15 @@ test('collision broad phase: overlapping units are pushed apart and distant unit
   assert.deepEqual({ x: distant.x, z: distant.z }, distantStart);
 });
 
+test('collision broad phase: exact unit tangency is not treated as overlap', () => {
+  const radius = getUnitColliderRadius('melee');
+  const first = makeUnit('tangent-a', 0, 0);
+  const second = makeUnit('tangent-b', radius * 2, 0);
+  const before = [[first.x, first.z], [second.x, second.z]];
+  resolveUnitUnitCollisions([first, second]);
+  assert.deepEqual([[first.x, first.z], [second.x, second.z]], before);
+});
+
 test('collision broad phase: centered overlaps stay deterministic and skip dead or garrisoned units', () => {
   const firstA = makeUnit('a', 0, 0);
   const secondA = makeUnit('b', 0, 0);
@@ -134,6 +143,15 @@ test('collision broad phase: units are pushed outside solid buildings but gates 
   );
   assert.deepEqual([gatePasser.x, gatePasser.z], [0, 0]);
   assert.deepEqual([breachedPasser.x, breachedPasser.z], [20, 0]);
+});
+
+test('collision broad phase: exact building tangency is not treated as overlap', () => {
+  const townCenter = makeBuilding('tangent-town-center', 0, 0, 'town_center', 5);
+  const tangentDistance = 4.18 + getUnitColliderRadius('melee');
+  const unit = makeUnit('tangent-building-unit', tangentDistance, 0);
+  const before = [unit.x, unit.z];
+  resolveUnitBuildingCollisions([unit], [townCenter]);
+  assert.deepEqual([unit.x, unit.z], before);
 });
 
 test('collision broad phase: gathering workers keep their resource interaction radius', () => {

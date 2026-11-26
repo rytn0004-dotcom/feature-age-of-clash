@@ -132,6 +132,14 @@ export function getResourceColliderRadius(
 const COLLISION_CELL_SIZE = 8;
 
 export interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
+
+function compareCollisionEntriesByIndex<T>(
+  first: CollisionEntry<T>,
+  second: CollisionEntry<T>,
+): number {
+  return first.index - second.index;
+}
+
 export interface CollisionIndex<T> {
   buckets: Map<string, CollisionEntry<T>[]>;
   entries: Array<CollisionEntry<T> | undefined>;
@@ -173,14 +181,7 @@ function collisionKey(x: number, z: number): string {
   return `${Math.floor(x / COLLISION_CELL_SIZE)}:${Math.floor(z / COLLISION_CELL_SIZE)}`;
 }
 
-/** Identifies the grid cells touched by a query rectangle, not merely the owner's cell. */
-function collisionQueryKey(x: number, z: number, reach: number): string {
-  const minX = Math.floor((x - reach) / COLLISION_CELL_SIZE);
-  const maxX = Math.floor((x + reach) / COLLISION_CELL_SIZE);
-  const minZ = Math.floor((z - reach) / COLLISION_CELL_SIZE);
-  const maxZ = Math.floor((z + reach) / COLLISION_CELL_SIZE);
-  return `${minX}:${maxX}:${minZ}:${maxZ}`;
-}
+
 
 function createEmptyCollisionIndex<T>(): CollisionIndex<T> {
   return {
@@ -306,7 +307,7 @@ function nearbyCollisionEntries<T extends { x: number; z: number }>(
       if (bucket) found.push(...bucket);
     }
   }
-  found.sort((a, b) => a.index - b.index);
+  found.sort(compareCollisionEntriesByIndex);
   return found;
 }
 
@@ -322,11 +323,13 @@ export interface UnitCollisionMotionState {
  * stationary builders or two moving units still share it evenly.
  */
 function isStationaryConstructionBuilder(unit: UnitCollisionMotionState): boolean {
+  const velocity = unit.velocity;
   return unit.state === 'building' &&
     !!unit.targetBuildingId &&
-    Number.isFinite(unit.velocity?.x) &&
-    Number.isFinite(unit.velocity?.z) &&
-    Math.hypot(unit.velocity!.x, unit.velocity!.z) < 0.08;
+    !!velocity &&
+    Number.isFinite(velocity.x) &&
+    Number.isFinite(velocity.z) &&
+    velocity.x * velocity.x + velocity.z * velocity.z < 0.0064;
 }
 
 /** Returns only the first unit's share; the second share is its complement. */
@@ -367,17 +370,29 @@ export function resolveUnitUnitCollisions(
     if (!first) continue;
     const visitToken = nextCollisionVisitToken(index.entries.length);
     const reach = first.radius + index.maxRadius;
-    let cachedQueryKey = '';
+    let cachedMinCellX = Number.NaN;
+    let cachedMaxCellX = Number.NaN;
+    let cachedMinCellZ = Number.NaN;
+    let cachedMaxCellZ = Number.NaN;
     let candidateCursor = 0;
 
     while (true) {
-      const nextQueryKey = collisionQueryKey(u1.x, u1.z, reach);
-      if (nextQueryKey !== cachedQueryKey) {
-        // Rebuild only when the query's covered cells change. A collision that
-        // moves either participant into another bucket invalidates this cache.
+      const minCellX = Math.floor((u1.x - reach) / COLLISION_CELL_SIZE);
+      const maxCellX = Math.floor((u1.x + reach) / COLLISION_CELL_SIZE);
+      const minCellZ = Math.floor((u1.z - reach) / COLLISION_CELL_SIZE);
+      const maxCellZ = Math.floor((u1.z + reach) / COLLISION_CELL_SIZE);
+      if (
+        minCellX !== cachedMinCellX ||
+        maxCellX !== cachedMaxCellX ||
+        minCellZ !== cachedMinCellZ ||
+        maxCellZ !== cachedMaxCellZ
+      ) {
         nearbyCollisionEntries(index, u1.x, u1.z, reach, candidates);
         candidateCursor = 0;
-        cachedQueryKey = nextQueryKey;
+        cachedMinCellX = minCellX;
+        cachedMaxCellX = maxCellX;
+        cachedMinCellZ = minCellZ;
+        cachedMaxCellZ = maxCellZ;
       }
 
       let next: CollisionEntry<UnitEntity> | undefined;
@@ -395,9 +410,10 @@ export function resolveUnitUnitCollisions(
       if (u2.hp <= 0 || u2.garrisonedInBuildingId) continue;
       const dx = u2.x - u1.x;
       const dz = u2.z - u1.z;
-      const dist = Math.hypot(dx, dz);
       const minDist = first.radius + next.radius;
-      if (dist >= minDist) continue;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared >= minDist * minDist) continue;
+      const dist = Math.sqrt(distanceSquared);
       let nx = dx;
       let nz = dz;
       if (dist > 0.0001) {
@@ -417,7 +433,10 @@ export function resolveUnitUnitCollisions(
       const firstChangedCell = moveCollisionEntry(index, first);
       const secondChangedCell = moveCollisionEntry(index, next);
       if (firstChangedCell || secondChangedCell) {
-        cachedQueryKey = '';
+        cachedMinCellX = Number.NaN;
+        cachedMaxCellX = Number.NaN;
+        cachedMinCellZ = Number.NaN;
+        cachedMaxCellZ = Number.NaN;
       }
     }
   }
@@ -439,14 +458,28 @@ export function resolveUnitBuildingCollisions(
     const visitToken = nextCollisionVisitToken(index.entries.length);
     const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
     const reach = unitRadius + index.maxRadius;
-    let cachedQueryKey = '';
+    let cachedMinCellX = Number.NaN;
+    let cachedMaxCellX = Number.NaN;
+    let cachedMinCellZ = Number.NaN;
+    let cachedMaxCellZ = Number.NaN;
     let candidateCursor = 0;
     while (true) {
-      const nextQueryKey = collisionQueryKey(unit.x, unit.z, reach);
-      if (nextQueryKey !== cachedQueryKey) {
+      const minCellX = Math.floor((unit.x - reach) / COLLISION_CELL_SIZE);
+      const maxCellX = Math.floor((unit.x + reach) / COLLISION_CELL_SIZE);
+      const minCellZ = Math.floor((unit.z - reach) / COLLISION_CELL_SIZE);
+      const maxCellZ = Math.floor((unit.z + reach) / COLLISION_CELL_SIZE);
+      if (
+        minCellX !== cachedMinCellX ||
+        maxCellX !== cachedMaxCellX ||
+        minCellZ !== cachedMinCellZ ||
+        maxCellZ !== cachedMaxCellZ
+      ) {
         nearbyCollisionEntries(index, unit.x, unit.z, reach, candidates);
         candidateCursor = 0;
-        cachedQueryKey = nextQueryKey;
+        cachedMinCellX = minCellX;
+        cachedMaxCellX = maxCellX;
+        cachedMinCellZ = minCellZ;
+        cachedMaxCellZ = maxCellZ;
       }
 
       let next: CollisionEntry<BuildingEntity> | undefined;
@@ -464,8 +497,9 @@ export function resolveUnitBuildingCollisions(
       const minDist = next.radius + unitRadius;
       const dx = unit.x - building.x;
       const dz = unit.z - building.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist >= minDist) continue;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared >= minDist * minDist) continue;
+      const dist = Math.sqrt(distanceSquared);
       const nx = dist > 0.0001 ? dx / dist : 1;
       const nz = dist > 0.0001 ? dz / dist : 0;
       unit.x = building.x + nx * (minDist + 0.02);
@@ -499,14 +533,28 @@ export function resolveUnitResourceCollisions(
     const visitToken = nextCollisionVisitToken(index.entries.length);
     const unitRadius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
     const reach = unitRadius + index.maxRadius;
-    let cachedQueryKey = '';
+    let cachedMinCellX = Number.NaN;
+    let cachedMaxCellX = Number.NaN;
+    let cachedMinCellZ = Number.NaN;
+    let cachedMaxCellZ = Number.NaN;
     let candidateCursor = 0;
     while (true) {
-      const nextQueryKey = collisionQueryKey(unit.x, unit.z, reach);
-      if (nextQueryKey !== cachedQueryKey) {
+      const minCellX = Math.floor((unit.x - reach) / COLLISION_CELL_SIZE);
+      const maxCellX = Math.floor((unit.x + reach) / COLLISION_CELL_SIZE);
+      const minCellZ = Math.floor((unit.z - reach) / COLLISION_CELL_SIZE);
+      const maxCellZ = Math.floor((unit.z + reach) / COLLISION_CELL_SIZE);
+      if (
+        minCellX !== cachedMinCellX ||
+        maxCellX !== cachedMaxCellX ||
+        minCellZ !== cachedMinCellZ ||
+        maxCellZ !== cachedMaxCellZ
+      ) {
         nearbyCollisionEntries(index, unit.x, unit.z, reach, candidates);
         candidateCursor = 0;
-        cachedQueryKey = nextQueryKey;
+        cachedMinCellX = minCellX;
+        cachedMaxCellX = maxCellX;
+        cachedMinCellZ = minCellZ;
+        cachedMaxCellZ = maxCellZ;
       }
 
       let next: CollisionEntry<ResourceNode> | undefined;
@@ -525,8 +573,9 @@ export function resolveUnitResourceCollisions(
       const minDist = next.radius + (targetHarvester ? unitRadius * 0.45 : unitRadius);
       const dx = unit.x - node.x;
       const dz = unit.z - node.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist >= minDist) continue;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared >= minDist * minDist) continue;
+      const dist = Math.sqrt(distanceSquared);
       const nx = dist > 0.0001 ? dx / dist : 0;
       const nz = dist > 0.0001 ? dz / dist : 1;
       unit.x = node.x + nx * (minDist + 0.02);
