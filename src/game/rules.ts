@@ -3662,13 +3662,6 @@ export interface AiTechDecisionContext {
     siege: number;
     fortificationCount: number;
   };
-  /** Active plus queued combat composition; lets research keep pace with the AI's own army plan. */
-  ownComposition?: {
-    melee: number;
-    ranged: number;
-    cavalry: number;
-    siege: number;
-  };
 }
 
 /**
