@@ -42,6 +42,7 @@ interface WallAnchor<T extends WallSnapBuilding> {
   point: { x: number; z: number };
   wall: T;
   side: 'start' | 'end';
+  order: number;
 }
 
 function getWallAxis(wall: WallSnapBuilding) {
@@ -66,6 +67,15 @@ function getWallEndpoint(wall: WallSnapBuilding, side: 'start' | 'end') {
  */
 function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): WallAnchor<T>[] {
   const groups = new Map<string, T[]>();
+  const anchors: WallAnchor<T>[] = [];
+  const addAnchor = (wall: T, side: 'start' | 'end') => {
+    anchors.push({
+      point: getWallEndpoint(wall, side),
+      wall,
+      side,
+      order: anchors.length,
+    });
+  };
   for (const wall of walls) {
     if (!wall.buildingDef.isWall || wall.hp <= 0 || !wall.isConstructed) continue;
     const key = wall.wallChainId ? `chain:${wall.wallChainId}` : `segment:${wall.id}`;
@@ -74,7 +84,6 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
     groups.set(key, group);
   }
 
-  const anchors: WallAnchor<T>[] = [];
   for (const group of groups.values()) {
     const ordered = [...group].sort((a, b) => (a.wallChainIndex ?? 0) - (b.wallChainIndex ?? 0));
     let run: T[] = [];
@@ -82,8 +91,8 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
       if (run.length === 0) return;
       const first = run[0];
       const last = run[run.length - 1];
-      anchors.push({ point: getWallEndpoint(first, 'start'), wall: first, side: 'start' });
-      anchors.push({ point: getWallEndpoint(last, 'end'), wall: last, side: 'end' });
+      addAnchor(first, 'start');
+      addAnchor(last, 'end');
       run = [];
     };
 
@@ -113,15 +122,26 @@ function collectWallAnchors<T extends WallSnapBuilding>(walls: readonly T[]): Wa
  */
 export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
   private anchors: WallAnchor<T>[] = [];
+  private buckets = new Map<string, WallAnchor<T>[]>();
   private rebuilds = 0;
 
   public rebuild(walls: readonly T[]): void {
     this.anchors = collectWallAnchors(walls);
+    this.buckets.clear();
+    for (const anchor of this.anchors) {
+      const cellX = Math.floor(anchor.point.x / WALL_ENDPOINT_SNAP_RADIUS);
+      const cellZ = Math.floor(anchor.point.z / WALL_ENDPOINT_SNAP_RADIUS);
+      const key = `${cellX},${cellZ}`;
+      const bucket = this.buckets.get(key);
+      if (bucket) bucket.push(anchor);
+      else this.buckets.set(key, [anchor]);
+    }
     this.rebuilds += 1;
   }
 
   public clear(): void {
     this.anchors = [];
+    this.buckets.clear();
   }
 
   public findNearest(
@@ -132,16 +152,51 @@ export class WallEndpointIndex<T extends WallSnapBuilding = WallSnapBuilding> {
       return null;
     }
 
-    let nearest: WallEndpointSnap<T> | null = null;
-    for (const anchor of this.anchors) {
-      // Health/construction can change between scheduled topology rebuilds.
-      if (anchor.wall.hp <= 0 || !anchor.wall.isConstructed) continue;
-      const distance = Math.hypot(point.x - anchor.point.x, point.z - anchor.point.z);
-      if (distance <= snapRadius && (!nearest || distance < nearest.distance)) {
-        nearest = { point: anchor.point, wall: anchor.wall, distance, side: anchor.side };
+    const radiusSquared = snapRadius * snapRadius;
+    const minCellX = Math.floor((point.x - snapRadius) / WALL_ENDPOINT_SNAP_RADIUS);
+    const maxCellX = Math.floor((point.x + snapRadius) / WALL_ENDPOINT_SNAP_RADIUS);
+    const minCellZ = Math.floor((point.z - snapRadius) / WALL_ENDPOINT_SNAP_RADIUS);
+    const maxCellZ = Math.floor((point.z + snapRadius) / WALL_ENDPOINT_SNAP_RADIUS);
+    let nearest: WallAnchor<T> | null = null;
+    let nearestDistanceSquared = radiusSquared;
+    let nearestOrder = Number.POSITIVE_INFINITY;
+
+    // The snap radius normally touches at most a 3x3 set of cells, independent
+    // of the total number of walls already built across the map.
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = this.buckets.get(`${cellX},${cellZ}`);
+        if (!bucket) continue;
+        for (const anchor of bucket) {
+          // Health/construction can change between scheduled topology rebuilds.
+          if (anchor.wall.hp <= 0 || !anchor.wall.isConstructed) continue;
+          const dx = point.x - anchor.point.x;
+          const dz = point.z - anchor.point.z;
+          const distanceSquared = dx * dx + dz * dz;
+          if (
+            distanceSquared <= radiusSquared &&
+            (
+              nearest === null ||
+              distanceSquared < nearestDistanceSquared ||
+              (distanceSquared === nearestDistanceSquared && anchor.order < nearestOrder)
+            )
+          ) {
+            nearest = anchor;
+            nearestDistanceSquared = distanceSquared;
+            nearestOrder = anchor.order;
+          }
+        }
       }
     }
-    return nearest;
+
+    return nearest
+      ? {
+          point: nearest.point,
+          wall: nearest.wall,
+          distance: Math.sqrt(nearestDistanceSquared),
+          side: nearest.side,
+        }
+      : null;
   }
 
   /** Exposed for deterministic regression tests and lightweight diagnostics. */

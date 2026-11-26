@@ -5973,6 +5973,7 @@ export class RtsEngine {
     instanced.count = 0;
     group.add(instanced);
     this.wallPlacementPreviewInstancedGhost = instanced;
+    this.wallPlacementPreviewTintSignature = '';
     return instanced;
   }
 
@@ -6021,14 +6022,20 @@ export class RtsEngine {
     );
     const previewLimit = Math.min(placements.length, MAX_WALL_CHAIN_SEGMENTS);
     const useInstancedPreview = shouldUseInstancedWallPreview(previewLimit);
-    const detailedPreviewLimit = useInstancedPreview
+    const instancedPreview = useInstancedPreview
+      ? this.ensureInstancedWallPlacementPreview(group)
+      : null;
+    const useInstancedGhost = instancedPreview !== null;
+    // If instancing cannot be built from the current wall template, fall back
+    // to the full models rather than leaving the route with no visible preview.
+    const detailedPreviewLimit = useInstancedGhost
       ? Math.min(WALL_PREVIEW_DETAILED_SEGMENT_LIMIT, previewLimit)
       : previewLimit;
 
-    // Short routes keep full 3D models. Long routes hide them and use one
-    // InstancedMesh, preserving one affordability colour per wall segment.
+    // Short routes keep full 3D models. Long routes prefer one InstancedMesh,
+    // but retain a correctness-first detailed fallback if instancing is unavailable.
     while (
-      !useInstancedPreview &&
+      !useInstancedGhost &&
       this.wallPlacementPreviewGhosts.length < detailedPreviewLimit &&
       this.wallPlacementGhostTemplate
     ) {
@@ -6042,33 +6049,30 @@ export class RtsEngine {
     for (let index = 0; index < this.wallPlacementPreviewGhosts.length; index++) {
       const ghost = this.wallPlacementPreviewGhosts[index];
       const placement = placements[index];
-      ghost.visible = !useInstancedPreview && !!placement && index < detailedPreviewLimit;
+      ghost.visible = !useInstancedGhost && !!placement && index < detailedPreviewLimit;
       if (!ghost.visible || !placement || index < fixedGhostsPlaced) continue;
       ghost.position.set(placement.x, 0, placement.z);
       ghost.rotation.y = placement.rotationY;
     }
     this.wallPlacementPreviewFixedGhostsPlaced = this.wallPlacementPreviewFixedPlacementCount;
 
-    if (useInstancedPreview) {
-      const instanced = this.ensureInstancedWallPlacementPreview(group);
-      if (instanced) {
-        if (!this.wallPlacementPreviewUsingInstancedGhost) this.wallPlacementPreviewInstancedFixedCount = 0;
-        instanced.visible = true;
-        instanced.count = previewLimit;
-        const startIndex = Math.min(this.wallPlacementPreviewInstancedFixedCount, previewLimit);
-        const transform = this.wallPlacementPreviewInstanceTransform;
-        for (let index = startIndex; index < previewLimit; index++) {
-          const placement = placements[index];
-          transform.position.set(placement.x, 0, placement.z);
-          transform.rotation.set(0, placement.rotationY, 0);
-          transform.scale.set(1, 1, 1);
-          transform.updateMatrix();
-          instanced.setMatrixAt(index, transform.matrix);
-        }
-        if (previewLimit > startIndex) instanced.instanceMatrix.needsUpdate = true;
-        this.wallPlacementPreviewInstancedFixedCount = Math.min(this.wallPlacementPreviewFixedPlacementCount, previewLimit);
-        this.wallPlacementPreviewUsingInstancedGhost = true;
+    if (instancedPreview) {
+      if (!this.wallPlacementPreviewUsingInstancedGhost) this.wallPlacementPreviewInstancedFixedCount = 0;
+      instancedPreview.visible = true;
+      instancedPreview.count = previewLimit;
+      const startIndex = Math.min(this.wallPlacementPreviewInstancedFixedCount, previewLimit);
+      const transform = this.wallPlacementPreviewInstanceTransform;
+      for (let index = startIndex; index < previewLimit; index++) {
+        const placement = placements[index];
+        transform.position.set(placement.x, 0, placement.z);
+        transform.rotation.set(0, placement.rotationY, 0);
+        transform.scale.set(1, 1, 1);
+        transform.updateMatrix();
+        instancedPreview.setMatrixAt(index, transform.matrix);
       }
+      if (previewLimit > startIndex) instancedPreview.instanceMatrix.needsUpdate = true;
+      this.wallPlacementPreviewInstancedFixedCount = Math.min(this.wallPlacementPreviewFixedPlacementCount, previewLimit);
+      this.wallPlacementPreviewUsingInstancedGhost = true;
     } else {
       if (this.wallPlacementPreviewInstancedGhost) this.wallPlacementPreviewInstancedGhost.visible = false;
       this.wallPlacementPreviewUsingInstancedGhost = false;

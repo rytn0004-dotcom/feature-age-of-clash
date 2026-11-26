@@ -231,3 +231,53 @@ test('wall endpoint index ignores an endpoint wall that becomes dead between reb
   assert.equal(index.findNearest({ x: 1.35, z: 0 }), null);
   assert.equal(index.rebuildCount, 1, 'health checks do not force a full index rebuild');
 });
+
+
+test('wall endpoint spatial index finds candidates across cell boundaries without scanning the full map', () => {
+  const walls: WallSnapBuilding[] = [];
+  for (let index = 0; index < 160; index++) {
+    walls.push(makeWall(`distant-${index}`, index * 9, {
+      wallChainId: `distant-chain-${index}`,
+      wallChainIndex: 0,
+      z: (index % 3) * 11,
+    }));
+  }
+  const boundaryWall = makeWall('boundary-wall', 320, {
+    wallChainId: 'boundary-chain',
+    wallChainIndex: 0,
+    z: 1.5,
+  });
+  walls.push(boundaryWall);
+
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild(walls);
+
+  const close = index.findNearest({ x: 321.31, z: 1.5 });
+  assert.equal(close?.wall.id, 'boundary-wall');
+  assert.equal(close?.side, 'end');
+  assert.ok((close?.distance ?? Infinity) < 0.05);
+
+  // The query sits in the neighboring spatial cell, but remains within the
+  // snap radius of the same endpoint.
+  const acrossBoundary = index.findNearest({ x: 319.75, z: 1.5 });
+  assert.equal(acrossBoundary?.wall.id, 'boundary-wall');
+  assert.ok(Math.abs((acrossBoundary?.distance ?? 0) - 1.6) < 1e-9);
+  assert.equal(index.rebuildCount, 1);
+  assert.equal(index.endpointCount, (160 + 1) * 2);
+});
+
+test('wall endpoint spatial index preserves original insertion order for equal-distance snaps', () => {
+  const first = makeWall('first-equal', 0, {
+    wallChainId: 'first-equal-chain',
+    wallChainIndex: 0,
+  });
+  const second = makeWall('second-equal', 2.7, {
+    wallChainId: 'second-equal-chain',
+    wallChainIndex: 0,
+  });
+  const index = new WallEndpointIndex<WallSnapBuilding>();
+  index.rebuild([first, second]);
+
+  const snap = index.findNearest({ x: 1.35, z: 0 });
+  assert.equal(snap?.wall.id, 'first-equal');
+});
