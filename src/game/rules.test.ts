@@ -2307,7 +2307,7 @@ test('wild deer (山羌): body heading matches actual movement immediately after
   const movementZ = movedZ / distance;
   assert.ok(
     facingX * movementX + facingZ * movementZ > 0.999999,
-    'The deer's forward axis must not oppose or lag behind its movement',
+    'The deer forward axis must not oppose or lag behind its movement',
   );
 });
 
