@@ -1646,7 +1646,7 @@ test('siege-and-garrison: anti-building armor blocks early soldiers while siege 
 
   const cannonUnit = mkUnitEnt('can1', cannonDef);
   const cannonVsTcDmg = calculateBuildingDamage(cannonUnit, tc, 3, ['shared_masonry']);
-  assert.ok(cannonVsTcDmg >= 200, `Imperial bombard cannon (${cannonVsTcDmg}) should devastate fortified structures`);
+  assert.equal(cannonVsTcDmg, 120, 'Bombard Cannon must ignore masonry armor while retaining the ~50s town-center break point');
 });
 
 test('economy-and-early-defense: 35/60s base gather rate, carry 15, Age I wall & tower unlock, and building combat stats inspection', async () => {
