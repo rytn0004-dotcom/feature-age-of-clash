@@ -2198,8 +2198,8 @@ export class RtsEngine {
 
   /** Exact unit queue duration using the same live bonuses as the production simulation. */
   public getUnitTrainingDuration(buildingId: string, unitDefId: string): number | null {
-    const building = this.getBuildingById(buildingId && entry.hp > 0);
-    if (!building) return null;
+    const building = this.getBuildingById(buildingId);
+    if (!building || building.hp <= 0) return null;
     const unit = this.findUnitDef(unitDefId, building.faction);
     if (!unit) return null;
     const hasNearbyForge =
@@ -2229,9 +2229,9 @@ export class RtsEngine {
 
   /** Current research duration; the Royal Foundry aura is subject to the shared speed ceiling. */
   public getTechResearchDuration(buildingId: string, techId: string): number | null {
-    const building = this.getBuildingById(buildingId && entry.hp > 0);
+    const building = this.getBuildingById(buildingId);
     const tech = findTechDef(techId);
-    if (!building || !tech) return null;
+    if (!building || building.hp <= 0 || !tech) return null;
     const hasNearbyForge =
       building.buildingType !== 'armory_forge' &&
       this.buildings.some(
@@ -2918,8 +2918,8 @@ export class RtsEngine {
   }
 
   public assignAllIdleWorkersToNode(nodeId: string): number {
-    const node = this.getResourceNodeById(nodeId && n.amount > 0);
-    if (!node) return 0;
+    const node = this.getResourceNodeById(nodeId);
+    if (!node || node.amount <= 0) return 0;
     const idleWorkers = this.units.filter(
       (u) =>
         this.isHumanControlled(u.faction) &&
@@ -3202,8 +3202,8 @@ export class RtsEngine {
   }
 
   public toggleOvooMode(buildingId: string): boolean {
-    const building = this.getBuildingById(buildingId && entry.hp > 0 && entry.buildingType === 'ovoo_relay');
-    if (!building) return false;
+    const building = this.getBuildingById(buildingId);
+    if (!building || building.hp <= 0 || building.buildingType !== 'ovoo_relay') return false;
     const nextMode = building.ovooMode === 'sacred_extraction' ? 'yam_relay' : 'sacred_extraction';
     building.ovooMode = nextMode;
     this.spawnShockwaveRing(building.x, building.z, nextMode === 'yam_relay' ? 0xf59e0b : 0x38bdf8, 6.5);
@@ -3229,8 +3229,8 @@ export class RtsEngine {
   }
 
   public triggerOvooWarHorn(buildingId: string): boolean {
-    const building = this.getBuildingById(buildingId && entry.hp > 0 && entry.isConstructed && entry.buildingType === 'ovoo_relay');
-    if (!building || (building.ovooHornCooldown || 0) > 0) return false;
+    const building = this.getBuildingById(buildingId);
+    if (!building || building.hp <= 0 || !building.isConstructed || building.buildingType !== 'ovoo_relay' || (building.ovooHornCooldown || 0) > 0) return false;
     building.ovooHornCooldown = 45;
     this.spawnShockwaveRing(building.x, building.z, 0xf59e0b, 16);
     this.spawnParticleBurst(building.x, 2.4, building.z, 'ember', 24);
@@ -4416,13 +4416,20 @@ export class RtsEngine {
     const bldg = this.getBuildingById(buildingId);
     if (!bldg) return;
 
-    const targetNode = target?.targetResourceNodeId
-      ? this.getResourceNodeById(target.targetResourceNodeId && n.amount > 0)
+    const targetNodeCandidate = target?.targetResourceNodeId
+      ? this.getResourceNodeById(target.targetResourceNodeId)
       : undefined;
-    const targetBldg =
-      !targetNode && target?.targetBuildingId
-        ? this.getBuildingById(target.targetBuildingId && !b.isConstructed && b.hp > 0)
-        : undefined;
+    const targetNode = targetNodeCandidate && targetNodeCandidate.amount > 0
+      ? targetNodeCandidate
+      : undefined;
+    const targetBuildingCandidate = !targetNode && target?.targetBuildingId
+      ? this.getBuildingById(target.targetBuildingId)
+      : undefined;
+    const targetBldg = targetBuildingCandidate &&
+      !targetBuildingCandidate.isConstructed &&
+      targetBuildingCandidate.hp > 0
+      ? targetBuildingCandidate
+      : undefined;
 
     if (targetNode) {
       if (targetNode.subtype === 'deep_fish' && bldg.buildingType !== 'dock') {
@@ -4806,8 +4813,8 @@ export class RtsEngine {
     if (!bldg || !bldg.garrisonedUnitIds || !bldg.garrisonedUnitIds.includes(unitId)) return false;
 
     bldg.garrisonedUnitIds = bldg.garrisonedUnitIds.filter((id) => id !== unitId);
-    const unit = this.getUnitById(unitId && u.hp > 0);
-    if (!unit) {
+    const unit = this.getUnitById(unitId);
+    if (!unit || unit.hp <= 0) {
       this.onSelectionChange?.();
       return false;
     }
@@ -4833,8 +4840,8 @@ export class RtsEngine {
     const remaining: string[] = [];
     let released = 0;
     ids.forEach((unitId, index) => {
-      const unit = this.getUnitById(unitId && candidate.hp > 0);
-      if (!unit) return;
+      const unit = this.getUnitById(unitId);
+      if (!unit || unit.hp <= 0) return;
 
       if (!shouldAiUnitLeaveShelter(unit.hp, unit.maxHp, unit.unitDef.category, recoveryRatio)) {
         remaining.push(unitId);
@@ -4858,8 +4865,8 @@ export class RtsEngine {
     let released = 0;
 
     ids.forEach((uid, idx) => {
-      const unit = this.getUnitById(uid && u.hp > 0);
-      if (!unit) return;
+      const unit = this.getUnitById(uid);
+      if (!unit || unit.hp <= 0) return;
       this.releaseGarrisonedUnitEntity(bldg, unit, idx);
       released++;
     });
@@ -4875,8 +4882,8 @@ export class RtsEngine {
   }
 
   public ringTownBell(tcId: string): 'garrisoned' | 'ungarrisoned' | 'none' {
-    const tc = this.getBuildingById(tcId && b.isConstructed && b.hp > 0);
-    if (!tc) return 'none';
+    const tc = this.getBuildingById(tcId);
+    if (!tc || !tc.isConstructed || tc.hp <= 0) return 'none';
     const faction = tc.faction;
 
     // If friendly buildings already shelter workers, clicking Town Bell releases them back to work
@@ -5131,8 +5138,8 @@ export class RtsEngine {
     }
     let ejectIndex = 0;
     for (const unitId of garrisonIds) {
-      const unit = this.getUnitById(unitId && candidate.hp > 0);
-      if (!unit) continue;
+      const unit = this.getUnitById(unitId);
+      if (!unit || unit.hp <= 0) continue;
       unit.garrisonedInBuildingId = undefined;
       unit.targetGarrisonBuildingId = undefined;
       const radius = getUnitColliderRadius(unit.unitDef.category, unit.unitDef.visual.scale);
@@ -11693,8 +11700,8 @@ export class RtsEngine {
         // Eject any surviving garrisoned units before removing collapsed structure
         if (bldg.garrisonedUnitIds && bldg.garrisonedUnitIds.length > 0) {
           bldg.garrisonedUnitIds.forEach((uid, idx) => {
-            const gu = this.getUnitById(uid && u.hp > 0);
-            if (!gu) return;
+            const gu = this.getUnitById(uid);
+            if (!gu || gu.hp <= 0) return;
             gu.garrisonedInBuildingId = undefined;
             gu.targetGarrisonBuildingId = undefined;
             gu.hp = Math.max(1, Math.round(gu.hp * 0.6));
