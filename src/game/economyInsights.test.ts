@@ -127,3 +127,18 @@ test('age readiness shortfall remains finite for invalid and negative save/mod v
     { food: 0, gold: 0, ready: true },
   );
 });
+
+
+test('nearest drop-off ignores damaged data with non-finite health or coordinates', () => {
+  const buildings = [
+    { id: 'invalid-coordinate', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'town_center', x: Number.NaN, z: 0 },
+    { id: 'invalid-health', faction: 'blue', isConstructed: true, hp: Number.POSITIVE_INFINITY, buildingType: 'town_center', x: 0.1, z: 0 },
+    { id: 'negative-health', faction: 'blue', isConstructed: true, hp: -1, buildingType: 'town_center', x: 0.2, z: 0 },
+    { id: 'valid', faction: 'blue', isConstructed: true, hp: 100, buildingType: 'town_center', x: 4, z: 0 },
+  ];
+
+  assert.equal(
+    selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', false, 0, 0)?.id,
+    'valid',
+  );
+});

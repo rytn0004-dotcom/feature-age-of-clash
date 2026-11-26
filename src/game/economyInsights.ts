@@ -132,7 +132,10 @@ export function selectNearestResourceDropOffBuilding<T extends ResourceDropOffBu
     if (
       building.faction !== faction ||
       !building.isConstructed ||
-      building.hp <= 0
+      !Number.isFinite(building.hp) ||
+      building.hp <= 0 ||
+      !Number.isFinite(building.x) ||
+      !Number.isFinite(building.z)
     ) continue;
 
     const type = building.buildingType;

@@ -614,3 +614,26 @@ test('construction approach spatial index moves and removes an existing reservat
   assert.equal(index.size, 1);
   assert.deepEqual(index.collect(24, 24, 1, output), []);
 });
+
+
+test('active construction worker counting ignores non-finite health and geometry', () => {
+  const target = { id: 'foundation', faction: 'blue', x: 5, z: 5 };
+  const worker = {
+    x: 5,
+    z: 5,
+    hp: 100,
+    faction: 'blue',
+    state: 'building',
+    targetBuildingId: 'foundation',
+  };
+
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...worker, hp: Number.NaN }, target, 3), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...worker, hp: Number.POSITIVE_INFINITY }, target, 3), false);
+  assert.equal(isActiveConstructionWorkerWithinReach({ ...worker, x: Number.NaN }, target, 3), false);
+  assert.equal(isActiveConstructionWorkerWithinReach(worker, { ...target, z: Number.POSITIVE_INFINITY }, 3), false);
+
+  const counts = new Map<string, number>();
+  accumulateActiveConstructionWorkerCount(counts, { ...worker, x: Number.POSITIVE_INFINITY }, target, 3);
+  accumulateActiveConstructionWorkerCount(counts, { ...worker, hp: Number.NaN }, target, 3);
+  assert.equal(counts.size, 0);
+});

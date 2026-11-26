@@ -354,7 +354,12 @@ export function isActiveConstructionWorkerWithinReach(
   if (
     !Number.isFinite(buildReach) ||
     buildReach < 0 ||
+    !Number.isFinite(worker.hp) ||
     worker.hp <= 0 ||
+    !Number.isFinite(worker.x) ||
+    !Number.isFinite(worker.z) ||
+    !Number.isFinite(target.x) ||
+    !Number.isFinite(target.z) ||
     worker.faction !== target.faction ||
     worker.state !== 'building' ||
     worker.targetBuildingId !== target.id ||

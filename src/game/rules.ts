@@ -1188,7 +1188,21 @@ export function computeAiWorkerAllocation(
   netRates?: Partial<Record<ResourceType, number>>
 ): Record<ResourceType, number> {
   const result: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
-  if (workerCount <= 0) return result;
+  if (!Number.isFinite(workerCount) || workerCount < 1) return result;
+  const safeWorkerCount = Math.floor(workerCount);
+  if (!Number.isSafeInteger(safeWorkerCount) || safeWorkerCount <= 0) return result;
+
+  // Save files and custom mods can contain non-finite or negative stock values.
+  // Normalize once so bad data cannot poison every allocation weight with NaN.
+  const safeStock = (value: number): number =>
+    Number.isFinite(value) ? Math.max(0, value) : 0;
+  const safeResources: Resources = {
+    food: safeStock(resources.food),
+    wood: safeStock(resources.wood),
+    gold: safeStock(resources.gold),
+    stone: safeStock(resources.stone),
+  };
+  const safeAge = Number.isFinite(age) ? age : 1;
 
   // Base weights by economic strategy
   let weights: Record<ResourceType, number>;
@@ -1200,7 +1214,7 @@ export function computeAiWorkerAllocation(
     weights = { food: 0.3, wood: 0.2, gold: 0.42, stone: 0.08 };
   } else if (gatherFocus === 'stone') {
     weights = { food: 0.28, wood: 0.25, gold: 0.17, stone: 0.3 };
-  } else if (gatherFocus === 'military_eco' || age >= 2) {
+  } else if (gatherFocus === 'military_eco' || safeAge >= 2) {
     weights = { food: 0.38, wood: 0.24, gold: 0.28, stone: 0.1 };
   } else {
     // Early game worker & camp ramp
@@ -1211,37 +1225,37 @@ export function computeAiWorkerAllocation(
   // food/gold to fall below tiny emergency thresholds. The boost fades to zero
   // as each age-up resource target is reached, preventing post-upgrade hoarding.
   const nextAgeCost =
-    age < 2
+    safeAge < 2
       ? { food: 400, gold: 200 }
-      : age < 3
+      : safeAge < 3
       ? { food: 1200, gold: 600 }
-      : age < 4
+      : safeAge < 4
       ? { food: 2400, gold: 1200 }
       : null;
   if (nextAgeCost) {
-    const foodReserveGap = Math.max(0, Math.min(1, (nextAgeCost.food - Math.max(0, resources.food)) / nextAgeCost.food));
-    const goldReserveGap = Math.max(0, Math.min(1, (nextAgeCost.gold - Math.max(0, resources.gold)) / nextAgeCost.gold));
+    const foodReserveGap = Math.max(0, Math.min(1, (nextAgeCost.food - Math.max(0, safeResources.food)) / nextAgeCost.food));
+    const goldReserveGap = Math.max(0, Math.min(1, (nextAgeCost.gold - Math.max(0, safeResources.gold)) / nextAgeCost.gold));
     weights.food += foodReserveGap * 0.28;
     weights.gold += goldReserveGap * 0.26;
   }
 
   // Dynamic deficit correction: boost starved essentials without starving everything else
-  if (resources.food < 110) weights.food += 0.26;
-  if (resources.wood < 110) weights.wood += 0.22;
-  if (resources.gold < 70 && workerCount >= 4) weights.gold += 0.18;
-  if (age >= 2 && resources.stone < 60 && workerCount >= 7) weights.stone += 0.1;
+  if (safeResources.food < 110) weights.food += 0.26;
+  if (safeResources.wood < 110) weights.wood += 0.22;
+  if (safeResources.gold < 70 && safeWorkerCount >= 4) weights.gold += 0.18;
+  if (safeAge >= 2 && safeResources.stone < 60 && safeWorkerCount >= 7) weights.stone += 0.1;
 
   // Use rolling inventory flow as a bounded correction, not as the sole source
   // of truth. Discrete construction / army purchases can create short negative
   // bursts, so only react while stock is still below a soft safety target.
   if (netRates) {
-    const stockTargets = computeAiResourceDemandTargets(age, netRates);
+    const stockTargets = computeAiResourceDemandTargets(safeAge, netRates);
 
     for (const type of AI_RESOURCE_TYPES) {
       const netPerMinute = netRates[type];
       if (!Number.isFinite(netPerMinute)) continue;
 
-      const stock = Math.max(0, resources[type] || 0);
+      const stock = Math.max(0, safeResources[type] || 0);
       const target = stockTargets[type];
       if (netPerMinute! < -4 && stock < target * 1.5) {
         weights[type] += Math.min(0.2, (-netPerMinute! - 4) / 60);
@@ -1257,7 +1271,7 @@ export function computeAiWorkerAllocation(
   let assigned = 0;
 
   for (const t of types) {
-    const exact = (weights[t] / totalW) * workerCount;
+    const exact = (weights[t] / totalW) * safeWorkerCount;
     const floored = Math.floor(exact);
     result[t] = floored;
     assigned += floored;
@@ -1265,12 +1279,12 @@ export function computeAiWorkerAllocation(
   }
 
   remainders.sort((a, b) => b.rem - a.rem);
-  for (let i = 0; i < workerCount - assigned; i++) {
+  for (let i = 0; i < safeWorkerCount - assigned; i++) {
     result[remainders[i % remainders.length].type]++;
   }
 
   // Guarantee at least 1 food worker whenever AI has >= 2 workers and food isn't overflowing
-  if (workerCount >= 2 && result.food === 0 && resources.food < 1600) {
+  if (safeWorkerCount >= 2 && result.food === 0 && safeResources.food < 1600) {
     const donor = AI_FOOD_DONOR_ORDER.find((t) => result[t] > 0);
     if (donor) {
       result[donor]--;

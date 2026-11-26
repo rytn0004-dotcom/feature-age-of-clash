@@ -4277,3 +4277,41 @@ test('bombard cannon: frequent heavy shots destroy an unbuffed 2,400 HP town cen
   assert.equal(shotsRequired, 20);
   assert.ok(timeToDestroy >= 48 && timeToDestroy <= 51, `expected ~50 seconds, got ${timeToDestroy.toFixed(2)}s`);
 });
+
+
+test('AI worker allocation stays finite when save or mod stock values are corrupted', async () => {
+  const { computeAiWorkerAllocation } = await import('./rules');
+  const empty = { food: 0, wood: 0, gold: 0, stone: 0 };
+
+  assert.deepEqual(
+    computeAiWorkerAllocation(
+      { food: 100, wood: 100, gold: 100, stone: 100 },
+      Number.NaN,
+    ),
+    empty,
+  );
+  assert.deepEqual(
+    computeAiWorkerAllocation(
+      { food: 100, wood: 100, gold: 100, stone: 100 },
+      Number.POSITIVE_INFINITY,
+    ),
+    empty,
+  );
+
+  const allocation = computeAiWorkerAllocation(
+    {
+      food: Number.NaN,
+      wood: Number.POSITIVE_INFINITY,
+      gold: -80,
+      stone: 45,
+    },
+    7,
+    'balanced_eco',
+    Number.NaN,
+    { food: Number.NEGATIVE_INFINITY, wood: Number.NaN, gold: 0, stone: 0 },
+  );
+
+  const values = Object.values(allocation);
+  assert.ok(values.every((value) => Number.isSafeInteger(value) && value >= 0));
+  assert.equal(values.reduce((total, value) => total + value, 0), 7);
+});
