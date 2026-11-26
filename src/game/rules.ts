@@ -3324,11 +3324,11 @@ export function stepWildAnimalState(
   // Update facing yaw strictly from actual ground translation (facing +X in local deer mesh => atan2(-dz, dx))
   let yaw = node.animalYaw ?? 0;
   if (distMoved > 0.002 && actualSpeed > 0.15) {
-    const targetYaw = Math.atan2(-dzMoved, dxMoved);
-    let diff = targetYaw - yaw;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    yaw += diff * (1 - Math.exp(-10 * clampedDt));
+    // The procedural deer rig faces local +X. Match its heading to the
+    // collision-resolved displacement immediately; easing this rotation lets
+    // the legs animate in the new travel direction while the body still faces
+    // the old one, producing a visible moonwalk during sharp evasive turns.
+    yaw = Math.atan2(-dzMoved, dxMoved);
   }
   node.animalYaw = yaw;
 

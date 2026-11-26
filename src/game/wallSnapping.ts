@@ -285,7 +285,6 @@ export function planWallChainExtension<T extends WallSnapBuilding>(
   const members = walls.filter((wall) =>
     wall.buildingDef.isWall &&
     wall.hp > 0 &&
-    wall.isConstructed &&
     (chainId ? wall.wallChainId === chainId : wall.id === snap.wall.id)
   );
   if (!members.includes(snap.wall)) return null;

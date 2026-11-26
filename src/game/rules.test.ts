@@ -2263,6 +2263,54 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
   assert.equal(followedDeer.animalPanicSuppressed, false, 'Deer re-arms only after the threat leaves');
 });
 
+test('wild deer (山羌): body heading matches actual movement immediately after a sharp direction change', async () => {
+  const { stepWildAnimalState } = await import('./rules');
+  const deer: ResourceNode = {
+    id: 'deer_heading',
+    resourceType: 'food',
+    subtype: 'hunt',
+    x: 0,
+    z: 0,
+    amount: 300,
+    maxAmount: 300,
+    animalHp: 32,
+    animalMaxHp: 32,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 1,
+    animalYaw: 0,
+    animalFleeUntil: 0,
+    animalFleeCooldown: 100,
+    animalPanicSuppressed: true,
+    animalWanderMoving: false,
+    animalWanderTimer: 8,
+    animalMoveBlend: 0,
+  };
+
+  const startX = deer.x;
+  const startZ = deer.z;
+  const step = stepWildAnimalState(deer, null, 10, 0.05, () => false, () => 0.5);
+  const movedX = deer.x - startX;
+  const movedZ = deer.z - startZ;
+  const distance = Math.hypot(movedX, movedZ);
+  assert.ok(distance > 0.002, 'The deterministic setup must produce real ground movement');
+
+  const expectedYaw = Math.atan2(-movedZ, movedX);
+  const angleError = Math.atan2(Math.sin(step.yaw - expectedYaw), Math.cos(step.yaw - expectedYaw));
+  assert.ok(Math.abs(angleError) < 1e-9, 'The deer must face the exact resolved movement direction');
+
+  // Three.js rotation around Y maps the rig's local +X forward axis to
+  // (cos(yaw), -sin(yaw)); it must agree with the observed world displacement.
+  const facingX = Math.cos(step.yaw);
+  const facingZ = -Math.sin(step.yaw);
+  const movementX = movedX / distance;
+  const movementZ = movedZ / distance;
+  assert.ok(
+    facingX * movementX + facingZ * movementZ > 0.999999,
+    'The deer's forward axis must not oppose or lag behind its movement',
+  );
+});
+
 test('wild boar (野豬): high food yield, faster harvesting, and aggressive pursuit after provocation', async () => {
   const { getFoodGatherMultiplier, stepWildBoarState, triggerWildBoarAggression, findBestFoodResourceNode } = await import('./rules');
   assert.ok(getFoodGatherMultiplier('boar') > getFoodGatherMultiplier('hunt'));

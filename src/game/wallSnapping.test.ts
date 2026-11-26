@@ -312,3 +312,27 @@ test('wall endpoint spatial index preserves original insertion order for equal-d
   const snap = index.findNearest({ x: 1.35, z: 0 });
   assert.equal(snap?.wall.id, 'first-equal');
 });
+
+
+test('wall extension: Shift-queued unfinished segments remain one extendable chain', () => {
+  const first = makeWall('queued-first', 0, {
+    faction: 'player',
+    isConstructed: false,
+    wallChainId: 'queued-chain',
+    wallChainIndex: 0,
+    wallChainSize: 1,
+  });
+  const snap = {
+    point: { x: 1, z: 0 },
+    wall: first,
+    distance: 0,
+    side: 'end' as const,
+  };
+
+  const plan = planWallChainExtension([first], snap, 2, 'start', 'fallback');
+  assert.ok(plan);
+  assert.equal(plan.chainId, 'queued-chain');
+  assert.equal(plan.totalSize, 3);
+  assert.deepEqual(plan.newIndices, [1, 2]);
+  assert.deepEqual(plan.existingAssignments.map((entry) => entry.index), [0]);
+});

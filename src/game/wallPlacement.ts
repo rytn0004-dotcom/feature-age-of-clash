@@ -2,6 +2,8 @@ import type { Resources } from '../types/game';
 
 /** Long wall previews switch from full models to one low-detail instanced batch. */
 export const WALL_PREVIEW_DETAILED_SEGMENT_LIMIT = 36;
+/** Maximum distance used to gently nudge a clicked wall start outside nearby blockers. */
+export const WALL_START_SEARCH_MAX_OFFSET = 4;
 
 export function shouldUseInstancedWallPreview(segmentCount: number): boolean {
   return Number.isFinite(segmentCount) &&
@@ -26,12 +28,16 @@ export interface WallStartPointResolution {
 export function findNearestValidWallStartPoint(
   origin: WallStartPoint,
   isValid: (point: WallStartPoint) => boolean,
-  maxOffset = 4,
+  maxOffset = WALL_START_SEARCH_MAX_OFFSET,
   step = 0.4,
   directionCount = 16,
 ): WallStartPointResolution | null {
   if (!Number.isFinite(origin.x) || !Number.isFinite(origin.z)) return null;
-  if (isValid(origin)) return { point: { x: origin.x, z: origin.z }, offset: 0 };
+
+  // The callback is synchronous, so one mutable candidate is enough for every
+  // ring sample. Return a detached copy only when a valid point is found.
+  const candidate = { x: origin.x, z: origin.z };
+  if (isValid(candidate)) return { point: { x: candidate.x, z: candidate.z }, offset: 0 };
 
   const safeMaxOffset = Number.isFinite(maxOffset) ? Math.max(0, maxOffset) : 0;
   const safeStep = Number.isFinite(step) && step > 0 ? step : 0.4;
@@ -42,11 +48,11 @@ export function findNearestValidWallStartPoint(
   for (let radius = safeStep; radius <= safeMaxOffset + 1e-9; radius += safeStep) {
     for (let direction = 0; direction < safeDirectionCount; direction++) {
       const angle = (direction * Math.PI * 2) / safeDirectionCount;
-      const point = {
-        x: origin.x + Math.cos(angle) * radius,
-        z: origin.z + Math.sin(angle) * radius,
-      };
-      if (isValid(point)) return { point, offset: radius };
+      candidate.x = origin.x + Math.cos(angle) * radius;
+      candidate.z = origin.z + Math.sin(angle) * radius;
+      if (isValid(candidate)) {
+        return { point: { x: candidate.x, z: candidate.z }, offset: radius };
+      }
     }
   }
 
@@ -95,4 +101,52 @@ export function getWallSegmentPreviewStatus(
     Math.min(safeCount, Math.floor(Number.isFinite(affordableSegmentCount) ? affordableSegmentCount : 0)),
   );
   return segmentIndex < safeAffordable ? 'buildable' : 'unaffordable';
+}
+
+
+/**
+ * Clips a multi-section wall route to the leading affordable modular pieces.
+ * The cut is placed at a segment boundary, not at its centre, so the next
+ * queued segment can continue without a gap.
+ */
+export function clipWallChainPointsToSegmentCount(
+  points: readonly WallStartPoint[],
+  segmentLimit: number,
+  segmentSpacing: number,
+): WallStartPoint[] {
+  const safeLimit = Math.max(0, Math.floor(Number.isFinite(segmentLimit) ? segmentLimit : 0));
+  if (points.length === 0) return [];
+  const result: WallStartPoint[] = [{ x: points[0].x, z: points[0].z }];
+  if (points.length < 2 || safeLimit === 0 || !Number.isFinite(segmentSpacing) || segmentSpacing <= 0) {
+    return result;
+  }
+
+  let remaining = safeLimit;
+  for (let index = 0; index < points.length - 1; index++) {
+    const start = points[index];
+    const end = points[index + 1];
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (!Number.isFinite(length) || length < 0.75) continue;
+
+    const sectionCount = Math.max(1, Math.ceil(length / segmentSpacing));
+    if (remaining >= sectionCount) {
+      result.push({ x: end.x, z: end.z });
+      remaining -= sectionCount;
+      if (remaining === 0) break;
+      continue;
+    }
+
+    if (remaining > 0) {
+      const fraction = remaining / sectionCount;
+      result.push({
+        x: start.x + dx * fraction,
+        z: start.z + dz * fraction,
+      });
+    }
+    break;
+  }
+
+  return result;
 }

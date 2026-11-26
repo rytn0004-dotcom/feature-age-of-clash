@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clipWallChainPointsToSegmentCount,
+  findNearestValidWallStartPoint,
   getAffordableWallSegmentCount,
   getWallSegmentPreviewStatus,
   shouldUseInstancedWallPreview,
@@ -117,4 +119,38 @@ test('wall layout: active section can reuse the placement array and its records'
   const invalid = layoutWallChainSection(start, { x: 0.5, z: 0 }, 3, undefined, reusable);
   assert.equal(invalid, reusable);
   assert.equal(invalid.length, 0, 'invalid input clears stale placements');
+});
+
+
+test('wall start search reuses one candidate object and returns a detached result', () => {
+  let candidateReference: { x: number; z: number } | null = null;
+  const result = findNearestValidWallStartPoint({ x: 0, z: 0 }, (candidate) => {
+    if (!candidateReference) candidateReference = candidate;
+    else assert.equal(candidate, candidateReference, 'candidate object must be reused between validations');
+    return candidate.x >= 0.39;
+  });
+
+  assert.ok(result);
+  assert.equal(result.offset, 0.4);
+  assert.ok(Math.abs(result.point.x - 0.4) < 1e-9);
+  assert.equal(result.point.z, 0);
+  assert.notEqual(result.point, candidateReference, 'the returned point must not mutate with later searches');
+});
+
+test('wall route clipping stops at the last affordable segment boundary without leaving a gap', () => {
+  const clipped = clipWallChainPointsToSegmentCount(
+    [{ x: 0, z: 0 }, { x: 10, z: 0 }],
+    3,
+    1.5,
+  );
+  assert.equal(clipped.length, 2);
+  assert.ok(Math.abs(clipped[1].x - 4.5) < 1e-9);
+  assert.equal(clipped[1].z, 0);
+
+  const multiSection = clipWallChainPointsToSegmentCount(
+    [{ x: 0, z: 0 }, { x: 6, z: 0 }, { x: 6, z: 6 }],
+    6,
+    1.5,
+  );
+  assert.deepEqual(multiSection, [{ x: 0, z: 0 }, { x: 6, z: 0 }, { x: 6, z: 3 }]);
 });
