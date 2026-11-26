@@ -580,6 +580,7 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
     getWildlifeMaxHealth,
     isDangerousWildlifeSubtype,
     isHuntableWildlifeSubtype,
+    canUnitHuntDangerousWildlife,
     findBestFoodResourceNode,
     findBalancedResourceNode,
   } = await import('./rules');
@@ -592,6 +593,20 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
   assert.equal(isDangerousWildlifeSubtype('hunt'), false);
   assert.equal(isHuntableWildlifeSubtype('aurochs'), true);
   assert.equal(getFoodGatherMultiplier('aurochs'), 1.55);
+
+  const workerDef = { category: 'worker', isNaval: false };
+  const meleeDef = { category: 'melee', isNaval: false };
+  const rangedDef = { category: 'ranged', isNaval: false };
+  const cavalryDef = { category: 'cavalry', isNaval: false };
+  const siegeDef = { category: 'siege', isNaval: false };
+  const fishingBoatDef = { category: 'ranged', isNaval: true };
+  assert.equal(canUnitHuntDangerousWildlife(workerDef, 'aurochs'), false);
+  assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'aurochs'), true);
+  assert.equal(canUnitHuntDangerousWildlife(rangedDef, 'boar'), true);
+  assert.equal(canUnitHuntDangerousWildlife(cavalryDef, 'boar'), true);
+  assert.equal(canUnitHuntDangerousWildlife(siegeDef, 'aurochs'), false);
+  assert.equal(canUnitHuntDangerousWildlife(fishingBoatDef, 'aurochs'), false);
+  assert.equal(canUnitHuntDangerousWildlife(meleeDef, 'hunt'), false);
 
   const aurochs: ResourceNode = {
     id: 'aurochs-test',
