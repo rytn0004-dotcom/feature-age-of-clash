@@ -556,3 +556,25 @@ test('construction approach query radius covers every reservation that can affec
     'reservation is close enough to affect the candidate score',
   );
 });
+
+
+test('construction approach spatial index moves and removes an existing reservation without duplicates', () => {
+  const index = new ConstructionApproachSpatialIndex<{ id: string; x: number; z: number }>();
+  const worker = { id: 'worker-a', x: 1, z: 1 };
+  const neighbor = { id: 'worker-b', x: 2, z: 2 };
+  index.beginRebuild();
+  index.insert(worker);
+  index.insert(neighbor);
+  assert.equal(index.size, 2);
+
+  index.upsert(worker, 24, 24);
+  assert.equal(index.size, 2, 'moving an item does not increase the reservation count');
+  const output: typeof worker[] = [];
+  assert.deepEqual(index.collect(1, 1, 2, output).map((item) => item.id), ['worker-b']);
+  assert.deepEqual(index.collect(24, 24, 1, output).map((item) => item.id), ['worker-a']);
+
+  assert.equal(index.remove(worker), true);
+  assert.equal(index.remove(worker), false, 'removing twice is harmless');
+  assert.equal(index.size, 1);
+  assert.deepEqual(index.collect(24, 24, 1, output), []);
+});

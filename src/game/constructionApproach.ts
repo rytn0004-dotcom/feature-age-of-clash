@@ -526,6 +526,7 @@ const CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE = 8;
 export class ConstructionApproachSpatialIndex<T extends ConstructionApproachSpatialItem> {
   private readonly buckets = new Map<number | string, T[]>();
   private readonly reusableBuckets: T[][] = [];
+  private readonly locations = new Map<T, { key: number | string; bucket: T[]; index: number }>();
   private _size = 0;
 
   public get size(): number {
@@ -538,22 +539,66 @@ export class ConstructionApproachSpatialIndex<T extends ConstructionApproachSpat
       this.reusableBuckets.push(bucket);
     }
     this.buckets.clear();
+    this.locations.clear();
     this._size = 0;
   }
 
   public insert(item: T, x = item.x, z = item.z): boolean {
-    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    return this.upsert(item, x, z);
+  }
+
+  /** Add or move one reservation without leaving duplicate bucket entries. */
+  public upsert(item: T, x = item.x, z = item.z): boolean {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) {
+      this.remove(item);
+      return false;
+    }
+
     const cellX = Math.floor(x / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
     const cellZ = Math.floor(z / CONSTRUCTION_APPROACH_SPATIAL_CELL_SIZE);
     const key = this.key(cellX, cellZ);
+    const previous = this.locations.get(item);
+    if (previous?.key === key) return true;
+
+    if (previous) this.removeFromBucket(item, previous);
+
     let bucket = this.buckets.get(key);
     if (!bucket) {
       bucket = this.reusableBuckets.pop() ?? [];
       this.buckets.set(key, bucket);
     }
+    const index = bucket.length;
     bucket.push(item);
-    this._size++;
+    this.locations.set(item, { key, bucket, index });
+    if (!previous) this._size++;
     return true;
+  }
+
+  public remove(item: T): boolean {
+    const location = this.locations.get(item);
+    if (!location) return false;
+    this.removeFromBucket(item, location);
+    this._size = Math.max(0, this._size - 1);
+    return true;
+  }
+
+  private removeFromBucket(
+    item: T,
+    location: { key: number | string; bucket: T[]; index: number },
+  ): void {
+    const lastIndex = location.bucket.length - 1;
+    const lastItem = location.bucket[lastIndex];
+    if (location.index !== lastIndex) {
+      location.bucket[location.index] = lastItem;
+      const lastLocation = this.locations.get(lastItem);
+      if (lastLocation) lastLocation.index = location.index;
+    }
+    location.bucket.pop();
+    if (location.bucket.length === 0) {
+      this.buckets.delete(location.key);
+      this.reusableBuckets.push(location.bucket);
+    }
+    this.locations.delete(item);
   }
 
   /** Collect the conservative square around a work-ring centre into reusable storage. */

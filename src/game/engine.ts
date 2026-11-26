@@ -558,6 +558,7 @@ export class RtsEngine {
   private constructionApproachSpatialIndex = new ConstructionApproachSpatialIndex<UnitEntity>();
   private constructionApproachSpatialCandidatesScratch: UnitEntity[] = [];
   private constructionApproachIndexPointScratch = { x: 0, z: 0 };
+  private constructionApproachIndexCenterScratch = { x: 0, z: 0 };
   /** Local spatial-query output and exclusion IDs reused by blocked construction handoffs. */
   private constructionHandoffQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -7901,30 +7902,14 @@ export class RtsEngine {
         this.isConstructionCancellationPending(building.id)
       ) continue;
 
-      const approachPoint = this.constructionApproachIndexPointScratch;
-      if (
-        worker.buildApproachBuildingId === building.id &&
-        Number.isFinite(worker.buildApproachAngle) &&
-        Number.isFinite(worker.buildApproachIndex)
-      ) {
-        const approachRadius = Math.max(
-          getBuildingCollisionRadius(building),
-          building.wallBreached && building.buildingDef.isWall ? building.buildingDef.size : 0,
+      if (worker.unitDef.category === 'worker') {
+        const approachPoint = this.writeConstructionApproachReservationPoint(
+          worker,
+          building,
+          this.constructionApproachIndexPointScratch,
         );
-        const approachReach = Math.max(2.2, approachRadius + 1.55);
-        writeConstructionApproachPoint(
-          { x: building.x, z: building.z },
-          Math.min(approachRadius + 0.95, approachReach - 0.25),
-          worker.buildApproachAngle!,
-          worker.buildApproachIndex!,
-          BUILD_APPROACH_CANDIDATE_COUNT,
-          approachPoint,
-        );
-      } else {
-        approachPoint.x = worker.x;
-        approachPoint.z = worker.z;
+        approachIndex.insert(worker, approachPoint.x, approachPoint.z);
       }
-      approachIndex.insert(worker, approachPoint.x, approachPoint.z);
 
       const repairingWall =
         !!building.wallBreached &&
@@ -8341,6 +8326,7 @@ export class RtsEngine {
           break;
         case 'building':
           this.stepUnitBuilding(unit, dt);
+          this.refreshConstructionApproachSpatialReservation(unit);
           break;
         case 'assembling':
           this.stepUnitFieldAssembly(unit, dt);
@@ -10327,6 +10313,71 @@ export class RtsEngine {
     return this.beginFieldRamAssembly(this.humanPlayerId, selected, true);
   }
 
+  /** Keep same-frame worker updates visible to builders processed later this step. */
+  private refreshConstructionApproachSpatialReservation(worker: UnitEntity): void {
+    const index = this.constructionApproachSpatialIndex;
+    if (
+      worker.hp <= 0 ||
+      worker.unitDef.category !== 'worker' ||
+      worker.state !== 'building' ||
+      !worker.targetBuildingId ||
+      worker.garrisonedInBuildingId
+    ) {
+      index.remove(worker);
+      return;
+    }
+
+    const building = this.combatBuildingLookupById.get(worker.targetBuildingId);
+    if (
+      !building ||
+      building.hp <= 0 ||
+      building.faction !== worker.faction ||
+      this.isConstructionCancellationPending(building.id)
+    ) {
+      index.remove(worker);
+      return;
+    }
+
+    const point = this.writeConstructionApproachReservationPoint(
+      worker,
+      building,
+      this.constructionApproachIndexPointScratch,
+    );
+    index.upsert(worker, point.x, point.z);
+  }
+
+  private writeConstructionApproachReservationPoint(
+    worker: UnitEntity,
+    building: BuildingEntity,
+    output: { x: number; z: number },
+  ): { x: number; z: number } {
+    if (
+      worker.buildApproachBuildingId === building.id &&
+      Number.isFinite(worker.buildApproachAngle) &&
+      Number.isFinite(worker.buildApproachIndex)
+    ) {
+      const buildingRadius = Math.max(
+        getBuildingCollisionRadius(building),
+        building.wallBreached && building.buildingDef.isWall ? building.buildingDef.size : 0,
+      );
+      const reach = Math.max(2.2, buildingRadius + 1.55);
+      const center = this.constructionApproachIndexCenterScratch;
+      center.x = building.x;
+      center.z = building.z;
+      return writeConstructionApproachPoint(
+        center,
+        Math.min(buildingRadius + 0.95, reach - 0.25),
+        worker.buildApproachAngle!,
+        worker.buildApproachIndex!,
+        BUILD_APPROACH_CANDIDATE_COUNT,
+        output,
+      );
+    }
+    output.x = worker.x;
+    output.z = worker.z;
+    return output;
+  }
+
   /**
    * Work positions for other builders on this structure or adjacent pieces of
    * the same wall chain. Their reserved approach slots act as soft occupancy,
@@ -10400,8 +10451,11 @@ export class RtsEngine {
         );
         const otherReach = Math.max(2.2, otherBuildingRadius + 1.55);
         const otherWorkRadius = Math.min(otherBuildingRadius + 0.95, otherReach - 0.25);
+        const center = this.constructionApproachIndexCenterScratch;
+        center.x = otherBuilding.x;
+        center.z = otherBuilding.z;
         writeConstructionApproachPoint(
-          { x: otherBuilding.x, z: otherBuilding.z },
+          center,
           otherWorkRadius,
           other.buildApproachAngle!,
           other.buildApproachIndex!,
