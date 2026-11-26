@@ -237,6 +237,29 @@ test('wall preview broad-phase detects terrain, building and resource blockers',
   );
 });
 
+test('wall preview allows explicitly snapped endpoint walls at tight turns only', async () => {
+  const { isWallChainPreviewObstructed } = await import('./collision');
+  const corner = [{ x: 1.35, z: 1.35 }];
+  const snappedAnchor = makeBuilding('snapped-anchor', 0, 0, 'wall', 1.6);
+  const unrelatedWall = makeBuilding('unrelated-wall', 0, 0, 'wall', 1.6);
+
+  assert.equal(
+    isWallChainPreviewObstructed(corner, 1.6, [snappedAnchor], [], [], [], [], [], []),
+    true,
+    'an unconnected wall remains a blocker',
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(corner, 1.6, [snappedAnchor], [], [], [], [], [], ['snapped-anchor']),
+    false,
+    'the wall explicitly snapped as the route endpoint can be joined',
+  );
+  assert.equal(
+    isWallChainPreviewObstructed(corner, 1.6, [snappedAnchor, unrelatedWall], [], [], [], [], [], ['snapped-anchor']),
+    true,
+    'ignoring the endpoint must not disable collision with unrelated structures',
+  );
+});
+
 test('wall preview broad-phase ignores destroyed buildings and depleted resource nodes', async () => {
   const { isWallChainPreviewObstructed } = await import('./collision');
   const placement = [{ x: 0, z: 0 }];

@@ -900,6 +900,7 @@ export function isWallChainPreviewObstructed(
   terrainDiscs: TerrainBlockedDisc[] = [],
   bridges: TerrainPassableBridge[] = [],
   pathPoints: readonly { x: number; z: number }[] = [],
+  connectedEndpointWallIds: readonly string[] = [],
 ): boolean {
   if (placements.length === 0) return false;
 
@@ -958,7 +959,7 @@ export function isWallChainPreviewObstructed(
   }
 
   for (const building of buildings) {
-    if (building.hp <= 0) continue;
+    if (building.hp <= 0 || connectedEndpointWallIds.includes(building.id)) continue;
     const minDistance = building.buildingDef.isWall
       ? Math.max(2.15, (footprintSize + building.buildingDef.size) * 0.72)
       : footprintSize + building.buildingDef.size;

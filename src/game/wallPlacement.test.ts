@@ -7,6 +7,7 @@ import {
   getWallSegmentPreviewStatus,
   shouldUseInstancedWallPreview,
   WALL_PREVIEW_DETAILED_SEGMENT_LIMIT,
+  WALL_PREVIEW_REFRESH_INTERVAL_MS,
 } from './wallPlacement';
 import { layoutWallChain, layoutWallChainSection } from './rules';
 import type { Resources } from '../types/game';
@@ -90,6 +91,10 @@ test('wall layout: section helper rejects invalid endpoints and retains the shor
     layoutWallChainSection({ x: 0, z: 0 }, { x: 0.7, z: 0 }),
     [],
   );
+});
+
+test('wall preview refresh is capped at ten updates per second', () => {
+  assert.equal(WALL_PREVIEW_REFRESH_INTERVAL_MS, 100);
 });
 
 test('wall preview switches to instanced low-detail rendering only after the detail limit', () => {

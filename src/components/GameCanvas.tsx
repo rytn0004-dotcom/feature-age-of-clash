@@ -6,6 +6,7 @@ import { sound } from '../game/audio';
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { isPlacementLocationValid } from '../game/collision';
 import { canUnitHuntDangerousWildlife, getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
+import { WALL_PREVIEW_REFRESH_INTERVAL_MS } from '../game/wallPlacement';
 
 interface GameCanvasProps {
   onEngineReady: (engine: RtsEngine) => void;
@@ -22,7 +23,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
   const lastClickedUnitRef = useRef<{ id: string; defId: string; time: number } | null>(null);
   const lastHoverCheckRef = useRef(0);
   const wallPreviewPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
-  const wallPreviewRafRef = useRef<number | null>(null);
+  const wallPreviewTimerRef = useRef<number | null>(null);
+  const lastWallPreviewRefreshRef = useRef(0);
   const lastWallInfoRefreshRef = useRef(0);
   const [marqueeBox, setMarqueeBox] = useState<{
     left: number;
@@ -45,9 +47,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
 
   useEffect(() => {
     return () => {
-      if (wallPreviewRafRef.current !== null) {
-        cancelAnimationFrame(wallPreviewRafRef.current);
-        wallPreviewRafRef.current = null;
+      if (wallPreviewTimerRef.current !== null) {
+        window.clearTimeout(wallPreviewTimerRef.current);
+        wallPreviewTimerRef.current = null;
       }
       wallPreviewPointerRef.current = null;
     };
@@ -488,6 +490,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         const worldPoint = engine.screenToWorld(e.clientX, e.clientY);
         if (worldPoint) {
           if (engine.placementBuildingType === 'wall') {
+            // A click is authoritative: discard a delayed hover update and use
+            // the exact click coordinates inside handleWallPlacementClick().
+            if (wallPreviewTimerRef.current !== null) {
+              window.clearTimeout(wallPreviewTimerRef.current);
+              wallPreviewTimerRef.current = null;
+            }
+            wallPreviewPointerRef.current = null;
             const result = engine.handleWallPlacementClick(worldPoint.x, worldPoint.z, e.shiftKey);
             setWallPlacementInfo(engine.getWallPlacementPreviewInfo());
             lastWallInfoRefreshRef.current = performance.now();
@@ -540,10 +549,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
     if (engine.placementBuildingType === 'wall') {
       if (hoverHint) setHoverHint(null);
       wallPreviewPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
-      // Defer both terrain raycasting and scene updates to one display frame.
-      if (wallPreviewRafRef.current === null) {
-        wallPreviewRafRef.current = requestAnimationFrame(() => {
-          wallPreviewRafRef.current = null;
+      // Keep only the latest pointer and cap expensive world projection,
+      // snapping, collision preview and scene updates at 10 Hz. Click commits
+      // bypass this timer and always use their exact pointer coordinates.
+      if (wallPreviewTimerRef.current === null) {
+        const elapsed = performance.now() - lastWallPreviewRefreshRef.current;
+        const delay = Math.max(0, WALL_PREVIEW_REFRESH_INTERVAL_MS - elapsed);
+        wallPreviewTimerRef.current = window.setTimeout(() => {
+          wallPreviewTimerRef.current = null;
           const activeEngine = engineRef.current;
           const latestPointer = wallPreviewPointerRef.current;
           if (!activeEngine || activeEngine.placementBuildingType !== 'wall' || !latestPointer) return;
@@ -551,14 +564,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
           if (!latestPoint) return;
           activeEngine.updateWallPlacementPreview(latestPoint.x, latestPoint.z);
 
-          // The ghost follows the pointer every display frame. HUD text changes
-          // far less often, so update its resource/cost summary at 4 Hz only.
           const now = performance.now();
+          lastWallPreviewRefreshRef.current = now;
+          // HUD text changes at most 4 Hz, independently of the 10 Hz ghost.
           if (now - lastWallInfoRefreshRef.current >= 250) {
             setWallPlacementInfo(activeEngine.getWallPlacementPreviewInfo());
             lastWallInfoRefreshRef.current = now;
           }
-        });
+        }, delay);
       }
       return;
     }

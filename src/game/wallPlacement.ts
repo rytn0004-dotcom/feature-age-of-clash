@@ -2,6 +2,8 @@ import type { Resources } from '../types/game';
 
 /** Long wall previews switch from full models to one low-detail instanced batch. */
 export const WALL_PREVIEW_DETAILED_SEGMENT_LIMIT = 36;
+/** Wall ghost geometry and collision preview are intentionally capped at 10 Hz. */
+export const WALL_PREVIEW_REFRESH_INTERVAL_MS = 100;
 /** Maximum distance used to gently nudge a clicked wall start outside nearby blockers. */
 export const WALL_START_SEARCH_MAX_OFFSET = 4;
 

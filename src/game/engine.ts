@@ -5560,6 +5560,12 @@ export class RtsEngine {
     tintColor: number
   ): THREE.Group {
     const preview = createBuildingMesh(type, faction, this.getCivilizationForFaction(faction), this.ageByFaction[faction] || 1);
+    // Contact shadows are presentation-only discs, not part of the wall model.
+    // Remove them before Box3 measures the long-route InstancedMesh template.
+    if (type === 'wall') {
+      const contactShadow = preview.getObjectByName('contactShadow');
+      if (contactShadow) preview.remove(contactShadow);
+    }
     const materialClones = new Map<THREE.Material, THREE.Material>();
     const tint = new THREE.Color(tintColor);
     preview.traverse((child) => {
@@ -5739,10 +5745,23 @@ export class RtsEngine {
     // stays untouched so adding a new segment never triggers another model tint pass.
   }
 
-  /** Formally validate one newly completed wall batch exactly once. */
+  /** Only snapped endpoint segments of the same wall chain may touch the new route. */
+  private getWallPlacementConnectedEndpointWallIds(
+    snaps: readonly (WallEndpointSnap<BuildingEntity> | null)[],
+  ): string[] {
+    const ids: string[] = [];
+    for (const snap of snaps) {
+      const id = snap?.wall.id;
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  /** Formal commit validation runs once; explicitly connected endpoints are not treated as blockers. */
   private validateWallPlacementSection(
     points: readonly WallChainPoint[],
     placements: readonly ReturnType<typeof layoutWallChain>[number][] = layoutWallChain(points),
+    pointSnaps: readonly (WallEndpointSnap<BuildingEntity> | null)[] = [],
   ): boolean {
     if (placements.length === 0 || placements.length > MAX_WALL_CHAIN_SEGMENTS) return false;
 
@@ -5756,6 +5775,7 @@ export class RtsEngine {
       obstacles?.discs,
       obstacles?.bridges,
       points,
+      this.getWallPlacementConnectedEndpointWallIds(pointSnaps),
     );
   }
 
@@ -6033,7 +6053,7 @@ export class RtsEngine {
 
     // One pass checks the continuous terrain path and every affordable
     // footprint against terrain, existing buildings, and resource nodes.
-    if (!this.validateWallPlacementSection(committedPoints, placements)) {
+    if (!this.validateWallPlacementSection(committedPoints, placements, partiallyAffordable ? pointSnaps.slice(0, 1) : pointSnaps)) {
       this.addFloatingText(
         this.cameraTarget.x,
         2.5,
@@ -6272,7 +6292,7 @@ export class RtsEngine {
 
     // Long routes use one lightweight ghost batch rather than dozens of
     // complete multi-mesh wall models, reducing both draw calls and scene nodes.
-    const geometry = new THREE.BoxGeometry(size.x * 0.96, size.y * 0.96, size.z * 0.96);
+    const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
     geometry.translate(center.x, center.y, center.z);
     const material = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -6349,6 +6369,25 @@ export class RtsEngine {
       this.wallPlacementPreviewAffordableSegmentCount,
       MAX_WALL_CHAIN_SEGMENTS,
     );
+    if (placements.length > 0) {
+      const obstacles = this.getTerrainNavObstacles();
+      this.wallPlacementPreviewBlocked = isWallChainPreviewObstructed(
+        placements,
+        DEFAULT_BUILDINGS.wall.size,
+        this.buildings,
+        this.resourceNodes,
+        obstacles?.rects,
+        obstacles?.discs,
+        obstacles?.bridges,
+        previewPoints,
+        [
+          ...this.getWallPlacementConnectedEndpointWallIds(this.wallPlacementPointSnaps),
+          ...(this.wallPlacementSnapTargetId ? [this.wallPlacementSnapTargetId] : []),
+        ],
+      );
+    } else {
+      this.wallPlacementPreviewBlocked = false;
+    }
     const useInstancedPreview = shouldUseInstancedWallPreview(previewLimit);
     const instancedPreview = useInstancedPreview
       ? this.ensureInstancedWallPlacementPreview(group)
