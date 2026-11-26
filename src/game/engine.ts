@@ -13521,6 +13521,10 @@ export class RtsEngine {
       const hasDeepFish = this.resourceNodes.some((n) => n.amount > 0 && n.subtype === 'deep_fish');
       const hasAnyBuildingInProgress = incompleteBuildings.length > 0;
       const needsHouse = aiPop.totalReserved >= Math.max(1, aiMaxPop - 1) && aiMaxPop < 90;
+      const ageUpReadiness = getAiAgeUpReadinessTargets(activeRules, aiAge, {
+        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
+        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
+      });
       const nextAgeLandmark: LandmarkType | null =
         aiAge === 1 ? 'landmark_barracks' : aiAge === 2 ? 'landmark_citadel' : aiAge === 3 ? 'landmark_arsenal' : null;
       const nextAgeLandmarkActive = !!nextAgeLandmark && (
@@ -13813,10 +13817,6 @@ export class RtsEngine {
       }
 
       // 5. Reserve the exact landmark cost before optional military production.
-      const ageUpReadiness = getAiAgeUpReadinessTargets(activeRules, aiAge, {
-        minimumWorkers: aiAge === 1 ? 5 : aiAge === 2 ? 6 : aiAge === 3 ? 8 : Infinity,
-        minimumGameTime: aiAge === 1 ? 35 : aiAge === 2 ? 90 : aiAge === 3 ? 180 : Infinity,
-      });
       const savingForAgeUp = shouldAiSaveForNextAge({
         age: aiAge,
         gameTime: this.stats.gameDuration,
