@@ -3687,7 +3687,7 @@ export function evaluateAiTechChoice(
     ? Math.max(0, Math.floor(ownComposition.mongolMountedArchers as number))
     : 0;
   const ownCategoryTotal = (Object.keys(ownComposition) as Array<keyof typeof ownComposition>)
-    .filter((key): key is UnitCategory => key !== 'mongolMountedArchers')
+    .filter((key): key is UnitCategory => key !== 'mongolMountedArchers' && key !== 'worker')
     .reduce((total, category) => total + safeOwnCount(category), 0);
   const uniqueOwnArmyTotal = Math.max(
     0,
