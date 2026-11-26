@@ -36,6 +36,31 @@ test('construction handoff failures cool down, expire, and allow a fresh route a
   ]);
 });
 
+test('active handoff failure IDs reuse and clear a caller-owned set', () => {
+  const retryAtByWorkerId = new Map<string, number>([
+    ['still-blocked', 40],
+    ['expired', 9],
+    ['invalid-deadline', Number.NaN],
+  ]);
+  const scratch = new Set<string>(['stale-entry']);
+
+  const active = getActiveConstructionHandoffFailureIds(retryAtByWorkerId, 10, scratch);
+
+  assert.equal(active, scratch, 'the caller-owned Set is reused');
+  assert.deepEqual([...active], ['still-blocked']);
+  assert.equal(retryAtByWorkerId.has('expired'), false);
+  assert.equal(retryAtByWorkerId.has('invalid-deadline'), false);
+
+  retryAtByWorkerId.set('invalid-clock', 60);
+  const invalidClock = getActiveConstructionHandoffFailureIds(
+    retryAtByWorkerId,
+    Number.NaN,
+    scratch,
+  );
+  assert.equal(invalidClock, scratch);
+  assert.deepEqual([...invalidClock], ['still-blocked', 'invalid-clock']);
+});
+
 test('repeated blocked-route polls do not extend a worker cooldown indefinitely', () => {
   const retryAtByWorkerId = new Map<string, number>();
   recordConstructionHandoffFailure(retryAtByWorkerId, 'worker-a', 5);
