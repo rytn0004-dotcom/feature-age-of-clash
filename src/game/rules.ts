@@ -3651,6 +3651,10 @@ export interface AiTechDecisionContext {
   age: number;
   workerCount: number;
   aiPersonality?: MatchParticipant['aiPersonality'];
+  /** Current and queued roster counts; Mongol mounted archers overlap cavalry and ranged roles. */
+  ownComposition?: Partial<Record<UnitCategory, number>> & {
+    mongolMountedArchers?: number;
+  };
   enemyComposition: {
     melee: number;
     ranged: number;
@@ -3674,6 +3678,21 @@ export function evaluateAiTechChoice(
   const { enemyComposition, aiPersonality } = ctx;
   const isDefensiveAi = aiPersonality === 'defensive' || aiPersonality === 'easy';
   const isAggressiveAi = aiPersonality === 'hard';
+  const ownComposition = ctx.ownComposition || {};
+  const safeOwnCount = (category: UnitCategory): number => {
+    const count = ownComposition[category];
+    return Number.isFinite(count) ? Math.max(0, Math.floor(count as number)) : 0;
+  };
+  const ownMountedArchers = Number.isFinite(ownComposition.mongolMountedArchers)
+    ? Math.max(0, Math.floor(ownComposition.mongolMountedArchers as number))
+    : 0;
+  const ownCategoryTotal = (Object.keys(ownComposition) as Array<keyof typeof ownComposition>)
+    .filter((key): key is UnitCategory => key !== 'mongolMountedArchers')
+    .reduce((total, category) => total + safeOwnCount(category), 0);
+  const uniqueOwnArmyTotal = Math.max(
+    0,
+    ownCategoryTotal - Math.min(ownMountedArchers, safeOwnCount('ranged'), safeOwnCount('cavalry')),
+  );
 
   for (const cand of candidates) {
     const { tech } = cand;
@@ -3683,6 +3702,47 @@ export function evaluateAiTechChoice(
     if (afterFood < ctx.reserveFood || afterGold < ctx.reserveGold) continue;
 
     let score = 20;
+
+    // 0. Value a technology by the roster that can use it now, including queued units.
+    // This prevents the AI from spending a scarce research slot on a counter or upgrade
+    // for a category it has not actually fielded. Mangudai count as both cavalry and ranged
+    // for role planning, but are only counted once when a tech targets both categories.
+    if (tech.targetCategories?.length) {
+      let targetedOwnCount = tech.targetCategories.reduce(
+        (total, category) => total + safeOwnCount(category),
+        0,
+      );
+      if (tech.targetCategories.includes('ranged') && tech.targetCategories.includes('cavalry')) {
+        targetedOwnCount -= Math.min(
+          ownMountedArchers,
+          safeOwnCount('ranged'),
+          safeOwnCount('cavalry'),
+        );
+      }
+      const safeTargetedCount = Math.max(0, targetedOwnCount);
+      if (safeTargetedCount > 0) {
+        const rosterShare = uniqueOwnArmyTotal > 0
+          ? Math.min(1, safeTargetedCount / uniqueOwnArmyTotal)
+          : 0;
+        score += 6 + Math.min(22, safeTargetedCount * 2) + rosterShare * 10;
+        if (tech.effect.attackBonus) score += Math.min(18, tech.effect.attackBonus * 3);
+        if (tech.effect.defenseBonus || tech.effect.rangedDefenseBonus) {
+          score += Math.min(14, ((tech.effect.defenseBonus || 0) + (tech.effect.rangedDefenseBonus || 0)) * 2.5);
+        }
+        if (tech.effect.rangeBonus) score += Math.min(18, tech.effect.rangeBonus * 7);
+        if (tech.effect.speedMultiplier) {
+          score += Math.min(12, Math.max(0, tech.effect.speedMultiplier - 1) * 55);
+        }
+        if (tech.effect.hpMultiplier) {
+          score += Math.min(16, Math.max(0, tech.effect.hpMultiplier - 1) * 80);
+        }
+        if (tech.effect.attackRateMultiplier) {
+          score += Math.min(16, Math.max(0, tech.effect.attackRateMultiplier - 1) * 70);
+        }
+      } else {
+        score -= 16;
+      }
+    }
 
     // 1. Economic & logistics priority (strongest early, scales down when saturated)
     const isEcoTech =
