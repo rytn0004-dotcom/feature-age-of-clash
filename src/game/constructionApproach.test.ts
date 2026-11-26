@@ -531,29 +531,46 @@ test('construction approach spatial index rebuild drops stale buckets and suppor
 });
 
 
-test('construction approach query radius covers every reservation that can affect a ring candidate', () => {
+test('construction approach query radius includes the last reservation that can influence a ring candidate', () => {
   const index = new ConstructionApproachSpatialIndex<{ id: string; x: number; z: number }>();
   const candidateRadius = 5.25;
   const preferredSpacing = 1.35;
   const angle = Math.PI / 4;
   const candidate = { x: Math.cos(angle) * candidateRadius, z: Math.sin(angle) * candidateRadius };
-  const reservation = {
-    id: 'boundary-reservation',
+  const insideBoundary = {
+    id: 'inside-boundary',
     x: candidate.x + Math.cos(angle) * (preferredSpacing - 0.01),
     z: candidate.z + Math.sin(angle) * (preferredSpacing - 0.01),
   };
+  const outsideBoundary = {
+    id: 'outside-boundary',
+    x: candidate.x + Math.cos(angle) * (preferredSpacing + 0.01),
+    z: candidate.z + Math.sin(angle) * (preferredSpacing + 0.01),
+  };
   index.beginRebuild();
-  index.insert(reservation);
+  index.insert(insideBoundary);
+  index.insert(outsideBoundary);
 
-  const output: typeof reservation[] = [];
+  const output: typeof insideBoundary[] = [];
   const possibleInfluenceRadius = candidateRadius + preferredSpacing;
-  assert.deepEqual(
-    index.collect(0, 0, possibleInfluenceRadius, output).map((item) => item.id),
-    ['boundary-reservation'],
+  const nearbyIds = index.collect(0, 0, possibleInfluenceRadius, output).map((item) => item.id);
+
+  assert.deepEqual(nearbyIds, ['inside-boundary']);
+  assert.ok(
+    Math.hypot(insideBoundary.x - candidate.x, insideBoundary.z - candidate.z) < preferredSpacing,
+    'the inside reservation can affect the candidate score',
   );
   assert.ok(
-    Math.hypot(reservation.x - candidate.x, reservation.z - candidate.z) < preferredSpacing,
-    'reservation is close enough to affect the candidate score',
+    Math.hypot(outsideBoundary.x - candidate.x, outsideBoundary.z - candidate.z) > preferredSpacing,
+    'the outside reservation cannot affect the candidate score',
+  );
+  assert.ok(
+    Math.hypot(insideBoundary.x, insideBoundary.z) < possibleInfluenceRadius,
+    'triangle-inequality boundary must include the inside reservation',
+  );
+  assert.ok(
+    Math.hypot(outsideBoundary.x, outsideBoundary.z) > possibleInfluenceRadius,
+    'query radius must exclude a reservation beyond the maximum possible influence range',
   );
 });
 
