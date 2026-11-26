@@ -554,7 +554,7 @@ async function main() {
         telemetry.drawCalls + " draws, wall validation P95 " + wallPlacement.p95Ms.toFixed(3) +
         " ms (" + wallPlacement.buildingCandidates + "/" + wallPlacement.totalBuildings + " building candidates, " +
         wallPlacement.resourceCandidates + "/" + wallPlacement.totalResources + " resource candidates), " +
-        decorations.shadowInstances + " shadow/ring instances, "
+        decorations.shadowInstances + " shadow/ring instances, " +
         staticMeshes.drawCallsSaved + " static mesh draws saved, " +
         (decorations.roleCrestInstances + decorations.roleSiegeInstances) + " role markers, " +
         decorations.buffRingInstances + " buff rings, " + telemetry.renderer);
