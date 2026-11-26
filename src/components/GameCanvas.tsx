@@ -664,8 +664,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       }
       if (
         !unit.unitDef.isNaval &&
-        unit.unitDef.category !== 'worker' &&
-        unit.unitDef.category !== 'siege'
+        unit.state !== 'assembling' &&
+        !unit.fieldAssemblyProjectId &&
+        (
+          unit.unitDef.category === 'melee' ||
+          unit.unitDef.category === 'ranged' ||
+          unit.unitDef.category === 'cavalry'
+        )
       ) {
         hasGroundCombatHuntersSelected = true;
       }
