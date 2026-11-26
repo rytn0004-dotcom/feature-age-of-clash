@@ -86,6 +86,36 @@ test('repair snapping finds a nearby breached wall and ignores healthy or unfini
 });
 
 
+test('repair snapping can scan the full building roster while excluding other factions and non-walls', () => {
+  const enemyDamaged = makeWall('enemy-damaged', 0.1, {
+    faction: 'enemy',
+    hp: 80,
+  });
+  const ownNonWall = makeWall('own-non-wall', 0.2, {
+    faction: 'player',
+    buildingDef: { isWall: false },
+    hp: 60,
+  });
+  const ownHealthy = makeWall('own-healthy', 0.3, {
+    faction: 'player',
+    hp: 500,
+  });
+  const ownDamaged = makeWall('own-damaged', 1, {
+    faction: 'player',
+    hp: 120,
+  });
+  const buildingRoster = [enemyDamaged, ownNonWall, ownHealthy, ownDamaged];
+
+  assert.equal(
+    findNearestRepairableWall({ x: 0, z: 0 }, buildingRoster, undefined, 'player')?.id,
+    'own-damaged',
+  );
+  assert.equal(
+    findNearestRepairableWall({ x: 0, z: 0 }, buildingRoster, undefined, 'enemy')?.id,
+    'enemy-damaged',
+  );
+});
+
 test('extending a wall from its end preserves chain identity and appends indices', () => {
   const walls = [
     makeWall('wall-0', 0, { wallChainIndex: 0, wallChainSize: 2 }),

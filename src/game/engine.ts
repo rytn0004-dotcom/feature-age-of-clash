@@ -5561,12 +5561,14 @@ export class RtsEngine {
   }
 
   public getNearestRepairableWallAt(x: number, z: number): BuildingEntity | null {
-    const walls = this.buildings.filter(
-      (building) =>
-        building.faction === this.humanPlayerId &&
-        building.buildingDef.isWall
-    );
-    return findNearestRepairableWall({ x, z }, walls) as BuildingEntity | null;
+    // Pass the existing roster directly; the query filters faction/wall state
+    // without allocating a fresh filtered array on every pointer movement.
+    return findNearestRepairableWall(
+      { x, z },
+      this.buildings,
+      undefined,
+      this.humanPlayerId,
+    ) as BuildingEntity | null;
   }
 
   public updateWallRepairPreview(x: number, z: number, enabled = true): BuildingEntity | null {

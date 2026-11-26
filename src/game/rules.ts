@@ -22,6 +22,10 @@ import {
 import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
 
+// Shared deterministic order for small, frequent AI economy loops.
+const AI_RESOURCE_TYPES: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+const AI_FOOD_DONOR_ORDER: readonly ResourceType[] = ['stone', 'gold', 'wood'];
+
 export const FIELD_RAM_TECH_ID = 'shared_field_engineering';
 export const FIELD_RAM_REQUIRED_INFANTRY = 4;
 export const FIELD_RAM_COST: Resources = { food: 0, wood: 140, gold: 60, stone: 0 };
@@ -1180,7 +1184,7 @@ export function computeAiWorkerAllocation(
   if (netRates) {
     const stockTargets = computeAiResourceDemandTargets(age, netRates);
 
-    for (const type of ['food', 'wood', 'gold', 'stone'] as ResourceType[]) {
+    for (const type of AI_RESOURCE_TYPES) {
       const netPerMinute = netRates[type];
       if (!Number.isFinite(netPerMinute)) continue;
 
@@ -1195,7 +1199,7 @@ export function computeAiWorkerAllocation(
   }
 
   const totalW = weights.food + weights.wood + weights.gold + weights.stone;
-  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const types = AI_RESOURCE_TYPES;
   const remainders: Array<{ type: ResourceType; rem: number }> = [];
   let assigned = 0;
 
@@ -1214,7 +1218,7 @@ export function computeAiWorkerAllocation(
 
   // Guarantee at least 1 food worker whenever AI has >= 2 workers and food isn't overflowing
   if (workerCount >= 2 && result.food === 0 && resources.food < 1600) {
-    const donor = (['stone', 'gold', 'wood'] as ResourceType[]).find((t) => result[t] > 0);
+    const donor = AI_FOOD_DONOR_ORDER.find((t) => result[t] > 0);
     if (donor) {
       result[donor]--;
       result.food++;
@@ -1247,7 +1251,7 @@ export function shouldAiQueueWorker(options: {
   const workerCap = Math.max(0, Math.floor(Number.isFinite(options.workerCap) ? options.workerCap : 0));
   if (committedWorkers >= workerCap) return false;
 
-  const resourceTypes: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
+  const resourceTypes = AI_RESOURCE_TYPES;
   const canAffordWorker = resourceTypes.every(
     (type) => (options.resources[type] || 0) >= (options.workerCost[type] || 0)
   );
@@ -1272,13 +1276,11 @@ export function selectAiWorkerResourceType(
   desiredAlloc: Readonly<Record<ResourceType, number>>,
   availableTypes: readonly ResourceType[]
 ): ResourceType | null {
-  const available = new Set(availableTypes);
-  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
   let recipient: ResourceType | null = null;
   let recipientDeficit = 0;
 
-  for (const type of types) {
-    if (!available.has(type)) continue;
+  for (const type of AI_RESOURCE_TYPES) {
+    if (!availableTypes.includes(type)) continue;
     const deficit = desiredAlloc[type] - activeCounts[type];
     if (deficit > recipientDeficit) {
       recipient = type;
@@ -1293,23 +1295,21 @@ export function selectAiWorkerResourceType(
 export function selectAiWorkerReassignment(
   activeCounts: Readonly<Record<ResourceType, number>>,
   desiredAlloc: Readonly<Record<ResourceType, number>>,
-  availableTypes: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone']
+  availableTypes: readonly ResourceType[] = AI_RESOURCE_TYPES
 ): { from: ResourceType; to: ResourceType } | null {
-  const types: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
-  const available = new Set(availableTypes);
   let donor: ResourceType | null = null;
   let donorSurplus = 1;
   let recipient: ResourceType | null = null;
   let recipientDeficit = 1;
 
-  for (const type of types) {
+  for (const type of AI_RESOURCE_TYPES) {
     const surplus = activeCounts[type] - desiredAlloc[type];
     if (surplus > donorSurplus) {
       donor = type;
       donorSurplus = surplus;
     }
 
-    if (!available.has(type)) continue;
+    if (!availableTypes.includes(type)) continue;
     const deficit = desiredAlloc[type] - activeCounts[type];
     if (deficit > recipientDeficit) {
       recipient = type;
@@ -3140,6 +3140,8 @@ export function triggerWildAnimalPanic(
   }
 }
 
+const WILD_ANIMAL_ESCAPE_ANGLE_OFFSETS = [0, 0.55, -0.55, 1.1, -1.1, 1.65, -1.65, 2.25, -2.25, Math.PI] as const;
+
 /**
  * Samples candidate angles fanning around `preferredAngle` to pick an obstacle-free
  * escape vector so deer smoothly steer along riverbanks/cliffs/buildings instead of bouncing in place.
@@ -3150,8 +3152,7 @@ export function pickWildAnimalEscapeAngle(
   preferredAngle: number,
   isBlocked: (cx: number, cz: number) => boolean
 ): number | null {
-  const offsets = [0, 0.55, -0.55, 1.1, -1.1, 1.65, -1.65, 2.25, -2.25, Math.PI];
-  for (const off of offsets) {
+  for (const off of WILD_ANIMAL_ESCAPE_ANGLE_OFFSETS) {
     const ang = preferredAngle + off;
     const tx1 = x + Math.cos(ang) * 1.4;
     const tz1 = z + Math.sin(ang) * 1.4;
@@ -3161,7 +3162,7 @@ export function pickWildAnimalEscapeAngle(
       return ang;
     }
   }
-  for (const off of offsets) {
+  for (const off of WILD_ANIMAL_ESCAPE_ANGLE_OFFSETS) {
     const ang = preferredAngle + off;
     const tx1 = x + Math.cos(ang) * 1.15;
     const tz1 = z + Math.sin(ang) * 1.15;

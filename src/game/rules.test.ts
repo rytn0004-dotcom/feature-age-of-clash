@@ -3043,6 +3043,15 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
     { from: 'wood', to: 'stone' },
     'Reassignment must choose the largest deficit with an available deposit'
   );
+  assert.equal(
+    selectAiWorkerReassignment(
+      { food: 2, wood: 5, gold: 1, stone: 0 },
+      { food: 5, wood: 1, gold: 1, stone: 2 },
+      []
+    ),
+    null,
+    'An empty resource-node roster must not trigger a worker reassignment'
+  );
 });
 
 

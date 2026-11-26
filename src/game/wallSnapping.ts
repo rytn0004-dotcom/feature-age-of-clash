@@ -4,6 +4,7 @@ export interface WallSnapBuilding {
   id: string;
   x: number;
   z: number;
+  faction?: string;
   rotationY?: number;
   wallChainId?: string;
   wallChainIndex?: number;
@@ -223,16 +224,19 @@ export function findNearestWallEndpoint<T extends WallSnapBuilding>(
 export function findNearestRepairableWall<T extends WallSnapBuilding>(
   point: { x: number; z: number },
   walls: readonly T[],
-  snapRadius = WALL_REPAIR_SNAP_RADIUS
+  snapRadius = WALL_REPAIR_SNAP_RADIUS,
+  factionId?: string,
 ): T | null {
   if (!Number.isFinite(point.x) || !Number.isFinite(point.z) || !Number.isFinite(snapRadius) || snapRadius < 0) {
     return null;
   }
 
+  const radiusSquared = snapRadius * snapRadius;
   let nearest: T | null = null;
-  let nearestDistance = snapRadius;
+  let nearestDistanceSquared = radiusSquared;
   for (const wall of walls) {
     if (
+      (factionId !== undefined && wall.faction !== factionId) ||
       !wall.buildingDef.isWall ||
       !wall.isConstructed ||
       wall.hp <= 0 ||
@@ -240,10 +244,12 @@ export function findNearestRepairableWall<T extends WallSnapBuilding>(
     ) {
       continue;
     }
-    const distance = Math.hypot(point.x - wall.x, point.z - wall.z);
-    if (distance <= nearestDistance) {
+    const dx = point.x - wall.x;
+    const dz = point.z - wall.z;
+    const distanceSquared = dx * dx + dz * dz;
+    if (distanceSquared <= nearestDistanceSquared) {
       nearest = wall;
-      nearestDistance = distance;
+      nearestDistanceSquared = distanceSquared;
     }
   }
   return nearest;
