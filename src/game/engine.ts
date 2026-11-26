@@ -6140,7 +6140,13 @@ export class RtsEngine {
         undefined,
         this.wallPlacementPreviewActiveSectionCache,
       );
-      placements.push(...activeSection);
+      // Copy the active records into the retained route buffer by index. Avoid
+      // a spread-argument list on every pointer-driven preview refresh.
+      const activeStartIndex = this.wallPlacementPreviewFixedPlacementCount;
+      for (let index = 0; index < activeSection.length; index++) {
+        placements[activeStartIndex + index] = activeSection[index];
+      }
+      placements.length = activeStartIndex + activeSection.length;
       activeDistance = getDistance(activeStart.x, activeStart.z, activeCursor.x, activeCursor.z);
     }
     this.wallPlacementPreviewDistanceCache = this.wallPlacementPreviewFixedDistance + activeDistance;
