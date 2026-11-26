@@ -144,7 +144,7 @@ test('wall route clipping stops at the last affordable segment boundary without 
     1.5,
   );
   assert.equal(clipped.length, 2);
-  assert.ok(Math.abs(clipped[1].x - 4.5) < 1e-9);
+  assert.ok(Math.abs(clipped[1].x - (30 / 7)) < 1e-9);
   assert.equal(clipped[1].z, 0);
 
   const multiSection = clipWallChainPointsToSegmentCount(

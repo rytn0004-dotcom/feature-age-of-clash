@@ -8402,7 +8402,10 @@ export class RtsEngine {
 
       if (!nearestTarget) {
         this.cancelUnitAttackWindup(unit);
-      } else if (unit.attackCooldown <= 0) {
+      } else if (
+        unit.attackCooldown <= 0 &&
+        (unit.attackRecoveryRemaining ?? 0) <= 0
+      ) {
         const timing = getUnitAttackTiming('ranged');
         if (
           unit.attackWindupTargetId !== nearestTarget.id ||
