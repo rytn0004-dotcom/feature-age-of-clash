@@ -523,6 +523,15 @@ export class RtsEngine {
   private combatBuildingLookupById = new Map<string, BuildingEntity>();
   private combatBuildingLookupSource: BuildingEntity[] | null = null;
   private combatBuildingLookupLength = -1;
+  /** Stable resource-node IDs are resolved in O(1) during every worker update. */
+  private resourceNodeLookupById = new Map<string, ResourceNode>();
+  private resourceNodeLookupSource: ResourceNode[] | null = null;
+  private resourceNodeLookupLength = -1;
+  /** Reused delivery candidates, built once per faction/resource on each simulation step. */
+  private returnDropOffBuildingsByKey = new Map<string, BuildingEntity[]>();
+  private returnDropOffReadyKeys = new Set<string>();
+  /** Dedicated output avoids clobbering other nested unit-only spatial queries. */
+  private mangudaiTargetQueryScratch: UnitEntity[] = [];
   /** Rebuilt once per simulation step; avoids one full unit scan per active builder. */
   private activeConstructionWorkerCountByBuilding = new Map<string, number>();
   /** Per-worker route failure cooldowns, scoped to one construction target. */
@@ -1613,6 +1622,12 @@ export class RtsEngine {
     this.combatBuildingLookupById.clear();
     this.combatBuildingLookupSource = null;
     this.combatBuildingLookupLength = -1;
+    this.resourceNodeLookupById.clear();
+    this.resourceNodeLookupSource = null;
+    this.resourceNodeLookupLength = -1;
+    this.returnDropOffBuildingsByKey.clear();
+    this.returnDropOffReadyKeys.clear();
+    this.mangudaiTargetQueryScratch.length = 0;
     this.combatTargetQueryScratch.units.length = 0;
     this.combatTargetQueryScratch.buildings.length = 0;
     this.cavalryRetreatQueryScratch.units.length = 0;
@@ -2732,7 +2747,20 @@ export class RtsEngine {
       node.animalHp = node.animalMaxHp;
       node.animalAlive = true;
     }
+    const previousResourceNodeCount = this.resourceNodes.length;
     this.resourceNodes.push(node);
+    if (
+      this.resourceNodeLookupSource === this.resourceNodes &&
+      this.resourceNodeLookupLength === previousResourceNodeCount
+    ) {
+      if (!this.resourceNodeLookupById.has(node.id)) {
+        this.resourceNodeLookupById.set(node.id, node);
+      }
+      this.resourceNodeLookupLength = this.resourceNodes.length;
+    } else {
+      this.resourceNodeLookupSource = null;
+      this.resourceNodeLookupLength = -1;
+    }
     this.navGridDirty = true;
 
     let mesh: THREE.Group;
@@ -5171,6 +5199,8 @@ export class RtsEngine {
       const farmNode = this.resourceNodes.find((node) => node.id === farmNodeId);
       if (farmNode) {
         this.resourceNodes = this.resourceNodes.filter((node) => node.id !== farmNodeId);
+        this.resourceNodeLookupSource = null;
+        this.resourceNodeLookupLength = -1;
         const nodeMesh = this.nodeMeshes.get(farmNodeId);
         if (nodeMesh) {
           this.scene.remove(nodeMesh);
@@ -7736,6 +7766,17 @@ export class RtsEngine {
     }
   }
 
+  private rebuildResourceNodeLookup(): void {
+    if (
+      this.resourceNodeLookupSource !== this.resourceNodes ||
+      this.resourceNodeLookupLength !== this.resourceNodes.length
+    ) {
+      rebuildEntityIdIndex(this.resourceNodeLookupById, this.resourceNodes);
+      this.resourceNodeLookupSource = this.resourceNodes;
+      this.resourceNodeLookupLength = this.resourceNodes.length;
+    }
+  }
+
   /**
    * Uses one nearby-candidate query for both hostile target scoring and local ally
    * focus bonuses. The existing scoring function still applies exact range,
@@ -7829,6 +7870,8 @@ export class RtsEngine {
 
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
+    this.rebuildResourceNodeLookup();
+    this.returnDropOffReadyKeys.clear();
     this.rebuildActiveConstructionWorkerCounts();
     if (
       this.battlefieldLeadershipRosterSource !== this.units ||
@@ -7883,6 +7926,7 @@ export class RtsEngine {
     // Preserve the stable roster array on ordinary frames. Only allocate a
     // compacted array when the first dead unit is actually encountered.
     const currentUnits = this.units;
+    const unitBadgeWallClockNow = performance.now();
     let remainingUnits: UnitEntity[] | null = null;
 
     for (let unitIndex = 0; unitIndex < currentUnits.length; unitIndex++) {
@@ -8115,9 +8159,15 @@ export class RtsEngine {
         const badge = (mesh.userData.unitBadge as THREE.Sprite) || (mesh.getObjectByName('unitBadge') as THREE.Sprite);
         if (badge) {
           mesh.userData.overheadBadgesEnabled = this.showOverheadBadges;
-          const now = performance.now();
-          const isUnderAttack = !!(unit.lastDamagedTime && now - unit.lastDamagedTime < 2500);
-          const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
+          const isUnderAttack = !!(
+            unit.lastDamagedTime &&
+            unitBadgeWallClockNow - unit.lastDamagedTime < 2500
+          );
+          let xpEligible = (unit as any)._xpEligible;
+          if (typeof xpEligible !== 'boolean') {
+            xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
+            (unit as any)._xpEligible = xpEligible;
+          }
           const lvl = xpEligible ? unit.level || 1 : 1;
           const hpRatio = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
           const hpBucket = Math.ceil(hpRatio * 40);
@@ -8368,13 +8418,14 @@ export class RtsEngine {
   private stepUnitMoving(unit: UnitEntity, dt: number) {
     // Finish boarding if we were ordered onto a friendly transport
     if (unit.targetEntityId && !unit.unitDef.isNaval) {
-      const boat = this.units.find(
-        (b) =>
-          b.id === unit.targetEntityId &&
-          b.unitDefId === 'transport_boat' &&
-          b.faction === unit.faction &&
-          b.hp > 0
-      );
+      const boatCandidate = this.combatUnitLookupById.get(unit.targetEntityId);
+      const boat =
+        boatCandidate &&
+        boatCandidate.unitDefId === 'transport_boat' &&
+        boatCandidate.faction === unit.faction &&
+        boatCandidate.hp > 0
+          ? boatCandidate
+          : undefined;
       if (boat) {
         if (getDistance(unit.x, unit.z, boat.x, boat.z) <= 7.5) {
           this.boardTransport(boat, [unit]);
@@ -8437,13 +8488,25 @@ export class RtsEngine {
     // still interrupted if the target leaves the firing envelope.
     if (unit.unitDefId === 'mongol_mangudai' && (unit.attackCooldown <= 0 || unit.attackWindupTargetId)) {
       let nearestTarget: UnitEntity | null = null;
-      let bestDistance = unit.unitDef.stats.range + 1.1;
-      for (const enemy of this.units) {
+      const firingRange = unit.unitDef.stats.range + 1.1;
+      const firingRangeSquared = firingRange * firingRange;
+      if (!this.combatSpatialIndex) this.rebuildCombatSpatialIndex();
+      const nearbyEnemies = queryCombatSpatialUnits(
+        this.combatSpatialIndex!,
+        unit.x,
+        unit.z,
+        firingRange + this.combatSpatialIndex!.cellSize,
+        this.mangudaiTargetQueryScratch,
+      );
+      let bestDistanceSquared = firingRangeSquared;
+      for (const enemy of nearbyEnemies) {
         if (enemy.hp <= 0 || enemy.garrisonedInBuildingId || !this.isHostile(unit, enemy)) continue;
-        const distance = getDistance(unit.x, unit.z, enemy.x, enemy.z);
-        if (distance <= bestDistance) {
+        const dx = unit.x - enemy.x;
+        const dz = unit.z - enemy.z;
+        const distanceSquared = dx * dx + dz * dz;
+        if (distanceSquared <= bestDistanceSquared) {
           nearestTarget = enemy;
-          bestDistance = distance;
+          bestDistanceSquared = distanceSquared;
         }
       }
 
@@ -9267,7 +9330,7 @@ export class RtsEngine {
     }
 
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
-    const node = this.resourceNodes.find((n) => n.id === unit.targetResourceNodeId);
+    const node = this.resourceNodeLookupById.get(unit.targetResourceNodeId);
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
       const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
       if (hasQueuedFollowUp) {
@@ -9662,35 +9725,57 @@ export class RtsEngine {
     unit.currentActionText = `🏃 運送${resNames[unit.carryingResource.type] || '物資'}回基地`;
 
     const isNaval = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
-    const dropOffs = this.buildings.filter(
-      (b) =>
-        b.faction === unit.faction &&
-        b.isConstructed &&
-        (isNaval
-          ? b.buildingType === 'dock'
-          : b.buildingType === 'town_center' ||
-            (unit.carryingResource?.type === 'food' &&
-              (b.buildingType === 'dock' || b.buildingType === 'granary' || b.buildingType === 'farm')) ||
-            (unit.carryingResource?.type === 'wood' && b.buildingType === 'lumber_camp') ||
-            ((unit.carryingResource?.type === 'gold' || unit.carryingResource?.type === 'stone') &&
-              b.buildingType === 'mining_camp'))
-    );
+    const resourceType = unit.carryingResource.type;
+    const cacheKey = `${unit.faction}:${isNaval ? 'naval' : resourceType}`;
+    let dropOffs = this.returnDropOffBuildingsByKey.get(cacheKey);
+    if (!dropOffs) {
+      dropOffs = [];
+      this.returnDropOffBuildingsByKey.set(cacheKey, dropOffs);
+    }
+    if (!this.returnDropOffReadyKeys.has(cacheKey)) {
+      dropOffs.length = 0;
+      for (const building of this.buildings) {
+        if (
+          building.hp <= 0 ||
+          building.faction !== unit.faction ||
+          !building.isConstructed
+        ) continue;
+        const acceptsResource = isNaval
+          ? building.buildingType === 'dock'
+          : building.buildingType === 'town_center' ||
+            (resourceType === 'food' &&
+              (building.buildingType === 'dock' ||
+                building.buildingType === 'granary' ||
+                building.buildingType === 'farm')) ||
+            (resourceType === 'wood' && building.buildingType === 'lumber_camp') ||
+            ((resourceType === 'gold' || resourceType === 'stone') &&
+              building.buildingType === 'mining_camp');
+        if (acceptsResource) dropOffs.push(building);
+      }
+      this.returnDropOffReadyKeys.add(cacheKey);
+    }
 
-    if (dropOffs.length === 0) {
+    let nearest: BuildingEntity | null = null;
+    let minDistanceSquared = Infinity;
+    for (const building of dropOffs) {
+      // Cached candidates are live object references, so destruction or a cancelled
+      // foundation later in this same step is still respected.
+      if (building.hp <= 0 || !building.isConstructed) continue;
+      const dx = unit.x - building.x;
+      const dz = unit.z - building.z;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared < minDistanceSquared) {
+        minDistanceSquared = distanceSquared;
+        nearest = building;
+      }
+    }
+
+    if (!nearest) {
       unit.state = 'idle';
       unit.currentActionText = isNaval ? '⚓ 需碼頭卸魚' : '💤 無存放建築待命';
       return;
     }
-
-    let nearest = dropOffs[0];
-    let minDist = getDistance(unit.x, unit.z, nearest.x, nearest.z);
-    for (const b of dropOffs) {
-      const d = getDistance(unit.x, unit.z, b.x, b.z);
-      if (d < minDist) {
-        minDist = d;
-        nearest = b;
-      }
-    }
+    const minDist = Math.sqrt(minDistanceSquared);
 
     const depositRange = Math.max(
       2.6,
@@ -10270,7 +10355,7 @@ export class RtsEngine {
       return;
     }
 
-    const bldg = this.buildings.find((b) => b.id === unit.targetBuildingId);
+    const bldg = this.combatBuildingLookupById.get(unit.targetBuildingId);
     if (bldg && this.isConstructionCancellationPending(bldg.id)) {
       unit.velocity = { x: 0, z: 0 };
       unit.currentActionText = '⏸ 工地取消倒數中';
@@ -10481,6 +10566,7 @@ export class RtsEngine {
 
       if (!repairingWall && !repairingStructure && bldg.buildProgress >= 1) {
         bldg.isConstructed = true;
+        this.returnDropOffReadyKeys.clear();
         this.constructionApproachFailedWorkersByBuilding.delete(bldg.id);
         if (bldg.buildingDef.isWall) this.wallEndpointIndexDirty = true;
         bldg.buildProgress = 1;
@@ -10592,7 +10678,7 @@ export class RtsEngine {
       return;
     }
 
-    const bldg = this.buildings.find((b) => b.id === unit.targetGarrisonBuildingId);
+    const bldg = this.combatBuildingLookupById.get(unit.targetGarrisonBuildingId);
     if (!bldg || bldg.hp <= 0 || !bldg.isConstructed || bldg.faction !== unit.faction) {
       unit.targetGarrisonBuildingId = undefined;
       unit.waypoints = undefined;
@@ -12491,9 +12577,13 @@ export class RtsEngine {
       mesh.userData.animState = anim;
     }
 
-    let phaseSeed = 0;
-    for (let i = 0; i < unit.id.length; i++) phaseSeed += unit.id.charCodeAt(i);
-    const t = this.simTime + (phaseSeed % 17) * 0.23;
+    let phaseSeed = mesh.userData.animPhaseSeed as number | undefined;
+    if (!Number.isFinite(phaseSeed)) {
+      phaseSeed = 0;
+      for (let i = 0; i < unit.id.length; i++) phaseSeed += unit.id.charCodeAt(i);
+      mesh.userData.animPhaseSeed = phaseSeed;
+    }
+    const t = this.simTime + (phaseSeed! % 17) * 0.23;
 
     // 0. Smooth shortest-arc yaw turning + subtle banking lean on tight corners
     let desiredYaw = anim.yaw;
@@ -12529,7 +12619,11 @@ export class RtsEngine {
         mat.emissiveIntensity = flashing ? 0.65 : 0;
       });
     }
-    const xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
+    let xpEligible = (unit as any)._xpEligible;
+    if (typeof xpEligible !== 'boolean') {
+      xpEligible = canUnitGainXp(unit.unitDefId, this.getCivilizationForFaction(unit.faction));
+      (unit as any)._xpEligible = xpEligible;
+    }
     if (parts.veteranHalo) {
       const veteranLevel = unit.level || 1;
       const isVet = xpEligible && veteranLevel >= 2;
