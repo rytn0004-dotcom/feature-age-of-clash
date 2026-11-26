@@ -153,6 +153,7 @@ import {
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
+  selectAiResourceNodeRelocation,
   shouldRelocateFromResourceNode,
   estimateAiResourceCampPaybackSeconds,
   shouldAiSaveForNextAge,
@@ -14154,64 +14155,45 @@ export class RtsEngine {
         if (bestType) assignWorkerToType(w, bestType);
       }
 
-      // Predict node depletion and move one gatherer before the group runs dry.
-      // The cooldown avoids evacuating an entire deposit in one AI decision.
+      // Predict node depletion and move one safe gatherer before the group runs dry.
+      // The selector is allocation-light and ignores deliveries, queued orders and hunts.
       const nodeRelocationReadyAt = this.aiNodeRelocationReadyAt.get(aiId) || 0;
       if (this.stats.gameDuration >= nodeRelocationReadyAt) {
-        const lowStockNodes = [...nodeGatherRateById.entries()]
-          .map(([nodeId, totalRate]) => {
-            const resourceNode = resourceNodeById.get(nodeId);
-            return resourceNode
-              ? {
-                  node: resourceNode,
-                  totalRate,
-                  remainingSeconds: resourceNode.amount / Math.max(0.001, totalRate),
-                }
-              : null;
-          })
-          .filter((entry): entry is NonNullable<typeof entry> =>
-            !!entry && shouldRelocateFromResourceNode(entry.node.amount, entry.totalRate, 12)
-          )
-          .sort((a, b) =>
-            a.remainingSeconds - b.remainingSeconds || a.node.id.localeCompare(b.node.id)
-          );
-
-        for (const depletedSoon of lowStockNodes) {
-          const relocatingWorker = aiEconomicWorkers
-            .filter((worker) =>
-              worker.state === 'gathering' &&
-              worker.targetResourceNodeId === depletedSoon.node.id
-            )
-            .sort((a, b) => a.id.localeCompare(b.id))[0];
-          if (!relocatingWorker) continue;
-
+        const relocation = selectAiResourceNodeRelocation(
+          this.resourceNodes,
+          nodeGatherRateById,
+          aiEconomicWorkers,
+          12,
+        );
+        if (relocation) {
+          const { node: depletedNode, worker: relocatingWorker } = relocation;
           const replacementNode = this.findBestDeliveredResourceNode(
             relocatingWorker,
-            depletedSoon.node.resourceType,
+            depletedNode.resourceType,
             Infinity,
             {
               assignedCounts: nodeWorkerCounts,
-              excludedNodeIds: new Set([depletedSoon.node.id]),
+              excludedNodeIds: new Set([depletedNode.id]),
             }
           );
-          if (!replacementNode) continue;
 
-          const previousCount = nodeWorkerCounts.get(depletedSoon.node.id) || 0;
-          nodeWorkerCounts.set(depletedSoon.node.id, Math.max(0, previousCount - 1));
-          nodeWorkerCounts.set(
-            replacementNode.id,
-            (nodeWorkerCounts.get(replacementNode.id) || 0) + 1
-          );
-          relocatingWorker.targetResourceNodeId = replacementNode.id;
-          relocatingWorker.waypoints = undefined;
-          relocatingWorker.pathGoal = undefined;
-          const replacementMeta = this.getResourceDisplayMeta(replacementNode);
-          relocatingWorker.currentActionText = `${replacementMeta.icon} 資源將耗盡，轉往${replacementMeta.action}`;
-          this.aiNodeRelocationReadyAt.set(
-            aiId,
-            this.stats.gameDuration + 4.8
-          );
-          break;
+          if (replacementNode) {
+            const previousCount = nodeWorkerCounts.get(depletedNode.id) || 0;
+            nodeWorkerCounts.set(depletedNode.id, Math.max(0, previousCount - 1));
+            nodeWorkerCounts.set(
+              replacementNode.id,
+              (nodeWorkerCounts.get(replacementNode.id) || 0) + 1
+            );
+            relocatingWorker.targetResourceNodeId = replacementNode.id;
+            relocatingWorker.waypoints = undefined;
+            relocatingWorker.pathGoal = undefined;
+            const replacementMeta = this.getResourceDisplayMeta(replacementNode);
+            relocatingWorker.currentActionText = `${replacementMeta.icon} 資源將耗盡，轉往${replacementMeta.action}`;
+            this.aiNodeRelocationReadyAt.set(
+              aiId,
+              this.stats.gameDuration + 4.8
+            );
+          }
         }
       }
 

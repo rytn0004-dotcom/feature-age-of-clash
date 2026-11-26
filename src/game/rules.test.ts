@@ -27,6 +27,7 @@ import {
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
+  selectAiResourceNodeRelocation,
   shouldRelocateFromResourceNode,
   selectSiegeEscortUnits,
   selectSiegeEscortAssignments,
@@ -4373,4 +4374,51 @@ test('AI economy rebalancing never interrupts cargo, queued work, or wildlife hu
   assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'boar' }), false);
   assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'aurochs' }), false);
   assert.equal(isAiWorkerEligibleForEconomicReassignment(worker, { amount: 500, subtype: 'hunt' }), false);
+});
+
+
+test('AI node relocation selects the most urgent safe worker without reordering game state', () => {
+  const nodes = [
+    { id: 'wood-slower', amount: 20, resourceType: 'wood' as const, subtype: 'wood' as const },
+    { id: 'wood-urgent', amount: 8, resourceType: 'wood' as const, subtype: 'wood' as const },
+    { id: 'hunt-urgent', amount: 2, resourceType: 'food' as const, subtype: 'boar' as const },
+    { id: 'gold-tie', amount: 4, resourceType: 'gold' as const, subtype: 'gold' as const },
+  ];
+  const rates = new Map([
+    ['wood-slower', 2],
+    ['wood-urgent', 2],
+    ['hunt-urgent', 1],
+    ['gold-tie', 1],
+  ]);
+  const workers = [
+    { id: 'z-worker', state: 'gathering', targetResourceNodeId: 'wood-urgent' },
+    { id: 'carrying', state: 'gathering', targetResourceNodeId: 'wood-urgent', carryingResource: { amount: 0 } },
+    { id: 'queued', state: 'gathering', targetResourceNodeId: 'gold-tie', commandQueue: [{ type: 'build' }] },
+    { id: 'a-worker', state: 'gathering', targetResourceNodeId: 'wood-urgent' },
+  ];
+
+  const selected = selectAiResourceNodeRelocation(nodes, rates, workers);
+  assert.equal(selected?.node.id, 'gold-tie', 'four seconds remaining is more urgent than four seconds on the next ID tie-break candidate?');
+  assert.equal(selected?.worker.id, 'z-worker', 'the eligible worker is chosen deterministically when the only worker is eligible');
+});
+
+test('AI node relocation ignores unsafe deposits and never mutates candidate arrays', () => {
+  const nodes = [
+    { id: 'dead', amount: 0, resourceType: 'wood' as const, subtype: 'wood' as const },
+    { id: 'hunt', amount: 1, resourceType: 'food' as const, subtype: 'hunt' as const },
+    { id: 'malformed', amount: Number.NaN, resourceType: 'gold' as const, subtype: 'gold' as const },
+    { id: 'wood', amount: 3, resourceType: 'wood' as const, subtype: 'wood' as const },
+  ];
+  const workers = [
+    { id: 'hunter', state: 'gathering', targetResourceNodeId: 'hunt' },
+    { id: 'builder-queue', state: 'gathering', targetResourceNodeId: 'wood', commandQueue: [{ type: 'repair' }] },
+  ];
+  const result = selectAiResourceNodeRelocation(
+    nodes,
+    new Map([['hunt', 1], ['malformed', 1], ['wood', 1]]),
+    workers,
+  );
+  assert.equal(result, null);
+  assert.equal(nodes[0].id, 'dead');
+  assert.equal(workers[0].targetResourceNodeId, 'hunt');
 });

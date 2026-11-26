@@ -1393,13 +1393,82 @@ export function isAiWorkerEligibleForEconomicReassignment(
     return false;
   }
 
-  const carriedAmount = worker.carryingResource?.amount;
-  if (
-    worker.carryingResource &&
-    (!Number.isFinite(carriedAmount) || (carriedAmount ?? 0) > 0)
-  ) return false;
+  // Presence of a cargo record means this worker is inside a delivery cycle;
+  // do not reclaim it until the deposit step clears the record.
+  if (worker.carryingResource) return false;
 
   return true;
+}
+
+/**
+ * Chooses the most urgent resource-node relocation and a safe worker in one
+ * deterministic scan. This avoids allocating/sorting candidate arrays and,
+ * importantly, never evacuates queued work, cargo deliveries or wildlife hunts.
+ */
+export function selectAiResourceNodeRelocation<
+  TNode extends Pick<ResourceNode, 'id' | 'amount' | 'resourceType' | 'subtype'>,
+  TWorker extends {
+    id: string;
+    state: string;
+    targetResourceNodeId?: string;
+    targetEntityId?: string;
+    targetBuildingId?: string;
+    targetGarrisonBuildingId?: string;
+    fieldAssemblyProjectId?: string;
+    carryingResource?: { amount: number };
+    commandQueue?: readonly unknown[];
+    queuedGatherStopAfterDeposit?: boolean;
+  },
+>(
+  nodes: readonly TNode[],
+  gatherRateByNodeId: ReadonlyMap<string, number>,
+  workers: readonly TWorker[],
+  leadTimeSeconds = 12,
+): { node: TNode; worker: TWorker } | null {
+  if (!Number.isFinite(leadTimeSeconds) || leadTimeSeconds <= 0) return null;
+
+  let bestNode: TNode | null = null;
+  let bestWorker: TWorker | null = null;
+  let bestRemainingSeconds = Number.POSITIVE_INFINITY;
+
+  for (const node of nodes) {
+    const totalRate = gatherRateByNodeId.get(node.id);
+    if (
+      !Number.isFinite(totalRate) ||
+      !shouldRelocateFromResourceNode(node.amount, totalRate as number, leadTimeSeconds)
+    ) continue;
+
+    const remainingSeconds = node.amount / (totalRate as number);
+    if (!Number.isFinite(remainingSeconds)) continue;
+
+    let nodeWorker: TWorker | null = null;
+    for (const worker of workers) {
+      if (
+        worker.targetResourceNodeId !== node.id ||
+        !isAiWorkerEligibleForEconomicReassignment(worker, node)
+      ) continue;
+
+      if (!nodeWorker || worker.id.localeCompare(nodeWorker.id) < 0) {
+        nodeWorker = worker;
+      }
+    }
+    if (!nodeWorker) continue;
+
+    if (
+      !bestNode ||
+      remainingSeconds < bestRemainingSeconds - 1e-9 ||
+      (
+        Math.abs(remainingSeconds - bestRemainingSeconds) <= 1e-9 &&
+        node.id.localeCompare(bestNode.id) < 0
+      )
+    ) {
+      bestNode = node;
+      bestWorker = nodeWorker;
+      bestRemainingSeconds = remainingSeconds;
+    }
+  }
+
+  return bestNode && bestWorker ? { node: bestNode, worker: bestWorker } : null;
 }
 
 /** Moves at most one worker from a clear surplus to a clear resource deficit. */
