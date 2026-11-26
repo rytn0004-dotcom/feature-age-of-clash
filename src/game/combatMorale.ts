@@ -146,6 +146,21 @@ export function applyMoraleImpact(input: MoraleImpactInput): number {
   return clampMorale(current - loss * (1 - resistance));
 }
 
+/**
+ * A full-morale or routed unit cannot benefit from recovery. Keep the original
+ * 4.5-second post-shock grace period so recovery timing remains deterministic.
+ */
+export function shouldRecoverUnitMorale(
+  morale: number | undefined,
+  moraleLastHitAt: number | undefined,
+  simTime: number,
+  isRouted: boolean,
+): boolean {
+  const currentMorale = Number.isFinite(morale) ? morale as number : 100;
+  if (isRouted || currentMorale === 100) return false;
+  return !(simTime - (moraleLastHitAt ?? 0) < 4.5);
+}
+
 /** Low morale gradually damages combat tempo without changing unit base statistics. */
 export function getMoraleCombatModifiers(morale: number): MoraleCombatModifiers {
   const score = clampMorale(morale);

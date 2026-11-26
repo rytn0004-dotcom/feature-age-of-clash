@@ -103,6 +103,7 @@ import {
   getMoraleCombatModifiers,
   getMoraleRoutGoal,
   selectNearestMoraleRoutThreat,
+  shouldRecoverUnitMorale,
   shouldUnitRout,
 } from './combatMorale';
 import { applySuppressionImpact, decaySuppression, getSuppressionCombatModifiers, getSuppressionImpact } from './combatSuppression';
@@ -8688,7 +8689,9 @@ export class RtsEngine {
     for (const leader of this.battlefieldLeadershipUnits) {
       const aura = leader.unitDef.leadershipAura;
       if (!aura || leader.hp <= 0 || leader.garrisonedInBuildingId || this.isHostile(unit, leader)) continue;
-      if (getDistance(unit.x, unit.z, leader.x, leader.z) > aura.radius) continue;
+      const dx = unit.x - leader.x;
+      const dz = unit.z - leader.z;
+      if (dx * dx + dz * dz > aura.radius * aura.radius) continue;
       const score =
         aura.moraleRecoveryPerSecond +
         aura.moraleShockResistance * 4 +
@@ -8728,6 +8731,10 @@ export class RtsEngine {
 
   private refreshUnitSuppression(unit: UnitEntity, dt: number): void {
     if (!Number.isFinite(unit.suppression)) unit.suppression = 0;
+    if ((unit.suppression ?? 0) <= 0) {
+      unit.suppression = 0;
+      return;
+    }
     if (this.simTime - (unit.suppressionLastHitAt ?? -Infinity) <= 1.2) return;
     unit.suppression = decaySuppression(unit.suppression ?? 0, dt);
     if ((unit.suppression ?? 0) < 0.5) unit.suppression = 0;
@@ -8817,12 +8824,20 @@ export class RtsEngine {
 
   private refreshUnitMorale(unit: UnitEntity, dt: number): void {
     if (!Number.isFinite(unit.morale)) unit.morale = 100;
+    if (
+      !shouldRecoverUnitMorale(
+        unit.morale,
+        unit.moraleLastHitAt,
+        this.simTime,
+        !!unit.moraleRoutGoal,
+      )
+    ) {
+      unit.leadershipAuraSourceId = undefined;
+      return;
+    }
+
     const leadership = this.getNearbyLeadershipAura(unit);
     unit.leadershipAuraSourceId = leadership?.id;
-    if (unit.moraleRoutGoal) return;
-    const secondsSinceShock = this.simTime - (unit.moraleLastHitAt ?? 0);
-    if (secondsSinceShock < 4.5) return;
-
     const isEngaged = unit.state === 'attacking' && !!unit.targetEntityId;
     const baseRecoveryRate = isEngaged ? 0.7 : unit.state === 'idle' ? 4.2 : 2.8;
     const recoveryRate = baseRecoveryRate + (leadership?.unitDef.leadershipAura?.moraleRecoveryPerSecond ?? 0);

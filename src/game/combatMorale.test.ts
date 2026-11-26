@@ -5,6 +5,7 @@ import {
   getMoraleCombatModifiers,
   getMoraleRoutGoal,
   selectNearestMoraleRoutThreat,
+  shouldRecoverUnitMorale,
   shouldUnitRout,
 } from './combatMorale';
 
@@ -66,6 +67,16 @@ test('shaken and broken morale slows movement and attack tempo', () => {
   assert.ok(getMoraleCombatModifiers(55).attackRateMultiplier < 1);
   assert.equal(getMoraleCombatModifiers(20).state, 'broken');
   assert.ok(getMoraleCombatModifiers(20).movementSpeedMultiplier < 0.9);
+});
+
+test('morale recovery gate skips full morale and routed units without changing the shock grace period', () => {
+  assert.equal(shouldRecoverUnitMorale(100, 0, 30, false), false);
+  assert.equal(shouldRecoverUnitMorale(undefined, 0, 30, false), false);
+  assert.equal(shouldRecoverUnitMorale(Number.NaN, 0, 30, false), false);
+  assert.equal(shouldRecoverUnitMorale(80, 0, 30, true), false);
+  assert.equal(shouldRecoverUnitMorale(80, 25.51, 30, false), false);
+  assert.equal(shouldRecoverUnitMorale(80, 25.5, 30, false), true);
+  assert.equal(shouldRecoverUnitMorale(80, undefined, 4.5, false), true);
 });
 
 test('AI combat units rout at the break point, while human orders and workers remain protected', () => {
