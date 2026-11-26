@@ -7953,10 +7953,15 @@ const sharedWildBoarHeadGeo = new THREE.SphereGeometry(0.34, 10, 8);
 const sharedWildBoarSnoutGeo = new THREE.CylinderGeometry(0.13, 0.19, 0.27, 9);
 sharedWildBoarSnoutGeo.rotateZ(-Math.PI / 2);
 const sharedWildBoarEarGeo = new THREE.ConeGeometry(0.085, 0.23, 5);
+const sharedWildBoarInnerEarGeo = new THREE.ConeGeometry(0.042, 0.135, 5);
 const sharedWildBoarTuskGeo = new THREE.ConeGeometry(0.055, 0.22, 6);
+const sharedWildBoarNostrilGeo = new THREE.SphereGeometry(0.026, 6, 5);
+const sharedWildBoarEyeHighlightGeo = new THREE.SphereGeometry(0.012, 5, 4);
 const sharedWildBoarLegGeo = new THREE.CylinderGeometry(0.105, 0.085, 0.38, 7);
 const sharedWildBoarHoofGeo = new THREE.CylinderGeometry(0.095, 0.11, 0.095, 6);
 const sharedWildBoarBristleGeo = new THREE.ConeGeometry(0.055, 0.17, 5);
+const sharedWildBoarRuffGeo = new THREE.SphereGeometry(0.3, 10, 8);
+const sharedWildBoarThroatGeo = new THREE.SphereGeometry(0.22, 9, 7);
 const sharedWildBoarTailGeo = new THREE.CylinderGeometry(0.025, 0.035, 0.24, 5);
 const sharedWildBoarFurMat = new THREE.MeshStandardMaterial({
   color: 0x68402b,
@@ -7967,6 +7972,10 @@ const sharedWildBoarFurMat = new THREE.MeshStandardMaterial({
 });
 const sharedWildBoarMuzzleMat = new THREE.MeshStandardMaterial({ color: 0x9a6046, roughness: 0.9 });
 const sharedWildBoarBristleMat = new THREE.MeshStandardMaterial({ color: 0x38251f, roughness: 0.96 });
+const sharedWildBoarInnerEarMat = new THREE.MeshStandardMaterial({ color: 0x8d5544, roughness: 0.94 });
+const sharedWildBoarRuffMat = new THREE.MeshStandardMaterial({ color: 0x4a2d22, map: resFurMaps.map, normalMap: resFurMaps.normalMap, roughness: 0.92 });
+const sharedWildBoarThroatMat = new THREE.MeshStandardMaterial({ color: 0x8b6048, roughness: 0.95 });
+const sharedWildBoarEyeHighlightMat = new THREE.MeshBasicMaterial({ color: 0xfff1d6 });
 const sharedWildBoarTuskMat = new THREE.MeshStandardMaterial({ color: 0xf3e5c2, roughness: 0.48 });
 const sharedWildBoarHoofMat = new THREE.MeshStandardMaterial({ color: 0x292524, roughness: 0.62 });
 const sharedWildBoarEyeMat = new THREE.MeshStandardMaterial({ color: 0x17120f, roughness: 0.3 });
@@ -7993,6 +8002,19 @@ export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group 
   shoulder.castShadow = true;
   bodyPivot.add(shoulder);
 
+  // A layered neck ruff breaks the single-sphere silhouette and gives the
+  // shoulder mass a rough, defensive profile without adding per-hair meshes.
+  const neckRuff = new THREE.Mesh(sharedWildBoarRuffGeo, sharedWildBoarRuffMat);
+  neckRuff.position.set(0.42, 0.2, 0);
+  neckRuff.scale.set(0.78, 1.12, 1.02);
+  neckRuff.castShadow = true;
+  bodyPivot.add(neckRuff);
+
+  const throat = new THREE.Mesh(sharedWildBoarThroatGeo, sharedWildBoarThroatMat);
+  throat.position.set(0.55, -0.06, 0);
+  throat.scale.set(0.88, 0.88, 0.94);
+  bodyPivot.add(throat);
+
   const headPivot = new THREE.Group();
   headPivot.position.set(0.57, 0.04, 0);
   bodyPivot.add(headPivot);
@@ -8007,31 +8029,96 @@ export function createWildBoarMesh(amount = 900, hasBadge = false): THREE.Group 
   snout.castShadow = true;
   headPivot.add(snout);
 
-  [-1, 1].forEach((side) => {
-    const tusk = new THREE.Mesh(sharedWildBoarTuskGeo, sharedWildBoarTuskMat);
-    tusk.position.set(0.32, -0.14, side * 0.19);
-    tusk.rotation.z = -0.52;
-    tusk.rotation.x = side * 0.22;
-    headPivot.add(tusk);
+  const sideTransforms = [-1, 1];
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarTuskGeo,
+    sharedWildBoarTuskMat,
+    sideTransforms.map((side) => ({
+      position: [0.32, -0.14, side * 0.19],
+      rotation: [side * 0.22, 0, -0.52],
+    })),
+    'instancedBoarTusks',
+    true,
+    false,
+  );
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarEarGeo,
+    sharedWildBoarFurMat,
+    sideTransforms.map((side) => ({
+      position: [-0.02, 0.27, side * 0.2],
+      rotation: [side * 0.42, 0, -0.18],
+    })),
+    'instancedBoarEars',
+    true,
+    false,
+  );
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarInnerEarGeo,
+    sharedWildBoarInnerEarMat,
+    sideTransforms.map((side) => ({
+      position: [0.012, 0.29, side * 0.2],
+      rotation: [side * 0.42, 0, -0.18],
+      scale: [0.58, 0.62, 0.58],
+    })),
+    'instancedBoarInnerEars',
+  );
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarEyeGeo,
+    sharedWildBoarEyeMat,
+    sideTransforms.map((side) => ({
+      position: [0.2, 0.12, side * 0.285],
+    })),
+    'instancedBoarEyes',
+  );
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarEyeHighlightGeo,
+    sharedWildBoarEyeHighlightMat,
+    sideTransforms.map((side) => ({
+      position: [0.214, 0.135, side * 0.312],
+    })),
+    'instancedBoarEyeHighlights',
+  );
+  createVisualInstanceBatch(
+    headPivot,
+    sharedWildBoarNostrilGeo,
+    sharedWildBoarEyeMat,
+    sideTransforms.map((side) => ({
+      position: [0.612, -0.04, side * 0.076],
+      scale: [0.62, 0.82, 0.82],
+    })),
+    'instancedBoarNostrils',
+  );
 
-    const ear = new THREE.Mesh(sharedWildBoarEarGeo, sharedWildBoarFurMat);
-    ear.position.set(-0.02, 0.27, side * 0.2);
-    ear.rotation.z = -0.18;
-    ear.rotation.x = side * 0.42;
-    headPivot.add(ear);
-
-    const eye = new THREE.Mesh(sharedWildBoarEyeGeo, sharedWildBoarEyeMat);
-    eye.position.set(0.2, 0.12, side * 0.285);
-    headPivot.add(eye);
-  });
-
+  const bristleTransforms: VisualInstanceTransform[] = [];
   for (let i = 0; i < 6; i++) {
-    const bristle = new THREE.Mesh(sharedWildBoarBristleGeo, sharedWildBoarBristleMat);
-    bristle.position.set(-0.38 + i * 0.17, 0.48, 0);
-    bristle.rotation.z = -0.12;
-    bristle.scale.set(0.9, 1 + (i % 2) * 0.22, 0.85);
-    bodyPivot.add(bristle);
+    bristleTransforms.push({
+      position: [-0.38 + i * 0.17, 0.48, 0],
+      rotation: [0, 0, -0.12],
+      scale: [0.9, 1 + (i % 2) * 0.22, 0.85],
+    });
   }
+  // A short second crest over the shoulder gives mature boars a heavier profile.
+  for (let i = 0; i < 3; i++) {
+    bristleTransforms.push({
+      position: [0.24 + i * 0.12, 0.38, 0],
+      rotation: [0, 0, -0.2],
+      scale: [0.76, 0.86 + (i % 2) * 0.16, 0.76],
+    });
+  }
+  createVisualInstanceBatch(
+    bodyPivot,
+    sharedWildBoarBristleGeo,
+    sharedWildBoarBristleMat,
+    bristleTransforms,
+    'instancedBoarMane',
+    true,
+    false,
+  );
 
   const makeLeg = (lx: number, lz: number): THREE.Group => {
     const leg = new THREE.Group();
