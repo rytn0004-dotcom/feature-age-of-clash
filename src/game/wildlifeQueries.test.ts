@@ -76,7 +76,7 @@ test('wildlife interactions keep idle units as threats but only active non-worke
   assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['active', 'attack-moving']);
 });
 
-test('explicit military hunting orders are scoped to the exact animal resource id', () => {
+test('direct gather orders are handled by gathering and excluded from ambient wildlife attacks', () => {
   const correctTarget = makeUnit('correct-target', 1, 0, {
     category: 'melee',
     state: 'gathering',
@@ -94,8 +94,8 @@ test('explicit military hunting orders are scoped to the exact animal resource i
     targetResourceNodeId: 'deer-1',
   });
   const scratch = makeScratch();
-  collectWildlifeUnitInteractions([correctTarget, wrongTarget, siege], 0, 0, 18, scratch, 'deer-1');
-  assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['correct-target']);
+  collectWildlifeUnitInteractions([correctTarget, wrongTarget, siege], 0, 0, 18, scratch);
+  assert.deepEqual(scratch.attackers, []);
 });
 
 test('wildlife squared-distance checks preserve flee and hunter range boundaries', () => {
@@ -122,7 +122,7 @@ test('wildlife squared-distance checks preserve flee and hunter range boundaries
   assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['at-range-edge']);
 });
 
-test('wildlife interaction query radius expands for explicit ranged hunters', () => {
+test('wildlife interaction query radius does not expand for direct gather orders', () => {
   const idleLongRange = makeUnit('idle', 0, 0, { range: 60 });
   const activeLongRange = makeUnit('active', 0, 0, { state: 'attacking', range: 60 });
   const assignedRanged = makeUnit('assigned-ranged', 0, 0, {
@@ -133,10 +133,10 @@ test('wildlife interaction query radius expands for explicit ranged hunters', ()
   });
   assert.equal(getWildlifeInteractionQueryRadius([idleLongRange], 18), 18);
   assert.equal(getWildlifeInteractionQueryRadius([activeLongRange], 18), 60.5);
-  assert.equal(getWildlifeInteractionQueryRadius([assignedRanged], 18), 25.5);
+  assert.equal(getWildlifeInteractionQueryRadius([assignedRanged], 18), 18);
 });
 
-test('a directly assigned military hunter attacks its selected animal', () => {
+test('a directly assigned military hunter is not double-counted by the ambient wildlife pass', () => {
   const hunter = makeUnit('hunter', 1, 0, {
     state: 'gathering',
     targetResourceNodeId: 'deer-1',
@@ -150,11 +150,11 @@ test('a directly assigned military hunter attacks its selected animal', () => {
     8,
     (attacker) => hits.push(attacker.id),
     () => undefined,
-    'deer-1',
   );
-  assert.equal(count, 1);
-  assert.deepEqual(hits, ['hunter']);
-  assert.equal(animal.animalHp, 18);
+  assert.equal(count, 0);
+  assert.deepEqual(hits, []);
+  assert.equal(animal.animalHp, 30);
+  assert.equal(hunter.wildlifeHuntReadyAt, undefined);
 });
 
 test('wildlife hunter attacks stop immediately after the animal dies', () => {

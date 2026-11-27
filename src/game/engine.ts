@@ -11431,7 +11431,6 @@ export class RtsEngine {
         node.z,
         DETECT,
         this.wildlifeUnitInteractionScratch,
-        node.id,
       );
       const step = stepWildAnimalState(node, interactions.nearestThreat, this.simTime, dt, isAnimalBlocked);
 
@@ -11502,7 +11501,6 @@ export class RtsEngine {
           triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
         },
         () => killAnimal(node, mesh, '山羌倒地'),
-        node.id,
       );
     }
   }

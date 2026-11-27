@@ -35,7 +35,6 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
   animalZ: number,
   detectRadius: number,
   output: WildlifeUnitInteractionScratch<Unit>,
-  animalId?: string,
 ): WildlifeUnitInteractionScratch<Unit> {
   const reusableNearest = output.nearestThreat;
   output.nearestThreat = null;
@@ -84,7 +83,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
       output.nearestThreat = nearest;
     }
 
-    if (isActiveWildlifeHunter(unit, animalId)) {
+    if (isActiveWildlifeHunter(unit)) {
       const range = unit.unitDef.stats.range || 1.5;
       const attackDistance = unit.unitDef.category === 'ranged'
         ? Math.max(4.8, range + 0.5)
@@ -98,23 +97,21 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
 
 
 /** Armed ground roles may hunt only while attacking/attack-moving or assigned to a resource node. */
-function isActiveWildlifeHunter(unit: WildlifeInteractionUnit, animalId?: string): boolean {
+function isActiveWildlifeHunter(unit: WildlifeInteractionUnit): boolean {
   const isArmedGroundRole =
     unit.unitDef.category === 'melee' ||
     unit.unitDef.category === 'ranged' ||
     unit.unitDef.category === 'cavalry' ||
     unit.unitDef.category === 'special';
-  const hasExplicitHuntOrder =
-    unit.state === 'gathering' &&
-    !!unit.targetResourceNodeId &&
-    (!animalId || unit.targetResourceNodeId === animalId);
 
+  // Direct gather orders already run their own attack cadence in stepUnitGathering.
+  // This ambient pass is reserved for autonomous attack and attack-move behavior.
   return (
     unit.hp > 0 &&
     !unit.garrisonedInBuildingId &&
     !unit.unitDef.isNaval &&
     isArmedGroundRole &&
-    (unit.state === 'attacking' || !!unit.attackMoveGoal || hasExplicitHuntOrder)
+    (unit.state === 'attacking' || !!unit.attackMoveGoal)
   );
 }
 
@@ -189,7 +186,6 @@ export function applyWildlifeHunterAttacks<Unit extends WildlifeHunterAttackUnit
   simTime: number,
   onHit: (attacker: Unit, damage: number) => void,
   onKill: () => void,
-  animalId?: string,
 ): number {
   const initialHp = animal.animalHp;
   if (
@@ -205,7 +201,7 @@ export function applyWildlifeHunterAttacks<Unit extends WildlifeHunterAttackUnit
   let appliedAttacks = 0;
   for (const attacker of attackers) {
     if (remainingHp <= 0) break;
-    if (!isActiveWildlifeHunter(attacker, animalId)) continue;
+    if (!isActiveWildlifeHunter(attacker)) continue;
     if (!tryConsumeWildlifeHunterAttack(attacker, simTime, attacker.unitDef.stats.attackRate || 1)) continue;
 
     const rawDamage = attacker.unitDef.stats.attack;
