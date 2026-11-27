@@ -4535,3 +4535,86 @@ test('AI economic reassignment rotates between eligible workers and skips commit
   assert.equal(selectAiWorkerReassignmentCandidateIndex(workers, 'gold', nodes, 0), -1);
   assert.equal(selectAiWorkerReassignmentCandidateIndex([], 'wood', nodes), -1);
 });
+
+
+test('wild boar and aurochs models face their actual charge and return direction', async () => {
+  const { stepWildBoarState } = await import('./rules');
+  const { getWildlifeForwardDirection } = await import('./wildlifeFacing');
+  const directions = [
+    { x: 6, z: 0 },
+    { x: -6, z: 0 },
+    { x: 0, z: 6 },
+    { x: 0, z: -6 },
+    { x: 6, z: 8 },
+    { x: -8, z: -6 },
+  ];
+
+  for (const subtype of ['boar', 'aurochs'] as const) {
+    for (const direction of directions) {
+      const animal: ResourceNode = {
+        id: `${subtype}-heading-${direction.x}-${direction.z}`,
+        resourceType: 'food',
+        subtype,
+        x: 0,
+        z: 0,
+        amount: 900,
+        maxAmount: 900,
+        animalAlive: true,
+        animalVx: 0,
+        animalVz: 0,
+        animalYaw: 1.1,
+      };
+      const step = stepWildBoarState(animal, direction, 0.1, () => false);
+      const forward = getWildlifeForwardDirection(step.yaw);
+      const movedX = animal.x;
+      const movedZ = animal.z;
+      const distance = Math.hypot(movedX, movedZ);
+
+      assert.ok(distance > 0.002, `${subtype} should move in the deterministic setup`);
+      assert.ok(forward);
+      const dot = forward!.x * movedX / distance + forward!.z * movedZ / distance;
+      assert.ok(dot > 0.999999, `${subtype} model must face its resolved movement direction`);
+    }
+  }
+});
+
+test('wild boar and aurochs retain heading when blocked and use displacement-locked gait', async () => {
+  const { stepWildBoarState } = await import('./rules');
+  const animal: ResourceNode = {
+    id: 'boar-blocked-heading',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 0,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+    animalYaw: 1.25,
+    animalGaitPhase: 2.4,
+    animalMoveBlend: 0.6,
+  };
+
+  const blocked = stepWildBoarState(animal, { x: 6, z: 0 }, 0.1, () => true);
+  assert.equal(blocked.distMoved, 0);
+  assert.equal(blocked.yaw, 1.25, 'a blocked animal should not turn its nose into an obstacle');
+  assert.equal(blocked.gaitPhase, 2.4, 'blocked movement must not advance footfall phase');
+  assert.ok(blocked.moveBlend < 0.6, 'stride amplitude should ease toward idle while blocked');
+
+  const invalidMotion: ResourceNode = {
+    ...animal,
+    id: 'aurochs-invalid-motion',
+    subtype: 'aurochs',
+    animalVx: Number.NaN,
+    animalVz: Number.POSITIVE_INFINITY,
+    animalYaw: Number.NaN,
+    animalGaitPhase: Number.NaN,
+    animalMoveBlend: Number.POSITIVE_INFINITY,
+  };
+  const recovered = stepWildBoarState(invalidMotion, null, Number.NaN, () => false);
+  assert.ok(Number.isFinite(recovered.yaw));
+  assert.ok(Number.isFinite(recovered.gaitPhase));
+  assert.ok(Number.isFinite(recovered.moveBlend));
+  assert.equal(recovered.distMoved, 0);
+});

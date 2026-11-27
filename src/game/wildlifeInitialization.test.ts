@@ -76,3 +76,31 @@ test('wildlife initialization: derives alive state from existing HP when the fla
   assert.equal(liveNode.animalAlive, true);
   assert.equal(deadNode.animalAlive, false);
 });
+
+
+test('wildlife initialization: sanitizes malformed headings and clamps extreme legacy velocity', () => {
+  const malformed: WildlifeSimulationState = {
+    animalAlive: true,
+    animalHp: 50,
+    animalMaxHp: 50,
+    animalVx: Number.POSITIVE_INFINITY,
+    animalVz: Number.NaN,
+    animalYaw: Number.NEGATIVE_INFINITY,
+  };
+  initializeWildlifeSimulationState(malformed, 2, 50);
+
+  assert.equal(malformed.animalVx, 0);
+  assert.equal(malformed.animalVz, 0);
+  assert.ok(Math.abs((malformed.animalYaw ?? 0) - 3.8) < 1e-12);
+
+  const excessive: WildlifeSimulationState = {
+    animalVx: 120,
+    animalVz: -120,
+    animalYaw: -0.5,
+  };
+  initializeWildlifeSimulationState(excessive, 0, 32);
+
+  assert.equal(excessive.animalVx, 8);
+  assert.equal(excessive.animalVz, -8);
+  assert.ok((excessive.animalYaw ?? 0) > Math.PI * 2 - 0.51);
+});

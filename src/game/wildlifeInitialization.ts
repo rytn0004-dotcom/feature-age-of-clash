@@ -1,4 +1,5 @@
 import type { ResourceNode } from '../types/game';
+import { sanitizeWildlifeVelocity, sanitizeWildlifeYaw } from './wildlifeFacing';
 
 export type WildlifeSimulationState = Pick<
   ResourceNode,
@@ -24,10 +25,9 @@ export function initializeWildlifeSimulationState(
     node.animalAlive = node.animalHp > 0;
   }
 
-  node.animalVx ??= 0;
-  node.animalVz ??= 0;
-  if (node.animalYaw === undefined) {
-    const safeIndex = Math.max(0, Number.isFinite(wildlifeIndex) ? Math.floor(wildlifeIndex) : 0);
-    node.animalYaw = (safeIndex * 1.9) % (Math.PI * 2);
-  }
+  node.animalVx = sanitizeWildlifeVelocity(node.animalVx);
+  node.animalVz = sanitizeWildlifeVelocity(node.animalVz);
+  const safeIndex = Math.max(0, Number.isFinite(wildlifeIndex) ? Math.floor(wildlifeIndex) : 0);
+  const initialYaw = (safeIndex * 1.9) % (Math.PI * 2);
+  node.animalYaw = sanitizeWildlifeYaw(node.animalYaw, initialYaw);
 }

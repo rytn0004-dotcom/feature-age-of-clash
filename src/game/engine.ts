@@ -11287,19 +11287,18 @@ export class RtsEngine {
           mesh.rotation.x = 0;
           const parts = mesh.userData.wildBoarAnimParts as WildBoarAnimParts | undefined;
           if (parts) {
-            const moving = step.actualSpeed > 0.28;
-            // Aurochs carry more mass: slower, deeper strides and a pronounced
-            // head-down charge make their movement distinct from a wild boar.
-            const gaitRate = isAurochs ? 8.7 : 12.5;
+            // Footfalls advance with collision-resolved ground distance, not wall-clock
+            // time, so blocked animals do not run in place or skate across the terrain.
+            const moving = step.moveBlend > 0.02;
             const strideAmplitude = isAurochs ? 0.46 : 0.58;
-            const phase = this.simTime * (moving ? gaitRate : 1.7);
-            const stride = moving ? Math.sin(phase) * strideAmplitude : 0;
+            const phase = step.gaitPhase;
+            const stride = Math.sin(phase) * strideAmplitude * step.moveBlend;
             parts.flLeg.rotation.z = stride;
             parts.brLeg.rotation.z = stride * 0.92;
             parts.frLeg.rotation.z = -stride;
             parts.blLeg.rotation.z = -stride * 0.92;
             const bob = moving
-              ? Math.abs(Math.sin(phase * 2)) * (isAurochs ? 0.016 : 0.025)
+              ? Math.abs(Math.sin(phase * 2)) * (isAurochs ? 0.016 : 0.025) * step.moveBlend
               : Math.sin(phase) * (isAurochs ? 0.008 : 0.012);
             const idleBodyHeight = isAurochs ? 0.82 : 0.72;
             parts.bodyPivot.position.y += (idleBodyHeight + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);

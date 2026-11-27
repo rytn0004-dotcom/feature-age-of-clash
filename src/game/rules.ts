@@ -21,7 +21,13 @@ import {
 } from '../types/game';
 import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
-import { getWildlifeFacingYaw } from './wildlifeFacing';
+import {
+  advanceWildlifeGait,
+  clampWildlifeDeltaSeconds,
+  getWildlifeFacingYaw,
+  sanitizeWildlifeVelocity,
+  sanitizeWildlifeYaw,
+} from './wildlifeFacing';
 
 // Shared deterministic order for small, frequent AI economy loops.
 const AI_RESOURCE_TYPES: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -3478,7 +3484,9 @@ export function stepWildAnimalState(
   const WANDER_SPEED = 1.05;
   const prevX = node.x;
   const prevZ = node.z;
-  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+  const clampedDt = clampWildlifeDeltaSeconds(dt);
+  node.animalVx = sanitizeWildlifeVelocity(node.animalVx);
+  node.animalVz = sanitizeWildlifeVelocity(node.animalVz);
 
   const REARM_RANGE = 16.5;
   // Re-arm only after the encounter has disengaged. A worker following the moving
@@ -3598,22 +3606,23 @@ export function stepWildAnimalState(
 
   // Update facing strictly from actual post-collision translation so the model
   // never appears to run sideways while its velocity or route changes.
-  let yaw = node.animalYaw ?? 0;
+  let yaw = sanitizeWildlifeYaw(node.animalYaw);
   const displacementYaw = getWildlifeFacingYaw(dxMoved, dzMoved);
   if (displacementYaw !== null && actualSpeed > 0.15) {
     yaw = displacementYaw;
   }
   node.animalYaw = yaw;
 
-  const targetBlend = actualSpeed < 0.18 ? 0 : Math.min(1, actualSpeed / 4.8);
-  let moveBlend = (node.animalMoveBlend ?? 0) + (targetBlend - (node.animalMoveBlend ?? 0)) * (1 - Math.exp(-12 * clampedDt));
-  if (actualSpeed < 0.18 && moveBlend < 0.03) moveBlend = 0;
+  const gait = advanceWildlifeGait(
+    node.animalGaitPhase,
+    node.animalMoveBlend,
+    distMoved,
+    actualSpeed,
+    clampedDt,
+  );
+  const moveBlend = gait.moveBlend;
+  const gaitPhase = gait.gaitPhase;
   node.animalMoveBlend = moveBlend;
-
-  let gaitPhase = node.animalGaitPhase ?? 0;
-  if (distMoved > 0.0005) {
-    gaitPhase = (gaitPhase + distMoved * 2.8) % (Math.PI * 200);
-  }
   node.animalGaitPhase = gaitPhase;
 
   // Bounding lift ONLY occurs during genuine fast running translation — zero hop while grazing, wandering, blocked, or cooling down
@@ -3784,6 +3793,8 @@ export interface WildBoarStepOutput {
   distMoved: number;
   actualSpeed: number;
   yaw: number;
+  gaitPhase: number;
+  moveBlend: number;
   isCharging: boolean;
   isReturning: boolean;
 }
@@ -3801,7 +3812,9 @@ export function stepWildBoarState(
 ): WildBoarStepOutput {
   const prevX = node.x;
   const prevZ = node.z;
-  const clampedDt = Math.max(0.0001, Math.min(0.1, dt));
+  const clampedDt = clampWildlifeDeltaSeconds(dt);
+  node.animalVx = sanitizeWildlifeVelocity(node.animalVx);
+  node.animalVz = sanitizeWildlifeVelocity(node.animalVz);
   const hasHome = !!home && Number.isFinite(home.x) && Number.isFinite(home.z);
   const homeDistance = hasHome ? Math.hypot(node.x - home!.x, node.z - home!.z) : 0;
   const targetHomeDistance = hasHome && target
@@ -3842,7 +3855,8 @@ export function stepWildBoarState(
   let targetVx = 0;
   let targetVz = 0;
   let isCharging = false;
-  let movementAngle: number | null = null;
+  let facingIntentAngle: number | null = null;
+  let movementWasBlocked = false;
 
   if (isReturning && hasHome) {
     const homeDx = home!.x - node.x;
@@ -3850,6 +3864,7 @@ export function stepWildBoarState(
     movementAngle = Math.atan2(homeDz, homeDx);
     const returnAngle = pickWildAnimalEscapeAngle(node.x, node.z, movementAngle, isBlocked);
     if (returnAngle !== null) {
+      facingIntentAngle = returnAngle;
       targetVx = Math.cos(returnAngle) * 2.45;
       targetVz = Math.sin(returnAngle) * 2.45;
     }
@@ -3857,6 +3872,7 @@ export function stepWildBoarState(
     movementAngle = Math.atan2(dz, dx);
     const chaseAngle = pickWildAnimalEscapeAngle(node.x, node.z, movementAngle, isBlocked);
     if (chaseAngle !== null) {
+      facingIntentAngle = chaseAngle;
       targetVx = Math.cos(chaseAngle) * 4.15;
       targetVz = Math.sin(chaseAngle) * 4.15;
       isCharging = true;
@@ -3885,6 +3901,7 @@ export function stepWildBoarState(
       } else {
         nx = prevX;
         nz = prevZ;
+        movementWasBlocked = true;
       }
       node.animalVx = 0;
       node.animalVz = 0;
@@ -3895,6 +3912,7 @@ export function stepWildBoarState(
   if (isBlocked(nx, nz)) {
     nx = prevX;
     nz = prevZ;
+    movementWasBlocked = true;
     node.animalVx = 0;
     node.animalVz = 0;
     isCharging = false;
@@ -3906,11 +3924,34 @@ export function stepWildBoarState(
   const movedZ = nz - prevZ;
   const distMoved = Math.hypot(movedX, movedZ);
   const actualSpeed = distMoved / clampedDt;
-  let yaw = node.animalYaw ?? 0;
-  if (distMoved > 0.002 && actualSpeed > 0.15) yaw = Math.atan2(-movedZ, movedX);
-  else if (movementAngle !== null) yaw = Math.atan2(-Math.sin(movementAngle), Math.cos(movementAngle));
+  let yaw = sanitizeWildlifeYaw(node.animalYaw);
+  const displacementYaw = getWildlifeFacingYaw(movedX, movedZ);
+  if (displacementYaw !== null && actualSpeed > 0.15) {
+    yaw = displacementYaw;
+  } else if (!movementWasBlocked && facingIntentAngle !== null) {
+    yaw = getWildlifeFacingYaw(Math.cos(facingIntentAngle), Math.sin(facingIntentAngle)) ?? yaw;
+  }
   node.animalYaw = yaw;
-  return { distMoved, actualSpeed, yaw, isCharging, isReturning };
+
+  const gait = advanceWildlifeGait(
+    node.animalGaitPhase,
+    node.animalMoveBlend,
+    distMoved,
+    actualSpeed,
+    clampedDt,
+    node.subtype === 'aurochs' ? 2.25 : 2.85,
+  );
+  node.animalGaitPhase = gait.gaitPhase;
+  node.animalMoveBlend = gait.moveBlend;
+  return {
+    distMoved,
+    actualSpeed,
+    yaw,
+    gaitPhase: gait.gaitPhase,
+    moveBlend: gait.moveBlend,
+    isCharging,
+    isReturning,
+  };
 }
 
 export interface AiTechCandidateInput {
