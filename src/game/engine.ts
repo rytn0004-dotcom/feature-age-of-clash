@@ -113,6 +113,7 @@ import {
   getTrainingTimeMultiplier,
 } from './civilizations';
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolLancer, shouldTrainMongolShaman } from './mongolAi';
+import { classifyAiFactionBuildings, classifyAiFactionUnits } from './aiFactionRoster';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import {
@@ -13640,73 +13641,30 @@ export class RtsEngine {
       const aiCiv = getCivilizationConfig(participant.civilization);
       const aiRes = this.getResourcesForFaction(aiId);
 
-      // Classify each faction roster in one stable-order pass instead of repeatedly
-      // filtering the same arrays for workers, army roles, and production buildings.
-      const aiUnits: UnitEntity[] = [];
-      const aiNavalBoats: UnitEntity[] = [];
-      const aiWorkers: UnitEntity[] = [];
-      const aiActiveWorkers: UnitEntity[] = [];
-      const aiArmy: UnitEntity[] = [];
-      for (const unit of unitsByFaction.get(aiId) || []) {
-        if (unit.hp <= 0) continue;
-        aiUnits.push(unit);
-
-        if (unit.unitDef.category === 'worker') {
-          if (unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat') {
-            aiNavalBoats.push(unit);
-          } else {
-            aiWorkers.push(unit);
-            if (!unit.garrisonedInBuildingId) aiActiveWorkers.push(unit);
-          }
-        }
-
-        if (
-          isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category) &&
-          !unit.garrisonedInBuildingId
-        ) {
-          aiArmy.push(unit);
-        }
-      }
-
-      const aiBuildings: BuildingEntity[] = [];
-      const aiBarracksList: BuildingEntity[] = [];
-      const aiArcheryList: BuildingEntity[] = [];
-      const aiStableList: BuildingEntity[] = [];
-      const aiSiegeWorkshopList: BuildingEntity[] = [];
-      const aiDocks: BuildingEntity[] = [];
-      const aiOvooBuildings: BuildingEntity[] = [];
-      let aiTC: BuildingEntity | undefined;
-      let aiUniqueBldg: BuildingEntity | undefined;
-      for (const building of buildingsByFaction.get(aiId) || []) {
-        if (building.hp <= 0) continue;
-        aiBuildings.push(building);
-
-        if (!aiTC && building.buildingType === 'town_center') aiTC = building;
-        if (!aiUniqueBldg && building.buildingType === aiCiv.uniqueBuildingType) {
-          aiUniqueBldg = building;
-        }
-
-        switch (building.buildingType) {
-          case 'barracks':
-            aiBarracksList.push(building);
-            break;
-          case 'archery_range':
-            aiArcheryList.push(building);
-            break;
-          case 'stable':
-            aiStableList.push(building);
-            break;
-          case 'siege_workshop':
-            aiSiegeWorkshopList.push(building);
-            break;
-          case 'dock':
-            aiDocks.push(building);
-            break;
-          case 'ovoo_relay':
-            if (building.isConstructed) aiOvooBuildings.push(building);
-            break;
-        }
-      }
+      const {
+        units: aiUnits,
+        navalBoats: aiNavalBoats,
+        workers: aiWorkers,
+        activeWorkers: aiActiveWorkers,
+        army: aiArmy,
+      } = classifyAiFactionUnits(
+        unitsByFaction.get(aiId) || [],
+        isAiMilitaryArmyUnit,
+      );
+      const {
+        buildings: aiBuildings,
+        townCenter: aiTC,
+        barracks: aiBarracksList,
+        archeryRanges: aiArcheryList,
+        stables: aiStableList,
+        siegeWorkshops: aiSiegeWorkshopList,
+        docks: aiDocks,
+        ovooBuildings: aiOvooBuildings,
+        uniqueBuilding: aiUniqueBldg,
+      } = classifyAiFactionBuildings(
+        buildingsByFaction.get(aiId) || [],
+        aiCiv.uniqueBuildingType,
+      );
 
       if (!aiTC && aiWorkers.length === 0 && aiArmy.length === 0) continue;
 

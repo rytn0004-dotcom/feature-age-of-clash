@@ -1,0 +1,77 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  classifyAiFactionBuildings,
+  classifyAiFactionUnits,
+} from './aiFactionRoster';
+
+test('AI faction unit classification preserves alive rosters and worker/military eligibility', () => {
+  const units = [
+    { id: 'worker', hp: 50, unitDefId: 'villager', unitDef: { category: 'worker' } },
+    { id: 'naval-worker', hp: 45, unitDefId: 'fishing_boat', unitDef: { category: 'worker', isNaval: true } },
+    { id: 'boat-by-id', hp: 40, unitDefId: 'fishing_boat', unitDef: { category: 'worker' } },
+    { id: 'garrisoned-worker', hp: 50, unitDefId: 'villager', garrisonedInBuildingId: 'tc', unitDef: { category: 'worker' } },
+    { id: 'melee', hp: 100, unitDefId: 'swordsman', unitDef: { category: 'melee' } },
+    { id: 'garrisoned-siege', hp: 100, unitDefId: 'ram', garrisonedInBuildingId: 'castle', unitDef: { category: 'siege' } },
+    { id: 'dead-worker', hp: 0, unitDefId: 'villager', unitDef: { category: 'worker' } },
+  ];
+
+  const roster = classifyAiFactionUnits(units, (_id, category) =>
+    category === 'melee' || category === 'siege'
+  );
+
+  assert.deepEqual(roster.units.map((unit) => unit.id), [
+    'worker',
+    'naval-worker',
+    'boat-by-id',
+    'garrisoned-worker',
+    'melee',
+    'garrisoned-siege',
+  ]);
+  assert.deepEqual(roster.navalBoats.map((unit) => unit.id), ['naval-worker', 'boat-by-id']);
+  assert.deepEqual(roster.workers.map((unit) => unit.id), ['worker', 'garrisoned-worker']);
+  assert.deepEqual(roster.activeWorkers.map((unit) => unit.id), ['worker']);
+  assert.deepEqual(roster.army.map((unit) => unit.id), ['melee']);
+});
+
+test('AI faction building classification keeps first anchors and source order', () => {
+  const buildings = [
+    { id: 'damaged-tc', hp: 0, buildingType: 'town_center' },
+    { id: 'first-tc', hp: 500, buildingType: 'town_center' },
+    { id: 'second-tc', hp: 500, buildingType: 'town_center' },
+    { id: 'barracks-a', hp: 400, buildingType: 'barracks' },
+    { id: 'barracks-b', hp: 400, buildingType: 'barracks' },
+    { id: 'range', hp: 400, buildingType: 'archery_range' },
+    { id: 'stable', hp: 400, buildingType: 'stable' },
+    { id: 'workshop', hp: 400, buildingType: 'siege_workshop' },
+    { id: 'dock', hp: 400, buildingType: 'dock' },
+    { id: 'unfinished-ovoo', hp: 400, buildingType: 'ovoo_relay', isConstructed: false },
+    { id: 'ovoo', hp: 400, buildingType: 'ovoo_relay', isConstructed: true },
+    { id: 'unique', hp: 400, buildingType: 'mongol_landmark' },
+    { id: 'dead-barracks', hp: 0, buildingType: 'barracks' },
+  ];
+
+  const roster = classifyAiFactionBuildings(buildings, 'mongol_landmark');
+
+  assert.equal(roster.townCenter?.id, 'first-tc');
+  assert.equal(roster.uniqueBuilding?.id, 'unique');
+  assert.deepEqual(roster.buildings.map((building) => building.id), [
+    'first-tc',
+    'second-tc',
+    'barracks-a',
+    'barracks-b',
+    'range',
+    'stable',
+    'workshop',
+    'dock',
+    'unfinished-ovoo',
+    'ovoo',
+    'unique',
+  ]);
+  assert.deepEqual(roster.barracks.map((building) => building.id), ['barracks-a', 'barracks-b']);
+  assert.deepEqual(roster.archeryRanges.map((building) => building.id), ['range']);
+  assert.deepEqual(roster.stables.map((building) => building.id), ['stable']);
+  assert.deepEqual(roster.siegeWorkshops.map((building) => building.id), ['workshop']);
+  assert.deepEqual(roster.docks.map((building) => building.id), ['dock']);
+  assert.deepEqual(roster.ovooBuildings.map((building) => building.id), ['ovoo']);
+});
