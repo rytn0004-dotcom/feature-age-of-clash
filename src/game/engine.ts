@@ -13778,6 +13778,7 @@ export class RtsEngine {
       // Collect hostile entities in original world order into reusable buffers.
       // Team lookups are cached once for the AI batch, and hostile workers/army
       // counts are derived in the same pass instead of filtering the roster again.
+      const aiReference = { faction: aiId, team: aiTeam };
       const aiHostileUnits = collectAiHostileEntitiesInOrder(
         this.units,
         aiId,
