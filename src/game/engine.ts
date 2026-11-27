@@ -14010,6 +14010,8 @@ export class RtsEngine {
               want
             );
             for (const u of squad) {
+              // Do not redirect a unit while it is resolving combat or retreating into cover.
+              if (u.state === 'attacking' || u.state === 'garrisoning') continue;
               // Keep an existing capture order and its active path/engagement intact.
               if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '奪取據點', focus)) {
                 continue;
@@ -14119,6 +14121,7 @@ export class RtsEngine {
               .filter((u) => u.state === 'idle' || u.currentActionText === '礦區警戒')
               .slice(0, 2);
             for (const u of pickets) {
+              if (u.state === 'attacking' || u.state === 'garrisoning') continue;
               if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '礦區警戒', localGold.n)) {
                 continue;
               }
@@ -14143,6 +14146,7 @@ export class RtsEngine {
           const squad = aiArmy.filter((u) => u.unitDef.category !== 'siege').slice(0, 3);
           for (const u of squad) {
             if (u.state !== 'idle' && u.currentActionText !== '奪取據點') continue;
+            if (u.state === 'attacking' || u.state === 'garrisoning') continue;
             if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '奪取據點', homeShrine.cp)) {
               continue;
             }
