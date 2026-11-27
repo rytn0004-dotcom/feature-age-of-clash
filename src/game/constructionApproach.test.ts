@@ -637,3 +637,22 @@ test('active construction worker counting ignores non-finite health and geometry
   accumulateActiveConstructionWorkerCount(counts, { ...worker, hp: Number.NaN }, target, 3);
   assert.equal(counts.size, 0);
 });
+
+
+test('construction work-ring selection treats exact preferred spacing as clear', () => {
+  const center = { x: 0, z: 0 };
+  const radius = 2.4;
+  const preferredAngle = 0;
+  const firstSlot = getConstructionApproachPoint(center, radius, preferredAngle, 0);
+  const oppositeSlot = getConstructionApproachPoint(center, radius, preferredAngle, 4);
+  const selected = selectConstructionApproachCandidateIndex(
+    firstSlot,
+    center,
+    radius,
+    preferredAngle,
+    [{ x: firstSlot.x, z: firstSlot.z + 1.35 }],
+  );
+
+  assert.equal(selected, 0, 'a reservation exactly at the preferred spacing must not receive an overlap penalty');
+  assert.ok(Math.hypot(oppositeSlot.x - firstSlot.x, oppositeSlot.z - firstSlot.z) > 1.35);
+});

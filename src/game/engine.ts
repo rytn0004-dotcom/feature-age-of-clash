@@ -10827,10 +10827,13 @@ export class RtsEngine {
     // around the wall and made blocked multi-segment routes look like idle villagers.
     const bldgRad = Math.max(getBuildingCollisionRadius(bldg), repairingWall ? bldg.buildingDef.size : 0);
     const workRingRad = bldgRad + 0.95;
-    const distToCenter = getDistance(unit.x, unit.z, bldg.x, bldg.z);
+    const deltaXToBuilding = unit.x - bldg.x;
+    const deltaZToBuilding = unit.z - bldg.z;
+    const distanceToBuildingSquared =
+      deltaXToBuilding * deltaXToBuilding + deltaZToBuilding * deltaZToBuilding;
     const buildReach = Math.max(2.2, bldgRad + 1.55);
 
-    if (distToCenter > buildReach) {
+    if (distanceToBuildingSquared > buildReach * buildReach) {
       if (unit.buildApproachBuildingId !== bldg.id) {
         const failedWorkers = this.constructionApproachFailedWorkersByBuilding.get(bldg.id);
         failedWorkers?.delete(unit.id);
@@ -10910,6 +10913,11 @@ export class RtsEngine {
       }
       return;
     }
+
+    // A square-distance check handles the common approach case above. Compute
+    // an exact distance only once a builder enters working range, where the
+    // hammer contact point uses it for consistent visual placement.
+    const distToCenter = Math.sqrt(distanceToBuildingSquared);
 
     // Reached a valid construction ring; do not carry a stale candidate into
     // the next wall segment or repair target.

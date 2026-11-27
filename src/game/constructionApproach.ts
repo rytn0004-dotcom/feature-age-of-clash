@@ -484,6 +484,7 @@ export function selectConstructionApproachCandidateIndex(
   const safeSpacing = Number.isFinite(preferredSpacing) ? Math.max(0, preferredSpacing) : 0;
   let bestIndex = 0;
   let bestScore = Number.POSITIVE_INFINITY;
+  const safeSpacingSquared = safeSpacing * safeSpacing;
   const candidatePoint = { x: 0, z: 0 };
 
   for (let index = 0; index < safeCount; index++) {
@@ -499,9 +500,14 @@ export function selectConstructionApproachCandidateIndex(
     let congestionPenalty = 0;
 
     for (const occupied of occupiedPoints) {
-      const separation = Math.hypot(candidatePoint.x - occupied.x, candidatePoint.z - occupied.z);
-      if (separation < safeSpacing) {
-        const overlap = safeSpacing - separation;
+      const dx = candidatePoint.x - occupied.x;
+      const dz = candidatePoint.z - occupied.z;
+      const separationSquared = dx * dx + dz * dz;
+      // Most nearby reservations are not close enough to affect this slot.
+      // Reject those with a squared-distance check and only take a square root
+      // for the relatively rare overlapping reservations that need a penalty.
+      if (separationSquared < safeSpacingSquared) {
+        const overlap = safeSpacing - Math.sqrt(separationSquared);
         congestionPenalty += overlap * overlap * 5;
       }
     }
