@@ -127,6 +127,50 @@ test('Quaternius deer GLB forward axis aligns with the procedural deer local +X 
   assert.ok(Math.abs(alignedForward.z) < 1e-9);
 });
 
+test('player-directed military hunting remains available only for living land wildlife', () => {
+  const wildlifeNodes = [
+    { resourceType: 'food', subtype: 'hunt', animalAlive: true, animalHp: 32 },
+    { resourceType: 'food', subtype: 'boar', animalAlive: true, animalHp: 200 },
+    { resourceType: 'food', subtype: 'aurochs', animalAlive: true, animalHp: 360 },
+  ] as const;
+  const hunterRoles = ['melee', 'ranged', 'cavalry', 'special'] as const;
+
+  for (const node of wildlifeNodes) {
+    assert.equal(canUnitReceiveGatherOrder(
+      { id: 'villager', category: 'worker', isNaval: false },
+      node,
+    ), true, 'workers retain their normal animal-gather/hunt order');
+
+    for (const category of hunterRoles) {
+      assert.equal(canUnitReceiveGatherOrder(
+        { id: category + '_hunter', category, isNaval: false },
+        node,
+      ), true, category + ' remains eligible for an explicit hunt command');
+    }
+
+    assert.equal(canUnitReceiveGatherOrder(
+      { id: 'siege_engine', category: 'siege', isNaval: false },
+      node,
+    ), false, 'siege engines must not be assigned animal-hunting work');
+    assert.equal(canUnitReceiveGatherOrder(
+      { id: 'warship', category: 'ranged', isNaval: true },
+      node,
+    ), false, 'naval units must not be assigned land-animal hunts');
+  }
+
+  const deadDeer = { ...wildlifeNodes[0], animalAlive: false, animalHp: 0 };
+  assert.equal(canUnitReceiveGatherOrder(
+    { id: 'spearman', category: 'melee', isNaval: false },
+    deadDeer,
+  ), false, 'a dead animal must not accept a new hunt order');
+
+  const ordinaryFood = { resourceType: 'food', subtype: 'berry' } as const;
+  assert.equal(canUnitReceiveGatherOrder(
+    { id: 'spearman', category: 'melee', isNaval: false },
+    ordinaryFood,
+  ), false, 'armed units keep their combat role and cannot harvest ordinary food');
+});
+
 test('AI age-up: protects the landmark budget after it can afford the cost until construction starts', () => {
   const ready = {
     age: 1,
