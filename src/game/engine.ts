@@ -14888,9 +14888,14 @@ export class RtsEngine {
       }
 
       const aiHasRam = hasAliveBatteringRam;
-      const aiRamBuilders = aiArmy
-        .filter((u) => u.unitDef.category === 'melee' && (u.state === 'idle' || u.state === 'moving'))
-        .slice(0, 4);
+      const aiRamBuilders: UnitEntity[] = [];
+      for (const unit of aiArmy) {
+        if (unit.unitDef.category !== 'melee' || (unit.state !== 'idle' && unit.state !== 'moving')) {
+          continue;
+        }
+        aiRamBuilders.push(unit);
+        if (aiRamBuilders.length === 4) break;
+      }
       if (
         aiAge >= 2 &&
         !aiHasRam &&
@@ -14926,11 +14931,12 @@ export class RtsEngine {
           (condition) => condition.field === 'workerCount' && condition.operator === '<'
         )?.value ?? 12;
       const minimumWorkersForAgeUp = ageUpReadiness.minimumWorkers;
-      let queuedWorkerCount = aiBuildings.reduce(
-        (total, building) =>
-          total + building.queue.filter((unitId) => unitId === aiCiv.workerUnitId).length,
-        0
-      );
+      let queuedWorkerCount = 0;
+      for (const building of aiBuildings) {
+        for (const queuedUnitId of building.queue) {
+          if (queuedUnitId === aiCiv.workerUnitId) queuedWorkerCount++;
+        }
+      }
       const aiWorkerDefinition = this.findUnitDef(aiCiv.workerUnitId, aiId);
 
       if (aiPop.totalReserved < aiMaxPop) {
