@@ -112,3 +112,38 @@ test('AI faction unit counters preserve production-role and military-cap semanti
   assert.equal(roster.militaryCount, 7, 'the military cap keeps counting living military units regardless of garrison');
   assert.equal(roster.mongolMountedArcherCount, 1);
 });
+
+
+test('AI unit and building roster subsets avoid repeat filters and retain original eligibility', () => {
+  const units = [
+    { id: 'melee', hp: 100, unitDefId: 'swordsman', unitDef: { category: 'melee' } },
+    { id: 'ram', hp: 100, unitDefId: 'battering_ram', unitDef: { category: 'siege' } },
+    { id: 'garrisoned-siege', hp: 100, unitDefId: 'ram', garrisonedInBuildingId: 'keep', unitDef: { category: 'siege' } },
+    { id: 'ranged', hp: 100, unitDefId: 'archer', unitDef: { category: 'ranged' } },
+  ];
+  const roster = classifyAiFactionUnits(
+    units,
+    (_id, category) => category !== 'worker',
+    (unit) => unit.unitDef.category === 'ranged',
+  );
+  assert.deepEqual(roster.nonSiegeArmy.map((unit) => unit.id), ['melee', 'ranged']);
+  assert.deepEqual(roster.siegeArmy.map((unit) => unit.id), ['ram']);
+  assert.equal(roster.meleeArmyCount, 1);
+  assert.equal(roster.hasBatteringRam, true);
+  assert.equal(roster.army.length, 3, 'garrisoned military units remain outside the field army');
+
+  const buildings = [
+    { id: 'farm', hp: 100, buildingType: 'farm' },
+    { id: 'farm-dead', hp: 0, buildingType: 'farm' },
+    { id: 'tower', hp: 100, buildingType: 'tower' },
+    { id: 'castle', hp: 100, buildingType: 'castle' },
+    { id: 'lumber', hp: 100, buildingType: 'lumber_camp' },
+    { id: 'mine', hp: 100, buildingType: 'mining_camp' },
+  ];
+  const buildingRoster = classifyAiFactionBuildings(buildings, 'unique');
+  assert.equal(buildingRoster.farmCount, 1);
+  assert.equal(buildingRoster.towerCount, 1);
+  assert.equal(buildingRoster.castleCount, 1);
+  assert.equal(buildingRoster.lumberCampCount, 1);
+  assert.equal(buildingRoster.miningCampCount, 1);
+});

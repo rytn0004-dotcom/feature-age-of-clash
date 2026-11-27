@@ -13655,6 +13655,10 @@ export class RtsEngine {
         workers: aiWorkers,
         activeWorkers: aiActiveWorkers,
         army: aiArmy,
+        nonSiegeArmy: aiNonSiegeArmy,
+        siegeArmy: aiSiegeArmy,
+        meleeArmyCount: aliveMeleeArmyCount,
+        hasBatteringRam: hasAliveBatteringRam,
         meleeCount: aliveMeleeCount,
         rangedSupportCount: aliveRangedSupportCount,
         cavalryCount: aliveCavalryCount,
@@ -13669,6 +13673,11 @@ export class RtsEngine {
       );
       const {
         buildings: aiBuildings,
+        farmCount: aiFarmCount,
+        towerCount: aiTowerCount,
+        castleCount: aiCastleCount,
+        lumberCampCount: aiLumberCampCount,
+        miningCampCount: aiMiningCampCount,
         townCenter: aiTC,
         barracks: aiBarracksList,
         archeryRanges: aiArcheryList,
@@ -14004,7 +14013,7 @@ export class RtsEngine {
               8,
               Math.max(3, Math.floor(aiArmy.length * (focus.ownerFaction === aiId ? 0.25 : 0.45)))
             );
-            const squad = (idleMil.length >= 2 ? idleMil : aiArmy.filter((u) => u.unitDef.category !== 'siege')).slice(
+            const squad = (idleMil.length >= 2 ? idleMil : aiNonSiegeArmy).slice(
               0,
               want
             );
@@ -14124,7 +14133,7 @@ export class RtsEngine {
           .filter((x) => x.cp.ownerFaction === 'neutral' || x.cp.ownerFaction === aiId)
           .sort((a, b) => a.d - b.d)[0];
         if (homeShrine && homeShrine.d < 45 && this.stats.gameDuration > 80) {
-          const squad = aiArmy.filter((u) => u.unitDef.category !== 'siege').slice(0, 3);
+          const squad = aiNonSiegeArmy.slice(0, 3);
           for (const u of squad) {
             if (u.state !== 'idle' && u.currentActionText !== '奪取據點') continue;
             u.attackMoveGoal = { x: homeShrine.cp.x, z: homeShrine.cp.z };
@@ -14668,11 +14677,11 @@ export class RtsEngine {
           const nearbyWildFood = landNodes.filter(
             (n) => n.amount > 0 && n.resourceType === 'food' && n.subtype !== 'farm' && getDistance(anchorX, anchorZ, n.x, n.z) <= 28
           ).length;
-          const aiFarms = aiBuildings.filter((b) => b.buildingType === 'farm').length;
-          const aiTowers = aiBuildings.filter((b) => b.buildingType === 'tower').length;
-          const aiCastles = aiBuildings.filter((b) => b.buildingType === 'castle').length;
-          const aiLumberCamps = aiBuildings.filter((b) => b.buildingType === 'lumber_camp').length;
-          const aiMiningCamps = aiBuildings.filter((b) => b.buildingType === 'mining_camp').length;
+          const aiFarms = aiFarmCount;
+          const aiTowers = aiTowerCount;
+          const aiCastles = aiCastleCount;
+          const aiLumberCamps = aiLumberCampCount;
+          const aiMiningCamps = aiMiningCampCount;
 
           if (hasDeepFish && aiDocks.length === 0 && aiWorkers.length >= 5 && aiRes.wood >= 150 && this.stats.gameDuration > 28) {
             this.tryAiConstructBuilding(aiId, 'dock', aiActiveWorkers, anchorX, anchorZ, toCenterAngle, 14, 54);
@@ -14844,7 +14853,7 @@ export class RtsEngine {
         age: aiAge,
         researched: researched.includes(FIELD_RAM_TECH_ID),
         researchInProgress: aiBuildings.some((b) => b.activeTechId === FIELD_RAM_TECH_ID),
-        meleeUnitCount: aiArmy.filter((u) => u.unitDef.category === 'melee').length,
+        meleeUnitCount: aliveMeleeArmyCount,
         hasAvailableBarracks: !!fieldResearchHall,
         prerequisitesMet: !!fieldEngineeringTech && canResearchTech(fieldEngineeringTech, researched, aiAge as AgeLevel).ok,
         resources: aiRes,
@@ -14878,7 +14887,7 @@ export class RtsEngine {
         this.startResearch(chosenTech.buildingId, chosenTech.tech.id);
       }
 
-      const aiHasRam = aiUnits.some((u) => u.hp > 0 && u.unitDefId === 'battering_ram');
+      const aiHasRam = hasAliveBatteringRam;
       const aiRamBuilders = aiArmy
         .filter((u) => u.unitDef.category === 'melee' && (u.state === 'idle' || u.state === 'moving'))
         .slice(0, 4);
@@ -14990,9 +14999,7 @@ export class RtsEngine {
         aiAge >= 2 &&
         aiArmy.length >= (personality === 'hard' ? 4 : 5) &&
         this.stats.gameDuration > (personality === 'hard' ? 70 : 100);
-      const siegeUnits = siegePushEnabled
-        ? aiArmy.filter((unit) => unit.hp > 0 && unit.unitDef.category === 'siege')
-        : [];
+      const siegeUnits = siegePushEnabled ? aiSiegeArmy : [];
       const enemyTc = siegePushEnabled
         ? aiHostileBuildings.find(
             (building) => building.hp > 0 && building.isConstructed && building.buildingType === 'town_center',
