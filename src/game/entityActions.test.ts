@@ -66,9 +66,14 @@ test('repairing an unfinished building restores refund eligibility only for HP a
   assert.equal(applyBuildingRepair(foundation, 3), 3);
   assert.equal(foundation.hp, 15);
   assert.equal(foundation.constructionDamageTaken, 5);
-  assert.equal(applyBuildingRepair(foundation, 10), 5);
-  assert.equal(foundation.hp, 20);
-  assert.equal(foundation.constructionDamageTaken, 0);
+  assert.equal(applyBuildingRepair(foundation, 10), 10, 'return value is total HP restored');
+  assert.equal(foundation.hp, 25);
+  assert.equal(foundation.constructionDamageTaken, 0, 'repair cannot leave negative damage debt');
+  assert.deepEqual(
+    calculateConstructionCancellationRefund(cost, foundation.hp, foundation.maxHp, 0.25, foundation.constructionDamageTaken),
+    cost,
+    'fully repaired attack damage restores the full cancellation refund',
+  );
   assert.equal(applyBuildingRepair(foundation, 50), 0);
   assert.equal(foundation.constructionDamageTaken, 0);
 
