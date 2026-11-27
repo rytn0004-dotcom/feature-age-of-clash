@@ -129,11 +129,11 @@ test('wildlife interaction query radius expands for explicit ranged hunters', ()
     category: 'ranged',
     state: 'gathering',
     targetResourceNodeId: 'deer-1',
-    range: 12,
+    range: 25,
   });
   assert.equal(getWildlifeInteractionQueryRadius([idleLongRange], 18), 18);
   assert.equal(getWildlifeInteractionQueryRadius([activeLongRange], 18), 60.5);
-  assert.equal(getWildlifeInteractionQueryRadius([assignedRanged], 18), 12.5);
+  assert.equal(getWildlifeInteractionQueryRadius([assignedRanged], 18), 25.5);
 });
 
 test('a directly assigned military hunter attacks its selected animal', () => {
