@@ -28,3 +28,14 @@ test('unit LOD selection: uses exact unit IDs without partial matches', () => {
   assert.equal(highDetailIds.has('unit-12'), true);
   assert.equal(highDetailIds.has('unit-2'), false);
 });
+
+test('unit animation cadence preserves close and selected detail while reducing distant updates', () => {
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(0), 0.05);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(28 * 28), 0.05);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(40 * 40), 0.1);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(58 * 58), 0.1);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(80 * 80), 0.2);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(80 * 80, true), 0.05);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(Number.NaN), 0.05);
+  assert.equal(getUnitAnimationUpdateIntervalSeconds(-1), 0.05);
+});

@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { groupEntitiesByFaction, rebuildEntityIdIndex } from './entityLookup';
 import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, takeNextUnitCommand } from './commandQueue';
-import { createUnitLodHighDetailSet } from './unitLodSelection';
+import {
+  createUnitLodHighDetailSet,
+  getUnitAnimationUpdateIntervalSeconds,
+} from './unitLodSelection';
 import {
   advanceUnitAttackWindup,
   getUnitAttackTiming,
@@ -683,6 +686,8 @@ export class RtsEngine {
 
   // Meshes cache
   private unitMeshes = new Map<string, THREE.Group>();
+  /** Reused O(1) membership set for units that must keep full-rate visual animation. */
+  private unitAnimationHighDetailIds = new Set<string>();
   private unitContactShadowBatch: THREE.InstancedMesh | null = null;
   private unitFactionRingBatch: THREE.InstancedMesh | null = null;
   private unitRoleCrestBatch: THREE.InstancedMesh | null = null;
@@ -7293,13 +7298,20 @@ export class RtsEngine {
     this.unitRoleCrestInstanceCursor = 0;
     this.unitRoleSiegeInstanceCursor = 0;
     this.unitBuffRingInstanceCursor = 0;
-    // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution
+    // Sync mesh positions & drive distance-locked procedural limb kinematics AFTER collision resolution.
+    // Only joint animation is cadence-limited; unit simulation, world positions, shadows, and markers
+    // still synchronize on every simulation step.
     phaseStartedAt = measurePhases ? performance.now() : 0;
+    const animationHighDetailIds = this.unitAnimationHighDetailIds;
+    animationHighDetailIds.clear();
+    for (const selectedId of this.selectedUnitIds) animationHighDetailIds.add(selectedId);
+    if (this.inspectedEntity?.type === 'unit') animationHighDetailIds.add(this.inspectedEntity.id);
     for (const unit of this.units) {
       if (unit.hp <= 0) continue;
       const mesh = this.unitMeshes.get(unit.id);
       if (mesh) {
         if (unit.garrisonedInBuildingId) {
+          mesh.userData.unitAnimationAccumulator = 0;
           mesh.visible = false;
           continue;
         }
@@ -7307,7 +7319,38 @@ export class RtsEngine {
         if (mesh.position.x !== unit.x || mesh.position.y !== 0 || mesh.position.z !== unit.z) {
           mesh.position.set(unit.x, 0, unit.z);
         }
-        this.animateUnitMesh(unit, mesh, dt);
+
+        const dx = unit.x - this.cameraTarget.x;
+        const dz = unit.z - this.cameraTarget.z;
+        const forceHighDetail =
+          animationHighDetailIds.has(unit.id) ||
+          unit.state === 'building' ||
+          unit.state === 'assembling';
+        const interval = getUnitAnimationUpdateIntervalSeconds(dx * dx + dz * dz, forceHighDetail);
+        const accumulated = Math.max(
+          0,
+          Number.isFinite(mesh.userData.unitAnimationAccumulator)
+            ? mesh.userData.unitAnimationAccumulator
+            : 0,
+        ) + dt;
+        const hasImmediateVisualEvent =
+          (unit.hitFlashTimer ?? 0) > 0 ||
+          (unit.recoilTimer ?? 0) > 0 ||
+          Number((unit as any)._attackSwing) > 0 ||
+          Number((unit as any)._huntAttackSwing) > 0;
+
+        if (hasImmediateVisualEvent) {
+          // A newly applied hit/swing must be shown immediately, not consumed by
+          // the time accumulated while this distant unit was on a lower cadence.
+          this.animateUnitMesh(unit, mesh, dt);
+          mesh.userData.unitAnimationAccumulator = 0;
+        } else if (accumulated >= interval) {
+          this.animateUnitMesh(unit, mesh, accumulated);
+          mesh.userData.unitAnimationAccumulator = accumulated % interval;
+        } else {
+          mesh.userData.unitAnimationAccumulator = accumulated;
+        }
+
         this.writeUnitDecorationInstances(mesh);
         this.writeUnitRoleAndBuffInstances(mesh);
       }
