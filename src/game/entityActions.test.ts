@@ -74,8 +74,9 @@ test('repairing an unfinished building restores refund eligibility only for HP a
     cost,
     'fully repaired attack damage restores the full cancellation refund',
   );
-  assert.equal(applyBuildingRepair(foundation, 50), 0);
-  assert.equal(foundation.constructionDamageTaken, 0);
+  assert.equal(applyBuildingRepair(foundation, 50), 50);
+  assert.equal(foundation.hp, 75);
+  assert.equal(foundation.constructionDamageTaken, 0, 'additional repair cannot create negative damage debt');
 
   const completed = { hp: 50, maxHp: 100, isConstructed: true, constructionDamageTaken: 10 };
   assert.equal(applyBuildingRepair(completed, 5), 5);
