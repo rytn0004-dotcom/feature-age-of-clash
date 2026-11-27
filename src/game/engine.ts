@@ -13499,7 +13499,8 @@ export class RtsEngine {
     aiId: FactionId,
     aiCiv: ReturnType<typeof getCivilizationConfig>,
     rawTargetId: string,
-    aiBuildings: BuildingEntity[]
+    aiBuildings: BuildingEntity[],
+    aiUnits: readonly UnitEntity[],
   ): boolean {
     let unitDefId = rawTargetId;
     if (rawTargetId === 'villager') {
@@ -13508,12 +13509,14 @@ export class RtsEngine {
       unitDefId = aiCiv.starterMeleeUnitId;
     } else if (rawTargetId === 'longbowman') {
       if (aiCiv.id === 'mongol') {
-        let rangedCount = this.units.filter(
-          (unit) => unit.faction === aiId && unit.hp > 0 && isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category)
-        ).length;
-        let shamanCount = this.units.filter(
-          (unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_shaman'
-        ).length;
+        let rangedCount = 0;
+        let shamanCount = 0;
+        // evaluateAiLogic already owns the live, faction-filtered roster. Reuse
+        // it instead of scanning the entire battlefield twice for each request.
+        for (const unit of aiUnits) {
+          if (isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category)) rangedCount++;
+          if (unit.unitDefId === 'mongol_shaman') shamanCount++;
+        }
         for (const building of aiBuildings) {
           for (const queuedUnitId of building.queue) {
             const queuedDef = this.findUnitDef(queuedUnitId, aiId);
@@ -13529,8 +13532,13 @@ export class RtsEngine {
       }
     } else if (rawTargetId === 'knight') {
       if (aiCiv.id === 'mongol') {
-        let lancerCount = this.units.filter((unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_lancer').length;
-        let keshikCount = this.units.filter((unit) => unit.faction === aiId && unit.hp > 0 && unit.unitDefId === 'mongol_keshik').length;
+        let lancerCount = 0;
+        let keshikCount = 0;
+        // Count both cavalry roles in one pass over the same faction-local roster.
+        for (const unit of aiUnits) {
+          if (unit.unitDefId === 'mongol_lancer') lancerCount++;
+          if (unit.unitDefId === 'mongol_keshik') keshikCount++;
+        }
         for (const building of aiBuildings) {
           lancerCount += building.queue.filter((queuedUnitId) => queuedUnitId === 'mongol_lancer').length;
           keshikCount += building.queue.filter((queuedUnitId) => queuedUnitId === 'mongol_keshik').length;
@@ -14915,7 +14923,7 @@ export class RtsEngine {
               continue;
             }
           }
-          const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings);
+          const queued = this.resolveAiTrainRequest(aiId, aiCiv, targetId, aiBuildings, aiUnits);
           if (queued) {
             if (isVillagerTrain) {
               queuedWorkerCount++;
