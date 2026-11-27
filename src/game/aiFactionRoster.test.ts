@@ -147,3 +147,48 @@ test('AI unit and building roster subsets avoid repeat filters and retain origin
   assert.equal(buildingRoster.lumberCampCount, 1);
   assert.equal(buildingRoster.miningCampCount, 1);
 });
+
+
+test('AI hostile roster collection matches team/faction hostility and reuses stable-order output', async () => {
+  const {
+    collectAiHostileEntitiesInOrder,
+    isAiFactionHostile,
+  } = await import('./aiFactionRoster');
+  const teamByFaction = new Map<string, number | undefined>([
+    ['blue', 1],
+    ['ally', 1],
+    ['red', 2],
+    ['green', 3],
+    ['no-team', undefined],
+  ]);
+  const entities = [
+    { id: 'blue-unit', faction: 'blue', team: 1, hp: 100 },
+    { id: 'ally-unit', faction: 'ally', team: 1, hp: 100 },
+    { id: 'red-unit', faction: 'red', team: 2, hp: 100 },
+    { id: 'green-unit', faction: 'green', hp: 100 },
+    { id: 'neutral-unit', faction: 'neutral', hp: 100 },
+    { id: 'dead-red-unit', faction: 'red', team: 2, hp: 0 },
+    { id: 'no-team-unit', faction: 'no-team', hp: 100 },
+  ];
+
+  assert.equal(isAiFactionHostile('blue', 1, entities[2], teamByFaction), true);
+  assert.equal(isAiFactionHostile('blue', 1, entities[1], teamByFaction), false);
+  assert.equal(isAiFactionHostile('blue', 1, entities[4], teamByFaction), false);
+  assert.equal(isAiFactionHostile('blue', undefined, entities[2], teamByFaction), true);
+  assert.equal(isAiFactionHostile('blue', undefined, entities[6], teamByFaction), true);
+
+  const output = [{ id: 'stale', faction: 'red', hp: 1 }];
+  const first = collectAiHostileEntitiesInOrder(entities, 'blue', 1, teamByFaction, output);
+  assert.equal(first, output);
+  assert.deepEqual(first.map((entity) => entity.id), ['red-unit', 'green-unit']);
+
+  const second = collectAiHostileEntitiesInOrder(
+    entities.slice(0, 2),
+    'blue',
+    1,
+    teamByFaction,
+    output,
+  );
+  assert.equal(second, output);
+  assert.deepEqual(second.map((entity) => entity.id), [], 'the reused output must not leak a previous enemy roster');
+});

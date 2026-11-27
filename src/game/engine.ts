@@ -113,7 +113,11 @@ import {
   getTrainingTimeMultiplier,
 } from './civilizations';
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolLancer, shouldTrainMongolShaman } from './mongolAi';
-import { classifyAiFactionBuildings, classifyAiFactionUnits } from './aiFactionRoster';
+import {
+  classifyAiFactionBuildings,
+  classifyAiFactionUnits,
+  collectAiHostileEntitiesInOrder,
+} from './aiFactionRoster';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import {
@@ -895,6 +899,11 @@ export class RtsEngine {
   private aiBuildingGroupsSource: BuildingEntity[] | null = null;
   private aiBuildingGroupsLength = -1;
   private aiBuildingGroupsByFaction = new Map<string, BuildingEntity[]>();
+  /** Reusable enemy-team lookup and ordered hostile entity rosters for AI planning. */
+  private aiFactionTeamByIdScratch = new Map<string, number | undefined>();
+  private aiHostileUnitRosterScratch: UnitEntity[] = [];
+  private aiHostileWorkerRosterScratch: UnitEntity[] = [];
+  private aiHostileBuildingRosterScratch: BuildingEntity[] = [];
   private aiDecisionFactionIds: FactionId[] = [];
   private aiDecisionSchedulerState: AiDecisionSchedulerState = { accumulatorSeconds: 0, cursor: 0 };
   private aiDecisionCount = 0;
@@ -1698,6 +1707,10 @@ export class RtsEngine {
     this.aiUnitGroupsSource = null;
     this.aiUnitGroupsLength = -1;
     this.aiUnitGroupsByFaction.clear();
+    this.aiFactionTeamByIdScratch.clear();
+    this.aiHostileUnitRosterScratch.length = 0;
+    this.aiHostileWorkerRosterScratch.length = 0;
+    this.aiHostileBuildingRosterScratch.length = 0;
     this.battlefieldLeadershipRosterSource = null;
     this.battlefieldLeadershipRosterLength = -1;
     this.battlefieldLeadershipCandidates.length = 0;
@@ -13630,6 +13643,11 @@ export class RtsEngine {
     const buildingsByFaction = this.getAiBuildingGroupsByFaction();
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
+    const teamByFaction = this.aiFactionTeamByIdScratch;
+    teamByFaction.clear();
+    for (const participant of this.participants) {
+      teamByFaction.set(participant.id, participant.team);
+    }
 
     for (const participant of this.participants) {
       if (participant.controller !== 'ai' || (onlyFactionId && participant.id !== onlyFactionId)) continue;
@@ -13757,14 +13775,31 @@ export class RtsEngine {
         }
       }
 
-      // Build each AI's live hostile rosters once, then reuse them throughout this planning pass.
-      const aiReference = { faction: aiId, team: aiTeam };
-      const aiHostileUnits = this.units.filter(
-        (unit) => unit.hp > 0 && this.isHostile(aiReference, unit),
+      // Collect hostile entities in original world order into reusable buffers.
+      // Team lookups are cached once for the AI batch, and hostile workers/army
+      // counts are derived in the same pass instead of filtering the roster again.
+      const aiHostileUnits = collectAiHostileEntitiesInOrder(
+        this.units,
+        aiId,
+        aiTeam,
+        teamByFaction,
+        this.aiHostileUnitRosterScratch,
       );
-      const aiHostileBuildings = this.buildings.filter(
-        (building) => building.hp > 0 && this.isHostile(aiReference, building),
+      const aiHostileBuildings = collectAiHostileEntitiesInOrder(
+        this.buildings,
+        aiId,
+        aiTeam,
+        teamByFaction,
+        this.aiHostileBuildingRosterScratch,
       );
+      const aiHostileWorkers = this.aiHostileWorkerRosterScratch;
+      aiHostileWorkers.length = 0;
+      let enemyArmyCount = 0;
+      for (const enemy of aiHostileUnits) {
+        if (enemy.garrisonedInBuildingId) continue;
+        if (enemy.unitDef.category === 'worker') aiHostileWorkers.push(enemy);
+        else enemyArmyCount++;
+      }
 
       const anchorX = aiTC?.x ?? aiBuildings[0]?.x ?? 0;
       const anchorZ = aiTC?.z ?? aiBuildings[0]?.z ?? 0;
@@ -13957,10 +13992,7 @@ export class RtsEngine {
         }
       }
 
-      const enemyArmyCount = aiHostileUnits.filter(
-        (unit) => unit.hp > 0 && !unit.garrisonedInBuildingId && unit.unitDef.category !== 'worker',
-      ).length;
-
+      // Enemy army count and exposed worker roster were collected with the hostile units above.
 
       // 1b. Map control: contested shrines + deny high-value resources
       if (participant.aiPersonality !== 'defensive' || underAttack) {
@@ -14038,9 +14070,7 @@ export class RtsEngine {
           aiArmy.length >= raidArmyMin &&
           this.stats.gameDuration > raidTimeGate
         ) {
-          const enemyWorkers = aiHostileUnits.filter(
-            (unit) => unit.hp > 0 && unit.unitDef.category === 'worker' && !unit.garrisonedInBuildingId,
-          );
+          const enemyWorkers = aiHostileWorkers;
           let bestRaid: { x: number; z: number; score: number; targetId?: string } | null = null;
           for (const ew of enemyWorkers) {
             let score = 20;
@@ -15230,9 +15260,7 @@ export class RtsEngine {
           );
 
           // Preferred soft targets: exposed enemy villagers
-          const exposedWorkers = aiHostileUnits.filter(
-            (unit) => unit.hp > 0 && unit.unitDef.category === 'worker' && !unit.garrisonedInBuildingId,
-          );
+          const exposedWorkers = aiHostileWorkers;
           const exposedWorkerById = new Map(exposedWorkers.map((worker) => [worker.id, worker] as const));
           const raiderUnits = strikeUnits.filter(
             (unit, idx) =>

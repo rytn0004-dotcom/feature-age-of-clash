@@ -207,3 +207,48 @@ export function classifyAiFactionBuildings<Building extends AiRosterBuildingLike
     uniqueBuilding,
   };
 }
+
+
+export interface AiFactionIdentity {
+  faction: string;
+  team?: number;
+}
+
+export interface AiHostileEntityLike extends AiFactionIdentity {
+  hp: number;
+}
+
+/** Matches the engine's areHostile fallback rules without repeated participant lookups. */
+export function isAiFactionHostile(
+  referenceFaction: string,
+  referenceTeam: number | undefined,
+  entity: AiFactionIdentity,
+  teamByFaction: ReadonlyMap<string, number | undefined>,
+): boolean {
+  if (referenceFaction === 'neutral' || entity.faction === 'neutral') return false;
+
+  const teamA = referenceTeam ?? teamByFaction.get(referenceFaction);
+  const teamB = entity.team ?? teamByFaction.get(entity.faction);
+  if (teamA !== undefined && teamB !== undefined) return teamA !== teamB;
+  return referenceFaction !== entity.faction;
+}
+
+/** Reuses caller-owned storage and preserves the source world's entity order. */
+export function collectAiHostileEntitiesInOrder<Entity extends AiHostileEntityLike>(
+  entities: readonly Entity[],
+  referenceFaction: string,
+  referenceTeam: number | undefined,
+  teamByFaction: ReadonlyMap<string, number | undefined>,
+  output: Entity[],
+): Entity[] {
+  output.length = 0;
+  for (const entity of entities) {
+    if (
+      entity.hp > 0 &&
+      isAiFactionHostile(referenceFaction, referenceTeam, entity, teamByFaction)
+    ) {
+      output.push(entity);
+    }
+  }
+  return output;
+}
