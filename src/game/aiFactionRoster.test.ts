@@ -180,7 +180,11 @@ test('AI hostile roster collection matches team/faction hostility and reuses sta
   const output = [{ id: 'stale', faction: 'red', hp: 1 }];
   const first = collectAiHostileEntitiesInOrder(entities, 'blue', 1, teamByFaction, output);
   assert.equal(first, output);
-  assert.deepEqual(first.map((entity) => entity.id), ['red-unit', 'green-unit']);
+  assert.deepEqual(
+    first.map((entity) => entity.id),
+    ['red-unit', 'green-unit', 'no-team-unit'],
+    'entities without a team retain the legacy faction-inequality fallback',
+  );
 
   const second = collectAiHostileEntitiesInOrder(
     entities.slice(0, 2),
