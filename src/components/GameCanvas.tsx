@@ -719,7 +719,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         hasNavalBoatSelected = true;
       }
       if (
-        canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
+        canUnitHuntWildlife(unit.unitDef, 'aurochs') &&
           unit.state !== 'assembling' &&
           !unit.fieldAssemblyProjectId
       ) {
