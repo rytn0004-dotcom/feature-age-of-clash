@@ -60,6 +60,11 @@ import {
   STAR_RELIC_FALL_AT,
 } from './rules';
 import { AiRule, ResourceNode, EntityCommon, UnitEntity } from '../types/game';
+import {
+  DEER_ASSET_FORWARD_ALIGNMENT_YAW,
+  getWildlifeFacingYaw,
+  getWildlifeForwardDirection,
+} from './wildlifeFacing';
 import { DEFAULT_BUILDINGS, MEDIEVAL_UNITS, ANIME_UNITS, FANTASY_UNITS, MONGOL_UNITS, SHARED_UNITS, INITIAL_MODS, DEFAULT_AI_RULES, DEFENSIVE_AI_RULES, EASY_AI_RULES, HARD_AI_RULES } from './mods';
 import {
   canResearchTech,
@@ -74,6 +79,49 @@ import {
   PRODUCTION_TIME_SCALE,
 } from './civilizations';
 
+
+
+test('wild deer model heading follows collision-resolved movement in every XZ direction', () => {
+  const movements = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+    { dx: 3, dz: 4 },
+    { dx: -4, dz: -3 },
+  ];
+
+  for (const movement of movements) {
+    const yaw = getWildlifeFacingYaw(movement.dx, movement.dz);
+    assert.notEqual(yaw, null);
+
+    const forward = getWildlifeForwardDirection(yaw!);
+    assert.notEqual(forward, null);
+    const length = Math.hypot(movement.dx, movement.dz);
+    assert.ok(Math.abs(forward!.x - movement.dx / length) < 1e-9);
+    assert.ok(Math.abs(forward!.z - movement.dz / length) < 1e-9);
+  }
+});
+
+test('wild deer keeps its previous heading when displacement is too small or invalid', () => {
+  assert.equal(getWildlifeFacingYaw(0, 0), null);
+  assert.equal(getWildlifeFacingYaw(0.002, 0), null);
+  assert.equal(getWildlifeFacingYaw(Number.NaN, 1), null);
+  assert.equal(getWildlifeFacingYaw(1, Number.POSITIVE_INFINITY), null);
+  assert.equal(getWildlifeForwardDirection(Number.NaN), null);
+});
+
+test('Quaternius deer GLB forward axis aligns with the procedural deer local +X axis', () => {
+  // The GLB's internal coordinate conversion makes its forward axis local +Z.
+  // Three.js Y rotation maps +Z to (sin(yaw), cos(yaw)).
+  const alignedForward = {
+    x: Math.sin(DEER_ASSET_FORWARD_ALIGNMENT_YAW),
+    z: Math.cos(DEER_ASSET_FORWARD_ALIGNMENT_YAW),
+  };
+
+  assert.ok(Math.abs(alignedForward.x - 1) < 1e-9);
+  assert.ok(Math.abs(alignedForward.z) < 1e-9);
+});
 
 test('AI age-up: protects the landmark budget after it can afford the cost until construction starts', () => {
   const ready = {

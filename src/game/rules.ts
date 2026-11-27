@@ -21,6 +21,7 @@ import {
 } from '../types/game';
 import { findTechDef, getCappedProductionSpeedMultiplier, getEffectiveProductionDuration, getResourceGatherTechMultiplier } from './civilizations';
 import { estimateDeliveredResourcePerMinute } from './economyInsights';
+import { getWildlifeFacingYaw } from './wildlifeFacing';
 
 // Shared deterministic order for small, frequent AI economy loops.
 const AI_RESOURCE_TYPES: readonly ResourceType[] = ['food', 'wood', 'gold', 'stone'];
@@ -3595,14 +3596,12 @@ export function stepWildAnimalState(
   const distMoved = Math.hypot(dxMoved, dzMoved);
   const actualSpeed = distMoved / clampedDt;
 
-  // Update facing yaw strictly from actual ground translation (facing +X in local deer mesh => atan2(-dz, dx))
+  // Update facing strictly from actual post-collision translation so the model
+  // never appears to run sideways while its velocity or route changes.
   let yaw = node.animalYaw ?? 0;
-  if (distMoved > 0.002 && actualSpeed > 0.15) {
-    // The procedural deer rig faces local +X. Match its heading to the
-    // collision-resolved displacement immediately; easing this rotation lets
-    // the legs animate in the new travel direction while the body still faces
-    // the old one, producing a visible moonwalk during sharp evasive turns.
-    yaw = Math.atan2(-dzMoved, dxMoved);
+  const displacementYaw = getWildlifeFacingYaw(dxMoved, dzMoved);
+  if (displacementYaw !== null && actualSpeed > 0.15) {
+    yaw = displacementYaw;
   }
   node.animalYaw = yaw;
 

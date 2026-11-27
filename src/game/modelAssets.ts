@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { DEER_ASSET_FORWARD_ALIGNMENT_YAW } from './wildlifeFacing';
 
 export type KayKitTreeVariant = 'A' | 'B';
 
@@ -88,9 +89,10 @@ export function attachDeerAssetLod(root: THREE.Group): void {
       if (!root.parent || root.userData.deerAssetLod) return;
 
       const model = cloneSkeleton(prototype.scene) as THREE.Group;
-      // The source animal faces local -Z; rotate that forward axis onto the
-      // procedural deer rig's +X heading so both LODs turn identically.
-      model.rotation.y = -Math.PI / 2;
+      // The GLB's internal Z-up conversion leaves the deer facing local +Z
+      // (Head bone sits ahead of Back along that axis). Rotate +90° around Y
+      // to align its forward axis with the procedural rig's local +X heading.
+      model.rotation.y = DEER_ASSET_FORWARD_ALIGNMENT_YAW;
       model.updateMatrixWorld(true);
 
       const bounds = new THREE.Box3().setFromObject(model);
