@@ -132,7 +132,9 @@ export function getResourceColliderRadius(
 
 const COLLISION_CELL_SIZE = 8;
 
-export interface CollisionEntry<T> { item: T; index: number; radius: number; key: string }
+export type CollisionBucketKey = number | string;
+
+export interface CollisionEntry<T> { item: T; index: number; radius: number; key: CollisionBucketKey }
 
 function compareCollisionEntriesByIndex<T>(
   first: CollisionEntry<T>,
@@ -142,7 +144,7 @@ function compareCollisionEntriesByIndex<T>(
 }
 
 export interface CollisionIndex<T> {
-  buckets: Map<string, CollisionEntry<T>[]>;
+  buckets: Map<CollisionBucketKey, CollisionEntry<T>[]>;
   entries: Array<CollisionEntry<T> | undefined>;
   entryCount: number;
   maxRadius: number;
@@ -178,15 +180,38 @@ function nextCollisionVisitToken(requiredLength: number): number {
   return collisionVisitToken;
 }
 
-function collisionKey(x: number, z: number): string {
-  return `${Math.floor(x / COLLISION_CELL_SIZE)}:${Math.floor(z / COLLISION_CELL_SIZE)}`;
+const PACKED_COLLISION_KEY_RADIX = 2 ** 26;
+const PACKED_COLLISION_X_LIMIT = 2 ** 26;
+const PACKED_COLLISION_Z_LIMIT = 2 ** 25;
+
+/** Packs ordinary battlefield cells into exact numeric keys with a safe string fallback. */
+function collisionCellKey(cellX: number, cellZ: number): CollisionBucketKey {
+  if (
+    Number.isSafeInteger(cellX) &&
+    Number.isSafeInteger(cellZ) &&
+    cellX > -PACKED_COLLISION_X_LIMIT &&
+    cellX < PACKED_COLLISION_X_LIMIT &&
+    cellZ >= -PACKED_COLLISION_Z_LIMIT &&
+    cellZ < PACKED_COLLISION_Z_LIMIT
+  ) {
+    return cellX * PACKED_COLLISION_KEY_RADIX + cellZ;
+  }
+
+  return cellX + ':' + cellZ;
+}
+
+function collisionKey(x: number, z: number): CollisionBucketKey {
+  return collisionCellKey(
+    Math.floor(x / COLLISION_CELL_SIZE),
+    Math.floor(z / COLLISION_CELL_SIZE),
+  );
 }
 
 
 
 function createEmptyCollisionIndex<T>(): CollisionIndex<T> {
   return {
-    buckets: new Map<string, CollisionEntry<T>[]>(),
+    buckets: new Map<CollisionBucketKey, CollisionEntry<T>[]>(),
     entries: [],
     entryCount: 0,
     maxRadius: 0,
@@ -304,8 +329,9 @@ function nearbyCollisionEntries<T extends { x: number; z: number }>(
   found.length = 0;
   for (let cx = minX; cx <= maxX; cx++) {
     for (let cz = minZ; cz <= maxZ; cz++) {
-      const bucket = index.buckets.get(`${cx}:${cz}`);
-      if (bucket) found.push(...bucket);
+      const bucket = index.buckets.get(collisionCellKey(cx, cz));
+      if (!bucket) continue;
+      for (const entry of bucket) found.push(entry);
     }
   }
   found.sort(compareCollisionEntriesByIndex);

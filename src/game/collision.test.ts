@@ -410,7 +410,8 @@ test('collision scratch: reuses collision maps, entries, buckets and candidate b
   assert.equal(scratch.unitIndex.buckets, unitMap);
   assert.equal(scratch.unitIndex.entries, unitEntries);
   assert.ok(previousUnitEntries.has(scratch.unitIndex.entries[0]!), 'an existing entity entry object should be recycled');
-  assert.ok(previousUnitBuckets.has(scratch.unitIndex.buckets.get('8:8')!), 'an existing unit bucket array should be recycled');
+  const packedNextCellKey = 8 * (2 ** 26) + 8;
+  assert.ok(previousUnitBuckets.has(scratch.unitIndex.buckets.get(packedNextCellKey)!), 'an existing unit bucket array should be recycled');
   assert.equal(scratch.unitCandidates, unitCandidates);
   assert.deepEqual(scratch.unitIndex.entries.map(entry => entry?.item.id), ['next-unit']);
 
@@ -500,4 +501,21 @@ test('wildlife broad-phase radius grows for oversized structures and remains con
 
   const invalidCurrent = extendMaximumBuildingCollisionRadius(Number.NaN, makeBuilding('town-center', 0, 0, 'town_center'));
   assert.equal(invalidCurrent, 4.18);
+});
+
+
+test('collision grid: packs negative cells and safely falls back for extreme coordinates', () => {
+  const scratch = createCollisionResolutionScratch();
+  const units = [
+    makeUnit('negative-cell', -17, -33),
+    makeUnit('positive-extreme', 0, 600_000_000),
+    makeUnit('negative-extreme', 0, -600_000_000),
+  ];
+
+  resolveUnitUnitCollisions(units, 0, scratch);
+
+  const keys = [...scratch.unitIndex.buckets.keys()];
+  assert.ok(keys.includes(-3 * (2 ** 26) - 5), 'ordinary negative cells should use packed numeric keys');
+  assert.ok(keys.includes('0:75000000'), 'large positive cells should use the safe string fallback');
+  assert.ok(keys.includes('0:-75000000'), 'large negative cells should use a distinct safe string fallback');
 });
