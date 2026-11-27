@@ -4575,6 +4575,34 @@ test('wild boar and aurochs models face their actual charge and return direction
       const dot = forward!.x * movedX / distance + forward!.z * movedZ / distance;
       assert.ok(dot > 0.999999, `${subtype} model must face its resolved movement direction`);
     }
+
+    const returningAnimal: ResourceNode = {
+      id: `${subtype}-return-heading`,
+      resourceType: 'food',
+      subtype,
+      x: 5,
+      z: 0,
+      amount: 900,
+      maxAmount: 900,
+      animalAlive: true,
+      animalVx: 0,
+      animalVz: 0,
+      animalYaw: 0,
+    };
+    const returnStep = stepWildBoarState(
+      returningAnimal,
+      null,
+      0.1,
+      () => false,
+      { x: 0, z: 0 },
+    );
+    const returnForward = getWildlifeForwardDirection(returnStep.yaw);
+    const returnDistance = Math.hypot(returningAnimal.x - 5, returningAnimal.z);
+    assert.ok(returnDistance > 0.002, `${subtype} should move toward its habitat`);
+    assert.ok(returnForward);
+    const returnDot = returnForward!.x * (returningAnimal.x - 5) / returnDistance +
+      returnForward!.z * returningAnimal.z / returnDistance;
+    assert.ok(returnDot > 0.999999, `${subtype} must face its actual return direction`);
   }
 });
 

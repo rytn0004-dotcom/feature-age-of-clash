@@ -3855,6 +3855,7 @@ export function stepWildBoarState(
   let targetVx = 0;
   let targetVz = 0;
   let isCharging = false;
+  let movementAngle: number | null = null;
   let facingIntentAngle: number | null = null;
   let movementWasBlocked = false;
 
