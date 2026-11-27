@@ -241,6 +241,7 @@ import {
   selectOptimalCombatTarget,
   shouldSwitchCombatTarget,
   type CombatTargetContext,
+  type CombatTargetSelectionScratch,
   isWallLinkedToTower,
   shouldBreachWallAfterSiegeHit,
   WALL_REPAIR_COST,
@@ -594,6 +595,11 @@ export class RtsEngine {
   private combatTargetQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
     buildings: [],
+  };
+  /** Reused candidate/pressure buffers for frequent nearby combat target scans. */
+  private combatTargetSelectionScratch: CombatTargetSelectionScratch = {
+    nearbyAllies: [],
+    alliesOnTargetCounts: new Map(),
   };
   private cavalryRetreatQueryScratch: CombatSpatialCandidates<UnitEntity, BuildingEntity> = {
     units: [],
@@ -8088,6 +8094,7 @@ export class RtsEngine {
       includeBuildings ? candidates.buildings : [],
       candidates.units,
       { ...context, maxSearchRange: safeRange },
+      this.combatTargetSelectionScratch,
     );
   }
 

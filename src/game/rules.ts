@@ -2367,6 +2367,12 @@ export interface CombatTargetContext {
   maxSearchRange?: number;
 }
 
+/** Reusable buffers for the synchronous per-unit target-selection hot path. */
+export interface CombatTargetSelectionScratch {
+  nearbyAllies: UnitEntity[];
+  alliesOnTargetCounts: Map<string, number>;
+}
+
 const DEFENSIVE_BUILDING_TYPES = new Set([
   'tower',
   'castle',
@@ -2394,9 +2400,10 @@ function scoreUnitMatchupTargetInternal(
   alliedUnits: UnitEntity[] = [],
   context: CombatTargetContext = {},
   nearbyAlliesOnly = false,
-  precomputedAlliesOnTarget?: ReadonlyMap<string, number>
+  precomputedAlliesOnTarget?: ReadonlyMap<string, number>,
+  precomputedDistance?: number,
 ): number {
-  const dist = getDistance(attacker.x, attacker.z, target.x, target.z);
+  const dist = precomputedDistance ?? getDistance(attacker.x, attacker.z, target.x, target.z);
   const attackerCat = attacker.unitDef.category;
   const isFastFlanker = attackerCat === 'cavalry' || attacker.unitDef.stats.speed >= 4.8;
   const isSiege = attackerCat === 'siege' || attacker.unitDefId === 'fantasy_treant';
@@ -2517,19 +2524,22 @@ export function selectOptimalCombatTarget(
   hostileUnits: UnitEntity[],
   hostileBuildings: BuildingEntity[] = [],
   alliedUnits: UnitEntity[] = [],
-  context: CombatTargetContext = {}
+  context: CombatTargetContext = {},
+  scratch?: CombatTargetSelectionScratch,
 ): UnitEntity | BuildingEntity | null {
   const maxRange = context.maxSearchRange ?? Infinity;
   const selfRef = { faction: attacker.faction, team: attacker.team };
 
-  const nearbyAllies = alliedUnits.filter(
-    (ally) =>
-      ally.id !== attacker.id &&
-      ally.hp > 0 &&
-      ally.faction === attacker.faction &&
-      getDistance(attacker.x, attacker.z, ally.x, ally.z) <= 16
-  );
-  const alliesOnTargetCounts = new Map<string, number>();
+  const nearbyAllies = scratch?.nearbyAllies ?? [];
+  nearbyAllies.length = 0;
+  for (const ally of alliedUnits) {
+    if (ally.id === attacker.id || ally.hp <= 0 || ally.faction !== attacker.faction) continue;
+    const dx = attacker.x - ally.x;
+    const dz = attacker.z - ally.z;
+    if (dx * dx + dz * dz <= 256) nearbyAllies.push(ally);
+  }
+  const alliesOnTargetCounts = scratch?.alliesOnTargetCounts ?? new Map<string, number>();
+  alliesOnTargetCounts.clear();
   for (const ally of nearbyAllies) {
     if (ally.id === attacker.id || !ally.targetEntityId || ally.hp <= 0) continue;
     alliesOnTargetCounts.set(
@@ -2545,7 +2555,7 @@ export function selectOptimalCombatTarget(
     if (u.hp <= 0 || u.garrisonedInBuildingId || !areHostile(selfRef, u)) continue;
     const d = getDistance(attacker.x, attacker.z, u.x, u.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true, alliesOnTargetCounts);
+    const s = scoreUnitMatchupTargetInternal(attacker, u, nearbyAllies, context, true, alliesOnTargetCounts, d);
     if (s > bestScore || (s === bestScore && (!bestTarget || u.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = u;
@@ -2556,7 +2566,7 @@ export function selectOptimalCombatTarget(
     if (b.hp <= 0 || !areHostile(selfRef, b)) continue;
     const d = getDistance(attacker.x, attacker.z, b.x, b.z);
     if (d > maxRange) continue;
-    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true, alliesOnTargetCounts);
+    const s = scoreUnitMatchupTargetInternal(attacker, b, nearbyAllies, context, true, alliesOnTargetCounts, d);
     if (s > bestScore || (s === bestScore && (!bestTarget || b.id.localeCompare(bestTarget.id) < 0))) {
       bestScore = s;
       bestTarget = b;

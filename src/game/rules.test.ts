@@ -1236,7 +1236,13 @@ test('AI worker production counts queued villagers and protects the next-age lan
 });
 
 test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire select optimal targets', async () => {
-  const { selectOptimalCombatTarget, selectClusterFocusTarget, shouldSwitchCombatTarget, assignRaidTargets } = await import('./rules');
+  const {
+    selectOptimalCombatTarget,
+    selectClusterFocusTarget,
+    shouldSwitchCombatTarget,
+    assignRaidTargets,
+    createCombatTargetSelectionScratch,
+  } = await import('./rules');
 
   const mkUnit = (
     id: string,
@@ -1319,6 +1325,41 @@ test('tactical-combat: 1v1 counter matchups and coordinated cluster focus-fire s
   const enemyArcher = mkUnit('ea1', 'ai2', 2, 'ranged', 7, 0, 65, 65, 14, 3.4);
   const cavPick = selectOptimalCombatTarget(knight, [enemyMelee, enemyArcher], [], [knight]);
   assert.equal(cavPick?.id, 'ea1');
+
+  // Repeated per-unit scans should reuse both temporary buffers and clear stale focus counts.
+  const focusAlly = {
+    ...mkUnit('focus-ally', 'ai1', 1, 'ranged', 1, 0, 65, 65, 14, 3.4),
+    targetEntityId: 'ea1',
+  };
+  const selectionScratch = createCombatTargetSelectionScratch();
+  const nearbyAllyBuffer = selectionScratch.nearbyAllies;
+  const focusCountMap = selectionScratch.alliesOnTargetCounts;
+  const scratchPick = selectOptimalCombatTarget(
+    knight,
+    [enemyMelee, enemyArcher],
+    [],
+    [knight, focusAlly],
+    {},
+    selectionScratch,
+  );
+  assert.equal(scratchPick?.id, 'ea1');
+  assert.equal(selectionScratch.nearbyAllies, nearbyAllyBuffer);
+  assert.deepEqual(selectionScratch.nearbyAllies.map((ally) => ally.id), ['focus-ally']);
+  assert.equal(selectionScratch.alliesOnTargetCounts.get('ea1'), 1);
+
+  const nextScratchPick = selectOptimalCombatTarget(
+    knight,
+    [enemyMelee],
+    [],
+    [knight],
+    {},
+    selectionScratch,
+  );
+  assert.equal(nextScratchPick?.id, 'em1');
+  assert.equal(selectionScratch.nearbyAllies, nearbyAllyBuffer);
+  assert.equal(selectionScratch.alliesOnTargetCounts, focusCountMap);
+  assert.equal(selectionScratch.nearbyAllies.length, 0);
+  assert.equal(selectionScratch.alliesOnTargetCounts.size, 0, 'old target focus counts must not leak into the next scan');
 
   // 2. Siege catapult should prioritize enemy defensive Watch Tower over a skirmisher
   const catapult = mkUnit('cat1', 'ai1', 1, 'siege', 0, 0, 160, 160, 18, 2.2);
