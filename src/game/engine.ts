@@ -114,6 +114,7 @@ import {
 } from './civilizations';
 import { evaluateMongolOvooPolicy, hasNearbyHostileUnit, isMongolRangedSupportUnit, shouldTrainMongolLancer, shouldTrainMongolShaman } from './mongolAi';
 import { classifyAiFactionBuildings, classifyAiFactionUnits } from './aiFactionRoster';
+import { getStableAiObjectiveOffset, isSameAiObjectiveOrder } from './aiObjectivePosition';
 import { getMongolKitingRetreatGoal } from './mongolCombatTactics';
 import { getDirectionalAttackModifier } from './combatTactics';
 import {
@@ -14009,12 +14010,19 @@ export class RtsEngine {
               want
             );
             for (const u of squad) {
+              // Do not redirect a unit while it is resolving combat or retreating into cover.
+              if (u.state === 'attacking' || u.state === 'garrisoning') continue;
+              // Keep an existing capture order and its active path/engagement intact.
+              if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '奪取據點', focus)) {
+                continue;
+              }
+              const offset = getStableAiObjectiveOffset(u.id, focus.id, 2.5);
               u.targetEntityId = undefined;
               u.targetBuildingId = undefined;
               u.targetResourceNodeId = undefined;
               u.attackMoveGoal = { x: focus.x, z: focus.z };
-              u.targetX = focus.x + (Math.random() - 0.5) * 5;
-              u.targetZ = focus.z + (Math.random() - 0.5) * 5;
+              u.targetX = focus.x + offset.x;
+              u.targetZ = focus.z + offset.z;
               u.state = 'moving';
               u.waypoints = undefined;
               u.currentActionText = '奪取據點';
@@ -14081,6 +14089,12 @@ export class RtsEngine {
               )
               .slice(0, Math.min(5, Math.max(2, Math.floor(aiArmy.length * 0.3))));
             for (const u of raiders) {
+              if (
+                u.targetEntityId === bestRaid.targetId &&
+                isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '襲擊經濟', bestRaid)
+              ) {
+                continue;
+              }
               if (bestRaid.targetId) {
                 u.targetEntityId = bestRaid.targetId;
                 u.state = 'attacking';
@@ -14107,9 +14121,14 @@ export class RtsEngine {
               .filter((u) => u.state === 'idle' || u.currentActionText === '礦區警戒')
               .slice(0, 2);
             for (const u of pickets) {
+              if (u.state === 'attacking' || u.state === 'garrisoning') continue;
+              if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '礦區警戒', localGold.n)) {
+                continue;
+              }
               if (getDistance(u.x, u.z, localGold.n.x, localGold.n.z) > 6) {
-                u.targetX = localGold.n.x + (Math.random() - 0.5) * 3;
-                u.targetZ = localGold.n.z + (Math.random() - 0.5) * 3;
+                const offset = getStableAiObjectiveOffset(u.id, localGold.n.id, 1.5);
+                u.targetX = localGold.n.x + offset.x;
+                u.targetZ = localGold.n.z + offset.z;
                 u.attackMoveGoal = { x: localGold.n.x, z: localGold.n.z };
                 u.targetEntityId = undefined;
                 u.state = 'moving';
@@ -14127,9 +14146,14 @@ export class RtsEngine {
           const squad = aiArmy.filter((u) => u.unitDef.category !== 'siege').slice(0, 3);
           for (const u of squad) {
             if (u.state !== 'idle' && u.currentActionText !== '奪取據點') continue;
+            if (u.state === 'attacking' || u.state === 'garrisoning') continue;
+            if (isSameAiObjectiveOrder(u.currentActionText, u.attackMoveGoal, '奪取據點', homeShrine.cp)) {
+              continue;
+            }
+            const offset = getStableAiObjectiveOffset(u.id, homeShrine.cp.id, 2.5);
             u.attackMoveGoal = { x: homeShrine.cp.x, z: homeShrine.cp.z };
-            u.targetX = homeShrine.cp.x;
-            u.targetZ = homeShrine.cp.z;
+            u.targetX = homeShrine.cp.x + offset.x;
+            u.targetZ = homeShrine.cp.z + offset.z;
             u.state = 'moving';
             u.currentActionText = '奪取據點';
           }
