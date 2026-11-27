@@ -5,6 +5,8 @@ const INITIAL_SCAN_PHASE_BUCKETS = 8;
 export interface CombatTargetScanState {
   id: string;
   combatTargetScanCooldown?: number;
+  /** Stable per-unit interval cached after the first deterministic ID hash. */
+  combatTargetScanIntervalSeconds?: number;
 }
 
 function getUnitScanBucket(unitId: string): number {
@@ -15,13 +17,11 @@ function getUnitScanBucket(unitId: string): number {
   return (hash >>> 0) % INITIAL_SCAN_PHASE_BUCKETS;
 }
 
-function getInitialScanPhase(unitId: string): number {
-  return (getUnitScanBucket(unitId) / INITIAL_SCAN_PHASE_BUCKETS) *
-    COMBAT_TARGET_SCAN_INTERVAL_SECONDS;
+function getInitialScanPhaseFromBucket(bucket: number): number {
+  return (bucket / INITIAL_SCAN_PHASE_BUCKETS) * COMBAT_TARGET_SCAN_INTERVAL_SECONDS;
 }
 
-function getUnitScanInterval(unitId: string): number {
-  const bucket = getUnitScanBucket(unitId);
+function getUnitScanIntervalFromBucket(bucket: number): number {
   return MIN_TARGET_SCAN_INTERVAL_SECONDS +
     (bucket / (INITIAL_SCAN_PHASE_BUCKETS - 1)) *
     (COMBAT_TARGET_SCAN_INTERVAL_SECONDS - MIN_TARGET_SCAN_INTERVAL_SECONDS);
@@ -38,9 +38,27 @@ export function consumeCombatTargetScanCooldown(
 ): boolean {
   const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 0;
   const storedCooldown = unit.combatTargetScanCooldown;
-  const currentCooldown = Number.isFinite(storedCooldown)
+  const hasStoredCooldown = Number.isFinite(storedCooldown);
+  const storedInterval = unit.combatTargetScanIntervalSeconds;
+  const hasCachedInterval =
+    Number.isFinite(storedInterval) &&
+    storedInterval! >= MIN_TARGET_SCAN_INTERVAL_SECONDS &&
+    storedInterval! <= COMBAT_TARGET_SCAN_INTERVAL_SECONDS;
+
+  let interval = hasCachedInterval ? storedInterval as number : 0;
+  let initialPhase = 0;
+  if (!hasCachedInterval || !hasStoredCooldown) {
+    // Hash a stable unit ID only when its schedule is first created or restored.
+    // Recurring target scans reuse the cached interval instead of re-hashing it.
+    const bucket = getUnitScanBucket(unit.id);
+    if (!hasCachedInterval) interval = getUnitScanIntervalFromBucket(bucket);
+    if (!hasStoredCooldown) initialPhase = getInitialScanPhaseFromBucket(bucket);
+  }
+  unit.combatTargetScanIntervalSeconds = interval;
+
+  const currentCooldown = hasStoredCooldown
     ? Math.max(0, storedCooldown as number)
-    : getInitialScanPhase(unit.id);
+    : initialPhase;
   const remaining = Math.max(0, currentCooldown - safeDt);
 
   if (remaining > 0) {
@@ -48,6 +66,6 @@ export function consumeCombatTargetScanCooldown(
     return false;
   }
 
-  unit.combatTargetScanCooldown = getUnitScanInterval(unit.id);
+  unit.combatTargetScanCooldown = interval;
   return true;
 }

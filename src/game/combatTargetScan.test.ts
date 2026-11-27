@@ -63,3 +63,17 @@ test('invalid delta times cannot poison the scan timer', () => {
   assert.equal(consumeCombatTargetScanCooldown(unit, -1), false);
   assert.equal(unit.combatTargetScanCooldown, 0.05);
 });
+
+
+test('nearby target scan caches the deterministic interval for recurring updates', () => {
+  const unit: CombatTargetScanState = { id: 'unit_cached_schedule' };
+
+  assert.equal(consumeCombatTargetScanCooldown(unit, 1), true);
+  const cachedInterval = unit.combatTargetScanIntervalSeconds;
+  assert.ok(Number.isFinite(cachedInterval));
+  assert.equal(unit.combatTargetScanCooldown, cachedInterval);
+
+  assert.equal(consumeCombatTargetScanCooldown(unit, cachedInterval!), true);
+  assert.equal(unit.combatTargetScanIntervalSeconds, cachedInterval);
+  assert.equal(unit.combatTargetScanCooldown, cachedInterval);
+});

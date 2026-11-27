@@ -48,8 +48,8 @@ export interface CombatSpatialIndex<
   cellSize: number;
   units: Unit[];
   buildings: Building[];
-  unitBuckets: Map<string, Unit[]>;
-  buildingBuckets: Map<string, Building[]>;
+  unitBuckets: Map<CombatSpatialBucketKey, Unit[]>;
+  buildingBuckets: Map<CombatSpatialBucketKey, Building[]>;
   /** Empty bucket arrays recycled between rebuilds to reduce per-step garbage. */
   reusableUnitBuckets: Unit[][];
   reusableBuildingBuckets: Building[][];
@@ -63,8 +63,34 @@ export interface CombatSpatialCandidates<
   buildings: Building[];
 }
 
-const spatialKey = (x: number, z: number, cellSize: number): string =>
-  Math.floor(x / cellSize) + ':' + Math.floor(z / cellSize);
+type CombatSpatialBucketKey = number | string;
+
+const PACKED_SPATIAL_KEY_RADIX = 2 ** 26;
+const PACKED_SPATIAL_X_LIMIT = 2 ** 26;
+const PACKED_SPATIAL_Z_LIMIT = 2 ** 25;
+
+/**
+ * Packs the common, bounded map-cell coordinates into one exact integer key.
+ * Very large coordinates fall back to the original textual representation so
+ * the fast path cannot introduce numeric-key collisions outside its safe range.
+ */
+function spatialCellKey(cellX: number, cellZ: number): CombatSpatialBucketKey {
+  if (
+    Number.isSafeInteger(cellX) &&
+    Number.isSafeInteger(cellZ) &&
+    cellX > -PACKED_SPATIAL_X_LIMIT &&
+    cellX < PACKED_SPATIAL_X_LIMIT &&
+    cellZ >= -PACKED_SPATIAL_Z_LIMIT &&
+    cellZ < PACKED_SPATIAL_Z_LIMIT
+  ) {
+    return cellX * PACKED_SPATIAL_KEY_RADIX + cellZ;
+  }
+
+  return cellX + ':' + cellZ;
+}
+
+const spatialKey = (x: number, z: number, cellSize: number): CombatSpatialBucketKey =>
+  spatialCellKey(Math.floor(x / cellSize), Math.floor(z / cellSize));
 
 function recycleBuckets<T>(
   buckets: Map<string, T[]>,
@@ -112,8 +138,8 @@ export function createCombatSpatialIndex<
     cellSize,
     units: [],
     buildings: [],
-    unitBuckets: new Map<string, Unit[]>(),
-    buildingBuckets: new Map<string, Building[]>(),
+    unitBuckets: new Map<CombatSpatialBucketKey, Unit[]>(),
+    buildingBuckets: new Map<CombatSpatialBucketKey, Building[]>(),
     reusableUnitBuckets: [],
     reusableBuildingBuckets: [],
   };
@@ -204,7 +230,7 @@ export function queryCombatSpatialIndex<
   const maxCellZ = Math.floor((z + radius) / index.cellSize);
   for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
     for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-      const key = cellX + ':' + cellZ;
+      const key = spatialCellKey(cellX, cellZ);
       const unitBucket = index.unitBuckets.get(key);
       if (unitBucket) {
         for (const unit of unitBucket) {
@@ -268,7 +294,7 @@ export function queryCombatSpatialBuildings<
 
   for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
     for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-      const bucket = index.buildingBuckets.get(cellX + ':' + cellZ);
+      const bucket = index.buildingBuckets.get(spatialCellKey(cellX, cellZ));
       if (!bucket) continue;
       for (const building of bucket) {
         if (building.hp <= 0) continue;
@@ -319,7 +345,7 @@ export function queryCombatSpatialUnits<
 
   for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
     for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-      const bucket = index.unitBuckets.get(cellX + ':' + cellZ);
+      const bucket = index.unitBuckets.get(spatialCellKey(cellX, cellZ));
       if (!bucket) continue;
       for (const unit of bucket) {
         if (unit.hp <= 0 || unit.garrisonedInBuildingId) continue;

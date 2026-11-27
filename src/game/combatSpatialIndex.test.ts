@@ -152,8 +152,10 @@ test('combat spatial index: rebuild reuses maps, active arrays and bucket arrays
   const buildingsArray = index.buildings;
   const unitMap = index.unitBuckets;
   const buildingMap = index.buildingBuckets;
-  const unitBucket = index.unitBuckets.get('0:0');
-  const buildingBucket = index.buildingBuckets.get('0:0');
+  const originCellKey = 0;
+  const movedCellKey = 6 * (2 ** 26) + 5;
+  const unitBucket = index.unitBuckets.get(originCellKey);
+  const buildingBucket = index.buildingBuckets.get(originCellKey);
 
   const movedUnit = { id: 'moved', x: 97, z: 81, hp: 100 };
   const movedBuilding = { id: 'moved-building', x: 98, z: 82, hp: 700 };
@@ -164,10 +166,10 @@ test('combat spatial index: rebuild reuses maps, active arrays and bucket arrays
   assert.equal(index.buildings, buildingsArray);
   assert.equal(index.unitBuckets, unitMap);
   assert.equal(index.buildingBuckets, buildingMap);
-  assert.equal(index.unitBuckets.has('0:0'), false);
-  assert.equal(index.buildingBuckets.has('0:0'), false);
-  assert.equal(index.unitBuckets.get('6:5'), unitBucket);
-  assert.equal(index.buildingBuckets.get('6:5'), buildingBucket);
+  assert.equal(index.unitBuckets.has(originCellKey), false);
+  assert.equal(index.buildingBuckets.has(originCellKey), false);
+  assert.equal(index.unitBuckets.get(movedCellKey), unitBucket);
+  assert.equal(index.buildingBuckets.get(movedCellKey), buildingBucket);
   assert.deepEqual(index.units.map((unit) => unit.id), ['moved']);
   assert.deepEqual(index.buildings.map((building) => building.id), ['moved-building']);
 
@@ -435,4 +437,23 @@ test('combat spatial building query visits only building buckets and reuses its 
   assert.deepEqual(queryCombatSpatialBuildings(index, 0, 0, Infinity, output).map((building) => building.id), ['near-b', 'far']);
   assert.deepEqual(queryCombatSpatialBuildings(index, Number.NaN, 0, 4, output), []);
   assert.deepEqual(queryCombatSpatialBuildings(index, 0, 0, -1, output), []);
+});
+
+
+test('combat spatial index: packed keys stay collision-free for negative and oversized map cells', () => {
+  const units = [
+    { id: 'negative', x: -17, z: -33, hp: 100 },
+    { id: 'positive-overflow', x: 0, z: 600_000_000, hp: 100 },
+    { id: 'negative-overflow', x: 0, z: -600_000_000, hp: 100 },
+  ];
+  const index = createCombatSpatialIndex(units, [], 16);
+
+  const keys = [...index.unitBuckets.keys()];
+  assert.ok(keys.includes(-2 * (2 ** 26) - 3), 'ordinary negative cells should use packed numeric keys');
+  assert.ok(keys.includes('0:37500000'), 'large positive cells should use the safe string fallback');
+  assert.ok(keys.includes('0:-37500000'), 'large negative cells should use a distinct safe string fallback');
+
+  assert.deepEqual(queryCombatSpatialUnits(index, -17, -33, 0.5).map((unit) => unit.id), ['negative']);
+  assert.deepEqual(queryCombatSpatialUnits(index, 0, 600_000_000, 0.5).map((unit) => unit.id), ['positive-overflow']);
+  assert.deepEqual(queryCombatSpatialUnits(index, 0, -600_000_000, 0.5).map((unit) => unit.id), ['negative-overflow']);
 });
