@@ -2381,7 +2381,7 @@ export class RtsEngine {
     }
   }
 
-  private writeUnitRoleMarkerInstance(mesh: THREE.Group): void {
+  private writeUnitRoleMarkerInstance(mesh: THREE.Group, worldMatrixReady = false): void {
     const roleMarker = mesh.userData.unitRoleMarkerMesh as THREE.Mesh | undefined;
     if (!roleMarker) return;
 
@@ -2410,14 +2410,14 @@ export class RtsEngine {
       return;
     }
 
-    mesh.updateMatrixWorld(true);
+    if (!worldMatrixReady) mesh.updateMatrixWorld(true);
     batch.setMatrixAt(cursor, roleMarker.matrixWorld);
     roleMarker.visible = false;
     if (kind === 'crest') this.unitRoleCrestInstanceCursor++;
     else this.unitRoleSiegeInstanceCursor++;
   }
 
-  private writeUnitBuffRingInstance(mesh: THREE.Group): void {
+  private writeUnitBuffRingInstance(mesh: THREE.Group, worldMatrixReady = false): void {
     const buffRing = mesh.userData.unitBuffRingMesh as THREE.Mesh | undefined;
     if (!buffRing) return;
 
@@ -2435,15 +2435,46 @@ export class RtsEngine {
       return;
     }
 
-    mesh.updateMatrixWorld(true);
+    if (!worldMatrixReady) mesh.updateMatrixWorld(true);
     this.unitBuffRingBatch.setMatrixAt(this.unitBuffRingInstanceCursor, buffRing.matrixWorld);
     this.unitBuffRingInstanceCursor++;
     buffRing.visible = false;
   }
 
   private writeUnitRoleAndBuffInstances(mesh: THREE.Group): void {
-    this.writeUnitRoleMarkerInstance(mesh);
-    this.writeUnitBuffRingInstance(mesh);
+    const roleMarker = mesh.userData.unitRoleMarkerMesh as THREE.Mesh | undefined;
+    const roleKind = mesh.userData.battlefieldRoleMarkerKind as 'crest' | 'siege' | undefined;
+    const roleBatch = roleKind === 'crest'
+      ? this.unitRoleCrestBatch
+      : roleKind === 'siege'
+        ? this.unitRoleSiegeBatch
+        : null;
+    const roleCursor = roleKind === 'crest'
+      ? this.unitRoleCrestInstanceCursor
+      : this.unitRoleSiegeInstanceCursor;
+    const roleNeedsWorldMatrix = !!(
+      roleMarker?.userData.instancedBatch === true &&
+      roleMarker.userData.lodVisible !== false &&
+      roleBatch &&
+      roleCursor < roleBatch.instanceMatrix.count
+    );
+
+    const buffRing = mesh.userData.unitBuffRingMesh as THREE.Mesh | undefined;
+    const buffNeedsWorldMatrix = !!(
+      buffRing?.userData.instancedBatch === true &&
+      buffRing.userData.batchVisible === true &&
+      this.unitBuffRingBatch &&
+      this.unitBuffRingInstanceCursor < this.unitBuffRingBatch.instanceMatrix.count
+    );
+
+    // A unit can have both a role crest and an active buff ring. Update the
+    // complete animated hierarchy once, then reuse the same world matrices
+    // for both instance batches instead of traversing the tree twice.
+    const worldMatrixReady = roleNeedsWorldMatrix || buffNeedsWorldMatrix;
+    if (worldMatrixReady) mesh.updateMatrixWorld(true);
+
+    this.writeUnitRoleMarkerInstance(mesh, worldMatrixReady);
+    this.writeUnitBuffRingInstance(mesh, worldMatrixReady);
   }
 
   private rebuildUnitRoleMarkerInstances(): void {
