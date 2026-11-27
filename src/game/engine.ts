@@ -9964,7 +9964,7 @@ export class RtsEngine {
       // This runs after auto-reseed logic so a paid reseed restores the crop in the same tick.
       this.refreshFarmCropDepletionVisual(node);
 
-      if (unit.carryingResource.amount >= unit.unitDef.stats.carryCapacity) {
+      if (!militaryHunter && unit.carryingResource && unit.carryingResource.amount >= unit.unitDef.stats.carryCapacity) {
         unit.waypoints = undefined;
         if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
           unit.targetResourceNodeId = undefined;
