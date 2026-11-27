@@ -534,6 +534,13 @@ export class RtsEngine {
   private aiWorkerRebalanceCursorByFaction = new Map<string, number>();
   private aiNodeRelocationReadyAt = new Map<string, number>();
   private aiCampPlacementReadyAt = new Map<string, number>();
+  /** Per-faction economic planning buffers reused between sequential AI decisions. */
+  private aiEconomicWorkerScratch: UnitEntity[] = [];
+  private aiNodeWorkerCountScratch = new Map<string, number>();
+  private aiNodeGatherRateScratch = new Map<string, number>();
+  private aiLandResourceNodeScratch: ResourceNode[] = [];
+  private aiAvailableResourceTypeScratch: ResourceType[] = [];
+  private aiAvailableResourceTypeSetScratch = new Set<ResourceType>();
   public playerResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public enemyResources: Resources = { food: 250, wood: 200, gold: 120, stone: 60 };
   public activeMods: GameMod[] = JSON.parse(JSON.stringify(INITIAL_MODS));
@@ -1708,6 +1715,12 @@ export class RtsEngine {
     this.aiUnitGroupsLength = -1;
     this.aiUnitGroupsByFaction.clear();
     this.aiFactionTeamByIdScratch.clear();
+    this.aiEconomicWorkerScratch.length = 0;
+    this.aiNodeWorkerCountScratch.clear();
+    this.aiNodeGatherRateScratch.clear();
+    this.aiLandResourceNodeScratch.length = 0;
+    this.aiAvailableResourceTypeScratch.length = 0;
+    this.aiAvailableResourceTypeSetScratch.clear();
     this.aiHostileUnitRosterScratch.length = 0;
     this.aiHostileWorkerRosterScratch.length = 0;
     this.aiHostileBuildingRosterScratch.length = 0;
@@ -13641,6 +13654,7 @@ export class RtsEngine {
   private evaluateAiLogic(onlyFactionId?: FactionId) {
     const unitsByFaction = this.getAiUnitGroupsByFaction();
     const buildingsByFaction = this.getAiBuildingGroupsByFaction();
+    this.rebuildResourceNodeLookup();
     const modRules = this.activeMods.flatMap((m) => (m.enabled ? m.aiRules : []));
     const standardRules = modRules.length > 0 ? modRules : DEFAULT_AI_RULES;
     const teamByFaction = this.aiFactionTeamByIdScratch;
@@ -14336,7 +14350,11 @@ export class RtsEngine {
 
       // 2. Dynamic Worker Allocation & Rebalancing.
       // Builders are excluded from the gatherer target; they are never reassigned from construction.
-      const aiEconomicWorkers = aiActiveWorkers.filter((worker) => worker.state !== 'building');
+      const aiEconomicWorkers = this.aiEconomicWorkerScratch;
+      aiEconomicWorkers.length = 0;
+      for (const worker of aiActiveWorkers) {
+        if (worker.state !== 'building') aiEconomicWorkers.push(worker);
+      }
 
       // Sample net inventory flow over a stable window so the allocation reacts
       // to actual gains/spending, not just a single volatile stock snapshot.
@@ -14371,11 +14389,13 @@ export class RtsEngine {
         economyFlow.netRates
       );
       const activeCounts: Record<ResourceType, number> = { food: 0, wood: 0, gold: 0, stone: 0 };
-      const resourceNodeById = new Map<string, ResourceNode>(
-        this.resourceNodes.map((node) => [node.id, node] as const)
-      );
-      const nodeWorkerCounts = new Map<string, number>();
-      const nodeGatherRateById = new Map<string, number>();
+      // The match-scoped ID index was rebuilt once above; do not materialize a
+      // duplicate map for every AI faction on every economy decision.
+      const resourceNodeById = this.resourceNodeLookupById;
+      const nodeWorkerCounts = this.aiNodeWorkerCountScratch;
+      nodeWorkerCounts.clear();
+      const nodeGatherRateById = this.aiNodeGatherRateScratch;
+      nodeGatherRateById.clear();
       const aiGatherTechs = this.getResearchedTechs(aiId);
       const aiHasStarOath = (this.starOathUntil[aiId] || 0) > this.simTime;
       for (const w of aiActiveWorkers) {
@@ -14403,13 +14423,21 @@ export class RtsEngine {
       }
 
       // Routine economy assignment excludes offshore fish and aggressive boars.
-      // Boars remain available to explicit/coordinated hunting orders.
-      const landNodes = this.resourceNodes.filter(
-        (rn) => rn.subtype !== 'deep_fish' && !isDangerousWildlifeSubtype(rn.subtype)
-      );
-      const availableResourceTypes = Array.from(
-        new Set(landNodes.filter((node) => node.amount > 0).map((node) => node.resourceType))
-      );
+      // Build the ordered land-node and available-resource lists in one pass.
+      const landNodes = this.aiLandResourceNodeScratch;
+      landNodes.length = 0;
+      const availableResourceTypes = this.aiAvailableResourceTypeScratch;
+      availableResourceTypes.length = 0;
+      const seenResourceTypes = this.aiAvailableResourceTypeSetScratch;
+      seenResourceTypes.clear();
+      for (const node of this.resourceNodes) {
+        if (node.subtype === 'deep_fish' || isDangerousWildlifeSubtype(node.subtype)) continue;
+        landNodes.push(node);
+        if (node.amount > 0 && !seenResourceTypes.has(node.resourceType)) {
+          seenResourceTypes.add(node.resourceType);
+          availableResourceTypes.push(node.resourceType);
+        }
+      }
       const assignWorkerToType = (
         worker: UnitEntity,
         prefType: ResourceType,
