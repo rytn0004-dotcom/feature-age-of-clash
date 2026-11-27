@@ -13640,23 +13640,73 @@ export class RtsEngine {
       const aiCiv = getCivilizationConfig(participant.civilization);
       const aiRes = this.getResourcesForFaction(aiId);
 
-      const aiUnits = (unitsByFaction.get(aiId) || []).filter((unit) => unit.hp > 0);
-      const aiNavalBoats = aiUnits.filter((u) => u.unitDef.category === 'worker' && (!!u.unitDef.isNaval || u.unitDefId === 'fishing_boat'));
-      const aiWorkers = aiUnits.filter(
-        (u) => u.unitDef.category === 'worker' && !u.unitDef.isNaval && u.unitDefId !== 'fishing_boat'
-      );
-      const aiActiveWorkers = aiWorkers.filter((u) => !u.garrisonedInBuildingId);
-      const aiArmy = aiUnits.filter(
-        (unit) => isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category) && !unit.garrisonedInBuildingId
-      );
-      const aiBuildings = (buildingsByFaction.get(aiId) || []).filter((building) => building.hp > 0);
-      const aiTC = aiBuildings.find((b) => b.buildingType === 'town_center');
-      const aiBarracksList = aiBuildings.filter((b) => b.buildingType === 'barracks');
-      const aiArcheryList = aiBuildings.filter((b) => b.buildingType === 'archery_range');
-      const aiStableList = aiBuildings.filter((b) => b.buildingType === 'stable');
-      const aiSiegeWorkshopList = aiBuildings.filter((b) => b.buildingType === 'siege_workshop');
-      const aiDocks = aiBuildings.filter((b) => b.buildingType === 'dock');
-      const aiUniqueBldg = aiBuildings.find((b) => b.buildingType === aiCiv.uniqueBuildingType);
+      // Classify each faction roster in one stable-order pass instead of repeatedly
+      // filtering the same arrays for workers, army roles, and production buildings.
+      const aiUnits: UnitEntity[] = [];
+      const aiNavalBoats: UnitEntity[] = [];
+      const aiWorkers: UnitEntity[] = [];
+      const aiActiveWorkers: UnitEntity[] = [];
+      const aiArmy: UnitEntity[] = [];
+      for (const unit of unitsByFaction.get(aiId) || []) {
+        if (unit.hp <= 0) continue;
+        aiUnits.push(unit);
+
+        if (unit.unitDef.category === 'worker') {
+          if (unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat') {
+            aiNavalBoats.push(unit);
+          } else {
+            aiWorkers.push(unit);
+            if (!unit.garrisonedInBuildingId) aiActiveWorkers.push(unit);
+          }
+        }
+
+        if (
+          isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category) &&
+          !unit.garrisonedInBuildingId
+        ) {
+          aiArmy.push(unit);
+        }
+      }
+
+      const aiBuildings: BuildingEntity[] = [];
+      const aiBarracksList: BuildingEntity[] = [];
+      const aiArcheryList: BuildingEntity[] = [];
+      const aiStableList: BuildingEntity[] = [];
+      const aiSiegeWorkshopList: BuildingEntity[] = [];
+      const aiDocks: BuildingEntity[] = [];
+      const aiOvooBuildings: BuildingEntity[] = [];
+      let aiTC: BuildingEntity | undefined;
+      let aiUniqueBldg: BuildingEntity | undefined;
+      for (const building of buildingsByFaction.get(aiId) || []) {
+        if (building.hp <= 0) continue;
+        aiBuildings.push(building);
+
+        if (!aiTC && building.buildingType === 'town_center') aiTC = building;
+        if (!aiUniqueBldg && building.buildingType === aiCiv.uniqueBuildingType) {
+          aiUniqueBldg = building;
+        }
+
+        switch (building.buildingType) {
+          case 'barracks':
+            aiBarracksList.push(building);
+            break;
+          case 'archery_range':
+            aiArcheryList.push(building);
+            break;
+          case 'stable':
+            aiStableList.push(building);
+            break;
+          case 'siege_workshop':
+            aiSiegeWorkshopList.push(building);
+            break;
+          case 'dock':
+            aiDocks.push(building);
+            break;
+          case 'ovoo_relay':
+            if (building.isConstructed) aiOvooBuildings.push(building);
+            break;
+        }
+      }
 
       if (!aiTC && aiWorkers.length === 0 && aiArmy.length === 0) continue;
 
@@ -13680,7 +13730,7 @@ export class RtsEngine {
       // Mongol AI keeps each Ovoo in Yam mode for production, healing, or nearby threats;
       // sacred extraction is preferred only when the local area is safe and a mine is nearby.
       if (aiCiv.id === 'mongol') {
-        for (const ovoo of aiBuildings.filter((building) => building.buildingType === 'ovoo_relay' && building.isConstructed)) {
+        for (const ovoo of aiOvooBuildings) {
           const nearEnemy = hasNearbyHostileUnit(
             ovoo,
             this.units,
