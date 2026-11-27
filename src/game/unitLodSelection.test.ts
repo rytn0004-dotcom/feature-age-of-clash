@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createUnitLodHighDetailSet,
   getUnitAnimationUpdateIntervalSeconds,
+  getUnitAnimationPhaseOffsetSeconds,
 } from './unitLodSelection';
 
 test('unit LOD selection: combines selected and inspected units', () => {
@@ -41,4 +42,16 @@ test('unit animation cadence preserves close and selected detail while reducing 
   assert.equal(getUnitAnimationUpdateIntervalSeconds(80 * 80, true), 0.05);
   assert.equal(getUnitAnimationUpdateIntervalSeconds(Number.NaN), 0.05);
   assert.equal(getUnitAnimationUpdateIntervalSeconds(-1), 0.05);
+});
+
+
+test('unit animation phase: stable IDs receive deterministic, distributed idle offsets', () => {
+  const first = getUnitAnimationPhaseOffsetSeconds('unit-ab');
+  const repeated = getUnitAnimationPhaseOffsetSeconds('unit-ab');
+  const reordered = getUnitAnimationPhaseOffsetSeconds('unit-ba');
+
+  assert.equal(first, repeated);
+  assert.ok(Number.isFinite(first) && first >= 0 && first < Math.PI * 2);
+  assert.ok(Number.isFinite(reordered) && reordered >= 0 && reordered < Math.PI * 2);
+  assert.notEqual(first, reordered, 'IDs with the same character sum should not share a crowd phase');
 });

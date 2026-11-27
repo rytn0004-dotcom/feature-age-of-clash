@@ -5,6 +5,7 @@ import { activateNextUnitCommand, enqueueCommandsForUnits, enqueueUnitCommand, t
 import {
   createUnitLodHighDetailSet,
   getUnitAnimationUpdateIntervalSeconds,
+  getUnitAnimationPhaseOffsetSeconds,
 } from './unitLodSelection';
 import {
   advanceUnitAttackWindup,
@@ -13045,13 +13046,12 @@ export class RtsEngine {
       mesh.userData.animState = anim;
     }
 
-    let phaseSeed = mesh.userData.animPhaseSeed as number | undefined;
-    if (!Number.isFinite(phaseSeed)) {
-      phaseSeed = 0;
-      for (let i = 0; i < unit.id.length; i++) phaseSeed += unit.id.charCodeAt(i);
-      mesh.userData.animPhaseSeed = phaseSeed;
+    let phaseOffsetSeconds = mesh.userData.unitIdlePhaseOffsetSeconds as number | undefined;
+    if (!Number.isFinite(phaseOffsetSeconds)) {
+      phaseOffsetSeconds = getUnitAnimationPhaseOffsetSeconds(unit.id);
+      mesh.userData.unitIdlePhaseOffsetSeconds = phaseOffsetSeconds;
     }
-    const t = this.simTime + (phaseSeed! % 17) * 0.23;
+    const t = this.simTime + phaseOffsetSeconds!;
 
     // 0. Smooth shortest-arc yaw turning + subtle banking lean on tight corners
     let desiredYaw = anim.yaw;
@@ -13349,11 +13349,27 @@ export class RtsEngine {
       tgtLKnee = 0.16;
       tgtScaleY = swingTimer > 0 && !isSiegeUnit ? 0.95 : 1;
     } else {
-      // Calm grounded breathing idle
-      tgtRArm = Math.sin(t * 2.1) * 0.06;
-      tgtLArm = -Math.sin(t * 2.1) * 0.06;
+      // Calm idle breathing plus a subtle alternating weight shift keeps a
+      // stationary formation alive without looking like units are walking in place.
+      const idleBreath = Math.sin(t * 2.1);
+      const idleWeightShift = Math.sin(t * 1.35);
+      const idleCounterShift = Math.sin(t * 1.35 + 0.9);
+      tgtRArm = idleBreath * 0.06 + idleWeightShift * 0.018;
+      tgtLArm = -idleBreath * 0.06 - idleWeightShift * 0.014;
       tgtBodyY = baseBodyY + (isSiegeUnit ? 0 : Math.sin(t * 2.4) * 0.022);
       tgtHorseHead = Math.sin(t * 1.8) * 0.055;
+
+      if (!isSiegeUnit) {
+        tgtLLeg = idleWeightShift * 0.022;
+        tgtRLeg = -idleWeightShift * 0.022;
+        tgtLKnee = Math.max(0, idleWeightShift) * 0.026;
+        tgtRKnee = Math.max(0, -idleWeightShift) * 0.026;
+        tgtBodyX = idleWeightShift * 0.014;
+        tgtBodyZ += idleCounterShift * 0.011;
+      } else {
+        tgtBodyZ += idleCounterShift * 0.003;
+      }
+
       if (mType === 'ram') parts.rightArmPivot.position.z = 0;
       else if (mType === 'cannon') parts.rightArmPivot.position.z = 0.18;
     }

@@ -28,3 +28,17 @@ export function getUnitAnimationUpdateIntervalSeconds(
   if (distanceSquared <= 58 * 58) return 0.1;
   return 0.2;
 }
+
+
+/**
+ * Stable per-unit animation phase so idle breathing and secondary movement do
+ * not look like a synchronized crowd. The seed is derived once per mesh and
+ * reused by all procedural animation channels.
+ */
+export function getUnitAnimationPhaseOffsetSeconds(unitId: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < unitId.length; index++) {
+    hash = Math.imul(hash ^ unitId.charCodeAt(index), 16777619);
+  }
+  return ((hash >>> 0) % 997) / 997 * Math.PI * 2;
+}
