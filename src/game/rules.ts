@@ -2373,6 +2373,13 @@ export interface CombatTargetSelectionScratch {
   alliesOnTargetCounts: Map<string, number>;
 }
 
+export function createCombatTargetSelectionScratch(): CombatTargetSelectionScratch {
+  return {
+    nearbyAllies: [],
+    alliesOnTargetCounts: new Map<string, number>(),
+  };
+}
+
 const DEFENSIVE_BUILDING_TYPES = new Set([
   'tower',
   'castle',
