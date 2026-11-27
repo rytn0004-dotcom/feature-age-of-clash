@@ -1359,6 +1359,44 @@ export function selectAiWorkerResourceType(
 }
 
 /**
+ * Ranks every currently under-filled resource by its unmet worker target.
+ * The fixed resource order is the deterministic tie-breaker. Callers can skip
+ * destinations whose route search failed and continue without starving a worker.
+ */
+export function selectAiWorkerResourceFallbackOrder(
+  activeCounts: Readonly<Record<ResourceType, number>>,
+  desiredAlloc: Readonly<Record<ResourceType, number>>,
+  availableTypes: readonly ResourceType[],
+  excludedTypes?: ReadonlySet<ResourceType>,
+): ResourceType[] {
+  const ordered: ResourceType[] = [];
+
+  for (let rank = 0; rank < AI_RESOURCE_TYPES.length; rank++) {
+    let bestType: ResourceType | null = null;
+    let bestDeficit = 0;
+
+    for (const type of AI_RESOURCE_TYPES) {
+      if (
+        !availableTypes.includes(type) ||
+        excludedTypes?.has(type) ||
+        ordered.includes(type)
+      ) continue;
+
+      const deficit = desiredAlloc[type] - activeCounts[type];
+      if (Number.isFinite(deficit) && deficit > bestDeficit) {
+        bestType = type;
+        bestDeficit = deficit;
+      }
+    }
+
+    if (!bestType) break;
+    ordered.push(bestType);
+  }
+
+  return ordered;
+}
+
+/**
  * Rebalancing may only take over a plain, uncommitted resource-gathering task.
  * Cargo, queued commands and explicit wildlife hunts must finish uninterrupted.
  */
@@ -1571,16 +1609,26 @@ export function selectBestForwardGoldNode<
   anchorZ: number,
   nodeWorkerCounts: ReadonlyMap<string, number>,
 ): { node: T; score: number } | null {
+  if (!Number.isFinite(anchorX) || !Number.isFinite(anchorZ)) return null;
+
   let best: { node: T; score: number } | null = null;
 
   for (const node of nodes) {
-    if (node.resourceType !== 'gold' || !(node.amount > 80)) continue;
+    if (
+      node.resourceType !== 'gold' ||
+      !Number.isFinite(node.amount) ||
+      node.amount <= 80 ||
+      !Number.isFinite(node.x) ||
+      !Number.isFinite(node.z)
+    ) continue;
 
     const homeDistance = getDistance(anchorX, anchorZ, node.x, node.z);
     const centerDistance = getDistance(0, 0, node.x, node.z);
-    const congestion = nodeWorkerCounts.get(node.id) || 0;
+    const rawCongestion = nodeWorkerCounts.get(node.id) ?? 0;
+    const congestion = Number.isFinite(rawCongestion) ? Math.max(0, rawCongestion) : 0;
     const score = node.amount * 0.02 - homeDistance * 0.4 - centerDistance * 0.15 - congestion * 8;
 
+    if (!Number.isFinite(score)) continue;
     if (!best || score > best.score) best = { node, score };
   }
 

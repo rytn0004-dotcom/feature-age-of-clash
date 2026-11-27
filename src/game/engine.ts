@@ -149,7 +149,7 @@ import {
   isAiMilitaryArmyUnit,
   shouldAiQueueMilitaryUnit,
   shouldAiQueueWorker,
-  selectAiWorkerResourceType,
+  selectAiWorkerResourceFallbackOrder,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   selectAiWorkerReassignmentCandidateIndex,
@@ -14172,12 +14172,14 @@ export class RtsEngine {
             continue;
           }
         }
-        const bestType = selectAiWorkerResourceType(
+        const fallbackOrder = selectAiWorkerResourceFallbackOrder(
           activeCounts,
           desiredAlloc,
-          availableResourceTypes
+          availableResourceTypes,
         );
-        if (bestType) assignWorkerToType(w, bestType);
+        for (const resourceType of fallbackOrder) {
+          if (assignWorkerToType(w, resourceType)) break;
+        }
       }
 
       // Predict node depletion and move one safe gatherer before the group runs dry.
@@ -14259,8 +14261,26 @@ export class RtsEngine {
           const previousCount = nodeWorkerCounts.get(previousNodeId) || 0;
           nodeWorkerCounts.set(previousNodeId, Math.max(0, previousCount - 1));
 
-          if (!assignWorkerToType(reassignable, workerReassignment.to)) {
-            // A failed reassignment must leave the old gatherer / node counts intact.
+          let reassigned = assignWorkerToType(reassignable, workerReassignment.to);
+          if (!reassigned) {
+            // If the top-ranked resource has no reachable deposit, try the
+            // next genuine deficit before restoring the worker's old assignment.
+            const fallbackOrder = selectAiWorkerResourceFallbackOrder(
+              activeCounts,
+              desiredAlloc,
+              availableResourceTypes,
+              new Set([workerReassignment.to]),
+            );
+            for (const resourceType of fallbackOrder) {
+              if (assignWorkerToType(reassignable, resourceType)) {
+                reassigned = true;
+                break;
+              }
+            }
+          }
+
+          if (!reassigned) {
+            // Failed destination searches must leave the old gatherer / node counts intact.
             activeCounts[workerReassignment.from]++;
             nodeWorkerCounts.set(previousNodeId, previousCount);
           }

@@ -24,6 +24,7 @@ import {
   isAiMilitaryArmyUnit,
   shouldAiQueueMilitaryUnit,
   selectAiWorkerResourceType,
+  selectAiWorkerResourceFallbackOrder,
   selectBestForwardGoldNode,
   selectAiWorkerReassignment,
   isAiWorkerEligibleForEconomicReassignment,
@@ -3134,6 +3135,34 @@ test('AI economy: rebalance one worker from a clear surplus into the largest res
     'Do not assign extra workers when all available targets are already filled'
   );
   assert.deepEqual(
+    selectAiWorkerResourceFallbackOrder(
+      { food: 0, wood: 2, gold: 0, stone: 0 },
+      { food: 4, wood: 2, gold: 3, stone: 1 },
+      ['food', 'gold', 'stone'],
+    ),
+    ['food', 'gold', 'stone'],
+    'Fallback destinations are ordered by deficit, ignoring unavailable resource types',
+  );
+  assert.deepEqual(
+    selectAiWorkerResourceFallbackOrder(
+      { food: 0, wood: 0, gold: 0, stone: 0 },
+      { food: 2, wood: 2, gold: 2, stone: 2 },
+      ['food', 'wood', 'gold', 'stone'],
+      new Set<ResourceNode['resourceType']>(['food', 'gold']),
+    ),
+    ['wood', 'stone'],
+    'Equal deficits use stable food/wood/gold/stone order and failed types can be skipped',
+  );
+  assert.deepEqual(
+    selectAiWorkerResourceFallbackOrder(
+      { food: 2, wood: 1, gold: 0, stone: 0 },
+      { food: 2, wood: 1, gold: 0, stone: 0 },
+      ['food', 'wood', 'gold', 'stone'],
+    ),
+    [],
+    'No fallback is offered once every available resource target is filled',
+  );
+  assert.deepEqual(
     selectAiWorkerReassignment(
       { food: 2, wood: 5, gold: 1, stone: 0 },
       { food: 5, wood: 1, gold: 1, stone: 2 },
@@ -4201,6 +4230,20 @@ test('AI forward gold selection returns null when no deposit has more than 80 go
     { id: 'other-resource', resourceType: 'food' as const, amount: 500, x: 1, z: 0 },
   ];
   assert.equal(selectBestForwardGoldNode(nodes, 0, 0, new Map()), null);
+});
+
+
+test('AI forward gold selection ignores malformed deposits and invalid anchor coordinates', () => {
+  const nodes = [
+    { id: 'infinite-stock', resourceType: 'gold' as const, amount: Number.POSITIVE_INFINITY, x: 0, z: 0 },
+    { id: 'invalid-x', resourceType: 'gold' as const, amount: 900, x: Number.NaN, z: 0 },
+    { id: 'invalid-z', resourceType: 'gold' as const, amount: 900, x: 0, z: Number.POSITIVE_INFINITY },
+    { id: 'valid', resourceType: 'gold' as const, amount: 200, x: 8, z: 0 },
+  ];
+
+  assert.equal(selectBestForwardGoldNode(nodes.slice(0, 3), 0, 0, new Map()), null);
+  assert.equal(selectBestForwardGoldNode(nodes, Number.NaN, 0, new Map()), null);
+  assert.equal(selectBestForwardGoldNode(nodes, 0, 0, new Map())?.node.id, 'valid');
 });
 
 
