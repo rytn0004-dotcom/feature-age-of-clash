@@ -76,8 +76,10 @@ export function advanceWildlifeGait(
   const strideScale = Number.isFinite(strideRadiansPerWorldUnit) && strideRadiansPerWorldUnit > 0
     ? strideRadiansPerWorldUnit
     : 2.8;
-  const gaitPhase = ((phase + distance * strideScale) % WILDLIFE_GAIT_PHASE_WRAP +
-    WILDLIFE_GAIT_PHASE_WRAP) % WILDLIFE_GAIT_PHASE_WRAP;
+  const unwrappedPhase = phase + distance * strideScale;
+  const gaitPhase = unwrappedPhase >= WILDLIFE_GAIT_PHASE_WRAP || unwrappedPhase < 0
+    ? ((unwrappedPhase % WILDLIFE_GAIT_PHASE_WRAP) + WILDLIFE_GAIT_PHASE_WRAP) % WILDLIFE_GAIT_PHASE_WRAP
+    : unwrappedPhase;
 
   const speed = Number.isFinite(actualSpeed) ? Math.max(0, actualSpeed) : 0;
   const safeDt = clampWildlifeDeltaSeconds(dt);
