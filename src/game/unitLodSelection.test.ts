@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createUnitLodHighDetailSet } from './unitLodSelection';
+import {
+  createUnitLodHighDetailSet,
+  getUnitAnimationUpdateIntervalSeconds,
+} from './unitLodSelection';
 
 test('unit LOD selection: combines selected and inspected units', () => {
   const highDetailIds = createUnitLodHighDetailSet(
