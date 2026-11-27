@@ -13647,9 +13647,17 @@ export class RtsEngine {
         workers: aiWorkers,
         activeWorkers: aiActiveWorkers,
         army: aiArmy,
+        meleeCount: aliveMeleeCount,
+        rangedSupportCount: aliveRangedSupportCount,
+        cavalryCount: aliveCavalryCount,
+        siegeCount: aliveSiegeCount,
+        specialCount: aliveSpecialCount,
+        militaryCount: aliveMilitaryCount,
+        mongolMountedArcherCount: aliveMongolMountedArcherCount,
       } = classifyAiFactionUnits(
         unitsByFaction.get(aiId) || [],
         isAiMilitaryArmyUnit,
+        (unit) => isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category),
       );
       const {
         buildings: aiBuildings,
@@ -14142,14 +14150,14 @@ export class RtsEngine {
         }
       }
       const roleCounts = {
-        melee: aiUnits.filter((unit) => unit.unitDef.category === 'melee').length + queuedRoleCounts.melee,
-        ranged: aiUnits.filter((unit) => isMongolRangedSupportUnit(unit.unitDefId, unit.unitDef.category)).length + queuedRoleCounts.ranged,
-        cavalry: aiUnits.filter((unit) => unit.unitDef.category === 'cavalry').length + queuedRoleCounts.cavalry,
-        siege: aiUnits.filter((unit) => unit.unitDef.category === 'siege').length + queuedRoleCounts.siege,
+        melee: aliveMeleeCount + queuedRoleCounts.melee,
+        ranged: aliveRangedSupportCount + queuedRoleCounts.ranged,
+        cavalry: aliveCavalryCount + queuedRoleCounts.cavalry,
+        siege: aliveSiegeCount + queuedRoleCounts.siege,
       };
       const maximumArmyCount = getAiMilitaryProductionCap(activeRules);
       let committedMilitaryCount =
-        aiUnits.filter((unit) => isAiMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category)).length +
+        aliveMilitaryCount +
         queuedRoleCounts.melee +
         queuedRoleCounts.ranged +
         queuedRoleCounts.cavalry +
@@ -14158,10 +14166,9 @@ export class RtsEngine {
       const ownTechComposition = {
         ...roleCounts,
         worker: aiWorkers.length,
-        special: aiArmy.filter((unit) => unit.unitDef.category === 'special').length,
+        special: aliveSpecialCount,
         mongolMountedArchers:
-          aiUnits.filter((unit) => unit.hp > 0 && unit.unitDefId === 'mongol_mangudai').length +
-          queuedMongolMountedArchers,
+          aliveMongolMountedArcherCount + queuedMongolMountedArchers,
       };
 
       const snapshot = {

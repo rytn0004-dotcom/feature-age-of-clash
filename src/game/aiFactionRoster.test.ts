@@ -75,3 +75,40 @@ test('AI faction building classification keeps first anchors and source order', 
   assert.deepEqual(roster.docks.map((building) => building.id), ['dock']);
   assert.deepEqual(roster.ovooBuildings.map((building) => building.id), ['ovoo']);
 });
+
+
+test('AI faction unit counters preserve production-role and military-cap semantics in one roster pass', () => {
+  const units = [
+    { id: 'melee', hp: 100, unitDefId: 'swordsman', unitDef: { category: 'melee' } },
+    { id: 'ranged-support', hp: 100, unitDefId: 'mongol_mangudai', unitDef: { category: 'cavalry' } },
+    { id: 'plain-ranged', hp: 100, unitDefId: 'archer', unitDef: { category: 'ranged' } },
+    { id: 'cavalry', hp: 100, unitDefId: 'knight', unitDef: { category: 'cavalry' } },
+    { id: 'siege', hp: 100, unitDefId: 'ram', unitDef: { category: 'siege' } },
+    { id: 'special', hp: 100, unitDefId: 'hero', unitDef: { category: 'special' } },
+    { id: 'garrisoned-special', hp: 100, unitDefId: 'hero', garrisonedInBuildingId: 'keep', unitDef: { category: 'special' } },
+    { id: 'dead-melee', hp: 0, unitDefId: 'swordsman', unitDef: { category: 'melee' } },
+  ];
+  let militaryChecks = 0;
+  let supportChecks = 0;
+  const roster = classifyAiFactionUnits(
+    units,
+    (_id, category) => {
+      militaryChecks++;
+      return category !== 'worker';
+    },
+    (unit) => {
+      supportChecks++;
+      return unit.unitDefId === 'mongol_mangudai' || unit.unitDef.category === 'ranged';
+    },
+  );
+
+  assert.equal(militaryChecks, 7, 'each living unit should be checked once for the military production cap');
+  assert.equal(supportChecks, 7, 'each living unit should be checked once for ranged-support composition');
+  assert.equal(roster.meleeCount, 1);
+  assert.equal(roster.rangedSupportCount, 2);
+  assert.equal(roster.cavalryCount, 2);
+  assert.equal(roster.siegeCount, 1);
+  assert.equal(roster.specialCount, 1, 'special units in garrison remain excluded from field army composition');
+  assert.equal(roster.militaryCount, 7, 'the military cap keeps counting living military units regardless of garrison');
+  assert.equal(roster.mongolMountedArcherCount, 1);
+});

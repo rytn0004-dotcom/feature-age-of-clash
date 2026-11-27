@@ -20,18 +20,33 @@ export interface AiFactionUnitRoster<Unit extends AiRosterUnitLike> {
   workers: Unit[];
   activeWorkers: Unit[];
   army: Unit[];
+  meleeCount: number;
+  rangedSupportCount: number;
+  cavalryCount: number;
+  siegeCount: number;
+  specialCount: number;
+  militaryCount: number;
+  mongolMountedArcherCount: number;
 }
 
 /** Classifies one faction's living units without rescanning the roster for each role. */
 export function classifyAiFactionUnits<Unit extends AiRosterUnitLike>(
   roster: readonly Unit[],
   isMilitaryArmyUnit: (unitDefId: string, category: string) => boolean,
+  isMongolRangedSupport: (unit: Unit) => boolean = (unit) => unit.unitDef.category === 'ranged',
 ): AiFactionUnitRoster<Unit> {
   const units: Unit[] = [];
   const navalBoats: Unit[] = [];
   const workers: Unit[] = [];
   const activeWorkers: Unit[] = [];
   const army: Unit[] = [];
+  let meleeCount = 0;
+  let rangedSupportCount = 0;
+  let cavalryCount = 0;
+  let siegeCount = 0;
+  let specialCount = 0;
+  let militaryCount = 0;
+  let mongolMountedArcherCount = 0;
 
   for (const unit of roster) {
     if (unit.hp <= 0) continue;
@@ -46,15 +61,34 @@ export function classifyAiFactionUnits<Unit extends AiRosterUnitLike>(
       }
     }
 
-    if (
-      isMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category) &&
-      !unit.garrisonedInBuildingId
-    ) {
+    const isMilitaryUnit = isMilitaryArmyUnit(unit.unitDefId, unit.unitDef.category);
+    if (isMilitaryUnit) militaryCount++;
+    if (unit.unitDef.category === 'melee') meleeCount++;
+    if (unit.unitDef.category === 'cavalry') cavalryCount++;
+    if (unit.unitDef.category === 'siege') siegeCount++;
+    if (unit.unitDefId === 'mongol_mangudai') mongolMountedArcherCount++;
+    if (isMongolRangedSupport(unit)) rangedSupportCount++;
+
+    if (isMilitaryUnit && !unit.garrisonedInBuildingId) {
       army.push(unit);
+      if (unit.unitDef.category === 'special') specialCount++;
     }
   }
 
-  return { units, navalBoats, workers, activeWorkers, army };
+  return {
+    units,
+    navalBoats,
+    workers,
+    activeWorkers,
+    army,
+    meleeCount,
+    rangedSupportCount,
+    cavalryCount,
+    siegeCount,
+    specialCount,
+    militaryCount,
+    mongolMountedArcherCount,
+  };
 }
 
 export interface AiFactionBuildingRoster<Building extends AiRosterBuildingLike> {
