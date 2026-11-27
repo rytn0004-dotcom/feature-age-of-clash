@@ -13,15 +13,15 @@ export function getConstructionCancellationUndoRemainingMs(
 }
 
 /**
- * Refund construction cost according to damage, not completion progress.
- * An undamaged foundation receives a full refund even at 10% construction.
- * Only HP missing relative to the current build progress reduces the refund.
+ * Refund from real combat damage, not an inferred HP/progress mismatch.
+ * Live buildings pass their damage ledger; the fallback supports legacy entities.
  */
 export function calculateConstructionCancellationRefund(
   cost: Resources,
   currentHp: number,
   maxHp: number,
   buildProgress: number,
+  constructionDamageTaken?: number,
 ): Resources {
   const validHealth =
     Number.isFinite(currentHp) &&
@@ -31,16 +31,16 @@ export function calculateConstructionCancellationRefund(
   const progress = validHealth ? Math.max(0, Math.min(1, buildProgress)) : 0;
   const expectedHp = validHealth ? maxHp * progress : 0;
   const actualHp = validHealth ? Math.max(0, Math.min(maxHp, currentHp)) : 0;
-  const damage = Math.max(0, expectedHp - actualHp);
-
-  // Ignore sub-HP rounding noise so pristine foundations always refund fully.
-  const undamagedTolerance = 0.5;
-  const refundRatio =
-    !validHealth || expectedHp <= 0
-      ? 0
-      : damage <= undamagedTolerance
-        ? 1
-        : Math.max(0, Math.min(1, actualHp / expectedHp));
+  const hasDamageLedger =
+    Number.isFinite(constructionDamageTaken) && (constructionDamageTaken as number) >= 0;
+  const damage = hasDamageLedger
+    ? Math.max(0, constructionDamageTaken as number)
+    : Math.max(0, expectedHp - actualHp);
+  const tolerance = hasDamageLedger ? 0 : 0.5;
+  const damageRatio = expectedHp > 0
+    ? Math.max(0, Math.min(1, (damage <= tolerance ? 0 : damage) / expectedHp))
+    : 0;
+  const refundRatio = validHealth && expectedHp > 0 ? 1 - damageRatio : 0;
 
   const refund = (value: number): number =>
     Number.isFinite(value) && value > 0 ? Math.floor(value * refundRatio) : 0;
@@ -51,6 +51,32 @@ export function calculateConstructionCancellationRefund(
     gold: refund(cost.gold || 0),
     stone: refund(cost.stone || 0),
   };
+}
+
+/** Subtract damage once and record only HP actually removed from an unfinished building. */
+export function applyBuildingDamage(
+  building: {
+    hp: number;
+    maxHp: number;
+    isConstructed: boolean;
+    constructionDamageTaken?: number;
+  },
+  incomingDamage: number,
+): number {
+  const safeMaxHp = Number.isFinite(building.maxHp) ? Math.max(0, building.maxHp) : 0;
+  const currentHp = Number.isFinite(building.hp)
+    ? Math.max(0, Math.min(safeMaxHp, building.hp))
+    : 0;
+  const damage = Number.isFinite(incomingDamage) ? Math.max(0, incomingDamage) : 0;
+  const appliedDamage = Math.min(currentHp, damage);
+  building.hp = currentHp - appliedDamage;
+  if (!building.isConstructed && appliedDamage > 0) {
+    const previousDamage = Number.isFinite(building.constructionDamageTaken)
+      ? Math.max(0, building.constructionDamageTaken as number)
+      : 0;
+    building.constructionDamageTaken = previousDamage + appliedDamage;
+  }
+  return appliedDamage;
 }
 
 /** Progress for an intentional hold action, clamped to the visible 0..1 range. */

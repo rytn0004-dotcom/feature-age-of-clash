@@ -15,6 +15,7 @@ import {
 import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
+  applyBuildingDamage,
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
   CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
@@ -2737,6 +2738,7 @@ export class RtsEngine {
       hp: instant ? finalMaxHp : Math.round(finalMaxHp * 0.1),
       maxHp: finalMaxHp,
       isConstructed: instant,
+      constructionDamageTaken: 0,
       buildProgress: instant ? 1 : 0.1,
       queue: [],
       queueProgress: 0,
@@ -3605,7 +3607,7 @@ export class RtsEngine {
         if (b.hp <= 0 || !this.isHostile(unit, b)) return;
         if (getDistance(unit.x, unit.z, b.x, b.z) <= 6.0 + getBuildingCollisionRadius(b)) {
           const dmg = Math.max(10, Math.round(ab.potency * 0.8));
-          b.hp -= dmg;
+          applyBuildingDamage(b, dmg);
           if (b.hp <= 0 && b.buildingDef.isWall) this.wallEndpointIndexDirty = true;
           b.hitFlashTimer = 0.08;
         }
@@ -5332,6 +5334,7 @@ export class RtsEngine {
       building.hp,
       building.maxHp,
       building.buildProgress,
+      building.constructionDamageTaken,
     );
     if (!this.removeBuildingEntity(building)) return false;
 
@@ -9375,7 +9378,8 @@ export class RtsEngine {
             this.spawnParticleBurst(target.x, 1.0, target.z, 'spark', 3);
           }
 
-          target.hp -= dmg;
+          if (target.type === 'building') applyBuildingDamage(target as BuildingEntity, dmg);
+          else target.hp -= dmg;
           if (target.type === 'building' && target.hp <= 0 && (target as BuildingEntity).buildingDef.isWall) {
             this.wallEndpointIndexDirty = true;
           }
@@ -11084,7 +11088,7 @@ export class RtsEngine {
       const dot = (bx / bd) * fx + (bz / bd) * fz;
       if (dot < cosHalf) continue;
       const splash = Math.max(3, Math.round(12 * dot * (1 - bd / range)));
-      b.hp -= splash;
+      applyBuildingDamage(b, splash);
       if (b.hp <= 0 && b.buildingDef.isWall) this.wallEndpointIndexDirty = true;
       b.hitFlashTimer = 0.1;
       b.lastAttackerFaction = attacker.faction;
@@ -12651,7 +12655,8 @@ export class RtsEngine {
           );
         }
 
-        target.hp -= dmg;
+        if (target.type === 'building') applyBuildingDamage(target as BuildingEntity, dmg);
+        else target.hp -= dmg;
         if (attacker?.unitDefId === 'bombard_cannon') {
           this.applyBombardCannonSplash(
             attacker,

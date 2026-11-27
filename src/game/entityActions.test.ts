@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyBuildingDamage,
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
   CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
@@ -18,6 +19,45 @@ test('cancelling a pristine foundation refunds the full cost even at 10% progres
 
 test('cancelling an undamaged partially-built structure still refunds the full cost', () => {
   assert.deepEqual(calculateConstructionCancellationRefund(cost, 40, 100, 0.4), cost);
+});
+
+test('a pristine foundation refunds fully when runtime HP and build progress temporarily drift apart', () => {
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 7, 100, 0.2, 0), cost);
+  assert.deepEqual(calculateConstructionCancellationRefund(cost, 45, 100, 0.6, 0), cost);
+});
+
+test('only tracked combat damage reduces the construction cancellation refund', () => {
+  assert.deepEqual(
+    calculateConstructionCancellationRefund(cost, 7, 100, 0.2, 5),
+    { food: 30, wood: 90, gold: 22, stone: 60 },
+  );
+  assert.deepEqual(
+    calculateConstructionCancellationRefund(cost, 35, 100, 0.5, 5),
+    { food: 36, wood: 108, gold: 27, stone: 72 },
+  );
+  assert.deepEqual(
+    calculateConstructionCancellationRefund(cost, 0, 100, 0.2, 100),
+    { food: 0, wood: 0, gold: 0, stone: 0 },
+  );
+});
+
+test('building damage ledger counts only HP actually lost before construction completes', () => {
+  const foundation = { hp: 10, maxHp: 100, isConstructed: false, constructionDamageTaken: 0 };
+  assert.equal(applyBuildingDamage(foundation, 4), 4);
+  assert.equal(foundation.hp, 6);
+  assert.equal(foundation.constructionDamageTaken, 4);
+  assert.equal(applyBuildingDamage(foundation, 100), 6);
+  assert.equal(foundation.hp, 0);
+  assert.equal(foundation.constructionDamageTaken, 10);
+
+  const completed = { hp: 80, maxHp: 100, isConstructed: true, constructionDamageTaken: 0 };
+  assert.equal(applyBuildingDamage(completed, 15), 15);
+  assert.equal(completed.hp, 65);
+  assert.equal(completed.constructionDamageTaken, 0);
+
+  const invalid = { hp: 40, maxHp: 100, isConstructed: false, constructionDamageTaken: 2 };
+  assert.equal(applyBuildingDamage(invalid, Number.NaN), 0);
+  assert.equal(invalid.constructionDamageTaken, 2);
 });
 
 test('construction cancellation withholds only the percentage of HP damage', () => {

@@ -431,6 +431,8 @@ export interface BuildingEntity extends EntityCommon {
   /** Linked nearby watchtower grants this segment additional armor. */
   wallTowerLinked?: boolean;
   isConstructed: boolean;
+  /** Damage actually received from attacks while this foundation was unfinished. */
+  constructionDamageTaken?: number;
   buildProgress: number; // 0 to 1
   queue: string[]; // queue of unitDefIds
   queueProgress: number; // 0 to 1
