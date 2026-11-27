@@ -5,7 +5,7 @@ import { sound } from '../game/audio';
 
 import { DEFAULT_BUILDINGS } from '../game/mods';
 import { isPlacementLocationValid } from '../game/collision';
-import { canUnitHuntDangerousWildlife, getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
+import { canUnitHuntWildlife, getBuildingMaxGarrison, getContestedShrineSummary } from '../game/rules';
 import {
   WALL_PREVIEW_INFO_REFRESH_INTERVAL_MS,
   WALL_PREVIEW_REFRESH_INTERVAL_MS,
@@ -402,7 +402,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         if (unit.unitDef.category === 'worker') {
           hasWorkersSelected = true;
         } else if (
-          canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
+          canUnitHuntWildlife(unit.unitDef, 'aurochs') &&
           unit.state !== 'assembling' &&
           !unit.fieldAssemblyProjectId
         ) {
@@ -469,10 +469,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         }
       }
 
-      // 6. Gather order if targeted resource node
+      // 6. Gather / hunt order if targeted resource node.
       if (hit.hitType === 'resource' && hit.resource) {
-        const isDangerousWildlife = hit.resource.subtype === 'boar' || hit.resource.subtype === 'aurochs';
-        if (hasWorkersSelected || (isDangerousWildlife && hasGroundCombatHuntersSelected)) {
+        const isHuntableWildlife =
+          hit.resource.subtype === 'hunt' ||
+          hit.resource.subtype === 'boar' ||
+          hit.resource.subtype === 'aurochs';
+        if (hasWorkersSelected || (isHuntableWildlife && hasGroundCombatHuntersSelected)) {
           engine.issueGatherOrder(hit.resource.id, e.shiftKey);
           return;
         }
@@ -517,6 +520,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
       // If in Attack-Move targeting mode, execute Attack-Move / Attack on target
       if (engine.pendingCommandMode === 'attack_move') {
         const hit = engine.raycastInteractive(e.clientX, e.clientY);
+        if (
+          hit.hitType === 'resource' &&
+          hit.resource &&
+          (hit.resource.subtype === 'hunt' || hit.resource.subtype === 'boar' || hit.resource.subtype === 'aurochs')
+        ) {
+          engine.issueAttackOrder(hit.resource.id, e.shiftKey);
+          return;
+        }
         if (hit.hitType === 'unit' && hit.unit && engine.isHostileToPlayer(hit.unit)) {
           engine.issueAttackOrder(hit.unit.id, e.shiftKey);
           return;
@@ -880,10 +891,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         food: { action: '採集糧食', label: '糧食資源' },
       };
       const meta = actionMap[sub] || { action: '採集資源', label: '資源點' };
-      const isDangerousWildlife = sub === 'boar' || sub === 'aurochs';
+      const isHuntableWildlife = sub === 'hunt' || sub === 'boar' || sub === 'aurochs';
       const hasGatherCommandSelection =
         hasWorkersSelected ||
-        (isDangerousWildlife && hasGroundCombatHuntersSelected) ||
+        (isHuntableWildlife && hasGroundCombatHuntersSelected) ||
         (hasNavalBoatSelected && (sub === 'shore_fish' || sub === 'deep_fish'));
 
       if (hasGatherCommandSelection) {
@@ -911,7 +922,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ onEngineReady }) => {
         } else if (
           hasNavalBoatSelected &&
           !hasLandWorkersSelected &&
-          !(isDangerousWildlife && hasGroundCombatHuntersSelected) &&
+          !(isHuntableWildlife && hasGroundCombatHuntersSelected) &&
           sub !== 'shore_fish'
         ) {
           setHoverHint({

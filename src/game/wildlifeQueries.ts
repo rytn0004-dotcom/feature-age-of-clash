@@ -8,6 +8,7 @@ export interface WildlifeInteractionUnit extends CombatSpatialUnit {
   };
   state: string;
   attackMoveGoal?: unknown;
+  targetResourceNodeId?: string;
 }
 
 export interface WildlifeThreatVector {
@@ -34,6 +35,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
   animalZ: number,
   detectRadius: number,
   output: WildlifeUnitInteractionScratch<Unit>,
+  animalId?: string,
 ): WildlifeUnitInteractionScratch<Unit> {
   const reusableNearest = output.nearestThreat;
   output.nearestThreat = null;
@@ -82,9 +84,11 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
       output.nearestThreat = nearest;
     }
 
-    if (isActiveWildlifeHunter(unit)) {
+    if (isActiveWildlifeHunter(unit, animalId)) {
       const range = unit.unitDef.stats.range || 1.5;
-      const attackDistance = Math.max(2.4, range + 0.5);
+      const attackDistance = unit.unitDef.category === 'ranged'
+        ? Math.max(4.8, range + 0.5)
+        : Math.max(2.4, range + 0.5);
       if (distanceSquared <= attackDistance * attackDistance) output.attackers.push(unit);
     }
   }
@@ -93,14 +97,24 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
 }
 
 
-/** True only for living ground combat units currently executing an attack order. */
-function isActiveWildlifeHunter(unit: WildlifeInteractionUnit): boolean {
+/** Armed ground roles may hunt only while attacking/attack-moving or assigned to a resource node. */
+function isActiveWildlifeHunter(unit: WildlifeInteractionUnit, animalId?: string): boolean {
+  const isArmedGroundRole =
+    unit.unitDef.category === 'melee' ||
+    unit.unitDef.category === 'ranged' ||
+    unit.unitDef.category === 'cavalry' ||
+    unit.unitDef.category === 'special';
+  const hasExplicitHuntOrder =
+    unit.state === 'gathering' &&
+    !!unit.targetResourceNodeId &&
+    (!animalId || unit.targetResourceNodeId === animalId);
+
   return (
     unit.hp > 0 &&
     !unit.garrisonedInBuildingId &&
     !unit.unitDef.isNaval &&
-    unit.unitDef.category !== 'worker' &&
-    (unit.state === 'attacking' || !!unit.attackMoveGoal)
+    isArmedGroundRole &&
+    (unit.state === 'attacking' || !!unit.attackMoveGoal || hasExplicitHuntOrder)
   );
 }
 
@@ -118,7 +132,12 @@ export function getWildlifeInteractionQueryRadius(
     if (!isActiveWildlifeHunter(unit)) continue;
     const range = unit.unitDef.stats.range || 1.5;
     if (range === Number.POSITIVE_INFINITY) return Number.POSITIVE_INFINITY;
-    if (Number.isFinite(range)) radius = Math.max(radius, Math.max(2.4, range + 0.5));
+    if (Number.isFinite(range)) {
+      const reach = unit.unitDef.category === 'ranged'
+        ? Math.max(4.8, range + 0.5)
+        : Math.max(2.4, range + 0.5);
+      radius = Math.max(radius, reach);
+    }
   }
   return radius;
 }
@@ -170,6 +189,7 @@ export function applyWildlifeHunterAttacks<Unit extends WildlifeHunterAttackUnit
   simTime: number,
   onHit: (attacker: Unit, damage: number) => void,
   onKill: () => void,
+  animalId?: string,
 ): number {
   const initialHp = animal.animalHp;
   if (
@@ -185,7 +205,7 @@ export function applyWildlifeHunterAttacks<Unit extends WildlifeHunterAttackUnit
   let appliedAttacks = 0;
   for (const attacker of attackers) {
     if (remainingHp <= 0) break;
-    if (!isActiveWildlifeHunter(attacker)) continue;
+    if (!isActiveWildlifeHunter(attacker, animalId)) continue;
     if (!tryConsumeWildlifeHunterAttack(attacker, simTime, attacker.unitDef.stats.attackRate || 1)) continue;
 
     const rawDamage = attacker.unitDef.stats.attack;

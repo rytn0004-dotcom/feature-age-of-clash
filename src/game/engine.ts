@@ -194,6 +194,7 @@ import {
   getWildlifeMaxHealth,
   isDangerousWildlifeSubtype,
   isHuntableWildlifeSubtype,
+  canUnitHuntWildlife,
   canUnitHuntDangerousWildlife,
   shouldAiOrganizeWildlifeHunt,
   advanceStarRelicChannel,
@@ -220,7 +221,7 @@ import {
   stepWildBoarState,
   triggerWildBoarAggression,
   selectWildBoarAggroTarget,
-  getWildBoarRangedHuntPlan,
+  getWildlifeRangedHuntPlan,
   isAllAiMatch,
   MatchWinnerSummary,
   resolveMatchOutcome,
@@ -4134,6 +4135,13 @@ export class RtsEngine {
     if (playerUnits.length === 0) return;
     this.pendingCommandMode = 'normal';
 
+    // An attack command aimed at an animal becomes a dedicated hunt order.
+    const wildlifeTarget = this.getResourceNodeById(targetId);
+    if (wildlifeTarget && isHuntableWildlifeSubtype(wildlifeTarget.subtype)) {
+      this.issueGatherOrder(targetId, queue);
+      return;
+    }
+
     const targetUnit = this.getUnitById(targetId);
     // Board friendly transport boat
     if (
@@ -4263,14 +4271,14 @@ export class RtsEngine {
       );
     if (selectedUnits.length === 0) return;
 
-    // Workers handle the normal economy. Ground combat units can be explicitly
-    // assigned to dangerous wildlife so the player can organize a real hunting party.
+    // Workers keep their economy role; armed ground units can explicitly hunt
+    // deer, boars and aurochs. Siege, naval and field-assembly units stay excluded.
     const eligibleUnits = selectedUnits.filter((unit) =>
       canUnitGatherNode(unit.unitDef, node) &&
       (
         unit.unitDef.category === 'worker' ||
         (
-          canUnitHuntDangerousWildlife(unit.unitDef, node.subtype) &&
+          canUnitHuntWildlife(unit.unitDef, node.subtype) &&
           (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
         )
       )
@@ -4279,8 +4287,8 @@ export class RtsEngine {
       sound.playInvalid();
       if (node.subtype === 'deep_fish') {
         this.addFloatingText(node.x, 2.5, node.z, '⛵ 深海魚群距離海岸太遠，村民無法採集！請建造【碼頭】並訓練【漁船】捕撈！', '#f59e0b');
-      } else if (isDangerousWildlifeSubtype(node.subtype)) {
-        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 狩獵大型野獸需要村民或近戰、遠程、騎兵；攻城器、漁船與正在組裝的部隊無法參與。', '#f59e0b');
+      } else if (isHuntableWildlifeSubtype(node.subtype)) {
+        this.addFloatingText(node.x, 2.5, node.z, '⚠️ 狩獵需要村民或近戰、遠程、騎兵、特殊地面單位；攻城器、船隻與正在組裝的部隊無法參與。', '#f59e0b');
       } else {
         this.addFloatingText(node.x, 2.5, node.z, '⚠️ 一般資源需要村民採集；漁船只能捕撈魚群。', '#f59e0b');
       }
@@ -9580,6 +9588,19 @@ export class RtsEngine {
       return;
     }
 
+    const assignedWildlife = isHuntableWildlifeSubtype(node.subtype);
+    const militaryHunter = unit.unitDef.category !== 'worker' && assignedWildlife;
+    if (militaryHunter && (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))) {
+      unit.targetResourceNodeId = undefined;
+      unit.waypoints = undefined;
+      unit.velocity = { x: 0, z: 0 };
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '🏹 狩獵完成';
+      }
+      return;
+    }
+
     const curAmt = Math.round(unit.carryingResource?.amount || 0);
     const cap = unit.unitDef.stats.carryCapacity;
     const labelMap: Record<string, string> = {
@@ -9607,13 +9628,17 @@ export class RtsEngine {
 
     const dist = getDistance(unit.x, unit.z, node.x, node.z);
     const nodeRadius = getResourceColliderRadius(node.resourceType, node.subtype);
-    const isLiveDangerousWildlife = isDangerousWildlifeSubtype(node.subtype) && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const isLiveHuntableWildlife =
+      assignedWildlife &&
+      node.animalAlive !== false &&
+      (node.animalHp === undefined || node.animalHp > 0);
+    if (isLiveHuntableWildlife) (unit as any)._gatherNodeType = node.subtype;
     const fallbackAngle = unit.id.split('').reduce(
       (sum, char, index) => sum + char.charCodeAt(0) * (index + 1),
       0,
     ) * 0.017453292519943295;
-    const rangedBoarPlan = isLiveDangerousWildlife && unit.unitDef.category === 'ranged'
-      ? getWildBoarRangedHuntPlan(
+    const rangedWildlifePlan = isLiveHuntableWildlife && unit.unitDef.category === 'ranged'
+      ? getWildlifeRangedHuntPlan(
           unit.x,
           unit.z,
           node.x,
@@ -9623,20 +9648,20 @@ export class RtsEngine {
         )
       : null;
 
-    if (rangedBoarPlan && rangedBoarPlan.mode !== 'hold') {
-      this.moveUnitAlongPath(unit, rangedBoarPlan.goalX, rangedBoarPlan.goalZ, dt);
-      unit.currentActionText = rangedBoarPlan.mode === 'retreat'
+    if (rangedWildlifePlan && rangedWildlifePlan.mode !== 'hold') {
+      this.moveUnitAlongPath(unit, rangedWildlifePlan.goalX, rangedWildlifePlan.goalZ, dt);
+      unit.currentActionText = rangedWildlifePlan.mode === 'retreat'
         ? '🏹 拉開距離 · 遠程掩護'
         : '🏹 接近射擊位置';
       return;
     }
 
-    if (rangedBoarPlan) {
-      const targetName = node.subtype === 'aurochs' ? '原牛' : '野豬';
-      unit.currentActionText = `🏹 遠程掩護${targetName} (${Math.ceil(node.animalHp ?? getWildlifeMaxHealth(node.subtype))} HP)`;
+    if (rangedWildlifePlan) {
+      const targetName = node.subtype === 'aurochs' ? '原牛' : node.subtype === 'boar' ? '野豬' : '山羌';
+      unit.currentActionText = `🏹 遠程狩獵${targetName} (${Math.ceil(node.animalHp ?? getWildlifeMaxHealth(node.subtype))} HP)`;
     }
 
-    const gatherRange = rangedBoarPlan?.maxRange ?? (
+    const gatherRange = rangedWildlifePlan?.maxRange ?? (
       node.subtype === 'deep_fish'
         ? Math.max(5.5, nodeRadius + 4.4)
         : node.subtype === 'shore_fish'
@@ -9689,6 +9714,7 @@ export class RtsEngine {
             : Math.max(1, unit.unitDef.stats.attack);
           node.animalHp = Math.max(0, (node.animalHp || 0) - dmg);
           hitCd = isVillager ? 0.9 : Math.max(0.55, 1 / Math.max(0.4, unit.unitDef.stats.attackRate || 1));
+          if (!isVillager) (unit as any)._huntAttackSwing = 0.28;
           this.addFloatingText(node.x, 1.6, node.z, `-${dmg}`, '#fca5a5');
           if (isDangerousWildlife) triggerWildBoarAggression(node, unit.id, this.simTime);
           else triggerWildAnimalPanic(node, unit.x, unit.z, this.simTime, 2.6);
@@ -11353,6 +11379,7 @@ export class RtsEngine {
         node.z,
         DETECT,
         this.wildlifeUnitInteractionScratch,
+        node.id,
       );
       const step = stepWildAnimalState(node, interactions.nearestThreat, this.simTime, dt, isAnimalBlocked);
 
@@ -11413,8 +11440,12 @@ export class RtsEngine {
         node,
         interactions.attackers,
         this.simTime,
-        (attacker) => triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5),
+        (attacker) => {
+          (attacker as any)._huntAttackSwing = 0.28;
+          triggerWildAnimalPanic(node, attacker.x, attacker.z, this.simTime, 2.5);
+        },
         () => killAnimal(node, mesh, '山羌倒地'),
+        node.id,
       );
     }
   }

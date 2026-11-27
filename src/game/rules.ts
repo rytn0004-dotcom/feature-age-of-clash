@@ -1674,19 +1674,27 @@ export function isHuntableWildlifeSubtype(subtype?: ResourceNode['subtype'] | st
   return subtype === 'hunt' || isDangerousWildlifeSubtype(subtype);
 }
 
-/** Ground combat units may join deliberate hunts, but workers remain the only
- * units eligible for ordinary economy nodes and naval units never hunt land animals. */
-export function canUnitHuntDangerousWildlife(
+/** Armed ground units can be explicitly assigned to any land animal; workers use normal gather orders. */
+export function canUnitHuntWildlife(
   unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,
   subtype?: ResourceNode['subtype'] | string,
 ): boolean {
-  return isDangerousWildlifeSubtype(subtype) &&
+  return isHuntableWildlifeSubtype(subtype) &&
     !unitDef.isNaval &&
     (
       unitDef.category === 'melee' ||
       unitDef.category === 'ranged' ||
-      unitDef.category === 'cavalry'
+      unitDef.category === 'cavalry' ||
+      unitDef.category === 'special'
     );
+}
+
+/** Risk classification remains separate so AI can reserve deliberate parties for aggressive beasts. */
+export function canUnitHuntDangerousWildlife(
+  unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,
+  subtype?: ResourceNode['subtype'] | string,
+): boolean {
+  return isDangerousWildlifeSubtype(subtype) && canUnitHuntWildlife(unitDef, subtype);
 }
 
 export function getWildlifeMaxHealth(subtype?: ResourceNode['subtype'] | string): number {
@@ -1899,7 +1907,7 @@ export function findBalancedResourceNode(
  * Enforces land vs naval gathering rules:
  * - Land units cannot harvest offshore `deep_fish`.
  * - Naval Fishing Boats can harvest both `deep_fish` and `shore_fish`, and cannot harvest land nodes.
- * - Role-specific wildlife hunting eligibility is handled by `canUnitHuntDangerousWildlife`.
+ * - Role-specific wildlife hunting eligibility is handled by `canUnitHuntWildlife`.
  */
 export function canUnitGatherNode(
   unitDef: Pick<UnitDefinition, 'id' | 'category' | 'isNaval'>,
@@ -3753,7 +3761,39 @@ export interface WildBoarRangedHuntPlan {
   maxRange: number;
 }
 
-/** Compute a compact firing band for ranged units explicitly ordered to hunt a boar. */
+/** Shared compact firing band for ranged units explicitly ordered to hunt any land animal. */
+export function getWildlifeRangedHuntPlan(
+  unitX: number,
+  unitZ: number,
+  animalX: number,
+  animalZ: number,
+  weaponRange: number,
+  fallbackAngle = 0,
+): WildBoarRangedHuntPlan | null {
+  if (
+    ![unitX, unitZ, animalX, animalZ, weaponRange, fallbackAngle].every(Number.isFinite) ||
+    weaponRange <= 2.25
+  ) return null;
+
+  const maxRange = Math.max(4.8, Math.min(8, weaponRange * 0.68));
+  const minRange = Math.max(3.2, maxRange - 2.1);
+  const preferredRange = (minRange + maxRange) * 0.5;
+  const dx = unitX - animalX;
+  const dz = unitZ - animalZ;
+  const distance = Math.hypot(dx, dz);
+  const angle = distance > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
+
+  return {
+    mode: distance > maxRange ? 'approach' : distance < minRange ? 'retreat' : 'hold',
+    goalX: animalX + Math.cos(angle) * preferredRange,
+    goalZ: animalZ + Math.sin(angle) * preferredRange,
+    minRange,
+    preferredRange,
+    maxRange,
+  };
+}
+
+/** Backward-compatible alias retained for existing boar tactics and balance tests. */
 export function getWildBoarRangedHuntPlan(
   unitX: number,
   unitZ: number,
@@ -3762,27 +3802,7 @@ export function getWildBoarRangedHuntPlan(
   weaponRange: number,
   fallbackAngle = 0,
 ): WildBoarRangedHuntPlan | null {
-  if (
-    ![unitX, unitZ, boarX, boarZ, weaponRange, fallbackAngle].every(Number.isFinite) ||
-    weaponRange <= 2.25
-  ) return null;
-
-  const maxRange = Math.max(4.8, Math.min(8, weaponRange * 0.68));
-  const minRange = Math.max(3.2, maxRange - 2.1);
-  const preferredRange = (minRange + maxRange) * 0.5;
-  const dx = unitX - boarX;
-  const dz = unitZ - boarZ;
-  const distance = Math.hypot(dx, dz);
-  const angle = distance > 0.001 ? Math.atan2(dz, dx) : fallbackAngle;
-
-  return {
-    mode: distance > maxRange ? 'approach' : distance < minRange ? 'retreat' : 'hold',
-    goalX: boarX + Math.cos(angle) * preferredRange,
-    goalZ: boarZ + Math.sin(angle) * preferredRange,
-    minRange,
-    preferredRange,
-    maxRange,
-  };
+  return getWildlifeRangedHuntPlan(unitX, unitZ, boarX, boarZ, weaponRange, fallbackAngle);
 }
 
 export const WILD_BOAR_HOME_LEASH_RADIUS = 26;

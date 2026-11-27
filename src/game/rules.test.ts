@@ -4,6 +4,8 @@ import {
   canAfford,
   canAssembleFieldRam,
   canUnitGatherNode,
+  canUnitHuntWildlife,
+  getWildlifeRangedHuntPlan,
   selectWildBoarAggroTarget,
   getWildBoarRangedHuntPlan,
   WILD_BOAR_FRONTLINE_SCREEN_RADIUS,
@@ -3785,6 +3787,33 @@ test('wild boar (野豬): only explicit ground-unit hunting orders can harvest t
     false,
     'naval units cannot harvest a land animal',
   );
+});
+
+test('all land wildlife accepts armed ground hunters but excludes siege, naval and workers', () => {
+  const roles = ['melee', 'ranged', 'cavalry', 'special'] as const;
+  const animals = ['hunt', 'boar', 'aurochs'] as const;
+  for (const subtype of animals) {
+    for (const category of roles) {
+      assert.equal(canUnitHuntWildlife({ category, isNaval: false }, subtype), true);
+    }
+    assert.equal(canUnitHuntWildlife({ category: 'siege', isNaval: false }, subtype), false);
+    assert.equal(canUnitHuntWildlife({ category: 'melee', isNaval: true }, subtype), false);
+    assert.equal(canUnitHuntWildlife({ category: 'worker', isNaval: false }, subtype), false);
+  }
+  assert.equal(canUnitHuntWildlife({ category: 'melee', isNaval: false }, 'berry'), false);
+});
+
+test('ranged hunting uses a shared firing band across deer, boar and aurochs', () => {
+  const far = getWildlifeRangedHuntPlan(0, 0, 12, 0, 10);
+  assert.ok(far);
+  assert.equal(far.mode, 'approach');
+  const close = getWildlifeRangedHuntPlan(0, 0, 1, 0, 10);
+  assert.ok(close);
+  assert.equal(close.mode, 'retreat');
+  const hold = getWildlifeRangedHuntPlan(0, 0, 6, 0, 10);
+  assert.ok(hold);
+  assert.equal(hold.mode, 'hold');
+  assert.equal(getWildlifeRangedHuntPlan(0, 0, 6, 0, Number.NaN), null);
 });
 
 test('wild boar (野豬): aggression refreshes safely, dead animals ignore provocation, and blocked charges stop', async () => {
