@@ -30,6 +30,7 @@ import {
   type UnitBadgeLookupCache,
 } from './unitBadgeCache';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
+import { getWildlifeIdleMotion } from './wildlifeFacing';
 import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
@@ -11187,7 +11188,6 @@ export class RtsEngine {
 
   private updateWildAnimals(dt: number) {
     const DETECT = 18;
-    let deerIdx = 0;
     const wildlifeInteractionQueryRadius = getWildlifeInteractionQueryRadius(this.units, DETECT);
     // Updated only when buildings are added, instead of rescanning every
     // building on every wildlife simulation slice.
@@ -11260,6 +11260,7 @@ export class RtsEngine {
       // newly initialized animal on the first wildlife update.
       initializeWildlifeSimulationState(node, nodeIndex, maxHp);
       if (mesh) this.updateWildlifeOverheadBadge(node, mesh);
+      const idleMotion = getWildlifeIdleMotion(this.simTime, nodeIndex * 2.399963229728653);
 
       if (!node.animalAlive) {
         if (mesh) {
@@ -11320,23 +11321,38 @@ export class RtsEngine {
             // Footfalls advance with collision-resolved ground distance, not wall-clock
             // time, so blocked animals do not run in place or skate across the terrain.
             const moving = step.moveBlend > 0.02;
+            const idleBlend = 1 - Math.max(0, Math.min(1, step.moveBlend));
             const strideAmplitude = isAurochs ? 0.46 : 0.58;
             const phase = step.gaitPhase;
             const stride = Math.sin(phase) * strideAmplitude * step.moveBlend;
-            parts.flLeg.rotation.z = stride;
-            parts.brLeg.rotation.z = stride * 0.92;
-            parts.frLeg.rotation.z = -stride;
-            parts.blLeg.rotation.z = -stride * 0.92;
+            const weightShift = idleMotion.weightShift * idleBlend;
+            parts.flLeg.rotation.z = stride + weightShift * 0.014;
+            parts.brLeg.rotation.z = stride * 0.92 + weightShift * 0.011;
+            parts.frLeg.rotation.z = -stride - weightShift * 0.014;
+            parts.blLeg.rotation.z = -stride * 0.92 - weightShift * 0.011;
             const bob = moving
               ? Math.abs(Math.sin(phase * 2)) * (isAurochs ? 0.016 : 0.025) * step.moveBlend
-              : Math.sin(phase) * (isAurochs ? 0.008 : 0.012);
+              : 0;
             const idleBodyHeight = isAurochs ? 0.82 : 0.72;
-            parts.bodyPivot.position.y += (idleBodyHeight + bob - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
+            const breathing = idleMotion.breathing * (isAurochs ? 0.017 : 0.012) * idleBlend;
+            parts.bodyPivot.position.y += (idleBodyHeight + bob + breathing - parts.bodyPivot.position.y) * Math.min(1, dt * 9);
             const headTilt = step.isCharging
               ? isAurochs ? -0.25 : -0.13
-              : step.isReturning ? 0.075 : Math.sin(this.simTime * 1.4) * 0.025;
+              : step.isReturning
+                ? 0.075
+                : idleMotion.grazing
+                  ? -0.12 - idleMotion.grazingAmount * 0.1 + idleMotion.headNod * 0.02
+                  : idleMotion.headNod * (isAurochs ? 0.035 : 0.045) * idleBlend;
             parts.headPivot.rotation.z += (headTilt - parts.headPivot.rotation.z) * Math.min(1, dt * 7);
-            parts.tailPivot.rotation.y = Math.sin(this.simTime * (isAurochs ? 2.8 : 4.4)) * (isAurochs ? 0.16 : 0.26);
+            const headLook = idleMotion.headLook * (isAurochs ? 0.075 : 0.11) * idleBlend;
+            parts.headPivot.rotation.y += (headLook - parts.headPivot.rotation.y) * Math.min(1, dt * 3.8);
+            const bodyLean = moving
+              ? Math.cos(phase) * 0.025 * step.moveBlend
+              : idleMotion.weightShift * (isAurochs ? 0.012 : 0.018);
+            parts.bodyPivot.rotation.z += (bodyLean - parts.bodyPivot.rotation.z) * Math.min(1, dt * 4.5);
+            parts.tailPivot.rotation.y =
+              Math.sin(this.simTime * (isAurochs ? 2.8 : 4.4)) * (isAurochs ? 0.16 : 0.26) +
+              idleMotion.tailSway * (isAurochs ? 0.045 : 0.065) * idleBlend;
           }
         }
 
@@ -11363,7 +11379,6 @@ export class RtsEngine {
         continue;
       }
 
-      deerIdx++;
       const nearbyUnits = this.combatSpatialIndex
         ? queryCombatSpatialIndex(
             this.combatSpatialIndex,
@@ -11386,7 +11401,7 @@ export class RtsEngine {
       if (mesh) {
         const animationState = step.moveBlend > 0.02
           ? (step.actualSpeed >= 2.2 ? 'gallop' : 'walk')
-          : (step.isGrazing ? 'graze' : 'idle');
+          : ((step.isGrazing || idleMotion.grazing) ? 'graze' : 'idle');
         updateDeerAssetAnimation(mesh, animationState, dt);
         mesh.position.set(node.x, step.hopY, node.z);
         mesh.rotation.y = step.yaw;
@@ -11419,19 +11434,24 @@ export class RtsEngine {
             }
           } else {
             const settle = 1 - Math.exp(-10 * dt);
-            parts.flLeg.rotation.z += (0 - parts.flLeg.rotation.z) * settle;
-            parts.frLeg.rotation.z += (0 - parts.frLeg.rotation.z) * settle;
-            parts.blLeg.rotation.z += (0 - parts.blLeg.rotation.z) * settle;
-            parts.brLeg.rotation.z += (0 - parts.brLeg.rotation.z) * settle;
-            parts.bodyPivot.rotation.z += (0 - parts.bodyPivot.rotation.z) * settle;
-            parts.tailPivot.rotation.z += (0 - parts.tailPivot.rotation.z) * settle;
-            if (step.isGrazing) {
-              const graze = Math.max(0, Math.sin(this.simTime * 1.15 + deerIdx * 1.7));
-              const targetHead = -graze * 0.44;
-              parts.headPivot.rotation.z += (targetHead - parts.headPivot.rotation.z) * Math.min(1, dt * 5);
-            } else {
-              parts.headPivot.rotation.z += (0.06 - parts.headPivot.rotation.z) * settle;
-            }
+            const idleBlend = 1 - blend;
+            const legShift = idleMotion.weightShift * 0.018 * idleBlend;
+            const legTargets = [legShift, -legShift, -legShift * 0.72, legShift * 0.72];
+            [parts.flLeg, parts.frLeg, parts.blLeg, parts.brLeg].forEach((leg, index) => {
+              leg.rotation.z += (legTargets[index] - leg.rotation.z) * settle;
+            });
+            const bodySway = idleMotion.weightShift * 0.012 * idleBlend;
+            parts.bodyPivot.rotation.z += (bodySway - parts.bodyPivot.rotation.z) * settle;
+            const bodyHeight = 0.7 + idleMotion.breathing * 0.012 * idleBlend;
+            parts.bodyPivot.position.y += (bodyHeight - parts.bodyPivot.position.y) * settle;
+            const targetTail = idleMotion.tailSway * 0.075 * idleBlend;
+            parts.tailPivot.rotation.z += (targetTail - parts.tailPivot.rotation.z) * settle;
+            const targetHead = (step.isGrazing || idleMotion.grazing)
+              ? -0.18 - idleMotion.grazingAmount * 0.2 + idleMotion.headNod * 0.035
+              : 0.06 + idleMotion.headNod * 0.025;
+            parts.headPivot.rotation.z += (targetHead - parts.headPivot.rotation.z) * Math.min(1, dt * 4.5);
+            const targetHeadLook = idleMotion.headLook * 0.14 * idleBlend;
+            parts.headPivot.rotation.y += (targetHeadLook - parts.headPivot.rotation.y) * Math.min(1, dt * 3.8);
           }
         }
       }
@@ -13117,8 +13137,33 @@ export class RtsEngine {
         tgtLLeg = 0.18;
         tgtRLeg = -0.18;
         tgtLKnee = 0.22;
+      } else if ((gSub === 'hunt' || gSub === 'aurochs' || gSub === 'boar') && unit.unitDef.category !== 'worker') {
+        // Armed hunters hold a weapon-ready stance and animate only on real hit windows.
+        const rawSwing = Number.isFinite((unit as any)._huntAttackSwing)
+          ? Math.max(0, (unit as any)._huntAttackSwing as number)
+          : 0;
+        const swing = Math.min(1, rawSwing / 0.28);
+        (unit as any)._huntAttackSwing = Math.max(0, rawSwing - dt);
+        if (unit.unitDef.category === 'ranged') {
+          tgtRArm = -0.22 - swing * 0.95;
+          tgtLArm = -0.3 - swing * 0.62;
+          tgtBodyX = -0.025 + swing * 0.12;
+          tgtBodyYaw = (0.5 - swing) * 0.08;
+          tgtLLeg = 0.06;
+          tgtRLeg = -0.04;
+          tgtLKnee = 0.07;
+        } else {
+          tgtRArm = 0.16 - swing * 1.42;
+          tgtLArm = -0.2 - swing * 0.34;
+          tgtBodyX = 0.025 + swing * 0.2;
+          tgtBodyYaw = (0.5 - swing) * 0.2;
+          tgtLLeg = 0.1;
+          tgtRLeg = -0.1;
+          tgtLKnee = 0.12;
+          tgtRKnee = 0.1;
+        }
       } else if (gSub === 'berry' || gSub === 'farm' || gSub === 'hunt' || gSub === 'aurochs' || gSub === 'boar') {
-        // Low crouching forage / harvest rhythm
+        // Workers use a low crouching forage / harvest rhythm.
         const harvest = 0.5 + 0.5 * Math.sin(t * 7.2);
         tgtRArm = -0.45 - harvest * 0.62;
         tgtLArm = -0.38 - (1 - harvest) * 0.45;

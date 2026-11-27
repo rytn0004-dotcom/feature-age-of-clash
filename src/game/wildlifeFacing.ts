@@ -20,6 +20,33 @@ export interface WildlifeGaitState {
   moveBlend: number;
 }
 
+export interface WildlifeIdleMotion {
+  breathing: number;
+  weightShift: number;
+  headNod: number;
+  headLook: number;
+  tailSway: number;
+  grazing: boolean;
+  grazingAmount: number;
+}
+
+/** Deterministic, phase-offset idle motion shared by all quadruped wildlife rigs. */
+export function getWildlifeIdleMotion(time: number, phaseOffset = 0): WildlifeIdleMotion {
+  const safeTime = Number.isFinite(time) ? time : 0;
+  const safeOffset = Number.isFinite(phaseOffset) ? phaseOffset : 0;
+  const t = safeTime + safeOffset;
+  const grazingWave = Math.sin(t * 0.23 + safeOffset * 0.31);
+  return {
+    breathing: 0.5 + 0.5 * Math.sin(t * 1.34 + safeOffset * 0.63),
+    weightShift: Math.sin(t * 0.78 + safeOffset * 0.91),
+    headNod: Math.sin(t * 1.06 + safeOffset * 0.47),
+    headLook: Math.sin(t * 0.39 + safeOffset * 1.13),
+    tailSway: Math.sin(t * 1.82 + safeOffset * 0.73),
+    grazing: grazingWave > 0.52,
+    grazingAmount: Math.max(0, Math.min(1, (grazingWave - 0.28) / 0.72)),
+  };
+}
+
 /** Converts real, collision-resolved ground displacement into the rig's Y yaw. */
 export function getWildlifeFacingYaw(dx: number, dz: number): number | null {
   if (
