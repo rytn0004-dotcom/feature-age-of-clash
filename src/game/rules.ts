@@ -1689,6 +1689,15 @@ export function canUnitHuntWildlife(
     );
 }
 
+/** Keeps melee hunters inside weapon reach without pushing them into animal collision. */
+export function getWildlifeMeleeHuntApproachRange(nodeRadius: number, weaponRange: number): number {
+  const safeRadius = Number.isFinite(nodeRadius) ? Math.max(0, nodeRadius) : 0;
+  const safeWeaponRange = Number.isFinite(weaponRange) ? Math.max(0, weaponRange) : 0;
+  const contactDistance = safeRadius + 1.35;
+  const attackReach = Math.max(2.4, safeWeaponRange + 0.5);
+  return Math.max(2.4, Math.min(contactDistance, attackReach));
+}
+
 /** Risk classification remains separate so AI can reserve deliberate parties for aggressive beasts. */
 export function canUnitHuntDangerousWildlife(
   unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,
@@ -1927,6 +1936,27 @@ export function canUnitGatherNode(
     return false;
   }
   return true;
+}
+
+/**
+ * Validates a direct or queued gather order by unit role.
+ * Workers may harvest ordinary resources and carcasses; armed ground units
+ * may only hunt living wildlife; naval units remain limited to fish.
+ */
+export function canUnitReceiveGatherOrder(
+  unitDef: Pick<UnitDefinition, 'id' | 'category' | 'isNaval'>,
+  node: Pick<ResourceNode, 'resourceType' | 'subtype' | 'animalAlive' | 'animalHp'>,
+): boolean {
+  if (!canUnitGatherNode(unitDef, node)) return false;
+
+  if (isHuntableWildlifeSubtype(node.subtype)) {
+    if (unitDef.category === 'worker') return true;
+    return canUnitHuntWildlife(unitDef, node.subtype) &&
+      node.animalAlive !== false &&
+      (node.animalHp === undefined || node.animalHp > 0);
+  }
+
+  return unitDef.category === 'worker' || !!unitDef.isNaval || unitDef.id === 'fishing_boat';
 }
 
 /**

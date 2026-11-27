@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getWildlifeIdleMotion } from './wildlifeFacing';
+import {
+  getWildlifeHuntFallbackAngle,
+  getWildlifeIdleMotion,
+  writeWildlifeIdleMotion,
+} from './wildlifeFacing';
 
 test('wildlife idle motion is deterministic for a stable time and individual phase', () => {
   const first = getWildlifeIdleMotion(24.5, 3.25);
@@ -18,6 +22,32 @@ test('wildlife individuals have phase-offset breathing, head and tail idle movem
     first.headLook !== second.headLook ||
     first.tailSway !== second.tailSway,
   );
+});
+
+test('wildlife idle writer reuses caller-owned storage and clears previous values', () => {
+  const scratch = {
+    breathing: 0,
+    weightShift: 0,
+    headNod: 0,
+    headLook: 0,
+    tailSway: 0,
+    grazing: false,
+    grazingAmount: 0,
+  };
+  const first = writeWildlifeIdleMotion(scratch, 12, 0.8);
+  assert.equal(first, scratch);
+  assert.deepEqual(first, getWildlifeIdleMotion(12, 0.8));
+  const second = writeWildlifeIdleMotion(scratch, 90, 4.2);
+  assert.equal(second, scratch);
+  assert.deepEqual(second, getWildlifeIdleMotion(90, 4.2));
+});
+
+test('wildlife hunt fallback angles are stable and bounded for different unit ids', () => {
+  const first = getWildlifeHuntFallbackAngle('unit-archer-1');
+  assert.equal(first, getWildlifeHuntFallbackAngle('unit-archer-1'));
+  assert.ok(first >= 0 && first < Math.PI * 2);
+  assert.notEqual(first, getWildlifeHuntFallbackAngle('unit-archer-2'));
+  assert.equal(getWildlifeHuntFallbackAngle(''), 0);
 });
 
 test('wildlife idle motion stays finite and bounded for invalid or extreme clocks', () => {

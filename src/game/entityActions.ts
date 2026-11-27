@@ -79,6 +79,33 @@ export function applyBuildingDamage(
   return appliedDamage;
 }
 
+/** Repairs current HP and removes only that healed amount from unfinished-building damage debt. */
+export function applyBuildingRepair(
+  building: {
+    hp: number;
+    maxHp: number;
+    isConstructed: boolean;
+    constructionDamageTaken?: number;
+  },
+  requestedHealing: number,
+): number {
+  const safeMaxHp = Number.isFinite(building.maxHp) ? Math.max(0, building.maxHp) : 0;
+  const currentHp = Number.isFinite(building.hp)
+    ? Math.max(0, Math.min(safeMaxHp, building.hp))
+    : 0;
+  const healing = Number.isFinite(requestedHealing) ? Math.max(0, requestedHealing) : 0;
+  const appliedHealing = Math.min(Math.max(0, safeMaxHp - currentHp), healing);
+  building.hp = currentHp + appliedHealing;
+
+  if (!building.isConstructed && appliedHealing > 0) {
+    const previousDamage = Number.isFinite(building.constructionDamageTaken)
+      ? Math.max(0, building.constructionDamageTaken as number)
+      : 0;
+    building.constructionDamageTaken = Math.max(0, previousDamage - appliedHealing);
+  }
+  return appliedHealing;
+}
+
 /** Progress for an intentional hold action, clamped to the visible 0..1 range. */
 export function getDeleteHoldProgress(startedAt: number, now: number): number {
   if (!Number.isFinite(startedAt) || !Number.isFinite(now)) return 0;

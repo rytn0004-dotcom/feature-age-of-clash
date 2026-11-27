@@ -4,7 +4,9 @@ import {
   canAfford,
   canAssembleFieldRam,
   canUnitGatherNode,
+  canUnitReceiveGatherOrder,
   canUnitHuntWildlife,
+  getWildlifeMeleeHuntApproachRange,
   getWildlifeRangedHuntPlan,
   selectWildBoarAggroTarget,
   getWildBoarRangedHuntPlan,
@@ -3801,6 +3803,38 @@ test('all land wildlife accepts armed ground hunters but excludes siege, naval a
     assert.equal(canUnitHuntWildlife({ category: 'worker', isNaval: false }, subtype), false);
   }
   assert.equal(canUnitHuntWildlife({ category: 'melee', isNaval: false }, 'berry'), false);
+});
+
+test('gather command eligibility keeps military hunters on wildlife-only orders', () => {
+  const worker = { id: 'villager', category: 'worker' as const, isNaval: false };
+  const infantry = { id: 'swordsman', category: 'melee' as const, isNaval: false };
+  const special = { id: 'mage', category: 'special' as const, isNaval: false };
+  const siege = { id: 'ram', category: 'siege' as const, isNaval: false };
+  const boat = { id: 'fishing_boat', category: 'worker' as const, isNaval: true };
+  const deer = { resourceType: 'food' as const, subtype: 'hunt' as const };
+  const carcass = { ...deer, animalAlive: false, animalHp: 0 };
+  const wood = { resourceType: 'wood' as const, subtype: 'wood' as const };
+  const fish = { resourceType: 'food' as const, subtype: 'deep_fish' as const };
+
+  assert.equal(canUnitReceiveGatherOrder(worker, deer), true);
+  assert.equal(canUnitReceiveGatherOrder(infantry, deer), true);
+  assert.equal(canUnitReceiveGatherOrder(special, deer), true);
+  assert.equal(canUnitReceiveGatherOrder(siege, deer), false);
+  assert.equal(canUnitReceiveGatherOrder(boat, deer), false);
+  assert.equal(canUnitReceiveGatherOrder(worker, carcass), true);
+  assert.equal(canUnitReceiveGatherOrder(infantry, carcass), false);
+  assert.equal(canUnitReceiveGatherOrder(infantry, wood), false);
+  assert.equal(canUnitReceiveGatherOrder(worker, wood), true);
+  assert.equal(canUnitReceiveGatherOrder(boat, fish), true);
+  assert.equal(canUnitReceiveGatherOrder(boat, wood), false);
+});
+
+test('melee hunting approach range stays inside weapon reach and outside the large-animal collider', () => {
+  assert.equal(getWildlifeMeleeHuntApproachRange(1.5, 1.5), 2.4);
+  assert.equal(getWildlifeMeleeHuntApproachRange(0.92, 1.5), 2.4);
+  assert.equal(getWildlifeMeleeHuntApproachRange(0.58, 1.5), 2.4);
+  assert.equal(getWildlifeMeleeHuntApproachRange(5, 4), 4.5);
+  assert.equal(getWildlifeMeleeHuntApproachRange(Number.NaN, Number.NaN), 2.4);
 });
 
 test('ranged hunting uses a shared firing band across deer, boar and aurochs', () => {

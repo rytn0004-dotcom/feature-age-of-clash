@@ -16,6 +16,7 @@ import { hasAmbientBuildingAnimation } from './ambientBuildingAnimation';
 import { removeBuildingScaffoldFromRoot } from './buildingScaffoldLifecycle';
 import {
   applyBuildingDamage,
+  applyBuildingRepair,
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
   CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
@@ -30,7 +31,11 @@ import {
   type UnitBadgeLookupCache,
 } from './unitBadgeCache';
 import { initializeWildlifeSimulationState } from './wildlifeInitialization';
-import { getWildlifeIdleMotion } from './wildlifeFacing';
+import {
+  getWildlifeHuntFallbackAngle,
+  writeWildlifeIdleMotion,
+  type WildlifeIdleMotion,
+} from './wildlifeFacing';
 import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
@@ -146,6 +151,8 @@ import {
   FIELD_RAM_ASSEMBLY_DURATION,
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
+  canUnitReceiveGatherOrder,
+  getWildlifeMeleeHuntApproachRange,
   computeAiWorkerAllocation,
   getAiMilitaryProductionCap,
   isAiMilitaryArmyUnit,
@@ -195,7 +202,6 @@ import {
   getWildlifeMaxHealth,
   isDangerousWildlifeSubtype,
   isHuntableWildlifeSubtype,
-  canUnitHuntWildlife,
   canUnitHuntDangerousWildlife,
   shouldAiOrganizeWildlifeHunt,
   advanceStarRelicChannel,
@@ -606,6 +612,16 @@ export class RtsEngine {
   private wildlifeUnitInteractionScratch: WildlifeUnitInteractionScratch<UnitEntity> = {
     nearestThreat: null,
     attackers: [],
+  };
+  /** Shared output avoids allocating one idle-motion object for every animal per tick. */
+  private wildlifeIdleMotionScratch: WildlifeIdleMotion = {
+    breathing: 0,
+    weightShift: 0,
+    headNod: 0,
+    headLook: 0,
+    tailSway: 0,
+    grazing: false,
+    grazingAmount: 0,
   };
   public resourceNodes: ResourceNode[] = [];
   public contestedPoints: ContestedPoint[] = [];
@@ -4275,13 +4291,10 @@ export class RtsEngine {
     // Workers keep their economy role; armed ground units can explicitly hunt
     // deer, boars and aurochs. Siege, naval and field-assembly units stay excluded.
     const eligibleUnits = selectedUnits.filter((unit) =>
-      canUnitGatherNode(unit.unitDef, node) &&
+      canUnitReceiveGatherOrder(unit.unitDef, node) &&
       (
         unit.unitDef.category === 'worker' ||
-        (
-          canUnitHuntWildlife(unit.unitDef, node.subtype) &&
-          (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
-        )
+        (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
       )
     );
     if (eligibleUnits.length === 0) {
@@ -4342,7 +4355,7 @@ export class RtsEngine {
         isValid = Number.isFinite(next.x) && Number.isFinite(next.z);
       } else if (next.type === 'gather') {
         const node = this.getResourceNodeById(next.nodeId);
-        isValid = !!node && node.amount > 0 && canUnitGatherNode(unit.unitDef, node);
+        isValid = !!node && node.amount > 0 && canUnitReceiveGatherOrder(unit.unitDef, node);
       } else if (next.type === 'attack') {
         const targetUnit = this.getUnitById(next.targetId);
         const targetBuilding = this.getBuildingById(next.targetId);
@@ -9593,11 +9606,30 @@ export class RtsEngine {
     const militaryHunter = unit.unitDef.category !== 'worker' && assignedWildlife;
     if (militaryHunter && (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))) {
       unit.targetResourceNodeId = undefined;
+      unit.targetEntityId = undefined;
       unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
       unit.velocity = { x: 0, z: 0 };
+      if (unit.carryingResource && unit.carryingResource.amount <= 0) unit.carryingResource = undefined;
+      (unit as any)._gatherNodeType = undefined;
+      (unit as any)._huntHitCd = undefined;
+      (unit as any)._huntAttackSwing = 0;
+      (unit as any)._gatherFxTimer = 0;
       if (!this.tryDequeueCommand(unit)) {
         unit.state = 'idle';
         unit.currentActionText = '🏹 狩獵完成';
+      }
+      return;
+    }
+    if (!canUnitReceiveGatherOrder(unit.unitDef, node)) {
+      unit.targetResourceNodeId = undefined;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '⚠️ 無法執行採集命令';
       }
       return;
     }
@@ -9634,10 +9666,7 @@ export class RtsEngine {
       node.animalAlive !== false &&
       (node.animalHp === undefined || node.animalHp > 0);
     if (isLiveHuntableWildlife) (unit as any)._gatherNodeType = node.subtype;
-    const fallbackAngle = unit.id.split('').reduce(
-      (sum, char, index) => sum + char.charCodeAt(0) * (index + 1),
-      0,
-    ) * 0.017453292519943295;
+    const fallbackAngle = getWildlifeHuntFallbackAngle(unit.id);
     const rangedWildlifePlan = isLiveHuntableWildlife && unit.unitDef.category === 'ranged'
       ? getWildlifeRangedHuntPlan(
           unit.x,
@@ -9663,11 +9692,13 @@ export class RtsEngine {
     }
 
     const gatherRange = rangedWildlifePlan?.maxRange ?? (
-      node.subtype === 'deep_fish'
-        ? Math.max(5.5, nodeRadius + 4.4)
-        : node.subtype === 'shore_fish'
-        ? Math.max(3.6, nodeRadius + 2.65)
-        : nodeRadius + 1.35
+      militaryHunter
+        ? getWildlifeMeleeHuntApproachRange(nodeRadius, unit.unitDef.stats.range)
+        : node.subtype === 'deep_fish'
+          ? Math.max(5.5, nodeRadius + 4.4)
+          : node.subtype === 'shore_fish'
+            ? Math.max(3.6, nodeRadius + 2.65)
+            : nodeRadius + 1.35
     );
 
     if (dist > gatherRange) {
@@ -9675,7 +9706,7 @@ export class RtsEngine {
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(node.x - unit.x, node.z - unit.z);
-      if (!unit.carryingResource) {
+      if (!militaryHunter && !unit.carryingResource) {
         unit.carryingResource = { type: node.resourceType, amount: 0 };
       }
 
@@ -9737,7 +9768,7 @@ export class RtsEngine {
             nm.rotation.x = 0.55;
           }
         }
-      } else {
+      } else if (!militaryHunter && unit.carryingResource) {
         const deltaGather = Math.min(node.amount, gatherRate * dt);
         unit.carryingResource.amount += deltaGather;
         node.amount -= deltaGather;
@@ -9761,7 +9792,9 @@ export class RtsEngine {
                   : node.subtype === 'shore_fish' || node.subtype === 'deep_fish'
                     ? 'spark'
                     : 'leaf';
-        this.spawnParticleBurst(node.x, node.subtype === 'shore_fish' || node.subtype === 'deep_fish' ? 0.35 : 0.85, node.z, pKind, 4);
+        if (!militaryHunter || node.animalAlive !== false) {
+          this.spawnParticleBurst(node.x, node.subtype === 'shore_fish' || node.subtype === 'deep_fish' ? 0.35 : 0.85, node.z, pKind, 4);
+        }
       } else {
         (unit as any)._gatherFxTimer = fxTimer;
         (unit as any)._gatherNodeType = node.subtype || node.resourceType;
@@ -10818,7 +10851,7 @@ export class RtsEngine {
           (bldg.maxHp / (bldg.buildingDef.buildTime * 0.65)) *
           (constructionSpeedMultiplier / PRODUCTION_TIME_SCALE) *
           perBuilderWorkShare;
-        bldg.hp = Math.min(bldg.maxHp, bldg.hp + repairSpeed * dt);
+        applyBuildingRepair(bldg, repairSpeed * dt);
       } else {
         const buildSpeed =
           (constructionSpeedMultiplier * perBuilderWorkShare) /
@@ -11260,7 +11293,11 @@ export class RtsEngine {
       // newly initialized animal on the first wildlife update.
       initializeWildlifeSimulationState(node, nodeIndex, maxHp);
       if (mesh) this.updateWildlifeOverheadBadge(node, mesh);
-      const idleMotion = getWildlifeIdleMotion(this.simTime, nodeIndex * 2.399963229728653);
+      const idleMotion = writeWildlifeIdleMotion(
+        this.wildlifeIdleMotionScratch,
+        this.simTime,
+        nodeIndex * 2.399963229728653,
+      );
 
       if (!node.animalAlive) {
         if (mesh) {

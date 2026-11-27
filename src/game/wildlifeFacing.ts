@@ -30,21 +30,47 @@ export interface WildlifeIdleMotion {
   grazingAmount: number;
 }
 
-/** Deterministic, phase-offset idle motion shared by all quadruped wildlife rigs. */
-export function getWildlifeIdleMotion(time: number, phaseOffset = 0): WildlifeIdleMotion {
+/** Writes deterministic, phase-offset idle motion into caller-owned storage. */
+export function writeWildlifeIdleMotion(
+  output: WildlifeIdleMotion,
+  time: number,
+  phaseOffset = 0,
+): WildlifeIdleMotion {
   const safeTime = Number.isFinite(time) ? time : 0;
   const safeOffset = Number.isFinite(phaseOffset) ? phaseOffset : 0;
   const t = safeTime + safeOffset;
   const grazingWave = Math.sin(t * 0.23 + safeOffset * 0.31);
-  return {
-    breathing: 0.5 + 0.5 * Math.sin(t * 1.34 + safeOffset * 0.63),
-    weightShift: Math.sin(t * 0.78 + safeOffset * 0.91),
-    headNod: Math.sin(t * 1.06 + safeOffset * 0.47),
-    headLook: Math.sin(t * 0.39 + safeOffset * 1.13),
-    tailSway: Math.sin(t * 1.82 + safeOffset * 0.73),
-    grazing: grazingWave > 0.52,
-    grazingAmount: Math.max(0, Math.min(1, (grazingWave - 0.28) / 0.72)),
-  };
+  output.breathing = 0.5 + 0.5 * Math.sin(t * 1.34 + safeOffset * 0.63);
+  output.weightShift = Math.sin(t * 0.78 + safeOffset * 0.91);
+  output.headNod = Math.sin(t * 1.06 + safeOffset * 0.47);
+  output.headLook = Math.sin(t * 0.39 + safeOffset * 1.13);
+  output.tailSway = Math.sin(t * 1.82 + safeOffset * 0.73);
+  output.grazing = grazingWave > 0.52;
+  output.grazingAmount = Math.max(0, Math.min(1, (grazingWave - 0.28) / 0.72));
+  return output;
+}
+
+/** Convenience value API for callers that do not need to reuse storage. */
+export function getWildlifeIdleMotion(time: number, phaseOffset = 0): WildlifeIdleMotion {
+  return writeWildlifeIdleMotion({
+    breathing: 0,
+    weightShift: 0,
+    headNod: 0,
+    headLook: 0,
+    tailSway: 0,
+    grazing: false,
+    grazingAmount: 0,
+  }, time, phaseOffset);
+}
+
+/** Stable id-derived angle without allocating split/reduce arrays inside simulation loops. */
+export function getWildlifeHuntFallbackAngle(unitId: string): number {
+  if (typeof unitId !== 'string' || unitId.length === 0) return 0;
+  let hash = 2166136261;
+  for (let index = 0; index < unitId.length; index++) {
+    hash = Math.imul(hash ^ unitId.charCodeAt(index), 16777619);
+  }
+  return ((hash >>> 0) / 4294967296) * Math.PI * 2;
 }
 
 /** Converts real, collision-resolved ground displacement into the rig's Y yaw. */

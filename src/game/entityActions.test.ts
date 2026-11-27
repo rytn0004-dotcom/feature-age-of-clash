@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyBuildingDamage,
+  applyBuildingRepair,
   applyConstructionWorkToHealth,
   calculateConstructionCancellationRefund,
   CONSTRUCTION_CANCELLATION_UNDO_WINDOW_MS,
@@ -58,6 +59,23 @@ test('building damage ledger counts only HP actually lost before construction co
   const invalid = { hp: 40, maxHp: 100, isConstructed: false, constructionDamageTaken: 2 };
   assert.equal(applyBuildingDamage(invalid, Number.NaN), 0);
   assert.equal(invalid.constructionDamageTaken, 2);
+});
+
+test('repairing an unfinished building restores refund eligibility only for HP actually healed', () => {
+  const foundation = { hp: 12, maxHp: 100, isConstructed: false, constructionDamageTaken: 8 };
+  assert.equal(applyBuildingRepair(foundation, 3), 3);
+  assert.equal(foundation.hp, 15);
+  assert.equal(foundation.constructionDamageTaken, 5);
+  assert.equal(applyBuildingRepair(foundation, 10), 5);
+  assert.equal(foundation.hp, 20);
+  assert.equal(foundation.constructionDamageTaken, 0);
+  assert.equal(applyBuildingRepair(foundation, 50), 0);
+  assert.equal(foundation.constructionDamageTaken, 0);
+
+  const completed = { hp: 50, maxHp: 100, isConstructed: true, constructionDamageTaken: 10 };
+  assert.equal(applyBuildingRepair(completed, 5), 5);
+  assert.equal(completed.hp, 55);
+  assert.equal(completed.constructionDamageTaken, 10);
 });
 
 test('construction cancellation withholds only the percentage of HP damage', () => {
