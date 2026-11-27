@@ -93,7 +93,7 @@ const spatialKey = (x: number, z: number, cellSize: number): CombatSpatialBucket
   spatialCellKey(Math.floor(x / cellSize), Math.floor(z / cellSize));
 
 function recycleBuckets<T>(
-  buckets: Map<string, T[]>,
+  buckets: Map<CombatSpatialBucketKey, T[]>,
   reusableBuckets: T[][],
 ): void {
   for (const bucket of buckets.values()) {
@@ -104,7 +104,7 @@ function recycleBuckets<T>(
 }
 
 function addToBucket<T extends CombatSpatialUnit | CombatSpatialBuilding>(
-  buckets: Map<string, T[]>,
+  buckets: Map<CombatSpatialBucketKey, T[]>,
   reusableBuckets: T[][],
   entity: T,
   cellSize: number,
