@@ -255,6 +255,7 @@ import {
 import {
   estimateDeliveredResourcePerMinute,
   selectNearestResourceDropOffBuilding,
+  selectNearestResourceCampNode,
 } from './economyInsights';
 import {
   createResourceNodeCandidateScratch,
@@ -14733,14 +14734,30 @@ export class RtsEngine {
           this.tryAiConstructBuilding(aiId, aiCiv.uniqueBuildingType, aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.75);
         } else {
           // Sustainable Farms when wild food nearby depletes, Shoreline Docks for deep fish, & fortifications starting Age I
-          const nearbyWildFood = landNodes.filter(
-            (n) => n.amount > 0 && n.resourceType === 'food' && n.subtype !== 'farm' && getDistance(anchorX, anchorZ, n.x, n.z) <= 28
-          ).length;
+          let nearbyWildFood = 0;
+          for (const node of landNodes) {
+            if (
+              node.amount > 0 &&
+              node.resourceType === 'food' &&
+              node.subtype !== 'farm' &&
+              getDistance(anchorX, anchorZ, node.x, node.z) <= 28
+            ) {
+              nearbyWildFood++;
+            }
+          }
           const aiFarms = aiFarmCount;
           const aiTowers = aiTowerCount;
           const aiCastles = aiCastleCount;
           const aiLumberCamps = aiLumberCampCount;
           const aiMiningCamps = aiMiningCampCount;
+          const woodCampNode =
+            aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45
+              ? selectNearestResourceCampNode(landNodes, 'lumber_camp', anchorX, anchorZ, 15, 36)
+              : null;
+          const mineCampNode =
+            aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55
+              ? selectNearestResourceCampNode(landNodes, 'mining_camp', anchorX, anchorZ, 15, 38)
+              : null;
 
           if (hasDeepFish && aiDocks.length === 0 && aiWorkers.length >= 5 && aiRes.wood >= 150 && this.stats.gameDuration > 28) {
             this.tryAiConstructBuilding(aiId, 'dock', aiActiveWorkers, anchorX, anchorZ, toCenterAngle, 14, 54);
@@ -14758,32 +14775,12 @@ export class RtsEngine {
             this.tryAiConstructBuilding(aiId, 'castle', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.15);
           } else if (aiArmy.length >= 6 && aiBarracksList.length < 2 && aiRes.wood >= 220) {
             this.tryAiConstructBuilding(aiId, 'barracks', aiActiveWorkers, anchorX, anchorZ, toCenterAngle + 0.25);
-          } else if (
-            aiLumberCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 45 &&
-            landNodes.some((node) => node.resourceType === 'wood' && node.amount > 0 &&
-              getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
-              getDistance(anchorX, anchorZ, node.x, node.z) <= 36)
-          ) {
-            const woodNode = landNodes
-              .filter((node) => node.resourceType === 'wood' && node.amount > 0)
-              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
-              .filter((entry) => entry.distance > 15 && entry.distance <= 36)
-              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
-            if (woodNode && this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodNode.x, woodNode.z)) {
+          } else if (woodCampNode) {
+            if (this.tryAiConstructBuilding(aiId, 'lumber_camp', aiActiveWorkers, woodCampNode.x, woodCampNode.z)) {
               this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
-          } else if (
-            aiMiningCamps === 0 && aiRes.wood >= 140 && this.stats.gameDuration > 55 &&
-            landNodes.some((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') &&
-              node.amount > 0 && getDistance(anchorX, anchorZ, node.x, node.z) > 15 &&
-              getDistance(anchorX, anchorZ, node.x, node.z) <= 38)
-          ) {
-            const mineNode = landNodes
-              .filter((node) => (node.resourceType === 'gold' || node.resourceType === 'stone') && node.amount > 0)
-              .map((node) => ({ node, distance: getDistance(anchorX, anchorZ, node.x, node.z) }))
-              .filter((entry) => entry.distance > 15 && entry.distance <= 38)
-              .sort((a, b) => a.distance - b.distance || a.node.id.localeCompare(b.node.id))[0]?.node;
-            if (mineNode && this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineNode.x, mineNode.z)) {
+          } else if (mineCampNode) {
+            if (this.tryAiConstructBuilding(aiId, 'mining_camp', aiActiveWorkers, mineCampNode.x, mineCampNode.z)) {
               this.aiCampPlacementReadyAt.set(aiId, this.stats.gameDuration + 45);
             }
           } else if (

@@ -161,3 +161,71 @@ export function selectNearestResourceDropOffBuilding<T extends ResourceDropOffBu
 
   return nearest;
 }
+
+
+export interface ResourceCampSiteNodeCandidate {
+  id: string;
+  x: number;
+  z: number;
+  amount: number;
+  resourceType: ResourceType;
+}
+
+/**
+ * Select the closest viable resource camp site in one pass. The minimum range
+ * is exclusive, the maximum range inclusive, and equal distances resolve by
+ * node ID exactly like the AI's previous distance-sort implementation.
+ */
+export function selectNearestResourceCampNode<T extends ResourceCampSiteNodeCandidate>(
+  nodes: readonly T[],
+  campType: 'lumber_camp' | 'mining_camp',
+  originX: number,
+  originZ: number,
+  minimumDistanceExclusive: number,
+  maximumDistanceInclusive: number,
+): T | null {
+  if (
+    !Number.isFinite(originX) ||
+    !Number.isFinite(originZ) ||
+    !Number.isFinite(minimumDistanceExclusive) ||
+    minimumDistanceExclusive < 0 ||
+    !Number.isFinite(maximumDistanceInclusive) ||
+    maximumDistanceInclusive < minimumDistanceExclusive
+  ) return null;
+
+  const minimumDistanceSquared = minimumDistanceExclusive * minimumDistanceExclusive;
+  const maximumDistanceSquared = maximumDistanceInclusive * maximumDistanceInclusive;
+  let best: T | null = null;
+  let bestDistanceSquared = Number.POSITIVE_INFINITY;
+
+  for (const node of nodes) {
+    const correctResource = campType === 'lumber_camp'
+      ? node.resourceType === 'wood'
+      : node.resourceType === 'gold' || node.resourceType === 'stone';
+    if (
+      !correctResource ||
+      !Number.isFinite(node.amount) ||
+      node.amount <= 0 ||
+      !Number.isFinite(node.x) ||
+      !Number.isFinite(node.z)
+    ) continue;
+
+    const dx = node.x - originX;
+    const dz = node.z - originZ;
+    const distanceSquared = dx * dx + dz * dz;
+    if (
+      distanceSquared <= minimumDistanceSquared ||
+      distanceSquared > maximumDistanceSquared
+    ) continue;
+
+    if (
+      distanceSquared < bestDistanceSquared ||
+      (distanceSquared === bestDistanceSquared && !!best && node.id.localeCompare(best.id) < 0)
+    ) {
+      best = node;
+      bestDistanceSquared = distanceSquared;
+    }
+  }
+
+  return best;
+}

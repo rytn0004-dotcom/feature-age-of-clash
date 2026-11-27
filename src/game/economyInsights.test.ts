@@ -5,6 +5,7 @@ import {
   calculateEconomyNetRates,
   getResourceHealthStatus,
   selectNearestResourceDropOffBuilding,
+  selectNearestResourceCampNode,
 } from './economyInsights';
 
 test('economy net flow uses simulated game time and includes all stock changes', () => {
@@ -141,4 +142,38 @@ test('nearest drop-off ignores damaged data with non-finite health or coordinate
     selectNearestResourceDropOffBuilding(buildings, 'blue', 'food', false, 0, 0)?.id,
     'valid',
   );
+});
+
+
+test('nearest camp site selection applies strict inner and inclusive outer distance bounds', () => {
+  const nodes = [
+    { id: 'too-close', x: 15, z: 0, amount: 100, resourceType: 'wood' as const },
+    { id: 'inside', x: 15.1, z: 0, amount: 100, resourceType: 'wood' as const },
+    { id: 'outer-edge', x: 36, z: 0, amount: 100, resourceType: 'wood' as const },
+    { id: 'too-far', x: 36.01, z: 0, amount: 100, resourceType: 'wood' as const },
+    { id: 'depleted', x: 16, z: 0, amount: 0, resourceType: 'wood' as const },
+    { id: 'gold', x: 15.05, z: 0, amount: 100, resourceType: 'gold' as const },
+  ];
+
+  assert.equal(
+    selectNearestResourceCampNode(nodes, 'lumber_camp', 0, 0, 15, 36)?.id,
+    'inside',
+  );
+  assert.equal(
+    selectNearestResourceCampNode(nodes, 'mining_camp', 0, 0, 15, 36)?.id,
+    'gold',
+  );
+});
+
+test('nearest camp site selection uses node ID for equal-distance ties and rejects invalid inputs', () => {
+  const nodes = [
+    { id: 'wood-z', x: 20, z: 0, amount: 100, resourceType: 'wood' as const },
+    { id: 'wood-a', x: -20, z: 0, amount: 100, resourceType: 'wood' as const },
+  ];
+  assert.equal(
+    selectNearestResourceCampNode(nodes, 'lumber_camp', 0, 0, 15, 36)?.id,
+    'wood-a',
+  );
+  assert.equal(selectNearestResourceCampNode(nodes, 'lumber_camp', Number.NaN, 0, 15, 36), null);
+  assert.equal(selectNearestResourceCampNode(nodes, 'lumber_camp', 0, 0, 40, 20), null);
 });
