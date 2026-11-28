@@ -4030,6 +4030,35 @@ test('melee hunting approach range stays inside weapon reach and outside the lar
   assert.equal(getWildlifeMeleeHuntApproachRange(Number.NaN, Number.NaN), 2.4);
 });
 
+test('wildlife hunt party approach angles form stable, evenly spaced sectors', async () => {
+  const { getWildlifeHuntPartySlotAngle } = await import('./rules');
+  const phase = 0.37;
+  const angles = [0, 1, 2, 3].map((slot) => getWildlifeHuntPartySlotAngle(slot, 4, phase));
+  assert.deepEqual(angles, [phase, phase + Math.PI / 2, phase + Math.PI, phase + Math.PI * 1.5]);
+  assert.equal(getWildlifeHuntPartySlotAngle(4, 4, phase), phase, 'slot indices wrap deterministically');
+  assert.equal(getWildlifeHuntPartySlotAngle(0, 0, phase), phase, 'empty parties do not divide by zero');
+  assert.equal(getWildlifeHuntPartySlotAngle(0, 3, Number.NaN), 0, 'malformed phases recover to zero');
+});
+
+test('melee wildlife approach points keep a safe attack radius and reuse caller storage', async () => {
+  const { writeWildlifeMeleeHuntApproachPoint, getWildlifeMeleeHuntApproachRange } = await import('./rules');
+  const output = { x: 0, z: 0 };
+  const result = writeWildlifeMeleeHuntApproachPoint(output, 12, -7, 1.5, 1.5, Math.PI / 2);
+  assert.equal(result, output, 'the caller-owned point object should be reused');
+  assert.ok(Math.abs(result.x - 12) < 1e-9);
+  const distance = Math.hypot(result.x - 12, result.z + 7);
+  assert.ok(distance > 2.0, 'the aurochs approach point stays outside its collider clearance');
+  assert.ok(distance < getWildlifeMeleeHuntApproachRange(1.5, 1.5));
+
+  const moved = writeWildlifeMeleeHuntApproachPoint(output, -3, 5, 0.92, 1.5, 0);
+  assert.equal(moved, output);
+  assert.ok(moved.x > -3);
+  assert.equal(moved.z, 5);
+
+  writeWildlifeMeleeHuntApproachPoint(output, Number.NaN, Number.POSITIVE_INFINITY, Number.NaN, Number.NaN, Number.NaN);
+  assert.ok(Number.isFinite(output.x) && Number.isFinite(output.z), 'malformed save/mod values must not poison approach coordinates');
+});
+
 test('ranged hunting uses a shared firing band across deer, boar and aurochs', () => {
   const far = getWildlifeRangedHuntPlan(0, 0, 12, 0, 10);
   assert.ok(far);

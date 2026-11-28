@@ -1707,6 +1707,48 @@ export function getWildlifeMeleeHuntApproachRange(nodeRadius: number, weaponRang
   return Math.max(2.4, Math.min(contactDistance, attackReach));
 }
 
+/** Assigns deterministic, evenly spaced approach sectors to a coordinated hunting party. */
+export function getWildlifeHuntPartySlotAngle(
+  slotIndex: number,
+  slotCount: number,
+  phaseOffset = 0,
+): number {
+  const safePhase = Number.isFinite(phaseOffset) ? phaseOffset : 0;
+  if (!Number.isFinite(slotIndex) || !Number.isFinite(slotCount) || slotCount < 1) return safePhase;
+  const count = Math.max(1, Math.floor(slotCount));
+  const index = ((Math.floor(slotIndex) % count) + count) % count;
+  return safePhase + (index / count) * Math.PI * 2;
+}
+
+export interface WildlifeHuntApproachPoint {
+  x: number;
+  z: number;
+}
+
+/** Writes a stable melee stand-off point into caller-owned storage (no per-tick allocation). */
+export function writeWildlifeMeleeHuntApproachPoint(
+  output: WildlifeHuntApproachPoint,
+  animalX: number,
+  animalZ: number,
+  nodeRadius: number,
+  weaponRange: number,
+  approachAngle: number,
+): WildlifeHuntApproachPoint {
+  const safeX = Number.isFinite(animalX) ? animalX : 0;
+  const safeZ = Number.isFinite(animalZ) ? animalZ : 0;
+  const safeRadius = Number.isFinite(nodeRadius) ? Math.max(0, nodeRadius) : 0;
+  const safeAngle = Number.isFinite(approachAngle) ? approachAngle : 0;
+  const attackRange = getWildlifeMeleeHuntApproachRange(safeRadius, weaponRange);
+  const standOffRadius = Math.min(
+    attackRange - 0.15,
+    Math.max(safeRadius + 0.55, attackRange * 0.82),
+  );
+  const safeStandOffRadius = Math.max(0.25, Number.isFinite(standOffRadius) ? standOffRadius : 0.25);
+  output.x = safeX + Math.cos(safeAngle) * safeStandOffRadius;
+  output.z = safeZ + Math.sin(safeAngle) * safeStandOffRadius;
+  return output;
+}
+
 /** Risk classification remains separate so AI can reserve deliberate parties for aggressive beasts. */
 export function canUnitHuntDangerousWildlife(
   unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,

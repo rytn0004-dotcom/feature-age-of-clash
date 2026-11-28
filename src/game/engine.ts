@@ -164,6 +164,8 @@ import {
   canUnitGatherNode,
   canUnitReceiveGatherOrder,
   getWildlifeMeleeHuntApproachRange,
+  getWildlifeHuntPartySlotAngle,
+  writeWildlifeMeleeHuntApproachPoint,
   computeAiWorkerAllocation,
   getAiMilitaryProductionCap,
   isAiMilitaryArmyUnit,
@@ -4388,6 +4390,17 @@ export class RtsEngine {
         (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
       )
     );
+    const isLiveWildlifeOrder = isHuntableWildlifeSubtype(node.subtype) &&
+      node.animalAlive !== false &&
+      (node.animalHp === undefined || node.animalHp > 0);
+    let wildlifeHunterCount = 0;
+    if (!queue && isLiveWildlifeOrder) {
+      for (const unit of eligibleUnits) {
+        if (unit.unitDef.category !== 'worker') wildlifeHunterCount++;
+      }
+    }
+    const wildlifeHuntPhase = getWildlifeHuntFallbackAngle(node.id);
+    let wildlifeHunterIndex = 0;
     if (eligibleUnits.length === 0) {
       sound.playInvalid();
       if (node.subtype === 'deep_fish') {
@@ -4413,6 +4426,18 @@ export class RtsEngine {
       }
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
+      if (isLiveWildlifeOrder && unit.unitDef.category !== 'worker') {
+        (unit as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+          wildlifeHunterIndex,
+          wildlifeHunterCount,
+          wildlifeHuntPhase,
+        );
+        (unit as any)._wildlifeHuntApproachTargetNodeId = nodeId;
+        wildlifeHunterIndex++;
+      } else {
+        delete (unit as any)._wildlifeHuntApproachAngle;
+        delete (unit as any)._wildlifeHuntApproachTargetNodeId;
+      }
       unit.targetResourceNodeId = nodeId;
       unit.targetEntityId = undefined;
       unit.targetBuildingId = undefined;
@@ -9737,6 +9762,8 @@ export class RtsEngine {
     if (militaryHunter && (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))) {
       unit.targetResourceNodeId = undefined;
       unit.targetEntityId = undefined;
+      delete (unit as any)._wildlifeHuntApproachAngle;
+      delete (unit as any)._wildlifeHuntApproachTargetNodeId;
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
@@ -9832,7 +9859,28 @@ export class RtsEngine {
     );
 
     if (dist > gatherRange) {
-      this.moveUnitAlongPath(unit, node.x, node.z, dt);
+      if (isLiveHuntableWildlife && militaryHunter && unit.unitDef.category !== 'ranged') {
+        const assignedAngle = (unit as any)._wildlifeHuntApproachTargetNodeId === node.id
+          ? (unit as any)._wildlifeHuntApproachAngle
+          : undefined;
+        const approachAngle = Number.isFinite(assignedAngle) ? assignedAngle : fallbackAngle;
+        let approachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
+        if (!approachGoal) {
+          approachGoal = { x: node.x, z: node.z };
+          (unit as any)._wildlifeHuntApproachGoal = approachGoal;
+        }
+        writeWildlifeMeleeHuntApproachPoint(
+          approachGoal,
+          node.x,
+          node.z,
+          nodeRadius,
+          unit.unitDef.stats.range,
+          approachAngle,
+        );
+        this.moveUnitAlongPath(unit, approachGoal.x, approachGoal.z, dt);
+      } else {
+        this.moveUnitAlongPath(unit, node.x, node.z, dt);
+      }
     } else {
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(node.x - unit.x, node.z - unit.z);
@@ -14378,7 +14426,25 @@ export class RtsEngine {
             1,
           );
           const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
+          let meleeHunterCount = 0;
           for (const hunter of huntingParty) {
+            if (hunter.unitDef.category !== 'ranged') meleeHunterCount++;
+          }
+          const huntRingPhase = getWildlifeHuntFallbackAngle(targetWildlife.id);
+          let meleeHunterIndex = 0;
+          for (const hunter of huntingParty) {
+            if (hunter.unitDef.category !== 'ranged') {
+              (hunter as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+                meleeHunterIndex,
+                meleeHunterCount,
+                huntRingPhase,
+              );
+              (hunter as any)._wildlifeHuntApproachTargetNodeId = targetWildlife.id;
+              meleeHunterIndex++;
+            } else {
+              delete (hunter as any)._wildlifeHuntApproachAngle;
+              delete (hunter as any)._wildlifeHuntApproachTargetNodeId;
+            }
             hunter.targetResourceNodeId = targetWildlife.id;
             hunter.targetEntityId = undefined;
             hunter.targetBuildingId = undefined;
