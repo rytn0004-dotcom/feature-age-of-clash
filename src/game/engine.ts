@@ -547,6 +547,8 @@ export class RtsEngine {
     distances: [],
     frontlineUnits: [],
     frontlineDistances: [],
+    rangedUnits: [],
+    rangedDistances: [],
   };
   private aiNodeWorkerCountScratch = new Map<string, number>();
   private aiNodeGatherRateScratch = new Map<string, number>();
@@ -1733,6 +1735,8 @@ export class RtsEngine {
     this.aiWildlifeHuntPartyScratch.distances.length = 0;
     this.aiWildlifeHuntPartyScratch.frontlineUnits.length = 0;
     this.aiWildlifeHuntPartyScratch.frontlineDistances.length = 0;
+    this.aiWildlifeHuntPartyScratch.rangedUnits.length = 0;
+    this.aiWildlifeHuntPartyScratch.rangedDistances.length = 0;
     this.aiNodeWorkerCountScratch.clear();
     this.aiNodeGatherRateScratch.clear();
     this.aiLandResourceNodeScratch.length = 0;
@@ -14371,6 +14375,7 @@ export class RtsEngine {
             4,
             this.aiWildlifeHuntPartyScratch,
             2,
+            1,
           );
           const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
           for (const hunter of huntingParty) {

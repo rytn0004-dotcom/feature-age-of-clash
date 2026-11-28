@@ -484,6 +484,16 @@ test('spatial: getDistance, findClosestResourceNode and findClosestEnemy', () =>
 
 test('wildlife carcasses re-enter routine food selection while living dangerous animals remain excluded', async () => {
   const { findBalancedResourceNode, findBestFoodResourceNode, isLiveDangerousWildlife } = await import('./rules');
+  const hpOnlyDeadBoar: ResourceNode = {
+    id: 'hp-only-dead-boar',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 1.5,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalHp: 0,
+  };
   const livingBoar: ResourceNode = {
     id: 'living-boar',
     resourceType: 'food',
@@ -512,10 +522,12 @@ test('wildlife carcasses re-enter routine food selection while living dangerous 
   };
 
   assert.equal(isLiveDangerousWildlife(livingBoar), true);
+  assert.equal(isLiveDangerousWildlife(hpOnlyDeadBoar), false);
   assert.equal(isLiveDangerousWildlife(deadBoar), false);
   assert.equal(isLiveDangerousWildlife(deadAurochs), false);
   assert.equal(findBalancedResourceNode(0, 0, [livingBoar], 'food'), null);
   assert.equal(findBalancedResourceNode(0, 0, [deadBoar], 'food')?.id, 'dead-boar');
+  assert.equal(findBalancedResourceNode(0, 0, [hpOnlyDeadBoar], 'food')?.id, 'hp-only-dead-boar');
   assert.equal(findBestFoodResourceNode(0, 0, [livingBoar], 36), null);
   assert.equal(findBestFoodResourceNode(0, 0, [deadBoar, deadAurochs], 36)?.id, 'dead-boar');
 });
@@ -3991,6 +4003,7 @@ test('gather command eligibility keeps military hunters on wildlife-only orders'
   const boat = { id: 'fishing_boat', category: 'worker' as const, isNaval: true };
   const deer = { resourceType: 'food' as const, subtype: 'hunt' as const };
   const carcass = { ...deer, animalAlive: false, animalHp: 0 };
+  const boarCarcass = { resourceType: 'food' as const, subtype: 'boar' as const, animalAlive: false, animalHp: 0 };
   const wood = { resourceType: 'wood' as const, subtype: 'wood' as const };
   const fish = { resourceType: 'food' as const, subtype: 'deep_fish' as const };
 
@@ -4001,6 +4014,8 @@ test('gather command eligibility keeps military hunters on wildlife-only orders'
   assert.equal(canUnitReceiveGatherOrder(boat, deer), false);
   assert.equal(canUnitReceiveGatherOrder(worker, carcass), true);
   assert.equal(canUnitReceiveGatherOrder(infantry, carcass), false);
+  assert.equal(canUnitReceiveGatherOrder(worker, boarCarcass), true);
+  assert.equal(canUnitReceiveGatherOrder(infantry, boarCarcass), false);
   assert.equal(canUnitReceiveGatherOrder(infantry, wood), false);
   assert.equal(canUnitReceiveGatherOrder(worker, wood), true);
   assert.equal(canUnitReceiveGatherOrder(boat, fish), true);

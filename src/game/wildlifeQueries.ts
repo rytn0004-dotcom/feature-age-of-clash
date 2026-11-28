@@ -29,14 +29,17 @@ export interface WildlifeHuntPartySelectionScratch<
 > {
   units: Unit[];
   distances: number[];
-  /** Top frontline candidates are staged here before the nearest remaining hunters are appended. */
+  /** Top frontline candidates are reserved before ranged support. */
   frontlineUnits: Unit[];
   frontlineDistances: number[];
+  /** Ranged hunters are reserved after the frontline screen and before nearby fillers. */
+  rangedUnits: Unit[];
+  rangedDistances: number[];
 }
 
 /**
- * Selects a nearby hunting party while reserving frontline coverage when available.
- * The output is ordered frontliners first, then the nearest remaining hunters.
+ * Selects a nearby hunting party with optional frontline and ranged-role reservations.
+ * The output is ordered frontliners, ranged support, then the nearest remaining hunters.
  * All arrays are caller-owned and reused; equal-distance candidates retain roster order.
  */
 export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCandidate>(
@@ -46,17 +49,21 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
   maxCount: number,
   output: WildlifeHuntPartySelectionScratch<Unit>,
   preferredFrontlineCount = 0,
+  preferredRangedCount = 0,
 ): Unit[] {
   output.units.length = 0;
   output.distances.length = 0;
   output.frontlineUnits.length = 0;
   output.frontlineDistances.length = 0;
+  output.rangedUnits.length = 0;
+  output.rangedDistances.length = 0;
 
   if (
     !Number.isFinite(targetX) ||
     !Number.isFinite(targetZ) ||
     !Number.isFinite(maxCount) ||
-    !Number.isFinite(preferredFrontlineCount)
+    !Number.isFinite(preferredFrontlineCount) ||
+    !Number.isFinite(preferredRangedCount)
   ) {
     return output.units;
   }
@@ -100,8 +107,45 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
     output.distances.push(output.frontlineDistances[index]);
   }
 
-  // Fill remaining slots with the nearest non-reserved candidates. Frontline units
-  // outside the protected pair may still fill spare slots when fewer other roles exist.
+  // Reserve ranged fire support before filling spare slots by proximity. This prevents
+  // nearby melee units from crowding every ranged unit out of the hunting party.
+  const rangedLimit = Math.min(
+    Math.max(0, limit - frontlineCount),
+    Math.max(0, Math.floor(preferredRangedCount)),
+  );
+  if (rangedLimit > 0) {
+    for (const candidate of candidates) {
+      if (candidate.unitDef.category !== 'ranged') continue;
+      if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
+      const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
+      if (!Number.isFinite(distance)) continue;
+
+      let insertAt = output.rangedDistances.length;
+      while (insertAt > 0 && distance < output.rangedDistances[insertAt - 1]) {
+        insertAt--;
+      }
+      if (insertAt >= rangedLimit) continue;
+
+      const nextLength = Math.min(rangedLimit, output.rangedUnits.length + 1);
+      for (let index = nextLength - 1; index > insertAt; index--) {
+        output.rangedUnits[index] = output.rangedUnits[index - 1];
+        output.rangedDistances[index] = output.rangedDistances[index - 1];
+      }
+      output.rangedUnits[insertAt] = candidate;
+      output.rangedDistances[insertAt] = distance;
+      output.rangedUnits.length = nextLength;
+      output.rangedDistances.length = nextLength;
+    }
+  }
+
+  const reservedCount = frontlineCount + output.rangedUnits.length;
+  for (let index = 0; index < output.rangedUnits.length; index++) {
+    output.units.push(output.rangedUnits[index]);
+    output.distances.push(output.rangedDistances[index]);
+  }
+
+  // Fill remaining slots with the nearest non-reserved candidates. If a role is
+  // unavailable, the spare slot is filled by another eligible hunter.
   for (const candidate of candidates) {
     let alreadyReserved = false;
     for (let index = 0; index < frontlineCount; index++) {
@@ -110,11 +154,20 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
         break;
       }
     }
+    if (!alreadyReserved) {
+      for (let index = 0; index < output.rangedUnits.length; index++) {
+        if (output.rangedUnits[index] === candidate) {
+          alreadyReserved = true;
+          break;
+        }
+      }
+    }
     if (alreadyReserved || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
 
     const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
+    if (!Number.isFinite(distance)) continue;
     let insertAt = output.units.length;
-    while (insertAt > frontlineCount && distance < output.distances[insertAt - 1]) {
+    while (insertAt > reservedCount && distance < output.distances[insertAt - 1]) {
       insertAt--;
     }
     if (insertAt >= limit) continue;
