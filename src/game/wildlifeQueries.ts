@@ -83,6 +83,8 @@ export interface WildlifeCarcassHarvesterCandidate {
   wildlifeCarcassHarvestNodeId?: string;
   wildlifeCarcassHarvestActive?: boolean;
   wildlifeCarcassHarvestSlotIndex?: number;
+  wildlifeCarcassWaitNodeId?: string;
+  wildlifeCarcassWaitSlotIndex?: number;
   carryingResource?: { amount: number };
   unitDef: {
     category: string;
