@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyWildlifeHunterAttacks,
   assignWildlifeCarcassHarvestSlotIndices,
+  assignWildlifeCarcassWaitingSlotIndices,
   collectWildlifeUnitInteractions,
   getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
@@ -709,4 +710,82 @@ test('carcass overflow queue uses unique, staggered ring positions with safe spa
   assert.ok(firstRingRadius > 6.7);
   assert.ok(secondRingRadius > firstRingRadius + 2);
   assert.ok(minimumSpacing > 2.5, 'waiting villagers should not be assigned overlapping staging points');
+});
+
+
+test('carcass overflow wait slots remain stable when the roster changes order', () => {
+  const first = makeCarcassWorker('waiter-first', 5, 0);
+  const second = makeCarcassWorker('waiter-second', 6, 0);
+  const newcomer = makeCarcassWorker('waiter-new', 7, 0);
+  first.wildlifeCarcassWaitNodeId = 'carcass-1';
+  first.wildlifeCarcassWaitSlotIndex = 2;
+  second.wildlifeCarcassWaitNodeId = 'carcass-1';
+  second.wildlifeCarcassWaitSlotIndex = 0;
+  const usedSlots = new Set<number>();
+
+  assignWildlifeCarcassWaitingSlotIndices(
+    [newcomer, second, first],
+    'carcass-1',
+    usedSlots,
+  );
+  assert.deepEqual(
+    [first, second, newcomer].map((unit) => unit.wildlifeCarcassWaitSlotIndex),
+    [2, 0, 1],
+  );
+
+  // Reordering the engine roster does not move existing waiters between lanes.
+  assignWildlifeCarcassWaitingSlotIndices(
+    [first, newcomer, second],
+    'carcass-1',
+    usedSlots,
+  );
+  assert.deepEqual(
+    [first, second, newcomer].map((unit) => unit.wildlifeCarcassWaitSlotIndex),
+    [2, 0, 1],
+  );
+
+  // A promoted harvester leaves the queue immediately; a later arrival reuses
+  // the vacant physical staging slot without shifting the remaining waiters.
+  second.wildlifeCarcassHarvestNodeId = 'carcass-1';
+  second.wildlifeCarcassHarvestActive = true;
+  const lateArrival = makeCarcassWorker('waiter-late', 8, 0);
+  assignWildlifeCarcassWaitingSlotIndices(
+    [lateArrival, first, second, newcomer],
+    'carcass-1',
+    usedSlots,
+  );
+  assert.equal(second.wildlifeCarcassWaitNodeId, undefined);
+  assert.equal(second.wildlifeCarcassWaitSlotIndex, undefined);
+  assert.equal(lateArrival.wildlifeCarcassWaitSlotIndex, 0);
+  assert.equal(first.wildlifeCarcassWaitSlotIndex, 2);
+  assert.equal(newcomer.wildlifeCarcassWaitSlotIndex, 1);
+  assert.equal(usedSlots.size, 3);
+});
+
+test('carcass overflow wait slots recover duplicate, stale and invalid positions', () => {
+  const first = makeCarcassWorker('waiter-a', 1, 0);
+  const duplicate = makeCarcassWorker('waiter-b', 2, 0);
+  const invalid = makeCarcassWorker('waiter-c', 3, 0);
+  const stale = makeCarcassWorker('waiter-d', 4, 0);
+  first.wildlifeCarcassWaitNodeId = 'carcass-1';
+  first.wildlifeCarcassWaitSlotIndex = 3;
+  duplicate.wildlifeCarcassWaitNodeId = 'carcass-1';
+  duplicate.wildlifeCarcassWaitSlotIndex = 3;
+  invalid.wildlifeCarcassWaitNodeId = 'carcass-1';
+  invalid.wildlifeCarcassWaitSlotIndex = -1;
+  stale.wildlifeCarcassWaitNodeId = 'other-carcass';
+  stale.wildlifeCarcassWaitSlotIndex = 0;
+  const usedSlots = new Set<number>();
+
+  assignWildlifeCarcassWaitingSlotIndices(
+    [first, duplicate, invalid, stale],
+    'carcass-1',
+    usedSlots,
+  );
+
+  assert.deepEqual(
+    [first, duplicate, invalid, stale].map((unit) => unit.wildlifeCarcassWaitSlotIndex),
+    [3, 0, 1, 2],
+  );
+  assert.equal(new Set([first, duplicate, invalid, stale].map((unit) => unit.wildlifeCarcassWaitSlotIndex)).size, 4);
 });

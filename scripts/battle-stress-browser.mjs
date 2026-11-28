@@ -1162,7 +1162,7 @@ async function main() {
               "    unit.targetBuildingId = undefined; unit.targetEntityId = undefined; unit.targetGarrisonBuildingId = undefined;",
               "    unit.commandQueue = undefined; unit.queuedGatherStopAfterDeposit = false; unit.carryingResource = undefined;",
               "    unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false, stats: { ...unit.unitDef.stats, carryCapacity: 40 } };",
-              "    unit.wildlifeCarcassHarvestNodeId = undefined; unit.wildlifeCarcassHarvestActive = undefined;",
+              "    unit.wildlifeCarcassHarvestNodeId = undefined; unit.wildlifeCarcassHarvestActive = undefined; unit.wildlifeCarcassWaitNodeId = undefined; unit.wildlifeCarcassWaitSlotIndex = undefined;",
               "    unit.wildlifeHuntApproachAngle = undefined; unit.wildlifeHuntApproachTargetNodeId = undefined; unit.wildlifeHuntApproachGoal = undefined;",
               "    unit.waypoints = undefined; unit.pathGoal = undefined; unit.pathCooldown = 0; unit.velocity = { x: 0, z: 0 };",
               "    unit.x = node.x + (index % 5) * 0.42; unit.z = node.z + Math.floor(index / 5) * 0.42;",
@@ -1173,14 +1173,23 @@ async function main() {
               "  const active = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === true);",
               "  const waiting = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === false);",
               "  const waitingSlotIndices = waiting.map((unit) => unit.wildlifeCarcassWaitSlotIndex);",
+              "  const originalWaitSlots = new Map(waiting.map((unit) => [unit.id, unit.wildlifeCarcassWaitSlotIndex]));",
+              "  const originalRoster = e.units;",
+              "  let waitingQueueStable = false;",
+              "  try {",
+              "    e.units = [...originalRoster].reverse();",
+              "    e.rebuildWildlifeCarcassHarvestAssignments();",
+              "    waitingQueueStable = waiting.every((unit) => unit.wildlifeCarcassWaitSlotIndex === originalWaitSlots.get(unit.id));",
+              "  } finally { e.units = originalRoster; }",
               "  const waitingQueueValid = waiting.every((unit) => unit.wildlifeCarcassWaitNodeId === nodeId && Number.isSafeInteger(unit.wildlifeCarcassWaitSlotIndex)) && new Set(waitingSlotIndices).size === waiting.length && waitingSlotIndices.every((slot) => slot >= 0 && slot < waiting.length);",
-              "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id), waitingQueueValid, waitingSlotIndices };",
+              "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id), waitingQueueValid, waitingQueueStable, waitingSlotIndices };",
               "})()",
             ].join("\n"));
             const expectedActive = Math.min(workerCount, capacity);
             assert.equal(stage.activeCount, expectedActive, subtype + " carcass admitted the wrong number of simultaneous villagers at roster size " + workerCount + ".");
             assert.equal(new Set(stage.activeIds).size, stage.activeCount, "One villager was assigned to more than one work slot.");
             assert.equal(stage.waitingQueueValid, true, subtype + " carcass did not assign unique, contiguous waiting positions at roster size " + workerCount + ".");
+            assert.equal(stage.waitingQueueStable, true, subtype + " carcass moved incumbent waiters after roster order changed at roster size " + workerCount + ".");
             wildlifeCapacityCases.push(stage);
             console.log("[wildlife-carcass] " + subtype + " / " + workerCount + " villagers: " +
               stage.activeCount + " active, " + stage.waitingCount + " waiting.");

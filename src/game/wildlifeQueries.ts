@@ -243,6 +243,70 @@ export function selectNearestWildlifeCarcassHarvesters<
   return output.units;
 }
 
+/**
+ * Preserve each overflow worker's staging slot across roster refreshes. A newly
+ * arriving worker takes the lowest vacant slot; existing waiters never shift
+ * merely because the engine's unit array was reordered.
+ *
+ * The caller owns and reuses the Set so this bounded-cadence pass allocates no
+ * per-worker collections.
+ */
+export function assignWildlifeCarcassWaitingSlotIndices<
+  Unit extends WildlifeCarcassHarvesterCandidate,
+>(
+  candidates: readonly Unit[],
+  nodeId: string,
+  usedSlots: Set<number>,
+): void {
+  usedSlots.clear();
+  if (!nodeId) {
+    for (const candidate of candidates) {
+      candidate.wildlifeCarcassWaitNodeId = undefined;
+      candidate.wildlifeCarcassWaitSlotIndex = undefined;
+    }
+    return;
+  }
+
+  // Reserve valid incumbent positions first, so roster order cannot steal them.
+  for (const candidate of candidates) {
+    if (candidate.wildlifeCarcassHarvestActive === true) {
+      candidate.wildlifeCarcassWaitNodeId = undefined;
+      candidate.wildlifeCarcassWaitSlotIndex = undefined;
+      continue;
+    }
+
+    const slotIndex = candidate.wildlifeCarcassWaitSlotIndex;
+    const isIncumbent =
+      candidate.wildlifeCarcassWaitNodeId === nodeId &&
+      Number.isSafeInteger(slotIndex) &&
+      (slotIndex as number) >= 0 &&
+      !usedSlots.has(slotIndex as number);
+    if (isIncumbent) {
+      usedSlots.add(slotIndex as number);
+    } else {
+      candidate.wildlifeCarcassWaitNodeId = nodeId;
+      candidate.wildlifeCarcassWaitSlotIndex = undefined;
+    }
+  }
+
+  // Fill holes without moving anyone who already owns a valid staging point.
+  let nextSlotIndex = 0;
+  for (const candidate of candidates) {
+    if (candidate.wildlifeCarcassHarvestActive === true) continue;
+    if (
+      candidate.wildlifeCarcassWaitNodeId === nodeId &&
+      Number.isSafeInteger(candidate.wildlifeCarcassWaitSlotIndex) &&
+      (candidate.wildlifeCarcassWaitSlotIndex as number) >= 0
+    ) continue;
+
+    while (usedSlots.has(nextSlotIndex)) nextSlotIndex++;
+    candidate.wildlifeCarcassWaitNodeId = nodeId;
+    candidate.wildlifeCarcassWaitSlotIndex = nextSlotIndex;
+    usedSlots.add(nextSlotIndex);
+    nextSlotIndex++;
+  }
+}
+
 export interface WildlifeCarcassWaitingPoint {
   x: number;
   z: number;

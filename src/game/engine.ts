@@ -44,6 +44,7 @@ import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
   assignWildlifeCarcassHarvestSlotIndices,
+  assignWildlifeCarcassWaitingSlotIndices,
   getWildlifeCarcassHarvestCapacity,
   isWildlifeCarcassNode,
   WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS,
@@ -675,6 +676,8 @@ export class RtsEngine {
   };
   /** Six is the largest supported wildlife carcass capacity; reuse this tiny slot bitmap. */
   private wildlifeCarcassSlotUsedScratch = Array(6).fill(false) as boolean[];
+  /** Reused per carcass to preserve stable overflow staging lanes without per-refresh Sets. */
+  private wildlifeCarcassWaitingSlotUsedScratch = new Set<number>();
   private wildlifeCarcassWaitingPointScratch = { x: 0, z: 0 };
   /** Shared output avoids allocating one idle-motion object for every animal per tick. */
   private wildlifeIdleMotionScratch: WildlifeIdleMotion = {
@@ -8369,8 +8372,6 @@ export class RtsEngine {
       for (const candidate of candidates) {
         candidate.wildlifeCarcassHarvestNodeId = nodeId;
         candidate.wildlifeCarcassHarvestActive = false;
-        candidate.wildlifeCarcassWaitNodeId = nodeId;
-        candidate.wildlifeCarcassWaitSlotIndex = undefined;
         if (!selected.includes(candidate)) candidate.wildlifeCarcassHarvestSlotIndex = undefined;
       }
 
@@ -8389,16 +8390,13 @@ export class RtsEngine {
         worker.wildlifeHuntApproachTargetNodeId = nodeId;
       }
 
-      // Sort only the small per-carcass roster on the existing 0.12s refresh.
-      // The queue stays deterministic and each overflow villager gets one
-      // non-overlapping staging sector until promoted into a harvest slot.
-      candidates.sort((left, right) => left.id.localeCompare(right.id));
-      let waitSlotIndex = 0;
-      for (const candidate of candidates) {
-        if (candidate.wildlifeCarcassHarvestActive === true) continue;
-        candidate.wildlifeCarcassWaitNodeId = nodeId;
-        candidate.wildlifeCarcassWaitSlotIndex = waitSlotIndex++;
-      }
+      // Preserve incumbent queue positions; only new/invalid waiters receive a
+      // vacant staging slot. This avoids path-goal churn on every roster refresh.
+      assignWildlifeCarcassWaitingSlotIndices(
+        candidates,
+        nodeId,
+        this.wildlifeCarcassWaitingSlotUsedScratch,
+      );
     }
   }
 
