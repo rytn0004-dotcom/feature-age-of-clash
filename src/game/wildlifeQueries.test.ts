@@ -690,3 +690,23 @@ test('carcass waiting points are finite, stable and outside the work ring', () =
   assert.ok(Number.isFinite(fallback.x));
   assert.ok(Number.isFinite(fallback.z));
 });
+
+test('carcass overflow queue uses unique, staggered ring positions with safe spacing', () => {
+  const points = Array.from({ length: 24 }, (_, waitSlotIndex) => {
+    const point = { x: 0, z: 0 };
+    writeWildlifeCarcassWaitingPoint(point, 4, -3, 1.5, 0.37, waitSlotIndex);
+    return point;
+  });
+  const firstRingRadius = Math.hypot(points[0].x - 4, points[0].z + 3);
+  const secondRingRadius = Math.hypot(points[12].x - 4, points[12].z + 3);
+  let minimumSpacing = Number.POSITIVE_INFINITY;
+  for (let left = 0; left < points.length; left++) {
+    for (let right = left + 1; right < points.length; right++) {
+      minimumSpacing = Math.min(minimumSpacing, Math.hypot(points[left].x - points[right].x, points[left].z - points[right].z));
+    }
+  }
+  assert.ok(points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.z)));
+  assert.ok(firstRingRadius > 6.7);
+  assert.ok(secondRingRadius > firstRingRadius + 2);
+  assert.ok(minimumSpacing > 2.5, 'waiting villagers should not be assigned overlapping staging points');
+});

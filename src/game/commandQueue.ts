@@ -22,6 +22,8 @@ export interface CommandQueueUnit {
   wildlifeCarcassHarvestNodeId?: string;
   wildlifeCarcassHarvestActive?: boolean;
   wildlifeCarcassHarvestSlotIndex?: number;
+  wildlifeCarcassWaitNodeId?: string;
+  wildlifeCarcassWaitSlotIndex?: number;
 }
 
 /** Append one independently-owned FIFO command to a unit's personal queue. */

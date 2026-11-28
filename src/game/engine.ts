@@ -4495,6 +4495,8 @@ export class RtsEngine {
       unit.wildlifeCarcassHarvestNodeId = undefined;
       unit.wildlifeCarcassHarvestActive = undefined;
       unit.wildlifeCarcassHarvestSlotIndex = undefined;
+      unit.wildlifeCarcassWaitNodeId = undefined;
+      unit.wildlifeCarcassWaitSlotIndex = undefined;
       unit.state = 'gathering';
       unit.currentActionText = `${meta.icon} 前往${meta.action}`;
     });
@@ -8291,6 +8293,8 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        unit.wildlifeCarcassWaitNodeId = undefined;
+        unit.wildlifeCarcassWaitSlotIndex = undefined;
         continue;
       }
 
@@ -8299,6 +8303,8 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        unit.wildlifeCarcassWaitNodeId = undefined;
+        unit.wildlifeCarcassWaitSlotIndex = undefined;
         continue;
       }
       // Living animals use the hunting-party ring, not the carcass harvesting cap.
@@ -8307,6 +8313,8 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        unit.wildlifeCarcassWaitNodeId = undefined;
+        unit.wildlifeCarcassWaitSlotIndex = undefined;
         continue;
       }
 
@@ -8335,6 +8343,8 @@ export class RtsEngine {
           candidate.wildlifeCarcassHarvestNodeId = undefined;
           candidate.wildlifeCarcassHarvestActive = undefined;
           candidate.wildlifeCarcassHarvestSlotIndex = undefined;
+          candidate.wildlifeCarcassWaitNodeId = undefined;
+          candidate.wildlifeCarcassWaitSlotIndex = undefined;
         }
         continue;
       }
@@ -8359,6 +8369,8 @@ export class RtsEngine {
       for (const candidate of candidates) {
         candidate.wildlifeCarcassHarvestNodeId = nodeId;
         candidate.wildlifeCarcassHarvestActive = false;
+        candidate.wildlifeCarcassWaitNodeId = nodeId;
+        candidate.wildlifeCarcassWaitSlotIndex = undefined;
         if (!selected.includes(candidate)) candidate.wildlifeCarcassHarvestSlotIndex = undefined;
       }
 
@@ -8367,12 +8379,25 @@ export class RtsEngine {
         const slotIndex = worker.wildlifeCarcassHarvestSlotIndex;
         if (!Number.isInteger(slotIndex)) continue;
         worker.wildlifeCarcassHarvestActive = true;
+        worker.wildlifeCarcassWaitNodeId = undefined;
+        worker.wildlifeCarcassWaitSlotIndex = undefined;
         worker.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
           slotIndex as number,
           capacity,
           phase,
         );
         worker.wildlifeHuntApproachTargetNodeId = nodeId;
+      }
+
+      // Sort only the small per-carcass roster on the existing 0.12s refresh.
+      // The queue stays deterministic and each overflow villager gets one
+      // non-overlapping staging sector until promoted into a harvest slot.
+      candidates.sort((left, right) => left.id.localeCompare(right.id));
+      let waitSlotIndex = 0;
+      for (const candidate of candidates) {
+        if (candidate.wildlifeCarcassHarvestActive === true) continue;
+        candidate.wildlifeCarcassWaitNodeId = nodeId;
+        candidate.wildlifeCarcassWaitSlotIndex = waitSlotIndex++;
       }
     }
   }
@@ -8449,6 +8474,8 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        unit.wildlifeCarcassWaitNodeId = undefined;
+        unit.wildlifeCarcassWaitSlotIndex = undefined;
         if (!remainingUnits) remainingUnits = currentUnits.slice(0, unitIndex);
         if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
           this.unloadTransport(unit);
@@ -9912,6 +9939,8 @@ export class RtsEngine {
       unit.wildlifeCarcassHarvestNodeId = undefined;
       unit.wildlifeCarcassHarvestActive = undefined;
       unit.wildlifeCarcassHarvestSlotIndex = undefined;
+      unit.wildlifeCarcassWaitNodeId = undefined;
+      unit.wildlifeCarcassWaitSlotIndex = undefined;
       const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
       if (hasQueuedFollowUp) {
         unit.targetResourceNodeId = undefined;
@@ -9999,6 +10028,8 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        unit.wildlifeCarcassWaitNodeId = undefined;
+        unit.wildlifeCarcassWaitSlotIndex = undefined;
         if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
           unit.targetResourceNodeId = undefined;
           unit.queuedGatherStopAfterDeposit = true;
@@ -10012,13 +10043,18 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestNodeId === node.id &&
         unit.wildlifeCarcassHarvestActive === true;
       if (!hasHarvestSlot) {
-        const waitAngle = getWildlifeHuntFallbackAngle(unit.id);
+        const waitSlotIndex = unit.wildlifeCarcassWaitNodeId === node.id &&
+          Number.isSafeInteger(unit.wildlifeCarcassWaitSlotIndex)
+          ? unit.wildlifeCarcassWaitSlotIndex as number
+          : -1;
+        const waitAngle = getWildlifeHuntFallbackAngle(node.id);
         writeWildlifeCarcassWaitingPoint(
           this.wildlifeCarcassWaitingPointScratch,
           node.x,
           node.z,
           getResourceColliderRadius(node.resourceType, node.subtype),
           waitAngle,
+          waitSlotIndex,
         );
         const waitGoal = this.wildlifeCarcassWaitingPointScratch;
         if (getDistance(unit.x, unit.z, waitGoal.x, waitGoal.z) > 0.9) {

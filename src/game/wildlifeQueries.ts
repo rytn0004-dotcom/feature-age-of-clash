@@ -255,6 +255,7 @@ export function writeWildlifeCarcassWaitingPoint(
   nodeZ: number,
   nodeRadius: number,
   waitAngle: number,
+  waitSlotIndex = -1,
 ): WildlifeCarcassWaitingPoint {
   const safeX = Number.isFinite(nodeX) ? nodeX : 0;
   const safeZ = Number.isFinite(nodeZ) ? nodeZ : 0;
@@ -262,6 +263,23 @@ export function writeWildlifeCarcassWaitingPoint(
   const safeAngle = Number.isFinite(waitAngle) ? waitAngle : 0;
   const turn = Math.PI * 2;
   const normalizedAngle = ((safeAngle % turn) + turn) % turn;
+
+  // Overflow workers use stable roster indices, not independent ID-derived
+  // angles. Twelve places per ring preserve spacing; alternate rings are
+  // staggered so adjacent lanes do not line up into a single traffic corridor.
+  if (Number.isSafeInteger(waitSlotIndex) && waitSlotIndex >= 0) {
+    const slotsPerRing = 12;
+    const ringIndex = Math.floor(waitSlotIndex / slotsPerRing);
+    const slotIndex = waitSlotIndex % slotsPerRing;
+    const stagger = ringIndex % 2 === 0 ? 0 : 0.5;
+    const angle = normalizedAngle + (slotIndex + stagger) * (turn / slotsPerRing);
+    const radius = safeRadius + 5.25 + ringIndex * 2.2;
+    output.x = safeX + Math.cos(angle) * radius;
+    output.z = safeZ + Math.sin(angle) * radius;
+    return output;
+  }
+
+  // Compatibility fallback for one-off calls without a roster assignment.
   const lane = Math.min(3, Math.floor((normalizedAngle / turn) * 4));
   const radius = safeRadius + 5.25 + lane * 1.8;
   output.x = safeX + Math.cos(safeAngle) * radius;

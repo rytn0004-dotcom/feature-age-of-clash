@@ -22,7 +22,7 @@ const report = {
   constructionStress: [],
   constructionStressNote: "Live RtsEngine construction runs in an isolated open corridor with resources/terrain disabled; pathfinding still uses the live navigation grid and wall/building collision data. Headless Chromium uses SwiftShader, not player GPU hardware.",
   wildlifeCarcassStress: [],
-  wildlifeCarcassStressNote: "Live RtsEngine carcass assignment and gathering checks use real villager entities, resource-node lookup, per-animal work caps, slot release, and concurrent carcass rosters. Timings are headless Chromium measurements.",
+  wildlifeCarcassStressNote: "Live RtsEngine checks cover per-animal harvest caps, deterministic overflow queues, worker handoff, AI food-source fallback, and concurrent carcass rosters. Timings are headless Chromium measurements.",
 };
 
 async function waitFor(operation, timeoutMs, label) {
@@ -1112,6 +1112,33 @@ async function main() {
         assert.equal(wildlifeAiSelection.liveHuntId, wildlifeNodeIds.hunt, "Carcass capacity incorrectly blocked live hunting.");
         report.wildlifeCarcassStress.push({ kind: "capacity-aware-ai-resource-selection", ...wildlifeAiSelection });
 
+        const wildlifeAiFoodFallback = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const source = e.resourceNodes.find((entry) => entry.id === " + JSON.stringify(wildlifeNodeIds.hunt) + ");",
+          "  const workers = " + JSON.stringify(constructionSetup.workerIds.slice(0, 18)) + ".map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+          "  const originalNodes = e.resourceNodes;",
+          "  const corpse = { ...source, id: 'stress-ai-full-carcass', subtype: 'hunt', x: workers[0].x + 4, z: workers[0].z + 2, amount: 1200, maxAmount: 1200, animalAlive: false, animalHp: 0 };",
+          "  const berry = { ...source, id: 'stress-ai-berry', subtype: 'berry', x: workers[0].x + 7, z: workers[0].z + 4, amount: 1200, maxAmount: 1200, animalAlive: undefined, animalHp: undefined };",
+          "  const farm = { ...source, id: 'stress-ai-farm', subtype: 'farm', x: workers[0].x + 9, z: workers[0].z + 6, amount: 1200, maxAmount: 1200, animalAlive: undefined, animalHp: undefined };",
+          "  try {",
+          "    e.resourceNodes = [corpse, berry, farm];",
+          "    const assignedCounts = new Map([[corpse.id, 3]]);",
+          "    const choices = [];",
+          "    for (const worker of workers) {",
+          "      const target = e.findBestDeliveredResourceNode(worker, 'food', Infinity, { assignedCounts });",
+          "      choices.push(target ? { id: target.id, subtype: target.subtype } : null);",
+          "      if (target) assignedCounts.set(target.id, (assignedCounts.get(target.id) || 0) + 1);",
+          "    }",
+          "    return { requestedWorkers: workers.length, assignedWorkers: choices.filter(Boolean).length, corpseAssignments: choices.filter((choice) => choice?.id === corpse.id).length, berryAssignments: choices.filter((choice) => choice?.id === berry.id).length, farmAssignments: choices.filter((choice) => choice?.id === farm.id).length, selectedSubtypes: [...new Set(choices.filter(Boolean).map((choice) => choice.subtype))] };",
+          "  } finally { e.resourceNodes = originalNodes; e.rebuildResourceNodeLookup(); }",
+          "})()",
+        ].join("\\n"));
+        assert.equal(wildlifeAiFoodFallback.assignedWorkers, wildlifeAiFoodFallback.requestedWorkers, "AI failed to find an alternative food source for every eligible worker.");
+        assert.equal(wildlifeAiFoodFallback.corpseAssignments, 0, "AI overflow assignments returned to an already-full carcass.");
+        assert.equal(wildlifeAiFoodFallback.berryAssignments + wildlifeAiFoodFallback.farmAssignments, wildlifeAiFoodFallback.requestedWorkers, "AI did not keep the overflow roster on usable food sources.");
+        report.wildlifeCarcassStress.push({ kind: "multi-worker-ai-food-fallback", ...wildlifeAiFoodFallback });
+
         const wildlifeCapacityCases = [];
         for (const subtype of ["hunt", "boar", "aurochs"]) {
           const nodeId = wildlifeNodeIds[subtype];
@@ -1145,12 +1172,15 @@ async function main() {
               "  e.rebuildWildlifeCarcassHarvestAssignments();",
               "  const active = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === true);",
               "  const waiting = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === false);",
-              "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id) };",
+              "  const waitingSlotIndices = waiting.map((unit) => unit.wildlifeCarcassWaitSlotIndex);",
+              "  const waitingQueueValid = waiting.every((unit) => unit.wildlifeCarcassWaitNodeId === nodeId && Number.isSafeInteger(unit.wildlifeCarcassWaitSlotIndex)) && new Set(waitingSlotIndices).size === waiting.length && waitingSlotIndices.every((slot) => slot >= 0 && slot < waiting.length);",
+              "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id), waitingQueueValid, waitingSlotIndices };",
               "})()",
             ].join("\n"));
             const expectedActive = Math.min(workerCount, capacity);
             assert.equal(stage.activeCount, expectedActive, subtype + " carcass admitted the wrong number of simultaneous villagers at roster size " + workerCount + ".");
             assert.equal(new Set(stage.activeIds).size, stage.activeCount, "One villager was assigned to more than one work slot.");
+            assert.equal(stage.waitingQueueValid, true, subtype + " carcass did not assign unique, contiguous waiting positions at roster size " + workerCount + ".");
             wildlifeCapacityCases.push(stage);
             console.log("[wildlife-carcass] " + subtype + " / " + workerCount + " villagers: " +
               stage.activeCount + " active, " + stage.waitingCount + " waiting.");

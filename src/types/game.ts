@@ -342,6 +342,10 @@ export interface UnitEntity extends EntityCommon {
   wildlifeCarcassHarvestActive?: boolean;
   /** Stable angular sector retained across carcass assignment refreshes. */
   wildlifeCarcassHarvestSlotIndex?: number;
+  /** Carcass whose overflow queue currently owns this worker. */
+  wildlifeCarcassWaitNodeId?: string;
+  /** Deterministic ring position within that carcass's overflow queue. */
+  wildlifeCarcassWaitSlotIndex?: number;
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;
