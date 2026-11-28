@@ -44,6 +44,8 @@ import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
   getWildlifeInteractionQueryRadius,
+  selectNearestWildlifeHuntParty,
+  type WildlifeHuntPartySelectionScratch,
   type WildlifeUnitInteractionScratch,
 } from './wildlifeQueries';
 import {
@@ -537,6 +539,12 @@ export class RtsEngine {
   private aiCampPlacementReadyAt = new Map<string, number>();
   /** Per-faction economic planning buffers reused between sequential AI decisions. */
   private aiEconomicWorkerScratch: UnitEntity[] = [];
+  /** Reused AI hunter candidates and nearest-party selection output. */
+  private aiWildlifeHuntCandidatesScratch: UnitEntity[] = [];
+  private aiWildlifeHuntPartyScratch: WildlifeHuntPartySelectionScratch<UnitEntity> = {
+    units: [],
+    distances: [],
+  };
   private aiNodeWorkerCountScratch = new Map<string, number>();
   private aiNodeGatherRateScratch = new Map<string, number>();
   private aiLandResourceNodeScratch: ResourceNode[] = [];
@@ -1717,6 +1725,9 @@ export class RtsEngine {
     this.aiUnitGroupsByFaction.clear();
     this.aiFactionTeamByIdScratch.clear();
     this.aiEconomicWorkerScratch.length = 0;
+    this.aiWildlifeHuntCandidatesScratch.length = 0;
+    this.aiWildlifeHuntPartyScratch.units.length = 0;
+    this.aiWildlifeHuntPartyScratch.distances.length = 0;
     this.aiNodeWorkerCountScratch.clear();
     this.aiNodeGatherRateScratch.clear();
     this.aiLandResourceNodeScratch.length = 0;
@@ -14267,25 +14278,31 @@ export class RtsEngine {
           isDangerousWildlifeSubtype(targetNode.subtype) &&
           (unit.state === 'gathering' || unit.state === 'returning_resource');
       });
-      const availableHuntUnits = aiArmy.filter((unit) =>
-        canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
-        unit.state === 'idle' &&
-        !unit.targetResourceNodeId &&
-        !unit.targetEntityId &&
-        !unit.targetBuildingId &&
-        unit.targetX === undefined &&
-        unit.targetZ === undefined &&
-        !unit.attackMoveGoal &&
-        !unit.wallPatrolRoute?.length &&
-        !unit.formationGroupId &&
-        !unit.pathGoal &&
-        !unit.waypoints?.length &&
-        !unit.targetGarrisonBuildingId &&
-        !unit.fieldAssemblyProjectId &&
-        !unit.garrisonedInBuildingId &&
-        !unit.commandQueue?.length &&
-        (!unit.lastDamagedTime || performance.now() - unit.lastDamagedTime > 12_000)
-      );
+      const availableHuntUnits = this.aiWildlifeHuntCandidatesScratch;
+      availableHuntUnits.length = 0;
+      for (const unit of aiArmy) {
+        if (
+          canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
+          unit.state === 'idle' &&
+          !unit.targetResourceNodeId &&
+          !unit.targetEntityId &&
+          !unit.targetBuildingId &&
+          unit.targetX === undefined &&
+          unit.targetZ === undefined &&
+          !unit.attackMoveGoal &&
+          !unit.wallPatrolRoute?.length &&
+          !unit.formationGroupId &&
+          !unit.pathGoal &&
+          !unit.waypoints?.length &&
+          !unit.targetGarrisonBuildingId &&
+          !unit.fieldAssemblyProjectId &&
+          !unit.garrisonedInBuildingId &&
+          !unit.commandQueue?.length &&
+          (!unit.lastDamagedTime || performance.now() - unit.lastDamagedTime > 12_000)
+        ) {
+          availableHuntUnits.push(unit);
+        }
+      }
       if (shouldAiOrganizeWildlifeHunt({
         gameTime: this.stats.gameDuration,
         food: aiRes.food,
@@ -14307,12 +14324,27 @@ export class RtsEngine {
 
           const distance = getDistance(anchorX, anchorZ, node.x, node.z);
           if (distance > 48) continue;
-          const enemyNearby = aiHostileUnits.some((enemy) =>
-            enemy.hp > 0 && !enemy.garrisonedInBuildingId &&
-            getDistance(enemy.x, enemy.z, node.x, node.z) < 28
-          ) || aiHostileBuildings.some((building) =>
-            building.hp > 0 && getDistance(building.x, building.z, node.x, node.z) < 24
-          );
+          let enemyNearby = false;
+          for (const enemy of aiHostileUnits) {
+            if (enemy.hp <= 0 || enemy.garrisonedInBuildingId) continue;
+            const dx = enemy.x - node.x;
+            const dz = enemy.z - node.z;
+            if (dx * dx + dz * dz < 28 * 28) {
+              enemyNearby = true;
+              break;
+            }
+          }
+          if (!enemyNearby) {
+            for (const building of aiHostileBuildings) {
+              if (building.hp <= 0) continue;
+              const dx = building.x - node.x;
+              const dz = building.z - node.z;
+              if (dx * dx + dz * dz < 24 * 24) {
+                enemyNearby = true;
+                break;
+              }
+            }
+          }
           if (enemyNearby) continue;
 
           const yieldBonus = Math.min(8, node.amount / 220);
@@ -14325,13 +14357,13 @@ export class RtsEngine {
         }
 
         if (targetWildlife) {
-          const huntingParty = availableHuntUnits
-            .slice()
-            .sort((a, b) =>
-              getDistance(a.x, a.z, targetWildlife!.x, targetWildlife!.z) -
-              getDistance(b.x, b.z, targetWildlife!.x, targetWildlife!.z)
-            )
-            .slice(0, 4);
+          const huntingParty = selectNearestWildlifeHuntParty(
+            availableHuntUnits,
+            targetWildlife.x,
+            targetWildlife.z,
+            4,
+            this.aiWildlifeHuntPartyScratch,
+          );
           const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
           for (const hunter of huntingParty) {
             hunter.targetResourceNodeId = targetWildlife.id;

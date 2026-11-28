@@ -4,6 +4,7 @@ import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
   getWildlifeInteractionQueryRadius,
+  selectNearestWildlifeHuntParty,
   tryConsumeWildlifeHunterAttack,
   type WildlifeHunterAttackUnit,
   type WildlifeUnitInteractionScratch,
@@ -204,4 +205,43 @@ test('wildlife hunter cooldown is shared across nearby animals at one simulation
   assert.equal(tryConsumeWildlifeHunterAttack(attacker, 5, 2), true);
   assert.equal(tryConsumeWildlifeHunterAttack(attacker, 5, 2), false);
   assert.equal(tryConsumeWildlifeHunterAttack(attacker, 5.5, 2), true);
+});
+
+
+test('AI wildlife hunt party selects nearest hunters in stable roster order and reuses scratch', () => {
+  const candidates = [
+    makeUnit('tie-first', -5, 0),
+    makeUnit('far', 9, 0),
+    makeUnit('nearest', 1, 0),
+    makeUnit('middle', 0, 3),
+    makeUnit('tie-second', 5, 0),
+  ];
+  const scratch = { units: [] as WildlifeHunterAttackUnit[], distances: [] as number[] };
+
+  const selected = selectNearestWildlifeHuntParty(candidates, 0, 0, 4, scratch);
+  assert.equal(selected, scratch.units);
+  assert.deepEqual(selected.map((unit) => unit.id), [
+    'nearest',
+    'middle',
+    'tie-first',
+    'tie-second',
+  ]);
+  assert.deepEqual(scratch.distances, [1, 3, 5, 5]);
+
+  const secondSelection = selectNearestWildlifeHuntParty(candidates, 0, 0, 2, scratch);
+  assert.equal(secondSelection, selected, 'the caller-owned array should be reused');
+  assert.deepEqual(secondSelection.map((unit) => unit.id), ['nearest', 'middle']);
+  assert.deepEqual(scratch.distances, [1, 3]);
+});
+
+test('AI wildlife hunt party safely clears output for invalid targets and empty limits', () => {
+  const scratch = {
+    units: [makeUnit('stale', 0, 0)],
+    distances: [0],
+  };
+  assert.deepEqual(selectNearestWildlifeHuntParty([makeUnit('candidate', 1, 0)], Number.NaN, 0, 4, scratch), []);
+  assert.deepEqual(scratch.distances, []);
+  assert.deepEqual(selectNearestWildlifeHuntParty([makeUnit('candidate', 1, 0)], 0, 0, 0, scratch), []);
+  assert.deepEqual(scratch.units, []);
+  assert.deepEqual(scratch.distances, []);
 });

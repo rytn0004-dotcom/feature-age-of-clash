@@ -3733,7 +3733,12 @@ export function selectWildBoarAggroTarget(
   let lockedTarget: UnitEntity | null = null;
   let nearestTarget: UnitEntity | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
+  let nearestFrontliner: UnitEntity | null = null;
+  let nearestFrontlinePriority = Number.POSITIVE_INFINITY;
+  let nearestFrontlineDistance = Number.POSITIVE_INFINITY;
 
+  // Resolve target lock, fallback target and optional ranged-hunter screen together.
+  // The previous ranged-only fallback needed a second pass over the same full unit roster.
   for (const candidate of candidates) {
     if (
       candidate.hp <= 0 ||
@@ -3757,45 +3762,31 @@ export function selectWildBoarAggroTarget(
       nearestTarget = candidate;
       nearestDistance = distance;
     }
+
+    const category = candidate.unitDef.category;
+    if (
+      distance <= WILD_BOAR_FRONTLINE_SCREEN_RADIUS &&
+      (category === 'worker' || category === 'melee' || category === 'cavalry' || category === 'special')
+    ) {
+      const frontlinePriority = category === 'worker' ? 1 : 0;
+      if (
+        frontlinePriority < nearestFrontlinePriority ||
+        (frontlinePriority === nearestFrontlinePriority && (
+          distance < nearestFrontlineDistance - 1e-9 ||
+          (Math.abs(distance - nearestFrontlineDistance) <= 1e-9 &&
+            (!nearestFrontliner || candidate.id.localeCompare(nearestFrontliner.id) < 0))
+        ))
+      ) {
+        nearestFrontliner = candidate;
+        nearestFrontlinePriority = frontlinePriority;
+        nearestFrontlineDistance = distance;
+      }
+    }
   }
 
   if (lockedTarget) {
-    if (lockedTarget.unitDef.category === 'ranged') {
-      let nearestFrontliner: UnitEntity | null = null;
-      let nearestFrontlinePriority = Number.POSITIVE_INFINITY;
-      let nearestFrontlineDistance = Number.POSITIVE_INFINITY;
-      for (const candidate of candidates) {
-        const category = candidate.unitDef.category;
-        if (
-          candidate.hp <= 0 ||
-          candidate.garrisonedInBuildingId ||
-          candidate.unitDef.isNaval ||
-          candidate.state !== 'gathering' ||
-          candidate.targetResourceNodeId !== nodeId ||
-          !candidate.id ||
-          !Number.isFinite(candidate.x) ||
-          !Number.isFinite(candidate.z) ||
-          (category !== 'worker' && category !== 'melee' && category !== 'cavalry' && category !== 'special')
-        ) continue;
-        const distance = Math.hypot(candidate.x - boarX, candidate.z - boarZ);
-        const frontlinePriority = category === 'worker' ? 1 : 0;
-        if (
-          distance <= WILD_BOAR_FRONTLINE_SCREEN_RADIUS &&
-          (
-            frontlinePriority < nearestFrontlinePriority ||
-            (frontlinePriority === nearestFrontlinePriority && (
-              distance < nearestFrontlineDistance - 1e-9 ||
-              (Math.abs(distance - nearestFrontlineDistance) <= 1e-9 &&
-                (!nearestFrontliner || candidate.id.localeCompare(nearestFrontliner.id) < 0))
-            ))
-          )
-        ) {
-          nearestFrontliner = candidate;
-          nearestFrontlinePriority = frontlinePriority;
-          nearestFrontlineDistance = distance;
-        }
-      }
-      if (nearestFrontliner) return nearestFrontliner;
+    if (lockedTarget.unitDef.category === 'ranged' && nearestFrontliner) {
+      return nearestFrontliner;
     }
     return lockedTarget;
   }

@@ -18,6 +18,66 @@ export interface WildlifeThreatVector {
 }
 
 /** Caller-owned scratch keeps local animal queries allocation-free across simulation ticks. */
+export interface WildlifeHuntPartyCandidate {
+  x: number;
+  z: number;
+}
+
+export interface WildlifeHuntPartySelectionScratch<
+  Unit extends WildlifeHuntPartyCandidate = WildlifeHuntPartyCandidate,
+> {
+  units: Unit[];
+  /** Distances are kept beside selected units so each candidate is measured only once. */
+  distances: number[];
+}
+
+/**
+ * Selects the nearest N hunters in stable roster order.
+ * The caller owns both output arrays; this keeps AI hunting selection allocation-free.
+ */
+export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCandidate>(
+  candidates: readonly Unit[],
+  targetX: number,
+  targetZ: number,
+  maxCount: number,
+  output: WildlifeHuntPartySelectionScratch<Unit>,
+): Unit[] {
+  output.units.length = 0;
+  output.distances.length = 0;
+
+  if (
+    !Number.isFinite(targetX) ||
+    !Number.isFinite(targetZ) ||
+    !Number.isFinite(maxCount)
+  ) {
+    return output.units;
+  }
+
+  const limit = Math.min(candidates.length, Math.max(0, Math.floor(maxCount)));
+  if (limit === 0) return output.units;
+
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
+
+    const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
+    let insertAt = output.distances.length;
+    // Strict comparison preserves original roster order for equal-distance candidates.
+    while (insertAt > 0 && distance < output.distances[insertAt - 1]) {
+      insertAt--;
+    }
+    if (insertAt >= limit) continue;
+
+    output.units.splice(insertAt, 0, candidate);
+    output.distances.splice(insertAt, 0, distance);
+    if (output.units.length > limit) {
+      output.units.pop();
+      output.distances.pop();
+    }
+  }
+
+  return output.units;
+}
+
 export interface WildlifeUnitInteractionScratch<
   Unit extends WildlifeInteractionUnit = WildlifeInteractionUnit,
 > {
