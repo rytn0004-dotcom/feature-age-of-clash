@@ -3903,6 +3903,7 @@ export function selectWildBoarAggroTarget(
   // The previous ranged-only fallback needed a second pass over the same full unit roster.
   for (const candidate of candidates) {
     if (
+      !Number.isFinite(candidate.hp) ||
       candidate.hp <= 0 ||
       candidate.garrisonedInBuildingId ||
       candidate.unitDef.isNaval ||
@@ -3947,8 +3948,12 @@ export function selectWildBoarAggroTarget(
   }
 
   if (lockedTarget) {
-    if (lockedTarget.unitDef.category === 'ranged' && nearestFrontliner) {
-      return nearestFrontliner;
+    if (nearestFrontliner) {
+      const lockedRole = lockedTarget.unitDef.category;
+      const screenRole = nearestFrontliner.unitDef.category;
+      const shouldProtectRanged = lockedRole === 'ranged';
+      const shouldRelieveWorker = lockedRole === 'worker' && screenRole !== 'worker';
+      if (shouldProtectRanged || shouldRelieveWorker) return nearestFrontliner;
     }
     return lockedTarget;
   }

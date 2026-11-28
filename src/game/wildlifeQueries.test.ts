@@ -368,3 +368,55 @@ test('AI wildlife hunt party safely clears output for invalid targets and empty 
   assert.deepEqual(scratch.rangedUnits, []);
   assert.deepEqual(scratch.rangedDistances, []);
 });
+
+
+test('wildlife perception ignores units with non-finite health', () => {
+  const malformed = makeUnit('nan-health', 0.5, 0, {
+    hp: Number.NaN,
+    state: 'attacking',
+    range: 8,
+  });
+  const valid = makeUnit('valid-hunter', 4, 0, {
+    state: 'attacking',
+    range: 8,
+  });
+  const scratch = makeScratch();
+
+  collectWildlifeUnitInteractions([malformed, valid], 0, 0, 18, scratch);
+  assert.deepEqual(scratch.nearestThreat, { x: 4, z: 0, d: 4 });
+  assert.deepEqual(scratch.attackers.map((unit) => unit.id), ['valid-hunter']);
+
+  const invalidOnly = makeUnit('infinite-health', 1, 0, {
+    hp: Number.POSITIVE_INFINITY,
+    state: 'attacking',
+  });
+  collectWildlifeUnitInteractions([invalidOnly], 0, 0, 18, scratch);
+  assert.equal(scratch.nearestThreat, null);
+  assert.deepEqual(scratch.attackers, []);
+});
+
+test('AI wildlife party selection rejects finite coordinates whose distance overflows', () => {
+  const overflowFrontliner = makeUnit('overflow-frontline', 1.7e308, 1.7e308, {
+    category: 'melee',
+  });
+  const scratch = {
+    units: [] as WildlifeHunterAttackUnit[],
+    distances: [] as number[],
+    frontlineUnits: [] as WildlifeHunterAttackUnit[],
+    frontlineDistances: [] as number[],
+    rangedUnits: [] as WildlifeHunterAttackUnit[],
+    rangedDistances: [] as number[],
+  };
+
+  const selected = selectNearestWildlifeHuntParty(
+    [overflowFrontliner],
+    0,
+    0,
+    1,
+    scratch,
+    1,
+    0,
+  );
+  assert.deepEqual(selected, []);
+  assert.deepEqual(scratch.frontlineDistances, []);
+});

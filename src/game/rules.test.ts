@@ -5028,3 +5028,65 @@ test('wild boar and aurochs retain heading when blocked and use displacement-loc
   assert.ok(Number.isFinite(recovered.moveBlend));
   assert.equal(recovered.distMoved, 0);
 });
+
+
+test('wild boar aggro transfers a locked villager to a newly arrived military frontliner', () => {
+  const villager = {
+    id: 'villager',
+    x: 1,
+    z: 0,
+    hp: 55,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'worker' as const, isNaval: false },
+  } as unknown as UnitEntity;
+  const frontliner = {
+    id: 'infantry',
+    x: 7,
+    z: 0,
+    hp: 88,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'melee' as const, isNaval: false },
+  } as unknown as UnitEntity;
+
+  assert.equal(
+    selectWildBoarAggroTarget('villager', 0, 0, [villager], 'boar')?.id,
+    'villager',
+    'a villager remains the fallback when no military screen is close enough',
+  );
+  assert.equal(
+    selectWildBoarAggroTarget('villager', 0, 0, [villager, frontliner], 'boar')?.id,
+    'infantry',
+    'a frontline unit arriving inside the screen radius should relieve the worker',
+  );
+
+  const outsideScreen = { ...frontliner, x: WILD_BOAR_FRONTLINE_SCREEN_RADIUS + 0.1 } as UnitEntity;
+  assert.equal(
+    selectWildBoarAggroTarget('villager', 0, 0, [villager, outsideScreen], 'boar')?.id,
+    'villager',
+    'a distant frontliner must not steal aggro before entering the protection radius',
+  );
+});
+
+test('wild boar aggro ignores candidates with non-finite health', () => {
+  const malformedNaN = {
+    id: 'nan-health',
+    x: 0.5,
+    z: 0,
+    hp: Number.NaN,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'melee' as const, isNaval: false },
+  } as unknown as UnitEntity;
+  const malformedInfinity = {
+    ...malformedNaN,
+    id: 'infinite-health',
+    hp: Number.POSITIVE_INFINITY,
+  } as UnitEntity;
+
+  assert.equal(
+    selectWildBoarAggroTarget(undefined, 0, 0, [malformedNaN, malformedInfinity], 'boar'),
+    null,
+  );
+});

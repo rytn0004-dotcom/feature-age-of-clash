@@ -83,6 +83,7 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
       if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
 
       const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
+      if (!Number.isFinite(distance)) continue;
       let insertAt = output.frontlineDistances.length;
       while (insertAt > 0 && distance < output.frontlineDistances[insertAt - 1]) {
         insertAt--;
@@ -222,6 +223,7 @@ export function collectWildlifeUnitInteractions<Unit extends WildlifeInteraction
   let nearestThreatId: string | null = null;
   for (const unit of candidates) {
     if (
+      !Number.isFinite(unit.hp) ||
       unit.hp <= 0 ||
       unit.garrisonedInBuildingId ||
       unit.unitDef.isNaval ||
