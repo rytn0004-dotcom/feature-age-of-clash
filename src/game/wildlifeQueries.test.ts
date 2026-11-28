@@ -443,6 +443,8 @@ function makeCarcassWorker(
     carryCapacity?: number;
     harvestActive?: boolean;
     harvestSlotIndex?: number;
+    waitNodeId?: string;
+    waitSlotIndex?: number;
   } = {},
 ) {
   return {
@@ -456,6 +458,8 @@ function makeCarcassWorker(
     wildlifeCarcassHarvestNodeId: options.harvestActive ? (options.nodeId ?? 'carcass-1') : undefined,
     wildlifeCarcassHarvestActive: options.harvestActive ?? false,
     wildlifeCarcassHarvestSlotIndex: options.harvestSlotIndex,
+    wildlifeCarcassWaitNodeId: options.waitNodeId,
+    wildlifeCarcassWaitSlotIndex: options.waitSlotIndex,
     carryingResource: options.cargo === undefined ? undefined : { amount: options.cargo },
     unitDef: {
       category: options.category ?? 'worker',
