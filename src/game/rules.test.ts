@@ -95,14 +95,13 @@ test('wildlife escape steering rejects candidates whose immediate step clips an 
   assert.ok(Math.abs(angle - 0.55) < 1e-9, 'steering should select the first adjacent clear sector');
   assert.ok(!blockedShortEastStep(Math.cos(angle!) * 0.45, Math.sin(angle!) * 0.45));
 
-  const trappedAtFirstStep = pickWildAnimalEscapeAngle(
-    0,
-    0,
-    0,
-    (x, z) => Math.hypot(x, z) > 0.2 && Math.hypot(x, z) < 0.9 && Math.abs(z) < 0.15,
-  );
-  assert.ok(trappedAtFirstStep !== null);
-  assert.ok(Math.abs(trappedAtFirstStep! - 0.55) < 1e-9);
+  // Force the first (long look-ahead) pass to fail everywhere, so the shorter
+  // fallback pass must also reject the obstructed eastward first step.
+  const blockedFarRaysAndShortEast = (x: number, z: number) =>
+    Math.hypot(x, z) > 1.3 || (x > 0.2 && x < 0.9 && Math.abs(z) < 0.15);
+  const fallbackAngle = pickWildAnimalEscapeAngle(0, 0, 0, blockedFarRaysAndShortEast);
+  assert.ok(fallbackAngle !== null);
+  assert.ok(Math.abs(fallbackAngle - 0.55) < 1e-9, 'the reduced-distance fallback must still avoid the blocked first step');
 });
 
 test('wild deer model heading follows collision-resolved movement in every XZ direction', () => {
