@@ -163,6 +163,7 @@ import {
   FIELD_RAM_TECH_ID,
   canUnitGatherNode,
   canUnitReceiveGatherOrder,
+  canUnitUseWildlifeMeleeHuntSlot,
   getWildlifeMeleeHuntApproachRange,
   getWildlifeHuntPartySlotAngle,
   shouldRepositionWildlifeMeleeHunter,
@@ -4398,7 +4399,7 @@ export class RtsEngine {
     let wildlifeHunterCount = 0;
     if (!queue && isLiveWildlifeOrder) {
       for (const unit of eligibleUnits) {
-        if (unit.unitDef.category !== 'worker') wildlifeHunterCount++;
+        if (canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) wildlifeHunterCount++;
       }
     }
     const wildlifeHuntPhase = getWildlifeHuntFallbackAngle(node.id);
@@ -4428,7 +4429,7 @@ export class RtsEngine {
       }
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
-      if (isLiveWildlifeOrder && unit.unitDef.category !== 'worker') {
+      if (isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) {
         (unit as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
           wildlifeHunterIndex,
           wildlifeHunterCount,
@@ -9861,7 +9862,7 @@ export class RtsEngine {
     );
 
     const usesMeleeHuntSlots =
-      isLiveHuntableWildlife && militaryHunter && unit.unitDef.category !== 'ranged';
+      isLiveHuntableWildlife && militaryHunter && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category);
     let meleeApproachGoal: { x: number; z: number } | undefined;
     let meleeApproachDistance = Number.POSITIVE_INFINITY;
     if (usesMeleeHuntSlots) {

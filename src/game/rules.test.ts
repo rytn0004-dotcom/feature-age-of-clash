@@ -4030,6 +4030,16 @@ test('melee hunting approach range stays inside weapon reach and outside the lar
   assert.equal(getWildlifeMeleeHuntApproachRange(Number.NaN, Number.NaN), 2.4);
 });
 
+test('wildlife melee encirclement slots exclude ranged units and non-hunters', async () => {
+  const { canUnitUseWildlifeMeleeHuntSlot } = await import('./rules');
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('melee'), true);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('cavalry'), true);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('special'), true);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('ranged'), false);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('worker'), false);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('siege'), false);
+});
+
 test('wildlife hunt party approach angles form stable, evenly spaced sectors', async () => {
   const { getWildlifeHuntPartySlotAngle } = await import('./rules');
   const phase = 0.37;

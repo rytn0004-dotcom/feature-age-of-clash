@@ -1698,6 +1698,11 @@ export function canUnitHuntWildlife(
     );
 }
 
+/** Only melee, cavalry and special ground hunters occupy close-range ring slots. */
+export function canUnitUseWildlifeMeleeHuntSlot(category: UnitCategory): boolean {
+  return category === 'melee' || category === 'cavalry' || category === 'special';
+}
+
 /** Keeps melee hunters inside weapon reach without pushing them into animal collision. */
 export function getWildlifeMeleeHuntApproachRange(nodeRadius: number, weaponRange: number): number {
   const safeRadius = Number.isFinite(nodeRadius) ? Math.max(0, nodeRadius) : 0;
