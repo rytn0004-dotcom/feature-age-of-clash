@@ -5090,3 +5090,46 @@ test('wild boar aggro ignores candidates with non-finite health', () => {
     null,
   );
 });
+
+
+test('wildlife frontline aggro rotates off a critically wounded hunter without target jitter', () => {
+  const wounded = {
+    id: 'wounded-frontline',
+    x: 2,
+    z: 0,
+    hp: 20,
+    maxHp: 100,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'melee' as const, isNaval: false },
+  } as unknown as UnitEntity;
+  const healthy = {
+    id: 'healthy-frontline',
+    x: 7,
+    z: 0,
+    hp: 82,
+    maxHp: 100,
+    state: 'gathering' as const,
+    targetResourceNodeId: 'boar',
+    unitDef: { category: 'cavalry' as const, isNaval: false },
+  } as unknown as UnitEntity;
+
+  assert.equal(
+    selectWildBoarAggroTarget('wounded-frontline', 0, 0, [wounded, healthy], 'boar')?.id,
+    'healthy-frontline',
+    'a critically wounded frontline hunter should hand off to a substantially healthier screen',
+  );
+
+  const slightlyHealthier = { ...healthy, hp: 34 } as UnitEntity;
+  assert.equal(
+    selectWildBoarAggroTarget('wounded-frontline', 0, 0, [wounded, slightlyHealthier], 'boar')?.id,
+    'wounded-frontline',
+    'small health differences must not churn the aggro target every simulation tick',
+  );
+
+  assert.equal(
+    selectWildBoarAggroTarget('healthy-frontline', 0, 0, [healthy], 'boar')?.id,
+    'healthy-frontline',
+    'a healthy target remains locked when there is no relief candidate',
+  );
+});

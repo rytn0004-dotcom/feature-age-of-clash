@@ -3898,6 +3898,9 @@ export function selectWildBoarAggroTarget(
   let nearestFrontliner: UnitEntity | null = null;
   let nearestFrontlinePriority = Number.POSITIVE_INFINITY;
   let nearestFrontlineDistance = Number.POSITIVE_INFINITY;
+  let healthiestFrontliner: UnitEntity | null = null;
+  let healthiestFrontlinerRatio = -1;
+  let healthiestFrontlinerDistance = Number.POSITIVE_INFINITY;
 
   // Resolve target lock, fallback target and optional ranged-hunter screen together.
   // The previous ranged-only fallback needed a second pass over the same full unit roster.
@@ -3944,16 +3947,51 @@ export function selectWildBoarAggroTarget(
         nearestFrontlinePriority = frontlinePriority;
         nearestFrontlineDistance = distance;
       }
+
+      // Reserve a healthier military screen as a deterministic relief option.
+      // Workers remain a fallback screen, never a preferred damage-rotation target.
+      if (category === 'melee' || category === 'cavalry' || category === 'special') {
+        const healthRatio = Number.isFinite(candidate.maxHp) && candidate.maxHp > 0
+          ? Math.max(0, Math.min(1, candidate.hp / candidate.maxHp))
+          : 1;
+        if (
+          healthRatio > healthiestFrontlinerRatio + 1e-9 ||
+          (Math.abs(healthRatio - healthiestFrontlinerRatio) <= 1e-9 && (
+            distance < healthiestFrontlinerDistance - 1e-9 ||
+            (Math.abs(distance - healthiestFrontlinerDistance) <= 1e-9 &&
+              (!healthiestFrontliner || candidate.id.localeCompare(healthiestFrontliner.id) < 0))
+          ))
+        ) {
+          healthiestFrontliner = candidate;
+          healthiestFrontlinerRatio = healthRatio;
+          healthiestFrontlinerDistance = distance;
+        }
+      }
     }
   }
 
   if (lockedTarget) {
+    const lockedRole = lockedTarget.unitDef.category;
     if (nearestFrontliner) {
-      const lockedRole = lockedTarget.unitDef.category;
       const screenRole = nearestFrontliner.unitDef.category;
       const shouldProtectRanged = lockedRole === 'ranged';
       const shouldRelieveWorker = lockedRole === 'worker' && screenRole !== 'worker';
       if (shouldProtectRanged || shouldRelieveWorker) return nearestFrontliner;
+    }
+
+    const isMilitaryFrontliner =
+      lockedRole === 'melee' || lockedRole === 'cavalry' || lockedRole === 'special';
+    const lockedHealthRatio = Number.isFinite(lockedTarget.maxHp) && lockedTarget.maxHp > 0
+      ? Math.max(0, Math.min(1, lockedTarget.hp / lockedTarget.maxHp))
+      : 1;
+    if (
+      isMilitaryFrontliner &&
+      lockedHealthRatio <= WILD_BOAR_FRONTLINE_RELIEF_HEALTH_RATIO &&
+      healthiestFrontliner &&
+      healthiestFrontliner.id !== lockedTarget.id &&
+      healthiestFrontlinerRatio >= lockedHealthRatio + WILD_BOAR_FRONTLINE_RELIEF_MIN_ADVANTAGE
+    ) {
+      return healthiestFrontliner;
     }
     return lockedTarget;
   }
@@ -3962,6 +4000,10 @@ export function selectWildBoarAggroTarget(
 }
 
 export const WILD_BOAR_FRONTLINE_SCREEN_RADIUS = 9;
+/** A frontline hunter below this health fraction may hand aggro to a healthier ally. */
+export const WILD_BOAR_FRONTLINE_RELIEF_HEALTH_RATIO = 0.35;
+/** Minimum health-fraction advantage required before rotating aggro; prevents target jitter. */
+export const WILD_BOAR_FRONTLINE_RELIEF_MIN_ADVANTAGE = 0.2;
 
 export interface WildBoarRangedHuntPlan {
   mode: 'approach' | 'retreat' | 'hold';
