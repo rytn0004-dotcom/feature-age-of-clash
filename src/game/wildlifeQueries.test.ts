@@ -301,12 +301,12 @@ test('AI wildlife hunt party fills spare frontline slots with nearest available 
 });
 
 
-test('AI wildlife hunt party reserves ranged support even when other frontline units are closer', () => {
+test('AI wildlife hunt party reserves ranged support even when non-frontline hunters are closer', () => {
   const candidates = [
     makeUnit('frontline-1', 4, 0, { category: 'melee' }),
     makeUnit('frontline-2', 5, 0, { category: 'cavalry' }),
-    makeUnit('near-melee-1', 0.2, 0, { category: 'melee' }),
-    makeUnit('near-melee-2', 0.4, 0, { category: 'melee' }),
+    makeUnit('near-special-1', 0.2, 0, { category: 'special' }),
+    makeUnit('near-special-2', 0.4, 0, { category: 'special' }),
     makeUnit('archer-near', 8, 0, { category: 'ranged' }),
     makeUnit('archer-far', 10, 0, { category: 'ranged' }),
   ];
@@ -324,7 +324,7 @@ test('AI wildlife hunt party reserves ranged support even when other frontline u
     'frontline-1',
     'frontline-2',
     'archer-near',
-    'near-melee-1',
+    'near-special-1',
   ]);
   assert.deepEqual(scratch.distances, [4, 5, 8, 0.2]);
   assert.equal(scratch.rangedUnits.length, 1);
