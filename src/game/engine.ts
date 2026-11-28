@@ -13384,6 +13384,12 @@ export class RtsEngine {
         tgtLKnee = Math.max(0, Math.cos(anim.gaitPhase)) * 0.86 * anim.moveBlend;
         tgtRKnee = Math.max(0, -Math.cos(anim.gaitPhase)) * 0.86 * anim.moveBlend;
 
+        const movingGatherSubtype = (unit as any)._gatherNodeType as string | undefined;
+        const isMovingArmedHunter =
+          unit.state === 'gathering' &&
+          unit.unitDef.category !== 'worker' &&
+          (movingGatherSubtype === 'hunt' || movingGatherSubtype === 'aurochs' || movingGatherSubtype === 'boar');
+
         if (isCarrying) {
           // Bracing backpack load with slight forward hunch
           tgtRArm = -0.35 - strideL * 0.18;
@@ -13393,6 +13399,24 @@ export class RtsEngine {
           tgtRArm = 0.56 - strideL * 0.22;
           tgtLArm = 0.56 + strideL * 0.22;
           tgtBodyX = 0.3 * anim.moveBlend;
+        } else if (isMovingArmedHunter) {
+          // Keep weapons braced during the approach and let hit swings finish while chasing.
+          const rawSwing = Number.isFinite((unit as any)._huntAttackSwing)
+            ? Math.max(0, (unit as any)._huntAttackSwing as number)
+            : 0;
+          const swing = Math.min(1, rawSwing / 0.28);
+          (unit as any)._huntAttackSwing = Math.max(0, rawSwing - dt);
+          if (unit.unitDef.category === 'ranged') {
+            tgtRArm = -0.22 - swing * 0.95 + strideL * 0.08;
+            tgtLArm = -0.3 - swing * 0.62 - strideR * 0.06;
+            tgtBodyX = -0.025 + swing * 0.12 + 0.13 * anim.moveBlend;
+            tgtBodyYaw = (0.5 - swing) * 0.08 - strideL * 0.04;
+          } else {
+            tgtRArm = 0.16 - swing * 1.42 - strideL * 0.12;
+            tgtLArm = -0.2 - swing * 0.34 + strideR * 0.08;
+            tgtBodyX = 0.025 + swing * 0.2 + 0.13 * anim.moveBlend;
+            tgtBodyYaw = (0.5 - swing) * 0.2 - strideL * 0.14;
+          }
         } else {
           tgtRArm = -strideL * 0.58;
           tgtLArm = strideL * 0.58;
