@@ -85,6 +85,8 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
   unit.wildlifeCarcassHarvestNodeId = undefined;
   unit.wildlifeCarcassHarvestActive = undefined;
   unit.wildlifeCarcassHarvestSlotIndex = undefined;
+  unit.wildlifeCarcassWaitNodeId = undefined;
+  unit.wildlifeCarcassWaitSlotIndex = undefined;
 
   switch (next.type) {
     case 'move':
