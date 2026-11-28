@@ -21,6 +21,8 @@ const report = {
   scenarios: [],
   constructionStress: [],
   constructionStressNote: "Live RtsEngine construction runs in an isolated open corridor with resources/terrain disabled; pathfinding still uses the live navigation grid and wall/building collision data. Headless Chromium uses SwiftShader, not player GPU hardware.",
+  wildlifeCarcassStress: [],
+  wildlifeCarcassStressNote: "Live RtsEngine carcass assignment and gathering checks use real villager entities, resource-node lookup, per-animal work caps, slot release, and concurrent carcass rosters. Timings are headless Chromium measurements.",
 };
 
 async function waitFor(operation, timeoutMs, label) {
@@ -1037,6 +1039,188 @@ async function main() {
             stage.retrySchedules + " retry schedules, " +
             stage.idleWorkerPercent.toFixed(1) + "% idle worker time.");
         }
+
+        // Exercise wildlife carcass allocation in the live engine, not only in
+        // isolated helper tests. The synthetic resource nodes are real ResourceNode
+        // records consumed by RtsEngine's own lookup and gathering methods.
+        const wildlifeNodeIds = {
+          hunt: "browser-stress-wildlife-hunt",
+          boar: "browser-stress-wildlife-boar",
+          aurochs: "browser-stress-wildlife-aurochs",
+        };
+        const wildlifeNodes = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const centerX = 84;",
+          "  const centerZ = " + (constructionSetup.centerZ + 72) + ";",
+          "  const rows = [",
+          "    { id: " + JSON.stringify(wildlifeNodeIds.hunt) + ", subtype: 'hunt', x: centerX, z: centerZ, maxHp: 32 },",
+          "    { id: " + JSON.stringify(wildlifeNodeIds.boar) + ", subtype: 'boar', x: centerX + 34, z: centerZ, maxHp: 200 },",
+          "    { id: " + JSON.stringify(wildlifeNodeIds.aurochs) + ", subtype: 'aurochs', x: centerX + 68, z: centerZ, maxHp: 360 },",
+          "  ];",
+          "  for (const row of rows) {",
+          "    const existing = e.resourceNodes.find((node) => node.id === row.id);",
+          "    if (existing) Object.assign(existing, { resourceType: 'food', subtype: row.subtype, x: row.x, z: row.z, amount: 1200, maxAmount: 1200, animalAlive: false, animalHp: 0, animalMaxHp: row.maxHp });",
+          "    else e.resourceNodes.push({ id: row.id, resourceType: 'food', subtype: row.subtype, x: row.x, z: row.z, amount: 1200, maxAmount: 1200, animalAlive: false, animalHp: 0, animalMaxHp: row.maxHp });",
+          "  }",
+          "  e.rebuildResourceNodeLookup();",
+          "  return { nodes: rows.map((row) => row.id), realEngine: typeof e.rebuildWildlifeCarcassHarvestAssignments === 'function' && typeof e.stepUnitGathering === 'function' };",
+          "})()",
+        ].join("\\n"));
+        assert.ok(wildlifeNodes.realEngine, "Live wildlife carcass engine methods are unavailable.");
+        const wildlifeCapacityCases = [];
+        for (const subtype of ["hunt", "boar", "aurochs"]) {
+          const nodeId = wildlifeNodeIds[subtype];
+          const capacity = subtype === "hunt" ? 3 : subtype === "boar" ? 4 : 6;
+          for (const workerCount of [1, 3, 4, 6, 12, 20]) {
+            const stage = await evaluate([
+              "(() => {",
+              "  const e = window.__rtsEngine;",
+              "  const workerIds = " + JSON.stringify(constructionSetup.workerIds) + ";",
+              "  const nodeId = " + JSON.stringify(nodeId) + ";",
+              "  const subtype = " + JSON.stringify(subtype) + ";",
+              "  const workerCount = " + workerCount + ";",
+              "  const workers = workerIds.map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+              "  const node = e.resourceNodes.find((entry) => entry.id === nodeId);",
+              "  node.subtype = subtype; node.amount = 1200; node.maxAmount = 1200; node.animalAlive = false; node.animalHp = 0;",
+              "  for (let index = 0; index < workers.length; index++) {",
+              "    const unit = workers[index];",
+              "    unit.hp = Math.max(1, unit.maxHp || 100);",
+              "    unit.state = index < workerCount ? 'gathering' : 'idle';",
+              "    unit.targetResourceNodeId = index < workerCount ? nodeId : undefined;",
+              "    unit.targetBuildingId = undefined; unit.targetEntityId = undefined; unit.targetGarrisonBuildingId = undefined;",
+              "    unit.commandQueue = undefined; unit.queuedGatherStopAfterDeposit = false; unit.carryingResource = undefined;",
+              "    unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false, stats: { ...unit.unitDef.stats, carryCapacity: 40 } };",
+              "    unit.wildlifeCarcassHarvestNodeId = undefined; unit.wildlifeCarcassHarvestActive = undefined;",
+              "    unit.wildlifeHuntApproachAngle = undefined; unit.wildlifeHuntApproachTargetNodeId = undefined; unit.wildlifeHuntApproachGoal = undefined;",
+              "    unit.waypoints = undefined; unit.pathGoal = undefined; unit.pathCooldown = 0; unit.velocity = { x: 0, z: 0 };",
+              "    unit.x = node.x + (index % 5) * 0.42; unit.z = node.z + Math.floor(index / 5) * 0.42;",
+              "    const mesh = e.unitMeshes.get(unit.id); if (mesh) { mesh.visible = true; mesh.position.set(unit.x, 0, unit.z); }",
+              "  }",
+              "  e.rebuildResourceNodeLookup();",
+              "  e.rebuildWildlifeCarcassHarvestAssignments();",
+              "  const active = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === true);",
+              "  const waiting = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === false);",
+              "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id) };",
+              "})()",
+            ].join("\\n"));
+            const expectedActive = Math.min(workerCount, capacity);
+            assert.equal(stage.activeCount, expectedActive, subtype + " carcass admitted the wrong number of simultaneous villagers at roster size " + workerCount + ".");
+            assert.equal(new Set(stage.activeIds).size, stage.activeCount, "One villager was assigned to more than one work slot.");
+            wildlifeCapacityCases.push(stage);
+            console.log("[wildlife-carcass] " + subtype + " / " + workerCount + " villagers: " +
+              stage.activeCount + " active, " + stage.waitingCount + " waiting.");
+          }
+        }
+        report.wildlifeCarcassStress.push({ kind: "capacity-matrix", cases: wildlifeCapacityCases });
+
+        const wildlifeLifecycle = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const nodeId = " + JSON.stringify(wildlifeNodeIds.hunt) + ";",
+          "  const workerIds = " + JSON.stringify(constructionSetup.workerIds.slice(0, 24)) + ";",
+          "  const node = e.resourceNodes.find((entry) => entry.id === nodeId);",
+          "  node.subtype = 'hunt'; node.amount = 1200; node.maxAmount = 1200; node.animalAlive = false; node.animalHp = 0;",
+          "  const workers = workerIds.map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+          "  for (const unit of workers) {",
+          "    unit.hp = Math.max(1, unit.maxHp || 100); unit.state = 'gathering'; unit.targetResourceNodeId = nodeId;",
+          "    unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false, stats: { ...unit.unitDef.stats, carryCapacity: 40 } };",
+          "    unit.carryingResource = undefined; unit.wildlifeCarcassHarvestNodeId = undefined; unit.wildlifeCarcassHarvestActive = undefined;",
+          "  }",
+          "  e.rebuildResourceNodeLookup(); e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  let active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const initialActiveCount = active.length;",
+          "  const full = active[0]; full.carryingResource = { type: 'food', amount: 40 };",
+          "  e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const fullCargoReleased = !active.includes(full) && active.length === initialActiveCount;",
+          "  const dead = active[0]; dead.hp = 0;",
+          "  e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const deadWorkerReleased = dead.wildlifeCarcassHarvestNodeId === undefined && active.length === initialActiveCount;",
+          "  const retasked = active[0]; retasked.state = 'moving';",
+          "  e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const retaskedWorkerReleased = retasked.wildlifeCarcassHarvestNodeId === undefined && active.length === initialActiveCount;",
+          "  return { initialActiveCount, fullCargoReleased, deadWorkerReleased, retaskedWorkerReleased, finalActiveCount: active.length };",
+          "})()",
+        ].join("\\n"));
+        assert.equal(wildlifeLifecycle.initialActiveCount, 3, "Lifecycle scenario did not begin with three active deer carcass workers.");
+        assert.equal(wildlifeLifecycle.fullCargoReleased, true, "A full-cargo villager retained a carcass work slot.");
+        assert.equal(wildlifeLifecycle.deadWorkerReleased, true, "A dead villager retained a carcass work slot.");
+        assert.equal(wildlifeLifecycle.retaskedWorkerReleased, true, "A re-tasked villager retained a carcass work slot.");
+        report.wildlifeCarcassStress.push({ kind: "slot-lifecycle", ...wildlifeLifecycle });
+
+        const wildlifeConcurrency = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const workerIds = " + JSON.stringify(constructionSetup.workerIds) + ";",
+          "  const nodeIds = " + JSON.stringify([wildlifeNodeIds.hunt, wildlifeNodeIds.boar, wildlifeNodeIds.aurochs]) + ";",
+          "  const nodes = nodeIds.map((id) => e.resourceNodes.find((node) => node.id === id));",
+          "  const subtypes = ['hunt', 'boar', 'aurochs'];",
+          "  const workers = workerIds.map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+          "  for (let index = 0; index < workers.length; index++) {",
+          "    const unit = workers[index]; const group = index % nodes.length; const node = nodes[group];",
+          "    unit.hp = Math.max(1, unit.maxHp || 100); unit.state = 'gathering'; unit.targetResourceNodeId = node.id;",
+          "    unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false, stats: { ...unit.unitDef.stats, carryCapacity: 40 } };",
+          "    unit.carryingResource = undefined; unit.wildlifeCarcassHarvestNodeId = undefined; unit.wildlifeCarcassHarvestActive = undefined;",
+          "    unit.wildlifeHuntApproachAngle = undefined; unit.wildlifeHuntApproachTargetNodeId = undefined; unit.wildlifeHuntApproachGoal = undefined;",
+          "    unit.x = node.x + (index % 7) * 0.35; unit.z = node.z + Math.floor(index / 7) * 0.35;",
+          "  }",
+          "  for (let group = 0; group < nodes.length; group++) { nodes[group].subtype = subtypes[group]; nodes[group].amount = 1200; nodes[group].maxAmount = 1200; nodes[group].animalAlive = false; nodes[group].animalHp = 0; }",
+          "  e.rebuildResourceNodeLookup(); e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  const counts = nodes.map((node) => workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === node.id && unit.wildlifeCarcassHarvestActive === true).length);",
+          "  const active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const deerWorkers = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeIds[0] && unit.wildlifeCarcassHarvestActive === true);",
+          "  const deerNode = nodes[0];",
+          "  const harvestResults = [];",
+          "  for (const unit of deerWorkers) {",
+          "    unit.x = deerNode.x; unit.z = deerNode.z; unit.carryingResource = undefined;",
+          "    e.stepUnitGathering(unit, 0.05);",
+          "    const goal = unit.wildlifeHuntApproachGoal;",
+          "    if (!goal) { harvestResults.push({ id: unit.id, amount: 0, reason: 'missing approach goal' }); continue; }",
+          "    const dx = goal.x - deerNode.x; const dz = goal.z - deerNode.z; const distance = Math.hypot(dx, dz);",
+          "    const inset = Math.max(0, distance - 0.03);",
+          "    unit.x = deerNode.x + dx * inset / Math.max(0.001, distance);",
+          "    unit.z = deerNode.z + dz * inset / Math.max(0.001, distance);",
+          "    unit.waypoints = undefined; unit.pathGoal = undefined; unit.pathCooldown = 0;",
+          "    const previous = unit.carryingResource?.amount || 0;",
+          "    e.stepUnitGathering(unit, 0.5);",
+          "    harvestResults.push({ id: unit.id, amount: (unit.carryingResource?.amount || 0) - previous });",
+          "  }",
+          "  return { workerCount: workers.length, activeCounts: counts, totalActive: active.length, uniqueActiveWorkers: new Set(active.map((unit) => unit.id)).size, harvestResults, deerMeatRemaining: deerNode.amount };",
+          "})()",
+        ].join("\\n"));
+        assert.deepEqual(wildlifeConcurrency.activeCounts, [3, 4, 6], "Concurrent carcasses did not enforce their independent work caps.");
+        assert.equal(wildlifeConcurrency.totalActive, 13, "Concurrent carcasses admitted an unexpected total worker count.");
+        assert.equal(wildlifeConcurrency.uniqueActiveWorkers, 13, "A villager occupied slots at multiple carcasses.");
+        assert.equal(wildlifeConcurrency.harvestResults.length, 3, "The live gathering test did not exercise all active deer carcass workers.");
+        assert.ok(wildlifeConcurrency.harvestResults.every((entry) => Number.isFinite(entry.amount) && entry.amount > 0), "Live stepUnitGathering failed to transfer meat to every admitted villager.");
+        assert.ok(wildlifeConcurrency.deerMeatRemaining < 1200, "Live stepUnitGathering did not consume meat from the carcass.");
+        report.wildlifeCarcassStress.push({ kind: "concurrent-carcasses-and-live-harvest", ...wildlifeConcurrency });
+
+        // Profile the actual engine assignment routine with the full 200-worker
+        // roster contending across three carcasses. This measures allocation cost
+        // independently from frame-rate and renderer variance.
+        const wildlifeTiming = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const original = e.rebuildWildlifeCarcassHarvestAssignments.bind(e);",
+          "  const measurements = [];",
+          "  for (let index = 0; index < 40; index++) {",
+          "    const start = performance.now(); original(); measurements.push(performance.now() - start);",
+          "  }",
+          "  measurements.sort((a, b) => a - b);",
+          "  const total = measurements.reduce((sum, value) => sum + value, 0);",
+          "  return { iterations: measurements.length, averageMs: total / measurements.length, p95Ms: measurements[Math.min(measurements.length - 1, Math.floor(measurements.length * 0.95))], maxMs: measurements[measurements.length - 1] };",
+          "})()",
+        ].join("\\n"));
+        assert.equal(wildlifeTiming.iterations, 40, "Wildlife assignment timing did not capture every iteration.");
+        assert.ok(Number.isFinite(wildlifeTiming.averageMs) && wildlifeTiming.averageMs >= 0, "Wildlife assignment timing is invalid.");
+        report.wildlifeCarcassStress.push({ kind: "200-villager-assignment-profile", ...wildlifeTiming });
+        console.log("[wildlife-carcass] live capacity matrix, full/dead/retasked release, three-carcass concurrency, and gathering passed; 200-worker assignment average " +
+          wildlifeTiming.averageMs.toFixed(3) + "ms, P95 " + wildlifeTiming.p95Ms.toFixed(3) + "ms.");
+
       }
 
       report.scenarios.push({ count, initial, seededBuffUnits, resourceLayouts, economyPanel, telemetry, wallPlacement, wallInteraction, exceptionCount: exceptions.length });
