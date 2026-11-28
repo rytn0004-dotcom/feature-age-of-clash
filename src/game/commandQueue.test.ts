@@ -53,6 +53,32 @@ test('queued movement and attack-move activate as distinct unit states', () => {
   assert.equal(unit.commandQueue, undefined);
 });
 
+test('queued wildlife hunting preserves its reserved melee ring slot on activation', () => {
+  const unit = makeUnit('hunter-a');
+  enqueueUnitCommand(unit, {
+    type: 'gather',
+    nodeId: 'aurochs-a',
+    wildlifeHuntApproachAngle: Math.PI * 0.75,
+  });
+
+  assert.equal(activateNextUnitCommand(unit)?.type, 'gather');
+  assert.equal(unit.state, 'gathering');
+  assert.equal(unit.targetResourceNodeId, 'aurochs-a');
+  assert.equal(unit.wildlifeHuntApproachAngle, Math.PI * 0.75);
+  assert.equal(unit.wildlifeHuntApproachTargetNodeId, 'aurochs-a');
+});
+
+test('activating a non-hunting queued order clears the previous wildlife ring slot', () => {
+  const unit = makeUnit('hunter-a');
+  unit.wildlifeHuntApproachAngle = 1.4;
+  unit.wildlifeHuntApproachTargetNodeId = 'old-boar';
+  enqueueUnitCommand(unit, { type: 'gather', nodeId: 'wood-a' });
+
+  assert.equal(activateNextUnitCommand(unit)?.type, 'gather');
+  assert.equal(unit.wildlifeHuntApproachAngle, undefined);
+  assert.equal(unit.wildlifeHuntApproachTargetNodeId, undefined);
+});
+
 test('queued gathering ends after one delivery when another action follows', () => {
   const unit = makeUnit('worker-a');
   enqueueUnitCommand(unit, { type: 'gather', nodeId: 'wood-a' });

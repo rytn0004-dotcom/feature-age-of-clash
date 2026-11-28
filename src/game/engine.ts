@@ -4397,7 +4397,7 @@ export class RtsEngine {
       node.animalAlive !== false &&
       (node.animalHp === undefined || node.animalHp > 0);
     let wildlifeHunterCount = 0;
-    if (!queue && isLiveWildlifeOrder) {
+    if (isLiveWildlifeOrder) {
       for (const unit of eligibleUnits) {
         if (canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) wildlifeHunterCount++;
       }
@@ -4423,23 +4423,34 @@ export class RtsEngine {
     eligibleUnits.forEach((unit) => {
       if (queue) {
         if (!unit.commandQueue) unit.commandQueue = [];
-        unit.commandQueue.push({ type: 'gather', nodeId });
+        const queuedCommand = isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)
+          ? {
+              type: 'gather' as const,
+              nodeId,
+              wildlifeHuntApproachAngle: getWildlifeHuntPartySlotAngle(
+                wildlifeHunterIndex++,
+                wildlifeHunterCount,
+                wildlifeHuntPhase,
+              ),
+            }
+          : { type: 'gather' as const, nodeId };
+        enqueueUnitCommand(unit, queuedCommand);
         unit.currentActionText = (unit.currentActionText || '') + ' ⋯佇列';
         return;
       }
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
       if (isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) {
-        (unit as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+        unit.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
           wildlifeHunterIndex,
           wildlifeHunterCount,
           wildlifeHuntPhase,
         );
-        (unit as any)._wildlifeHuntApproachTargetNodeId = nodeId;
+        unit.wildlifeHuntApproachTargetNodeId = nodeId;
         wildlifeHunterIndex++;
       } else {
-        delete (unit as any)._wildlifeHuntApproachAngle;
-        delete (unit as any)._wildlifeHuntApproachTargetNodeId;
+        unit.wildlifeHuntApproachAngle = undefined;
+        unit.wildlifeHuntApproachTargetNodeId = undefined;
       }
       unit.targetResourceNodeId = nodeId;
       unit.targetEntityId = undefined;
@@ -9765,8 +9776,8 @@ export class RtsEngine {
     if (militaryHunter && (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))) {
       unit.targetResourceNodeId = undefined;
       unit.targetEntityId = undefined;
-      delete (unit as any)._wildlifeHuntApproachAngle;
-      delete (unit as any)._wildlifeHuntApproachTargetNodeId;
+      unit.wildlifeHuntApproachAngle = undefined;
+      unit.wildlifeHuntApproachTargetNodeId = undefined;
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
@@ -9866,8 +9877,8 @@ export class RtsEngine {
     let meleeApproachGoal: { x: number; z: number } | undefined;
     let meleeApproachDistance = Number.POSITIVE_INFINITY;
     if (usesMeleeHuntSlots) {
-      const assignedAngle = (unit as any)._wildlifeHuntApproachTargetNodeId === node.id
-        ? (unit as any)._wildlifeHuntApproachAngle
+      const assignedAngle = unit.wildlifeHuntApproachTargetNodeId === node.id
+        ? unit.wildlifeHuntApproachAngle
         : undefined;
       const approachAngle = Number.isFinite(assignedAngle) ? assignedAngle : fallbackAngle;
       meleeApproachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
@@ -14517,16 +14528,16 @@ export class RtsEngine {
           let meleeHunterIndex = 0;
           for (const hunter of huntingParty) {
             if (canUnitUseWildlifeMeleeHuntSlot(hunter.unitDef.category)) {
-              (hunter as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+              hunter.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
                 meleeHunterIndex,
                 meleeHunterCount,
                 huntRingPhase,
               );
-              (hunter as any)._wildlifeHuntApproachTargetNodeId = targetWildlife.id;
+              hunter.wildlifeHuntApproachTargetNodeId = targetWildlife.id;
               meleeHunterIndex++;
             } else {
-              delete (hunter as any)._wildlifeHuntApproachAngle;
-              delete (hunter as any)._wildlifeHuntApproachTargetNodeId;
+              hunter.wildlifeHuntApproachAngle = undefined;
+              hunter.wildlifeHuntApproachTargetNodeId = undefined;
             }
             hunter.targetResourceNodeId = targetWildlife.id;
             hunter.targetEntityId = undefined;

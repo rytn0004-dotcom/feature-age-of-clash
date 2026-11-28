@@ -16,6 +16,8 @@ export interface CommandQueueUnit {
   state?: string;
   currentActionText?: string;
   queuedGatherStopAfterDeposit?: boolean;
+  wildlifeHuntApproachAngle?: number;
+  wildlifeHuntApproachTargetNodeId?: string;
 }
 
 /** Append one independently-owned FIFO command to a unit's personal queue. */
@@ -71,6 +73,8 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
   unit.pathGoal = undefined;
   unit.pathCooldown = 0;
   unit.queuedGatherStopAfterDeposit = false;
+  unit.wildlifeHuntApproachAngle = undefined;
+  unit.wildlifeHuntApproachTargetNodeId = undefined;
 
   switch (next.type) {
     case 'move':
@@ -88,6 +92,10 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
       break;
     case 'gather':
       unit.targetResourceNodeId = next.nodeId;
+      if (Number.isFinite(next.wildlifeHuntApproachAngle)) {
+        unit.wildlifeHuntApproachAngle = next.wildlifeHuntApproachAngle;
+        unit.wildlifeHuntApproachTargetNodeId = next.nodeId;
+      }
       unit.queuedGatherStopAfterDeposit = !!unit.commandQueue?.length;
       unit.state = 'gathering';
       unit.currentActionText = '⋯佇列採集';

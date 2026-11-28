@@ -301,7 +301,7 @@ export interface EntityCommon {
 export type UnitQueuedCommand =
   | { type: 'move'; x: number; z: number; unload?: boolean }
   | { type: 'attackMove'; x: number; z: number }
-  | { type: 'gather'; nodeId: string }
+  | { type: 'gather'; nodeId: string; wildlifeHuntApproachAngle?: number }
   | { type: 'attack'; targetId: string }
   | { type: 'board'; targetId: string }
   | { type: 'build'; buildingId: string }
@@ -332,6 +332,9 @@ export interface UnitEntity extends EntityCommon {
   attackRecoveryRemaining?: number;
   /** Shared simulation-time cooldown for incidental attacks on wild deer. */
   wildlifeHuntReadyAt?: number;
+  /** Stable melee ring slot reserved by a direct or queued wildlife hunt order. */
+  wildlifeHuntApproachAngle?: number;
+  wildlifeHuntApproachTargetNodeId?: string;
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;
