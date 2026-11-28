@@ -1066,7 +1066,7 @@ async function main() {
           "  e.rebuildResourceNodeLookup();",
           "  return { nodes: rows.map((row) => row.id), realEngine: typeof e.rebuildWildlifeCarcassHarvestAssignments === 'function' && typeof e.stepUnitGathering === 'function' };",
           "})()",
-        ].join("\\n"));
+        ].join("\n"));
         assert.ok(wildlifeNodes.realEngine, "Live wildlife carcass engine methods are unavailable.");
         const wildlifeCapacityCases = [];
         for (const subtype of ["hunt", "boar", "aurochs"]) {
@@ -1103,7 +1103,7 @@ async function main() {
               "  const waiting = workers.filter((unit) => unit.wildlifeCarcassHarvestNodeId === nodeId && unit.wildlifeCarcassHarvestActive === false);",
               "  return { subtype, workerCount, capacity: " + capacity + ", activeCount: active.length, waitingCount: waiting.length, activeIds: active.map((unit) => unit.id) };",
               "})()",
-            ].join("\\n"));
+            ].join("\n"));
             const expectedActive = Math.min(workerCount, capacity);
             assert.equal(stage.activeCount, expectedActive, subtype + " carcass admitted the wrong number of simultaneous villagers at roster size " + workerCount + ".");
             assert.equal(new Set(stage.activeIds).size, stage.activeCount, "One villager was assigned to more than one work slot.");
@@ -1144,7 +1144,7 @@ async function main() {
           "  const retaskedWorkerReleased = retasked.wildlifeCarcassHarvestNodeId === undefined && active.length === initialActiveCount;",
           "  return { initialActiveCount, fullCargoReleased, deadWorkerReleased, retaskedWorkerReleased, finalActiveCount: active.length };",
           "})()",
-        ].join("\\n"));
+        ].join("\n"));
         assert.equal(wildlifeLifecycle.initialActiveCount, 3, "Lifecycle scenario did not begin with three active deer carcass workers.");
         assert.equal(wildlifeLifecycle.fullCargoReleased, true, "A full-cargo villager retained a carcass work slot.");
         assert.equal(wildlifeLifecycle.deadWorkerReleased, true, "A dead villager retained a carcass work slot.");
@@ -1190,7 +1190,7 @@ async function main() {
           "  }",
           "  return { workerCount: workers.length, activeCounts: counts, totalActive: active.length, uniqueActiveWorkers: new Set(active.map((unit) => unit.id)).size, harvestResults, deerMeatRemaining: deerNode.amount };",
           "})()",
-        ].join("\\n"));
+        ].join("\n"));
         assert.deepEqual(wildlifeConcurrency.activeCounts, [3, 4, 6], "Concurrent carcasses did not enforce their independent work caps.");
         assert.equal(wildlifeConcurrency.totalActive, 13, "Concurrent carcasses admitted an unexpected total worker count.");
         assert.equal(wildlifeConcurrency.uniqueActiveWorkers, 13, "A villager occupied slots at multiple carcasses.");
@@ -1214,7 +1214,7 @@ async function main() {
           "  const total = measurements.reduce((sum, value) => sum + value, 0);",
           "  return { iterations: measurements.length, averageMs: total / measurements.length, p95Ms: measurements[Math.min(measurements.length - 1, Math.floor(measurements.length * 0.95))], maxMs: measurements[measurements.length - 1] };",
           "})()",
-        ].join("\\n"));
+        ].join("\n"));
         assert.equal(wildlifeTiming.iterations, 40, "Wildlife assignment timing did not capture every iteration.");
         assert.ok(Number.isFinite(wildlifeTiming.averageMs) && wildlifeTiming.averageMs >= 0, "Wildlife assignment timing is invalid.");
         report.wildlifeCarcassStress.push({ kind: "200-villager-assignment-profile", ...wildlifeTiming });
