@@ -45,6 +45,7 @@ import {
   collectWildlifeUnitInteractions,
   assignWildlifeCarcassHarvestSlotIndices,
   getWildlifeCarcassHarvestCapacity,
+  isWildlifeCarcassNode,
   WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS,
   getWildlifeInteractionQueryRadius,
   selectNearestWildlifeCarcassHarvesters,
@@ -8302,9 +8303,7 @@ export class RtsEngine {
       }
       // Living animals use the hunting-party ring, not the carcass harvesting cap.
       // Only a confirmed corpse can receive the limited villager work slots.
-      const isCarcass = node.animalAlive === false ||
-        (node.animalHp !== undefined && node.animalHp <= 0);
-      if (!isCarcass) {
+      if (!isWildlifeCarcassNode(node)) {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
@@ -9805,6 +9804,13 @@ export class RtsEngine {
       const approachDistance = getDistance(worker.x, worker.z, node.x, node.z);
       if (!(approachDistance <= maxDistance)) continue;
       const assigned = Math.max(0, options.assignedCounts?.get(node.id) || 0);
+      const carcassCapacity = getWildlifeCarcassHarvestCapacity(node.subtype);
+      if (
+        options.assignedCounts &&
+        isWildlifeCarcassNode(node) &&
+        carcassCapacity > 0 &&
+        assigned >= carcassCapacity
+      ) continue;
       const sourceBonus = node.resourceType === 'food' ? getFoodSourcePriority(node.subtype) * 4.5 : 0;
       const richBonus = node.nodeTier === 'rich' ? 4 : 0;
       const preScore = approachDistance + assigned * 5.5 - sourceBonus - richBonus;
@@ -14827,7 +14833,12 @@ export class RtsEngine {
           activeCounts[w.carryingResource.type]++;
         } else if (w.state === 'gathering' && w.targetResourceNodeId) {
           const n = resourceNodeById.get(w.targetResourceNodeId);
-          if (n && n.amount > 0) {
+          const isWaitingForCarcassSlot =
+            !!n &&
+            w.unitDef.category === 'worker' &&
+            isWildlifeCarcassNode(n) &&
+            w.wildlifeCarcassHarvestActive !== true;
+          if (n && n.amount > 0 && !isWaitingForCarcassSlot) {
             activeCounts[n.resourceType]++;
             const gatherRate = (w.unitDef.stats.gatherSpeed || 2) *
               getEffectiveGatherMultiplier(n, aiGatherTechs, aiHasStarOath);

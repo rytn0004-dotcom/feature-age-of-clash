@@ -51,6 +51,21 @@ export function getWildlifeCarcassHarvestCapacity(subtype?: string): number {
   return 0;
 }
 
+export interface WildlifeCarcassNodeCandidate {
+  subtype?: string;
+  animalAlive?: boolean;
+  animalHp?: number;
+}
+
+/** A huntable resource becomes a carcass only after an explicit death signal. */
+export function isWildlifeCarcassNode(
+  node?: WildlifeCarcassNodeCandidate | null,
+): boolean {
+  if (!node || getWildlifeCarcassHarvestCapacity(node.subtype) <= 0) return false;
+  return node.animalAlive === false ||
+    (node.animalHp !== undefined && node.animalHp <= 0);
+}
+
 /** Re-evaluate carcass work slots at a stable cadence rather than on every render/update slice. */
 export const WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS = 0.12;
 

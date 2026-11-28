@@ -6,6 +6,7 @@ import {
   collectWildlifeUnitInteractions,
   getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
+  isWildlifeCarcassNode,
   selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
   tryConsumeWildlifeHunterAttack,
@@ -469,6 +470,16 @@ function makeCarcassSelectionScratch() {
     distances: [] as number[],
   };
 }
+
+test('only explicitly dead huntable animals are classified as carcasses', () => {
+  assert.equal(isWildlifeCarcassNode({ subtype: 'hunt', animalAlive: false, animalHp: 0 }), true);
+  assert.equal(isWildlifeCarcassNode({ subtype: 'boar', animalHp: 0 }), true);
+  assert.equal(isWildlifeCarcassNode({ subtype: 'aurochs', animalAlive: false }), true);
+  assert.equal(isWildlifeCarcassNode({ subtype: 'hunt', animalAlive: true, animalHp: 1 }), false);
+  assert.equal(isWildlifeCarcassNode({ subtype: 'hunt', animalAlive: undefined, animalHp: 20 }), false);
+  assert.equal(isWildlifeCarcassNode({ subtype: 'berry', animalAlive: false, animalHp: 0 }), false);
+  assert.equal(isWildlifeCarcassNode(undefined), false);
+});
 
 test('wildlife carcass harvest capacities are explicit per animal size', () => {
   assert.equal(getWildlifeCarcassHarvestCapacity('hunt'), 3);

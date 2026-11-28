@@ -1089,6 +1089,29 @@ async function main() {
         assert.equal(wildlifeLifeStage.corpseAssigned, 3, "Workers were not assigned when the animal transitioned into a carcass.");
         report.wildlifeCarcassStress.push({ kind: "live-to-carcass-transition", ...wildlifeLifeStage });
 
+        const wildlifeAiSelection = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const nodeId = " + JSON.stringify(wildlifeNodeIds.hunt) + ";",
+          "  const node = e.resourceNodes.find((entry) => entry.id === nodeId);",
+          "  const worker = e.units.find((unit) => unit.id === " + JSON.stringify(constructionSetup.workerIds[0]) + ");",
+          "  const originalNodes = e.resourceNodes;",
+          "  try {",
+          "    e.resourceNodes = [node];",
+          "    node.amount = 1200; node.animalAlive = false; node.animalHp = 0;",
+          "    const fullCarcass = e.findBestDeliveredResourceNode(worker, 'food', Infinity, { assignedCounts: new Map([[nodeId, 3]]) });",
+          "    const openCarcass = e.findBestDeliveredResourceNode(worker, 'food', Infinity, { assignedCounts: new Map([[nodeId, 2]]) });",
+          "    node.animalAlive = true; node.animalHp = 32;",
+          "    const liveHunt = e.findBestDeliveredResourceNode(worker, 'food', Infinity, { assignedCounts: new Map([[nodeId, 3]]) });",
+          "    return { fullCarcassId: fullCarcass?.id ?? null, openCarcassId: openCarcass?.id ?? null, liveHuntId: liveHunt?.id ?? null };",
+          "  } finally { e.resourceNodes = originalNodes; node.animalAlive = false; node.animalHp = 0; }",
+          "})()",
+        ].join("\n"));
+        assert.equal(wildlifeAiSelection.fullCarcassId, null, "AI selection assigned another worker to a full carcass.");
+        assert.equal(wildlifeAiSelection.openCarcassId, wildlifeNodeIds.hunt, "AI selection ignored an available carcass slot.");
+        assert.equal(wildlifeAiSelection.liveHuntId, wildlifeNodeIds.hunt, "Carcass capacity incorrectly blocked live hunting.");
+        report.wildlifeCarcassStress.push({ kind: "capacity-aware-ai-resource-selection", ...wildlifeAiSelection });
+
         const wildlifeCapacityCases = [];
         for (const subtype of ["hunt", "boar", "aurochs"]) {
           const nodeId = wildlifeNodeIds[subtype];
