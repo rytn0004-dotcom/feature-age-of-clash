@@ -215,6 +215,7 @@ import {
   getFactionPopulationStats,
   getFoodGatherMultiplier,
   getFoodSourcePriority,
+  getSafeResourceHarvestDelta,
   getNodeTierGatherMultiplier,
   getWildlifeMaxHealth,
   isDangerousWildlifeSubtype,
@@ -9731,6 +9732,37 @@ export class RtsEngine {
 
     const isBoat = !!unit.unitDef.isNaval || unit.unitDefId === 'fishing_boat';
     const node = this.resourceNodeLookupById.get(unit.targetResourceNodeId);
+    const assignedWildlife = !!node && isHuntableWildlifeSubtype(node.subtype);
+    const militaryHunter = unit.unitDef.category !== 'worker' && assignedWildlife;
+
+    // Finish a military hunt before the generic empty-resource fallback. Otherwise,
+    // an exhausted carcass could briefly send a combat unit toward an unrelated food node.
+    if (
+      node &&
+      militaryHunter &&
+      (node.amount <= 0 || node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))
+    ) {
+      unit.targetResourceNodeId = undefined;
+      unit.targetEntityId = undefined;
+      unit.wildlifeHuntApproachAngle = undefined;
+      unit.wildlifeHuntApproachTargetNodeId = undefined;
+      unit.wildlifeHuntApproachGoal = undefined;
+      unit.waypoints = undefined;
+      unit.pathGoal = undefined;
+      unit.pathCooldown = 0;
+      unit.velocity = { x: 0, z: 0 };
+      if (unit.carryingResource && unit.carryingResource.amount <= 0) unit.carryingResource = undefined;
+      (unit as any)._gatherNodeType = undefined;
+      (unit as any)._huntHitCd = undefined;
+      (unit as any)._huntAttackSwing = 0;
+      (unit as any)._gatherFxTimer = 0;
+      if (!this.tryDequeueCommand(unit)) {
+        unit.state = 'idle';
+        unit.currentActionText = '🏹 狩獵完成';
+      }
+      return;
+    }
+
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
       const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
       if (hasQueuedFollowUp) {
@@ -9774,28 +9806,6 @@ export class RtsEngine {
       return;
     }
 
-    const assignedWildlife = isHuntableWildlifeSubtype(node.subtype);
-    const militaryHunter = unit.unitDef.category !== 'worker' && assignedWildlife;
-    if (militaryHunter && (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0))) {
-      unit.targetResourceNodeId = undefined;
-      unit.targetEntityId = undefined;
-      unit.wildlifeHuntApproachAngle = undefined;
-      unit.wildlifeHuntApproachTargetNodeId = undefined;
-      unit.waypoints = undefined;
-      unit.pathGoal = undefined;
-      unit.pathCooldown = 0;
-      unit.velocity = { x: 0, z: 0 };
-      if (unit.carryingResource && unit.carryingResource.amount <= 0) unit.carryingResource = undefined;
-      (unit as any)._gatherNodeType = undefined;
-      (unit as any)._huntHitCd = undefined;
-      (unit as any)._huntAttackSwing = 0;
-      (unit as any)._gatherFxTimer = 0;
-      if (!this.tryDequeueCommand(unit)) {
-        unit.state = 'idle';
-        unit.currentActionText = '🏹 狩獵完成';
-      }
-      return;
-    }
     if (!canUnitReceiveGatherOrder(unit.unitDef, node)) {
       unit.targetResourceNodeId = undefined;
       unit.waypoints = undefined;
@@ -9865,8 +9875,10 @@ export class RtsEngine {
       unit.currentActionText = `🏹 遠程狩獵${targetName} (${Math.ceil(node.animalHp ?? getWildlifeMaxHealth(node.subtype))} HP)`;
     }
 
+    const usesMeleeHuntSlots =
+      isLiveHuntableWildlife && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category);
     const gatherRange = rangedWildlifePlan?.maxRange ?? (
-      militaryHunter
+      usesMeleeHuntSlots
         ? getWildlifeMeleeHuntApproachRange(nodeRadius, unit.unitDef.stats.range)
         : node.subtype === 'deep_fish'
           ? Math.max(5.5, nodeRadius + 4.4)
@@ -9874,9 +9886,6 @@ export class RtsEngine {
             ? Math.max(3.6, nodeRadius + 2.65)
             : nodeRadius + 1.35
     );
-
-    const usesMeleeHuntSlots =
-      isLiveHuntableWildlife && militaryHunter && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category);
     let meleeApproachGoal: { x: number; z: number } | undefined;
     let meleeApproachDistance = Number.POSITIVE_INFINITY;
     if (usesMeleeHuntSlots) {
@@ -10023,9 +10032,15 @@ export class RtsEngine {
           }
         }
       } else if (!militaryHunter && unit.carryingResource) {
-        const deltaGather = Math.min(node.amount, gatherRate * dt);
+        const deltaGather = getSafeResourceHarvestDelta(
+          node.amount,
+          unit.carryingResource.amount,
+          gatherRate,
+          dt,
+          cap,
+        );
         unit.carryingResource.amount += deltaGather;
-        node.amount -= deltaGather;
+        node.amount = Math.max(0, node.amount - deltaGather);
       }
 
       const fxTimer = ((unit as any)._gatherFxTimer || 0) + dt;

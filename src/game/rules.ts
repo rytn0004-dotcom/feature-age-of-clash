@@ -1664,6 +1664,38 @@ export const FOOD_SOURCE_PRIORITY: Record<string, number> = {
   food: 1,
 };
 
+/**
+ * Returns a safe resource harvest amount without exceeding the node reserve or
+ * the worker's remaining carry capacity. Invalid simulation data never creates
+ * negative cargo, replenishes a node, or propagates NaN into the economy.
+ */
+export function getSafeResourceHarvestDelta(
+  resourceAmount: number,
+  cargoAmount: number,
+  gatherRate: number,
+  dt: number,
+  carryCapacity: number,
+): number {
+  if (
+    !Number.isFinite(resourceAmount) ||
+    !Number.isFinite(cargoAmount) ||
+    !Number.isFinite(gatherRate) ||
+    !Number.isFinite(dt) ||
+    !Number.isFinite(carryCapacity) ||
+    resourceAmount <= 0 ||
+    cargoAmount < 0 ||
+    gatherRate <= 0 ||
+    dt <= 0 ||
+    carryCapacity <= 0 ||
+    cargoAmount >= carryCapacity
+  ) return 0;
+
+  const availableCapacity = carryCapacity - cargoAmount;
+  const harvestBudget = gatherRate * dt;
+  if (!Number.isFinite(harvestBudget) || harvestBudget <= 0) return 0;
+  return Math.max(0, Math.min(resourceAmount, availableCapacity, harvestBudget));
+}
+
 /** Wildlife that can seriously injure an isolated gatherer is never auto-assigned by default. */
 export function isDangerousWildlifeSubtype(subtype?: ResourceNode['subtype'] | string): boolean {
   return subtype === 'boar' || subtype === 'aurochs';
@@ -1698,9 +1730,9 @@ export function canUnitHuntWildlife(
     );
 }
 
-/** Only melee, cavalry and special ground hunters occupy close-range ring slots. */
+/** Workers and close-range combat roles reserve separate approach sectors around living wildlife. */
 export function canUnitUseWildlifeMeleeHuntSlot(category: UnitCategory): boolean {
-  return category === 'melee' || category === 'cavalry' || category === 'special';
+  return category === 'worker' || category === 'melee' || category === 'cavalry' || category === 'special';
 }
 
 /** Keeps melee hunters inside weapon reach without pushing them into animal collision. */

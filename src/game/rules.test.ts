@@ -4049,13 +4049,13 @@ test('melee hunting approach range stays inside weapon reach and outside the lar
   assert.equal(getWildlifeMeleeHuntApproachRange(Number.NaN, Number.NaN), 2.4);
 });
 
-test('wildlife melee encirclement slots exclude ranged units and non-hunters', async () => {
+test('wildlife close-range encirclement slots include workers but exclude ranged and non-hunters', async () => {
   const { canUnitUseWildlifeMeleeHuntSlot } = await import('./rules');
   assert.equal(canUnitUseWildlifeMeleeHuntSlot('melee'), true);
   assert.equal(canUnitUseWildlifeMeleeHuntSlot('cavalry'), true);
   assert.equal(canUnitUseWildlifeMeleeHuntSlot('special'), true);
+  assert.equal(canUnitUseWildlifeMeleeHuntSlot('worker'), true);
   assert.equal(canUnitUseWildlifeMeleeHuntSlot('ranged'), false);
-  assert.equal(canUnitUseWildlifeMeleeHuntSlot('worker'), false);
   assert.equal(canUnitUseWildlifeMeleeHuntSlot('siege'), false);
 });
 
@@ -5132,4 +5132,36 @@ test('wildlife frontline aggro rotates off a critically wounded hunter without t
     'healthy-frontline',
     'a healthy target remains locked when there is no relief candidate',
   );
+});
+
+
+test('wildlife workers use the same stable encirclement slot geometry as melee hunters', async () => {
+  const { canUnitUseWildlifeMeleeHuntSlot, getWildlifeHuntOrderSlotAngle } = await import('./rules');
+  const workers = ['worker-a', 'worker-b', 'worker-c', 'worker-d'];
+  assert.ok(workers.every(() => canUnitUseWildlifeMeleeHuntSlot('worker')));
+  const phase = 0.23;
+  const angles = workers.map((_, index) =>
+    getWildlifeHuntOrderSlotAngle(index, workers.length, phase, 0),
+  );
+  assert.deepEqual(angles, [
+    phase,
+    phase + Math.PI / 2,
+    phase + Math.PI,
+    phase + Math.PI * 1.5,
+  ]);
+});
+
+test('safe resource harvesting never exceeds node stock or remaining carry capacity', async () => {
+  const { getSafeResourceHarvestDelta } = await import('./rules');
+
+  assert.equal(getSafeResourceHarvestDelta(300, 18, 12, 3, 40), 22);
+  assert.equal(getSafeResourceHarvestDelta(5, 0, 20, 1, 50), 5);
+  assert.equal(getSafeResourceHarvestDelta(300, 40, 12, 1, 40), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, 0, 12, 1, 0), 0);
+  assert.equal(getSafeResourceHarvestDelta(Number.NaN, 0, 12, 1, 40), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, Number.NaN, 12, 1, 40), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, 0, Number.POSITIVE_INFINITY, 1, 40), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, 0, 12, Number.NaN, 40), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, 0, 12, 1, Number.POSITIVE_INFINITY), 0);
+  assert.equal(getSafeResourceHarvestDelta(300, -1, 12, 1, 40), 0);
 });
