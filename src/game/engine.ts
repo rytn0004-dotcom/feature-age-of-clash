@@ -14511,12 +14511,12 @@ export class RtsEngine {
           const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
           let meleeHunterCount = 0;
           for (const hunter of huntingParty) {
-            if (hunter.unitDef.category !== 'ranged') meleeHunterCount++;
+            if (canUnitUseWildlifeMeleeHuntSlot(hunter.unitDef.category)) meleeHunterCount++;
           }
           const huntRingPhase = getWildlifeHuntFallbackAngle(targetWildlife.id);
           let meleeHunterIndex = 0;
           for (const hunter of huntingParty) {
-            if (hunter.unitDef.category !== 'ranged') {
+            if (canUnitUseWildlifeMeleeHuntSlot(hunter.unitDef.category)) {
               (hunter as any)._wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
                 meleeHunterIndex,
                 meleeHunterCount,
