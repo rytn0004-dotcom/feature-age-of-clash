@@ -340,6 +340,8 @@ export interface UnitEntity extends EntityCommon {
   /** Per-simulation-step carcass work-slot reservation, rebuilt from live gather orders. */
   wildlifeCarcassHarvestNodeId?: string;
   wildlifeCarcassHarvestActive?: boolean;
+  /** Stable angular sector retained across carcass assignment refreshes. */
+  wildlifeCarcassHarvestSlotIndex?: number;
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;

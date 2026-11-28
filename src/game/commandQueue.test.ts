@@ -155,6 +155,7 @@ test('activating a new queued order releases carcass slot reservations and stale
   unit.wildlifeHuntApproachGoal = { x: 5, z: 4 };
   unit.wildlifeCarcassHarvestNodeId = 'carcass-a';
   unit.wildlifeCarcassHarvestActive = true;
+  unit.wildlifeCarcassHarvestSlotIndex = 2;
   enqueueUnitCommand(unit, { type: 'move', x: 14, z: 9 });
 
   assert.equal(activateNextUnitCommand(unit)?.type, 'move');
@@ -163,4 +164,5 @@ test('activating a new queued order releases carcass slot reservations and stale
   assert.equal(unit.wildlifeHuntApproachGoal, undefined);
   assert.equal(unit.wildlifeCarcassHarvestNodeId, undefined);
   assert.equal(unit.wildlifeCarcassHarvestActive, undefined);
+  assert.equal(unit.wildlifeCarcassHarvestSlotIndex, undefined);
 });

@@ -43,6 +43,7 @@ import {
 import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
+  assignWildlifeCarcassHarvestSlotIndices,
   getWildlifeCarcassHarvestCapacity,
   WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS,
   getWildlifeInteractionQueryRadius,
@@ -671,6 +672,8 @@ export class RtsEngine {
     units: [],
     distances: [],
   };
+  /** Six is the largest supported wildlife carcass capacity; reuse this tiny slot bitmap. */
+  private wildlifeCarcassSlotUsedScratch = Array(6).fill(false) as boolean[];
   private wildlifeCarcassWaitingPointScratch = { x: 0, z: 0 };
   /** Shared output avoids allocating one idle-motion object for every animal per tick. */
   private wildlifeIdleMotionScratch: WildlifeIdleMotion = {
@@ -4490,6 +4493,7 @@ export class RtsEngine {
       unit.pathCooldown = 0;
       unit.wildlifeCarcassHarvestNodeId = undefined;
       unit.wildlifeCarcassHarvestActive = undefined;
+      unit.wildlifeCarcassHarvestSlotIndex = undefined;
       unit.state = 'gathering';
       unit.currentActionText = `${meta.icon} 前往${meta.action}`;
     });
@@ -8285,6 +8289,7 @@ export class RtsEngine {
       ) {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
+        unit.wildlifeCarcassHarvestSlotIndex = undefined;
         continue;
       }
 
@@ -8292,6 +8297,7 @@ export class RtsEngine {
       if (!node || !isHuntableWildlifeSubtype(node.subtype)) {
         unit.wildlifeCarcassHarvestNodeId = undefined;
         unit.wildlifeCarcassHarvestActive = undefined;
+        unit.wildlifeCarcassHarvestSlotIndex = undefined;
         continue;
       }
 
@@ -8319,6 +8325,7 @@ export class RtsEngine {
         for (const candidate of candidates) {
           candidate.wildlifeCarcassHarvestNodeId = undefined;
           candidate.wildlifeCarcassHarvestActive = undefined;
+          candidate.wildlifeCarcassHarvestSlotIndex = undefined;
         }
         continue;
       }
@@ -8331,20 +8338,28 @@ export class RtsEngine {
         capacity,
         scratch,
       );
-      // First release every prior slot in this carcass group, then re-apply the
-      // bounded selection. Full-cargo, dead, invalid or re-tasked workers cannot
-      // keep a stale slot occupied.
+      // Preserve each incumbent's exact approach sector before releasing the
+      // old roster. Newcomers fill only genuinely unused sectors, so periodic
+      // distance refreshes do not make the same villagers cross around the carcass.
+      assignWildlifeCarcassHarvestSlotIndices(
+        selected,
+        nodeId,
+        capacity,
+        this.wildlifeCarcassSlotUsedScratch,
+      );
       for (const candidate of candidates) {
         candidate.wildlifeCarcassHarvestNodeId = nodeId;
         candidate.wildlifeCarcassHarvestActive = false;
+        if (!selected.includes(candidate)) candidate.wildlifeCarcassHarvestSlotIndex = undefined;
       }
 
       const phase = getWildlifeHuntFallbackAngle(nodeId);
-      for (let slotIndex = 0; slotIndex < selected.length; slotIndex++) {
-        const worker = selected[slotIndex];
+      for (const worker of selected) {
+        const slotIndex = worker.wildlifeCarcassHarvestSlotIndex;
+        if (!Number.isInteger(slotIndex)) continue;
         worker.wildlifeCarcassHarvestActive = true;
         worker.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
-          slotIndex,
+          slotIndex as number,
           capacity,
           phase,
         );

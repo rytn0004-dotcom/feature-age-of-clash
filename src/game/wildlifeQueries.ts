@@ -67,6 +67,7 @@ export interface WildlifeCarcassHarvesterCandidate {
   garrisonedInBuildingId?: string;
   wildlifeCarcassHarvestNodeId?: string;
   wildlifeCarcassHarvestActive?: boolean;
+  wildlifeCarcassHarvestSlotIndex?: number;
   carryingResource?: { amount: number };
   unitDef: {
     category: string;
@@ -78,9 +79,61 @@ export interface WildlifeCarcassHarvesterCandidate {
 export interface WildlifeCarcassHarvestSelectionScratch<
   Unit extends WildlifeCarcassHarvesterCandidate = WildlifeCarcassHarvesterCandidate,
 > {
-  /** Nearest eligible villagers, ordered by distance then stable unit ID. */
+  /** Nearest eligible villagers, ordered by weighted distance then stable unit ID. */
   units: Unit[];
   distances: number[];
+}
+
+/**
+ * Preserve an incumbent's exact ring-sector index while assigning unused sectors
+ * to newcomers. Existing slots are reserved in a first pass so a newly selected
+ * close worker cannot steal a later incumbent's sector.
+ *
+ * The caller owns a boolean buffer sized to the maximum supported carcass capacity.
+ */
+export function assignWildlifeCarcassHarvestSlotIndices<
+  Unit extends WildlifeCarcassHarvesterCandidate,
+>(
+  selected: readonly Unit[],
+  nodeId: string,
+  maxCount: number,
+  usedSlots: boolean[],
+): void {
+  const limit = Number.isFinite(maxCount)
+    ? Math.min(usedSlots.length, Math.max(0, Math.floor(maxCount)))
+    : 0;
+  for (let index = 0; index < usedSlots.length; index++) usedSlots[index] = false;
+  if (!nodeId || limit === 0) {
+    for (const unit of selected) unit.wildlifeCarcassHarvestSlotIndex = undefined;
+    return;
+  }
+
+  // Reserve all still-valid incumbent sectors before allocating newcomer sectors.
+  for (const unit of selected) {
+    const slotIndex = unit.wildlifeCarcassHarvestSlotIndex;
+    const isIncumbent =
+      unit.wildlifeCarcassHarvestNodeId === nodeId &&
+      unit.wildlifeCarcassHarvestActive === true &&
+      Number.isInteger(slotIndex) &&
+      (slotIndex as number) >= 0 &&
+      (slotIndex as number) < limit &&
+      !usedSlots[slotIndex as number];
+    if (isIncumbent) usedSlots[slotIndex as number] = true;
+    else unit.wildlifeCarcassHarvestSlotIndex = undefined;
+  }
+
+  // Allocate each newcomer the first free sector for deterministic recovery.
+  for (const unit of selected) {
+    if (Number.isInteger(unit.wildlifeCarcassHarvestSlotIndex)) continue;
+    let freeSlot = 0;
+    while (freeSlot < limit && usedSlots[freeSlot]) freeSlot++;
+    if (freeSlot >= limit) {
+      unit.wildlifeCarcassHarvestSlotIndex = undefined;
+      continue;
+    }
+    usedSlots[freeSlot] = true;
+    unit.wildlifeCarcassHarvestSlotIndex = freeSlot;
+  }
 }
 
 /**

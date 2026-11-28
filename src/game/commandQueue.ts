@@ -21,6 +21,7 @@ export interface CommandQueueUnit {
   wildlifeHuntApproachGoal?: { x: number; z: number };
   wildlifeCarcassHarvestNodeId?: string;
   wildlifeCarcassHarvestActive?: boolean;
+  wildlifeCarcassHarvestSlotIndex?: number;
 }
 
 /** Append one independently-owned FIFO command to a unit's personal queue. */
@@ -81,6 +82,7 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
   unit.wildlifeHuntApproachGoal = undefined;
   unit.wildlifeCarcassHarvestNodeId = undefined;
   unit.wildlifeCarcassHarvestActive = undefined;
+  unit.wildlifeCarcassHarvestSlotIndex = undefined;
 
   switch (next.type) {
     case 'move':

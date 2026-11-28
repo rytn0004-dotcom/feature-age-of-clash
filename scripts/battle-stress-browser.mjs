@@ -1199,6 +1199,24 @@ async function main() {
         assert.ok(wildlifeConcurrency.deerMeatRemaining < 1200, "Live stepUnitGathering did not consume meat from the carcass.");
         report.wildlifeCarcassStress.push({ kind: "concurrent-carcasses-and-live-harvest", ...wildlifeConcurrency });
 
+        const slotStability = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const workers = " + JSON.stringify(constructionSetup.workerIds) + ".map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+          "  const before = new Map(workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true).map((unit) => [unit.id, unit.wildlifeCarcassHarvestSlotIndex]));",
+          "  for (const unit of workers) { if (!before.has(unit.id)) continue; unit.x += (unit.id.length % 2 ? 0.22 : -0.22); unit.z += (unit.id.length % 3 ? -0.18 : 0.18); }",
+          "  e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  const after = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
+          "  const retained = after.filter((unit) => before.has(unit.id) && before.get(unit.id) === unit.wildlifeCarcassHarvestSlotIndex).length;",
+          "  return { beforeCount: before.size, afterCount: after.length, retainedCount: retained, uniqueSlots: new Set(after.map((unit) => unit.targetResourceNodeId + ':' + unit.wildlifeCarcassHarvestSlotIndex)).size };",
+          "})()",
+        ].join("\n"));
+        assert.ok(slotStability.beforeCount > 0, "Sector stability scenario had no incumbent workers.");
+        assert.equal(slotStability.afterCount, slotStability.beforeCount, "Incumbent workers were unexpectedly displaced by minor movement.");
+        assert.equal(slotStability.retainedCount, slotStability.beforeCount, "A carcass worker changed angular sector after minor movement.");
+        assert.equal(slotStability.uniqueSlots, slotStability.afterCount, "Two workers shared the same carcass sector.");
+        report.wildlifeCarcassStress.push({ kind: "stable-approach-sector-refresh", ...slotStability });
+
         // Profile the actual engine assignment routine with the full 200-worker
         // roster contending across three carcasses. This measures allocation cost
         // independently from frame-rate and renderer variance.

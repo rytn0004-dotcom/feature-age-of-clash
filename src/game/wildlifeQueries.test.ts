@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyWildlifeHunterAttacks,
+  assignWildlifeCarcassHarvestSlotIndices,
   collectWildlifeUnitInteractions,
   getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
@@ -439,6 +440,7 @@ function makeCarcassWorker(
     cargo?: number;
     carryCapacity?: number;
     harvestActive?: boolean;
+    harvestSlotIndex?: number;
   } = {},
 ) {
   return {
@@ -451,6 +453,7 @@ function makeCarcassWorker(
     garrisonedInBuildingId: options.garrisoned ? 'town-center' : undefined,
     wildlifeCarcassHarvestNodeId: options.harvestActive ? (options.nodeId ?? 'carcass-1') : undefined,
     wildlifeCarcassHarvestActive: options.harvestActive ?? false,
+    wildlifeCarcassHarvestSlotIndex: options.harvestSlotIndex,
     carryingResource: options.cargo === undefined ? undefined : { amount: options.cargo },
     unitDef: {
       category: options.category ?? 'worker',
@@ -550,6 +553,43 @@ test('carcass slot retention prevents near-equal villagers from swapping every r
     scratch,
   );
   assert.deepEqual(selected.map((unit) => unit.id), ['newcomer']);
+});
+
+test('carcass ring-sector indices stay fixed when incumbent selection order changes', () => {
+  const incumbentA = makeCarcassWorker('incumbent-a', 1, 0, {
+    harvestActive: true,
+    harvestSlotIndex: 2,
+  });
+  const incumbentB = makeCarcassWorker('incumbent-b', 2, 0, {
+    harvestActive: true,
+    harvestSlotIndex: 0,
+  });
+  const newcomer = makeCarcassWorker('newcomer', 0.5, 0);
+  const selected = [newcomer, incumbentB, incumbentA];
+  const usedSlots = Array(6).fill(false);
+
+  assignWildlifeCarcassHarvestSlotIndices(selected, 'carcass-1', 3, usedSlots);
+
+  assert.equal(incumbentA.wildlifeCarcassHarvestSlotIndex, 2);
+  assert.equal(incumbentB.wildlifeCarcassHarvestSlotIndex, 0);
+  assert.equal(newcomer.wildlifeCarcassHarvestSlotIndex, 1);
+  assert.equal(new Set(selected.map((unit) => unit.wildlifeCarcassHarvestSlotIndex)).size, 3);
+});
+
+test('duplicate, invalid and out-of-range carcass sectors recover deterministically', () => {
+  const first = makeCarcassWorker('first', 1, 0, { harvestActive: true, harvestSlotIndex: 1 });
+  const duplicate = makeCarcassWorker('duplicate', 2, 0, { harvestActive: true, harvestSlotIndex: 1 });
+  const outOfRange = makeCarcassWorker('out-of-range', 3, 0, { harvestActive: true, harvestSlotIndex: 5 });
+  const selected = [first, duplicate, outOfRange];
+  const usedSlots = Array(6).fill(false);
+
+  assignWildlifeCarcassHarvestSlotIndices(selected, 'carcass-1', 3, usedSlots);
+
+  assert.deepEqual(
+    selected.map((unit) => unit.wildlifeCarcassHarvestSlotIndex),
+    [1, 0, 2],
+  );
+  assert.equal(new Set(selected.map((unit) => unit.wildlifeCarcassHarvestSlotIndex)).size, 3);
 });
 
 test('a full-cargo incumbent releases its carcass slot to the next eligible villager', () => {
