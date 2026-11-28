@@ -4040,6 +4040,46 @@ test('wildlife hunt party approach angles form stable, evenly spaced sectors', a
   assert.equal(getWildlifeHuntPartySlotAngle(0, 3, Number.NaN), 0, 'malformed phases recover to zero');
 });
 
+test('melee hunters reposition inside attack range but fall back to attacking when ring paths stall', async () => {
+  const { shouldRepositionWildlifeMeleeHunter, WILDLIFE_HUNT_SLOT_TOLERANCE } = await import('./rules');
+
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(2.1, 2.4, 2.2, 0, 0),
+    true,
+    'a hunter in attack range still moves toward its assigned ring point',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(2.1, 2.4, WILDLIFE_HUNT_SLOT_TOLERANCE - 0.1, 0, 0),
+    false,
+    'a hunter already close to its slot should attack immediately',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(2.1, 2.4, 2.2, 1.79, 0),
+    true,
+    'brief movement stalls should still allow one recovery attempt',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(2.1, 2.4, 2.2, 1.8, 0),
+    false,
+    'a sustained stall should not keep the hunter from attacking',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(2.1, 2.4, 2.2, 0, 0.5),
+    false,
+    'the recovery cooldown should temporarily keep the hunter in attack mode',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(6, 2.4, 2.2, 20, 2),
+    true,
+    'a hunter outside weapon reach must continue closing distance',
+  );
+  assert.equal(
+    shouldRepositionWildlifeMeleeHunter(Number.NaN, 2.4, 2.2, 0, 0),
+    false,
+    'invalid geometry must not trigger movement',
+  );
+});
+
 test('melee wildlife approach points keep a safe attack radius and reuse caller storage', async () => {
   const { writeWildlifeMeleeHuntApproachPoint, getWildlifeMeleeHuntApproachRange } = await import('./rules');
   const output = { x: 0, z: 0 };

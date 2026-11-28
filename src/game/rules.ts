@@ -1749,6 +1749,45 @@ export function writeWildlifeMeleeHuntApproachPoint(
   return output;
 }
 
+/** Maximum distance from a reserved ring point before a hunter is considered out of position. */
+export const WILDLIFE_HUNT_SLOT_TOLERANCE = 0.9;
+
+/**
+ * Decides whether a melee hunter should move to its assigned ring point.
+ * Hunters already in weapon range give up on repositioning after a sustained stall,
+ * so an unreachable ideal slot never prevents them from attacking the animal.
+ */
+export function shouldRepositionWildlifeMeleeHunter(
+  distanceToAnimal: number,
+  attackRange: number,
+  distanceToSlot: number,
+  stuckDuration = 0,
+  recoveryCooldown = 0,
+  stallLimitSeconds = 1.8,
+  slotTolerance = WILDLIFE_HUNT_SLOT_TOLERANCE,
+): boolean {
+  if (
+    !Number.isFinite(distanceToAnimal) ||
+    !Number.isFinite(attackRange) ||
+    !Number.isFinite(distanceToSlot)
+  ) return false;
+
+  if (distanceToAnimal > Math.max(0, attackRange)) return true;
+
+  const safeStuckDuration = Number.isFinite(stuckDuration) ? Math.max(0, stuckDuration) : 0;
+  const safeRecoveryCooldown = Number.isFinite(recoveryCooldown) ? Math.max(0, recoveryCooldown) : 0;
+  const safeStallLimit = Number.isFinite(stallLimitSeconds) && stallLimitSeconds > 0
+    ? stallLimitSeconds
+    : 1.8;
+  const safeTolerance = Number.isFinite(slotTolerance) ? Math.max(0, slotTolerance) : WILDLIFE_HUNT_SLOT_TOLERANCE;
+
+  return (
+    distanceToSlot > safeTolerance &&
+    safeStuckDuration < safeStallLimit &&
+    safeRecoveryCooldown <= 0
+  );
+}
+
 /** Risk classification remains separate so AI can reserve deliberate parties for aggressive beasts. */
 export function canUnitHuntDangerousWildlife(
   unitDef: Pick<UnitDefinition, 'category' | 'isNaval'>,

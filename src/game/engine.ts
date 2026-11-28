@@ -165,6 +165,8 @@ import {
   canUnitReceiveGatherOrder,
   getWildlifeMeleeHuntApproachRange,
   getWildlifeHuntPartySlotAngle,
+  shouldRepositionWildlifeMeleeHunter,
+  WILDLIFE_HUNT_SLOT_TOLERANCE,
   writeWildlifeMeleeHuntApproachPoint,
   computeAiWorkerAllocation,
   getAiMilitaryProductionCap,
@@ -9858,30 +9860,86 @@ export class RtsEngine {
             : nodeRadius + 1.35
     );
 
-    if (dist > gatherRange) {
-      if (isLiveHuntableWildlife && militaryHunter && unit.unitDef.category !== 'ranged') {
-        const assignedAngle = (unit as any)._wildlifeHuntApproachTargetNodeId === node.id
-          ? (unit as any)._wildlifeHuntApproachAngle
-          : undefined;
-        const approachAngle = Number.isFinite(assignedAngle) ? assignedAngle : fallbackAngle;
-        let approachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
-        if (!approachGoal) {
-          approachGoal = { x: node.x, z: node.z };
-          (unit as any)._wildlifeHuntApproachGoal = approachGoal;
-        }
-        writeWildlifeMeleeHuntApproachPoint(
-          approachGoal,
-          node.x,
-          node.z,
-          nodeRadius,
-          unit.unitDef.stats.range,
-          approachAngle,
-        );
-        this.moveUnitAlongPath(unit, approachGoal.x, approachGoal.z, dt);
+    const usesMeleeHuntSlots =
+      isLiveHuntableWildlife && militaryHunter && unit.unitDef.category !== 'ranged';
+    let meleeApproachGoal: { x: number; z: number } | undefined;
+    let meleeApproachDistance = Number.POSITIVE_INFINITY;
+    if (usesMeleeHuntSlots) {
+      const assignedAngle = (unit as any)._wildlifeHuntApproachTargetNodeId === node.id
+        ? (unit as any)._wildlifeHuntApproachAngle
+        : undefined;
+      const approachAngle = Number.isFinite(assignedAngle) ? assignedAngle : fallbackAngle;
+      meleeApproachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
+      if (!meleeApproachGoal) {
+        meleeApproachGoal = { x: node.x, z: node.z };
+        (unit as any)._wildlifeHuntApproachGoal = meleeApproachGoal;
+      }
+      writeWildlifeMeleeHuntApproachPoint(
+        meleeApproachGoal,
+        node.x,
+        node.z,
+        nodeRadius,
+        unit.unitDef.stats.range,
+        approachAngle,
+      );
+      meleeApproachDistance = getDistance(unit.x, unit.z, meleeApproachGoal.x, meleeApproachGoal.z);
+    }
+
+    const slotFallbackBlocked =
+      !!usesMeleeHuntSlots &&
+      dist <= gatherRange &&
+      meleeApproachDistance > WILDLIFE_HUNT_SLOT_TOLERANCE &&
+      (
+        (Number.isFinite(unit.stuckDuration) && (unit.stuckDuration || 0) >= MOVEMENT_STALL_RECOVERY_SECONDS) ||
+        (Number.isFinite(unit.pathRecoveryCooldown) && (unit.pathRecoveryCooldown || 0) > 0)
+      );
+    const shouldRepositionMeleeHunter = !!usesMeleeHuntSlots && shouldRepositionWildlifeMeleeHunter(
+      dist,
+      gatherRange,
+      meleeApproachDistance,
+      unit.stuckDuration,
+      unit.pathRecoveryCooldown,
+      MOVEMENT_STALL_RECOVERY_SECONDS,
+      WILDLIFE_HUNT_SLOT_TOLERANCE,
+    );
+
+    if (dist > gatherRange || shouldRepositionMeleeHunter) {
+      if (meleeApproachGoal) {
+        this.moveUnitAlongPath(unit, meleeApproachGoal.x, meleeApproachGoal.z, dt);
+        if (dist <= gatherRange) unit.currentActionText = '⚔️ 調整包圍位置';
       } else {
         this.moveUnitAlongPath(unit, node.x, node.z, dt);
       }
     } else {
+      if (usesMeleeHuntSlots && slotFallbackBlocked) {
+        // Keep attacking when terrain/crowding prevents the ideal ring slot.
+        // The cooldown creates a pause before another reposition attempt, avoiding
+        // a one-frame attack / repeated path-search loop.
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.pathCooldown = 0;
+        const recoveryCooldown = Number.isFinite(unit.pathRecoveryCooldown)
+          ? Math.max(0, unit.pathRecoveryCooldown || 0)
+          : 0;
+        if (recoveryCooldown > 0) {
+          unit.pathRecoveryCooldown = Math.max(0, recoveryCooldown - dt);
+          if (unit.pathRecoveryCooldown <= 0) {
+            unit.stuckDuration = 0;
+            unit.stuckAccumulator = 0;
+          }
+        } else {
+          unit.pathRecoveryCooldown = MOVEMENT_STALL_RECOVERY_COOLDOWN_SECONDS;
+        }
+      } else if (usesMeleeHuntSlots) {
+        // Reaching the assigned sector clears obsolete path state before combat.
+        unit.stuckDuration = 0;
+        unit.stuckAccumulator = 0;
+        unit.pathRecoveryCooldown = 0;
+        unit.waypoints = undefined;
+        unit.pathGoal = undefined;
+        unit.pathCooldown = 0;
+      }
+
       unit.velocity = { x: 0, z: 0 };
       (unit as any)._desiredYaw = Math.atan2(node.x - unit.x, node.z - unit.z);
       if (!militaryHunter && !unit.carryingResource) {
