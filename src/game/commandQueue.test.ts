@@ -146,3 +146,21 @@ test('clearing a queue also clears its finite-gather marker', () => {
   assert.equal(unit.commandQueue, undefined);
   assert.equal(unit.queuedGatherStopAfterDeposit, false);
 });
+
+
+test('activating a new queued order releases carcass slot reservations and stale approach goals', () => {
+  const unit = makeUnit('worker-a');
+  unit.wildlifeHuntApproachAngle = Math.PI / 2;
+  unit.wildlifeHuntApproachTargetNodeId = 'carcass-a';
+  unit.wildlifeHuntApproachGoal = { x: 5, z: 4 };
+  unit.wildlifeCarcassHarvestNodeId = 'carcass-a';
+  unit.wildlifeCarcassHarvestActive = true;
+  enqueueUnitCommand(unit, { type: 'move', x: 14, z: 9 });
+
+  assert.equal(activateNextUnitCommand(unit)?.type, 'move');
+  assert.equal(unit.wildlifeHuntApproachAngle, undefined);
+  assert.equal(unit.wildlifeHuntApproachTargetNodeId, undefined);
+  assert.equal(unit.wildlifeHuntApproachGoal, undefined);
+  assert.equal(unit.wildlifeCarcassHarvestNodeId, undefined);
+  assert.equal(unit.wildlifeCarcassHarvestActive, undefined);
+});

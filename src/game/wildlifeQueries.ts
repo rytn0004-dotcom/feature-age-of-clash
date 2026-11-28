@@ -37,6 +37,148 @@ export interface WildlifeHuntPartySelectionScratch<
   rangedDistances: number[];
 }
 
+/** Maximum number of villagers that can work one wildlife carcass at the same time. */
+export const WILDLIFE_CARCASS_HARVEST_CAPACITY = {
+  hunt: 3,
+  boar: 4,
+  aurochs: 6,
+} as const;
+
+export function getWildlifeCarcassHarvestCapacity(subtype?: string): number {
+  if (subtype === 'hunt') return WILDLIFE_CARCASS_HARVEST_CAPACITY.hunt;
+  if (subtype === 'boar') return WILDLIFE_CARCASS_HARVEST_CAPACITY.boar;
+  if (subtype === 'aurochs') return WILDLIFE_CARCASS_HARVEST_CAPACITY.aurochs;
+  return 0;
+}
+
+export interface WildlifeCarcassHarvesterCandidate {
+  id: string;
+  x: number;
+  z: number;
+  hp: number;
+  state: string;
+  targetResourceNodeId?: string;
+  garrisonedInBuildingId?: string;
+  carryingResource?: { amount: number };
+  unitDef: {
+    category: string;
+    isNaval?: boolean;
+    stats?: { carryCapacity?: number };
+  };
+}
+
+export interface WildlifeCarcassHarvestSelectionScratch<
+  Unit extends WildlifeCarcassHarvesterCandidate = WildlifeCarcassHarvesterCandidate,
+> {
+  /** Nearest eligible villagers, ordered by distance then stable unit ID. */
+  units: Unit[];
+  distances: number[];
+}
+
+/**
+ * Selects only the nearest eligible villagers up to the carcass's physical work
+ * capacity. The bounded insertion buffer is O(candidateCount * capacity), so a
+ * 400-unit crowd does not require sorting or allocating a full candidate copy.
+ */
+export function selectNearestWildlifeCarcassHarvesters<
+  Unit extends WildlifeCarcassHarvesterCandidate,
+>(
+  candidates: readonly Unit[],
+  nodeId: string,
+  nodeX: number,
+  nodeZ: number,
+  maxCount: number,
+  output: WildlifeCarcassHarvestSelectionScratch<Unit>,
+): Unit[] {
+  output.units.length = 0;
+  output.distances.length = 0;
+  if (
+    !nodeId ||
+    !Number.isFinite(nodeX) ||
+    !Number.isFinite(nodeZ) ||
+    !Number.isFinite(maxCount) ||
+    maxCount <= 0
+  ) return output.units;
+
+  const limit = Math.min(candidates.length, Math.max(0, Math.floor(maxCount)));
+  if (limit === 0) return output.units;
+
+  for (const candidate of candidates) {
+    if (
+      !candidate.id ||
+      !Number.isFinite(candidate.hp) ||
+      candidate.hp <= 0 ||
+      candidate.unitDef.category !== 'worker' ||
+      candidate.unitDef.isNaval ||
+      candidate.state !== 'gathering' ||
+      candidate.targetResourceNodeId !== nodeId ||
+      candidate.garrisonedInBuildingId ||
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.z)
+    ) continue;
+
+    if (candidate.carryingResource) {
+      const cargo = candidate.carryingResource.amount;
+      const capacity = candidate.unitDef.stats?.carryCapacity;
+      if (!Number.isFinite(cargo) || cargo < 0) continue;
+      if (Number.isFinite(capacity) && (capacity as number) > 0 && cargo >= (capacity as number)) continue;
+    }
+
+    const distance = Math.hypot(candidate.x - nodeX, candidate.z - nodeZ);
+    if (!Number.isFinite(distance)) continue;
+
+    let insertAt = output.distances.length;
+    while (insertAt > 0) {
+      const previousDistance = output.distances[insertAt - 1];
+      const previous = output.units[insertAt - 1];
+      const isCloser = distance < previousDistance - 1e-9;
+      const isStableTie = Math.abs(distance - previousDistance) <= 1e-9 &&
+        candidate.id.localeCompare(previous.id) < 0;
+      if (!isCloser && !isStableTie) break;
+      insertAt--;
+    }
+    if (insertAt >= limit) continue;
+
+    const nextLength = Math.min(limit, output.units.length + 1);
+    for (let index = nextLength - 1; index > insertAt; index--) {
+      output.units[index] = output.units[index - 1];
+      output.distances[index] = output.distances[index - 1];
+    }
+    output.units[insertAt] = candidate;
+    output.distances[insertAt] = distance;
+    output.units.length = nextLength;
+    output.distances.length = nextLength;
+  }
+
+  return output.units;
+}
+
+export interface WildlifeCarcassWaitingPoint {
+  x: number;
+  z: number;
+}
+
+/** Stable outer staging point used by overflow villagers while carcass slots are full. */
+export function writeWildlifeCarcassWaitingPoint(
+  output: WildlifeCarcassWaitingPoint,
+  nodeX: number,
+  nodeZ: number,
+  nodeRadius: number,
+  waitAngle: number,
+): WildlifeCarcassWaitingPoint {
+  const safeX = Number.isFinite(nodeX) ? nodeX : 0;
+  const safeZ = Number.isFinite(nodeZ) ? nodeZ : 0;
+  const safeRadius = Number.isFinite(nodeRadius) ? Math.max(0, nodeRadius) : 0;
+  const safeAngle = Number.isFinite(waitAngle) ? waitAngle : 0;
+  const turn = Math.PI * 2;
+  const normalizedAngle = ((safeAngle % turn) + turn) % turn;
+  const lane = Math.min(3, Math.floor((normalizedAngle / turn) * 4));
+  const radius = safeRadius + 5.25 + lane * 1.8;
+  output.x = safeX + Math.cos(safeAngle) * radius;
+  output.z = safeZ + Math.sin(safeAngle) * radius;
+  return output;
+}
+
 /**
  * Selects a nearby hunting party with optional frontline and ranged-role reservations.
  * The output is ordered frontliners, ranged support, then the nearest remaining hunters.

@@ -43,8 +43,12 @@ import {
 import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
+  getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
+  selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
+  writeWildlifeCarcassWaitingPoint,
+  type WildlifeCarcassHarvestSelectionScratch,
   type WildlifeHuntPartySelectionScratch,
   type WildlifeUnitInteractionScratch,
 } from './wildlifeQueries';
@@ -656,6 +660,15 @@ export class RtsEngine {
     nearestThreat: null,
     attackers: [],
   };
+  /** Candidate buckets and output buffers reused to cap carcass workers without per-hunter full-roster scans. */
+  private wildlifeCarcassCandidatesByNode = new Map<string, UnitEntity[]>();
+  private wildlifeCarcassCandidateArrayPool: UnitEntity[][] = [];
+  private wildlifeCarcassCandidateArrayPoolCursor = 0;
+  private wildlifeCarcassHarvestSelectionScratch: WildlifeCarcassHarvestSelectionScratch<UnitEntity> = {
+    units: [],
+    distances: [],
+  };
+  private wildlifeCarcassWaitingPointScratch = { x: 0, z: 0 };
   /** Shared output avoids allocating one idle-motion object for every animal per tick. */
   private wildlifeIdleMotionScratch: WildlifeIdleMotion = {
     breathing: 0,
@@ -4395,11 +4408,9 @@ export class RtsEngine {
         (queue || (!unit.fieldAssemblyProjectId && unit.state !== 'assembling'))
       )
     );
-    const isLiveWildlifeOrder = isHuntableWildlifeSubtype(node.subtype) &&
-      node.animalAlive !== false &&
-      (node.animalHp === undefined || node.animalHp > 0);
+    const isWildlifeOrder = isHuntableWildlifeSubtype(node.subtype);
     let wildlifeHunterCount = 0;
-    if (isLiveWildlifeOrder) {
+    if (isWildlifeOrder) {
       for (const unit of eligibleUnits) {
         if (canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) wildlifeHunterCount++;
       }
@@ -4425,7 +4436,7 @@ export class RtsEngine {
     eligibleUnits.forEach((unit) => {
       if (queue) {
         if (!unit.commandQueue) unit.commandQueue = [];
-        const queuedCommand = isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)
+        const queuedCommand = isWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)
           ? {
               type: 'gather' as const,
               nodeId,
@@ -4443,7 +4454,7 @@ export class RtsEngine {
       }
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
-      if (isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) {
+      if (isWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) {
         unit.wildlifeHuntApproachAngle = getWildlifeHuntOrderSlotAngle(
           wildlifeHunterIndex,
           wildlifeHunterCount,
@@ -4474,6 +4485,8 @@ export class RtsEngine {
       unit.waypoints = undefined;
       unit.pathGoal = undefined;
       unit.pathCooldown = 0;
+      unit.wildlifeCarcassHarvestNodeId = undefined;
+      unit.wildlifeCarcassHarvestActive = undefined;
       unit.state = 'gathering';
       unit.currentActionText = `${meta.icon} 前往${meta.action}`;
     });
@@ -8247,9 +8260,83 @@ export class RtsEngine {
     };
   }
 
+  /**
+   * Rebuild deterministic carcass work slots once per unit-update slice.
+   * Only the closest eligible villagers receive active positions; the rest wait
+   * outside the work ring and are promoted automatically when a slot opens.
+   */
+  private rebuildWildlifeCarcassHarvestAssignments(): void {
+    for (const candidates of this.wildlifeCarcassCandidatesByNode.values()) candidates.length = 0;
+    this.wildlifeCarcassCandidatesByNode.clear();
+    this.wildlifeCarcassCandidateArrayPoolCursor = 0;
+
+    for (const unit of this.units) {
+      unit.wildlifeCarcassHarvestNodeId = undefined;
+      unit.wildlifeCarcassHarvestActive = undefined;
+      if (
+        !Number.isFinite(unit.hp) ||
+        unit.hp <= 0 ||
+        unit.unitDef.category !== 'worker' ||
+        unit.unitDef.isNaval ||
+        unit.state !== 'gathering' ||
+        !unit.targetResourceNodeId ||
+        unit.garrisonedInBuildingId
+      ) continue;
+
+      const node = this.resourceNodeLookupById.get(unit.targetResourceNodeId);
+      if (!node || !isHuntableWildlifeSubtype(node.subtype)) continue;
+
+      let candidates = this.wildlifeCarcassCandidatesByNode.get(node.id);
+      if (!candidates) {
+        const poolIndex = this.wildlifeCarcassCandidateArrayPoolCursor++;
+        candidates = this.wildlifeCarcassCandidateArrayPool[poolIndex];
+        if (!candidates) {
+          candidates = [];
+          this.wildlifeCarcassCandidateArrayPool[poolIndex] = candidates;
+        }
+        candidates.length = 0;
+        this.wildlifeCarcassCandidatesByNode.set(node.id, candidates);
+      }
+      candidates.push(unit);
+    }
+
+    const scratch = this.wildlifeCarcassHarvestSelectionScratch;
+    for (const [nodeId, candidates] of this.wildlifeCarcassCandidatesByNode) {
+      const node = this.resourceNodeLookupById.get(nodeId);
+      const capacity = getWildlifeCarcassHarvestCapacity(node?.subtype);
+      if (!node || node.amount <= 0 || capacity <= 0) continue;
+
+      for (const candidate of candidates) {
+        candidate.wildlifeCarcassHarvestNodeId = nodeId;
+        candidate.wildlifeCarcassHarvestActive = false;
+      }
+
+      const selected = selectNearestWildlifeCarcassHarvesters(
+        candidates,
+        nodeId,
+        node.x,
+        node.z,
+        capacity,
+        scratch,
+      );
+      const phase = getWildlifeHuntFallbackAngle(nodeId);
+      for (let slotIndex = 0; slotIndex < selected.length; slotIndex++) {
+        const worker = selected[slotIndex];
+        worker.wildlifeCarcassHarvestActive = true;
+        worker.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+          slotIndex,
+          capacity,
+          phase,
+        );
+        worker.wildlifeHuntApproachTargetNodeId = nodeId;
+      }
+    }
+  }
+
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildResourceNodeLookup();
+    this.rebuildWildlifeCarcassHarvestAssignments();
     this.returnDropOffReadyKeys.clear();
     this.rebuildActiveConstructionWorkerCounts();
     if (
@@ -9835,6 +9922,56 @@ export class RtsEngine {
     };
     const rLabel = labelMap[node.subtype || node.resourceType] || '資源';
     const huntingLive = isHuntableWildlifeSubtype(node.subtype) && node.animalAlive !== false && (node.animalHp === undefined || node.animalHp > 0);
+    const isWildlifeCarcass = assignedWildlife &&
+      (node.animalAlive === false || (node.animalHp !== undefined && node.animalHp <= 0));
+    const isCarcassWorker = isWildlifeCarcass && unit.unitDef.category === 'worker';
+
+    if (isCarcassWorker) {
+      // A full villager leaves the work roster immediately so another worker can take its slot.
+      if (
+        unit.carryingResource &&
+        Number.isFinite(cap) &&
+        cap > 0 &&
+        unit.carryingResource.amount >= cap
+      ) {
+        unit.waypoints = undefined;
+        if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
+          unit.targetResourceNodeId = undefined;
+          unit.queuedGatherStopAfterDeposit = true;
+        }
+        unit.state = 'returning_resource';
+        unit.currentActionText = '🏃 運送肉類回基地';
+        return;
+      }
+
+      const hasHarvestSlot =
+        unit.wildlifeCarcassHarvestNodeId === node.id &&
+        unit.wildlifeCarcassHarvestActive === true;
+      if (!hasHarvestSlot) {
+        const waitAngle = getWildlifeHuntFallbackAngle(unit.id);
+        writeWildlifeCarcassWaitingPoint(
+          this.wildlifeCarcassWaitingPointScratch,
+          node.x,
+          node.z,
+          getResourceColliderRadius(node.resourceType, node.subtype),
+          waitAngle,
+        );
+        const waitGoal = this.wildlifeCarcassWaitingPointScratch;
+        if (getDistance(unit.x, unit.z, waitGoal.x, waitGoal.z) > 0.9) {
+          this.moveUnitAlongPath(unit, waitGoal.x, waitGoal.z, dt);
+        } else {
+          unit.velocity.x = 0;
+          unit.velocity.z = 0;
+          unit.waypoints = undefined;
+          unit.pathGoal = undefined;
+          unit.pathCooldown = 0;
+        }
+        unit.wildlifeHuntApproachGoal = undefined;
+        unit.currentActionText = `⏳ 等待${rLabel}採集位置（同時上限 ${getWildlifeCarcassHarvestCapacity(node.subtype)} 人）`;
+        return;
+      }
+    }
+
     unit.currentActionText = huntingLive
       ? node.subtype === 'aurochs'
         ? `🦬 多人圍獵原牛 (${Math.ceil(node.animalHp ?? 360)} HP)`
@@ -9876,7 +10013,10 @@ export class RtsEngine {
     }
 
     const usesMeleeHuntSlots =
-      isLiveHuntableWildlife && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category);
+      (isLiveHuntableWildlife && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) ||
+      (isCarcassWorker &&
+        unit.wildlifeCarcassHarvestNodeId === node.id &&
+        unit.wildlifeCarcassHarvestActive === true);
     const gatherRange = rangedWildlifePlan?.maxRange ?? (
       usesMeleeHuntSlots
         ? getWildlifeMeleeHuntApproachRange(nodeRadius, unit.unitDef.stats.range)

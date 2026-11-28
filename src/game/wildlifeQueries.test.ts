@@ -420,3 +420,139 @@ test('AI wildlife party selection rejects finite coordinates whose distance over
   assert.deepEqual(selected, []);
   assert.deepEqual(scratch.frontlineDistances, []);
 });
+
+
+function makeCarcassWorker(
+  id: string,
+  x: number,
+  z: number,
+  options: {
+    hp?: number;
+    state?: string;
+    nodeId?: string;
+    category?: string;
+    isNaval?: boolean;
+    garrisoned?: boolean;
+    cargo?: number;
+    carryCapacity?: number;
+  } = {},
+) {
+  return {
+    id,
+    x,
+    z,
+    hp: options.hp ?? 100,
+    state: options.state ?? 'gathering',
+    targetResourceNodeId: options.nodeId ?? 'carcass-1',
+    garrisonedInBuildingId: options.garrisoned ? 'town-center' : undefined,
+    carryingResource: options.cargo === undefined ? undefined : { amount: options.cargo },
+    unitDef: {
+      category: options.category ?? 'worker',
+      isNaval: options.isNaval ?? false,
+      stats: { carryCapacity: options.carryCapacity ?? 40 },
+    },
+  };
+}
+
+function makeCarcassSelectionScratch() {
+  return {
+    units: [] as ReturnType<typeof makeCarcassWorker>[],
+    distances: [] as number[],
+  };
+}
+
+test('wildlife carcass harvest capacities are explicit per animal size', () => {
+  assert.equal(getWildlifeCarcassHarvestCapacity('hunt'), 3);
+  assert.equal(getWildlifeCarcassHarvestCapacity('boar'), 4);
+  assert.equal(getWildlifeCarcassHarvestCapacity('aurochs'), 6);
+  assert.equal(getWildlifeCarcassHarvestCapacity('berry'), 0);
+  assert.equal(getWildlifeCarcassHarvestCapacity(undefined), 0);
+});
+
+test('carcass harvesting never exceeds the per-animal simultaneous villager cap, even with 400 units', () => {
+  const capacities = [
+    { subtype: 'hunt', cap: 3 },
+    { subtype: 'boar', cap: 4 },
+    { subtype: 'aurochs', cap: 6 },
+  ];
+  for (const { subtype, cap } of capacities) {
+    const nodeId = `carcass-${subtype}`;
+    const candidates = Array.from({ length: 400 }, (_, index) =>
+      makeCarcassWorker(`worker-${String(index).padStart(3, '0')}`, index / 10, (index % 7) / 10, { nodeId }),
+    );
+    const scratch = makeCarcassSelectionScratch();
+    const selected = selectNearestWildlifeCarcassHarvesters(
+      candidates,
+      nodeId,
+      0,
+      0,
+      getWildlifeCarcassHarvestCapacity(subtype),
+      scratch,
+    );
+    assert.equal(selected.length, cap, `${subtype} should admit exactly ${cap} nearby villagers`);
+    assert.equal(selected, scratch.units, 'the caller-owned selection buffer should be reused');
+    assert.equal(scratch.distances.length, cap);
+    assert.ok(selected.length <= cap, 'the maximum simultaneous headcount must never be exceeded');
+  }
+});
+
+test('carcass harvester selection prefers the closest villagers and resolves ties by stable ID', () => {
+  const candidates = [
+    makeCarcassWorker('worker-z', -2, 0),
+    makeCarcassWorker('worker-far', 9, 0),
+    makeCarcassWorker('worker-b', 2, 0),
+    makeCarcassWorker('worker-a', -2, 0),
+    makeCarcassWorker('worker-near', 0.5, 0),
+  ];
+  const scratch = makeCarcassSelectionScratch();
+  const selected = selectNearestWildlifeCarcassHarvesters(
+    candidates,
+    'carcass-1',
+    0,
+    0,
+    3,
+    scratch,
+  );
+
+  assert.deepEqual(selected.map((unit) => unit.id), ['worker-near', 'worker-a', 'worker-z']);
+  assert.deepEqual(scratch.distances, [0.5, 2, 2]);
+});
+
+test('carcass harvester selection excludes invalid, busy, naval, garrisoned and full-cargo units', () => {
+  const candidates = [
+    makeCarcassWorker('valid', 1, 0),
+    makeCarcassWorker('dead', 0.1, 0, { hp: 0 }),
+    makeCarcassWorker('nan-health', 0.2, 0, { hp: Number.NaN }),
+    makeCarcassWorker('wrong-state', 0.3, 0, { state: 'moving' }),
+    makeCarcassWorker('wrong-node', 0.4, 0, { nodeId: 'other-carcass' }),
+    makeCarcassWorker('military', 0.5, 0, { category: 'melee' }),
+    makeCarcassWorker('naval', 0.6, 0, { isNaval: true }),
+    makeCarcassWorker('garrisoned', 0.7, 0, { garrisoned: true }),
+    makeCarcassWorker('full-cargo', 0.8, 0, { cargo: 40 }),
+    makeCarcassWorker('invalid-cargo', 0.9, 0, { cargo: Number.NaN }),
+    makeCarcassWorker('invalid-coordinate', Number.NaN, 0),
+  ];
+  const selected = selectNearestWildlifeCarcassHarvesters(
+    candidates,
+    'carcass-1',
+    0,
+    0,
+    10,
+    makeCarcassSelectionScratch(),
+  );
+  assert.deepEqual(selected.map((unit) => unit.id), ['valid']);
+});
+
+test('carcass waiting points are finite, stable and outside the work ring', () => {
+  const first = { x: 0, z: 0 };
+  const second = { x: 0, z: 0 };
+  writeWildlifeCarcassWaitingPoint(first, 4, -3, 1.5, Math.PI / 3);
+  writeWildlifeCarcassWaitingPoint(second, 4, -3, 1.5, Math.PI / 3);
+
+  assert.deepEqual(first, second);
+  assert.ok(Math.hypot(first.x - 4, first.z + 3) > 6.7);
+  const fallback = { x: 10, z: 10 };
+  writeWildlifeCarcassWaitingPoint(fallback, Number.NaN, Number.POSITIVE_INFINITY, Number.NaN, Number.NaN);
+  assert.ok(Number.isFinite(fallback.x));
+  assert.ok(Number.isFinite(fallback.z));
+});

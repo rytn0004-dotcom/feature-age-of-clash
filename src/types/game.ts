@@ -337,6 +337,9 @@ export interface UnitEntity extends EntityCommon {
   wildlifeHuntApproachTargetNodeId?: string;
   /** Reused stand-off point updated as the hunted animal moves. */
   wildlifeHuntApproachGoal?: { x: number; z: number };
+  /** Per-simulation-step carcass work-slot reservation, rebuilt from live gather orders. */
+  wildlifeCarcassHarvestNodeId?: string;
+  wildlifeCarcassHarvestActive?: boolean;
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;

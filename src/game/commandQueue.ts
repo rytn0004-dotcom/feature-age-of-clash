@@ -18,6 +18,9 @@ export interface CommandQueueUnit {
   queuedGatherStopAfterDeposit?: boolean;
   wildlifeHuntApproachAngle?: number;
   wildlifeHuntApproachTargetNodeId?: string;
+  wildlifeHuntApproachGoal?: { x: number; z: number };
+  wildlifeCarcassHarvestNodeId?: string;
+  wildlifeCarcassHarvestActive?: boolean;
 }
 
 /** Append one independently-owned FIFO command to a unit's personal queue. */
@@ -75,6 +78,9 @@ export function activateNextUnitCommand<T extends CommandQueueUnit>(
   unit.queuedGatherStopAfterDeposit = false;
   unit.wildlifeHuntApproachAngle = undefined;
   unit.wildlifeHuntApproachTargetNodeId = undefined;
+  unit.wildlifeHuntApproachGoal = undefined;
+  unit.wildlifeCarcassHarvestNodeId = undefined;
+  unit.wildlifeCarcassHarvestActive = undefined;
 
   switch (next.type) {
     case 'move':
