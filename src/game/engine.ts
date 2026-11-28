@@ -8300,6 +8300,16 @@ export class RtsEngine {
         unit.wildlifeCarcassHarvestSlotIndex = undefined;
         continue;
       }
+      // Living animals use the hunting-party ring, not the carcass harvesting cap.
+      // Only a confirmed corpse can receive the limited villager work slots.
+      const isCarcass = node.animalAlive === false ||
+        (node.animalHp !== undefined && node.animalHp <= 0);
+      if (!isCarcass) {
+        unit.wildlifeCarcassHarvestNodeId = undefined;
+        unit.wildlifeCarcassHarvestActive = undefined;
+        unit.wildlifeCarcassHarvestSlotIndex = undefined;
+        continue;
+      }
 
       let candidates = this.wildlifeCarcassCandidatesByNode.get(node.id);
       if (!candidates) {
@@ -8437,6 +8447,9 @@ export class RtsEngine {
     for (let unitIndex = 0; unitIndex < currentUnits.length; unitIndex++) {
       const unit = currentUnits[unitIndex];
       if (unit.hp <= 0) {
+        unit.wildlifeCarcassHarvestNodeId = undefined;
+        unit.wildlifeCarcassHarvestActive = undefined;
+        unit.wildlifeCarcassHarvestSlotIndex = undefined;
         if (!remainingUnits) remainingUnits = currentUnits.slice(0, unitIndex);
         if (unit.unitDefId === 'transport_boat' && unit.transportCargoIds?.length) {
           this.unloadTransport(unit);
@@ -9890,6 +9903,9 @@ export class RtsEngine {
     }
 
     if (!node || node.amount <= 0 || !canUnitGatherNode(unit.unitDef, node)) {
+      unit.wildlifeCarcassHarvestNodeId = undefined;
+      unit.wildlifeCarcassHarvestActive = undefined;
+      unit.wildlifeCarcassHarvestSlotIndex = undefined;
       const hasQueuedFollowUp = !!unit.commandQueue?.length || !!unit.queuedGatherStopAfterDeposit;
       if (hasQueuedFollowUp) {
         unit.targetResourceNodeId = undefined;
@@ -9974,6 +9990,9 @@ export class RtsEngine {
         unit.carryingResource.amount >= cap
       ) {
         unit.waypoints = undefined;
+        unit.wildlifeCarcassHarvestNodeId = undefined;
+        unit.wildlifeCarcassHarvestActive = undefined;
+        unit.wildlifeCarcassHarvestSlotIndex = undefined;
         if (unit.commandQueue?.length || unit.queuedGatherStopAfterDeposit) {
           unit.targetResourceNodeId = undefined;
           unit.queuedGatherStopAfterDeposit = true;

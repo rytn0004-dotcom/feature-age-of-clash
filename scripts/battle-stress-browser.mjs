@@ -1068,6 +1068,27 @@ async function main() {
           "})()",
         ].join("\n"));
         assert.ok(wildlifeNodes.realEngine, "Live wildlife carcass engine methods are unavailable.");
+
+        const wildlifeLifeStage = await evaluate([
+          "(() => {",
+          "  const e = window.__rtsEngine;",
+          "  const nodeId = " + JSON.stringify(wildlifeNodeIds.hunt) + ";",
+          "  const node = e.resourceNodes.find((entry) => entry.id === nodeId);",
+          "  const workers = " + JSON.stringify(constructionSetup.workerIds.slice(0, 12)) + ".map((id) => e.units.find((unit) => unit.id === id)).filter(Boolean);",
+          "  node.subtype = 'hunt'; node.amount = 1200; node.maxAmount = 1200; node.animalAlive = true; node.animalHp = 32;",
+          "  for (const unit of workers) { unit.hp = Math.max(1, unit.maxHp || 100); unit.state = 'gathering'; unit.targetResourceNodeId = nodeId; unit.unitDef = { ...unit.unitDef, category: 'worker', isNaval: false }; unit.carryingResource = undefined; unit.wildlifeCarcassHarvestNodeId = nodeId; unit.wildlifeCarcassHarvestActive = true; unit.wildlifeCarcassHarvestSlotIndex = 1; }",
+          "  e.rebuildResourceNodeLookup(); e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  const liveAssigned = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true || unit.wildlifeCarcassHarvestSlotIndex !== undefined).length;",
+          "  node.animalAlive = false; node.animalHp = 0;",
+          "  e.rebuildWildlifeCarcassHarvestAssignments();",
+          "  const corpseAssigned = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true).length;",
+          "  return { liveAssigned, corpseAssigned };",
+          "})()",
+        ].join("\n"));
+        assert.equal(wildlifeLifeStage.liveAssigned, 0, "Living animals must not consume carcass harvesting slots.");
+        assert.equal(wildlifeLifeStage.corpseAssigned, 3, "Workers were not assigned when the animal transitioned into a carcass.");
+        report.wildlifeCarcassStress.push({ kind: "live-to-carcass-transition", ...wildlifeLifeStage });
+
         const wildlifeCapacityCases = [];
         for (const subtype of ["hunt", "boar", "aurochs"]) {
           const nodeId = wildlifeNodeIds[subtype];
@@ -1131,6 +1152,8 @@ async function main() {
           "  let active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
           "  const initialActiveCount = active.length;",
           "  const full = active[0]; full.carryingResource = { type: 'food', amount: 40 };",
+          "  e.stepUnitGathering(full, 0.05);",
+          "  const fullCargoImmediateRelease = full.wildlifeCarcassHarvestNodeId === undefined && full.wildlifeCarcassHarvestActive === undefined && full.wildlifeCarcassHarvestSlotIndex === undefined;",
           "  e.rebuildWildlifeCarcassHarvestAssignments();",
           "  active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
           "  const fullCargoReleased = !active.includes(full) && active.length === initialActiveCount;",
@@ -1142,10 +1165,11 @@ async function main() {
           "  e.rebuildWildlifeCarcassHarvestAssignments();",
           "  active = workers.filter((unit) => unit.wildlifeCarcassHarvestActive === true);",
           "  const retaskedWorkerReleased = retasked.wildlifeCarcassHarvestNodeId === undefined && active.length === initialActiveCount;",
-          "  return { initialActiveCount, fullCargoReleased, deadWorkerReleased, retaskedWorkerReleased, finalActiveCount: active.length };",
+          "  return { initialActiveCount, fullCargoImmediateRelease, fullCargoReleased, deadWorkerReleased, retaskedWorkerReleased, finalActiveCount: active.length };",
           "})()",
         ].join("\n"));
         assert.equal(wildlifeLifecycle.initialActiveCount, 3, "Lifecycle scenario did not begin with three active deer carcass workers.");
+        assert.equal(wildlifeLifecycle.fullCargoImmediateRelease, true, "A full-cargo villager did not release its work-slot fields on the gather tick.");
         assert.equal(wildlifeLifecycle.fullCargoReleased, true, "A full-cargo villager retained a carcass work slot.");
         assert.equal(wildlifeLifecycle.deadWorkerReleased, true, "A dead villager retained a carcass work slot.");
         assert.equal(wildlifeLifecycle.retaskedWorkerReleased, true, "A re-tasked villager retained a carcass work slot.");
