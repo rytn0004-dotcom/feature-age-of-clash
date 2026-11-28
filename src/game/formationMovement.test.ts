@@ -257,6 +257,23 @@ test('formation terrain flow: same-position queue priority is independent of mem
   assert.equal(getFormationNarrowPassageTrafficScale('unit-a', [beta, alpha], passage), 1);
 });
 
+test('formation terrain flow: malformed passage projections never count as corridor occupants', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: Number.NaN,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const members = [
+    { id: 'current', x: 5, z: 0 },
+    { id: 'nearby', x: 5, z: 0 },
+  ];
+
+  assert.equal(getFormationNarrowPassageTrafficScale('current', members, passage), 1);
+});
+
 
 test('combat tactics: infantry slots form a stable frontline without exceeding melee range', () => {
   const members = [
