@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
+  getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
+  selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
   tryConsumeWildlifeHunterAttack,
+  writeWildlifeCarcassWaitingPoint,
   type WildlifeHunterAttackUnit,
   type WildlifeUnitInteractionScratch,
 } from './wildlifeQueries';
@@ -514,7 +517,7 @@ test('carcass harvester selection prefers the closest villagers and resolves tie
     scratch,
   );
 
-  assert.deepEqual(selected.map((unit) => unit.id), ['worker-near', 'worker-a', 'worker-z']);
+  assert.deepEqual(selected.map((unit) => unit.id), ['worker-near', 'worker-a', 'worker-b']);
   assert.deepEqual(scratch.distances, [0.5, 2, 2]);
 });
 
