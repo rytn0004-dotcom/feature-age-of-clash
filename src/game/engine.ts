@@ -51,6 +51,7 @@ import {
   getWildlifeInteractionQueryRadius,
   selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
+  isWildlifeHuntLocationSafe,
   writeWildlifeCarcassWaitingPoint,
   type WildlifeCarcassHarvestSelectionScratch,
   type WildlifeHuntPartySelectionScratch,
@@ -14691,6 +14692,7 @@ export class RtsEngine {
       });
       const availableHuntUnits = this.aiWildlifeHuntCandidatesScratch;
       availableHuntUnits.length = 0;
+      let availableFrontlineHunters = 0;
       for (const unit of aiArmy) {
         if (
           canUnitHuntDangerousWildlife(unit.unitDef, 'aurochs') &&
@@ -14712,6 +14714,9 @@ export class RtsEngine {
           (!unit.lastDamagedTime || performance.now() - unit.lastDamagedTime > 12_000)
         ) {
           availableHuntUnits.push(unit);
+          if (unit.unitDef.category === 'melee' || unit.unitDef.category === 'cavalry') {
+            availableFrontlineHunters++;
+          }
         }
       }
       if (shouldAiOrganizeWildlifeHunt({
@@ -14719,6 +14724,7 @@ export class RtsEngine {
         food: aiRes.food,
         armyCount: aiArmy.length,
         availableHunters: availableHuntUnits.length,
+        availableFrontlineHunters,
         enemyDistance: nearestEnemyDist,
         underAttack: underAttack === 1,
         hasActiveHuntParty,
@@ -14735,28 +14741,7 @@ export class RtsEngine {
 
           const distance = getDistance(anchorX, anchorZ, node.x, node.z);
           if (distance > 48) continue;
-          let enemyNearby = false;
-          for (const enemy of aiHostileUnits) {
-            if (enemy.hp <= 0 || enemy.garrisonedInBuildingId) continue;
-            const dx = enemy.x - node.x;
-            const dz = enemy.z - node.z;
-            if (dx * dx + dz * dz < 28 * 28) {
-              enemyNearby = true;
-              break;
-            }
-          }
-          if (!enemyNearby) {
-            for (const building of aiHostileBuildings) {
-              if (building.hp <= 0) continue;
-              const dx = building.x - node.x;
-              const dz = building.z - node.z;
-              if (dx * dx + dz * dz < 24 * 24) {
-                enemyNearby = true;
-                break;
-              }
-            }
-          }
-          if (enemyNearby) continue;
+          if (!isWildlifeHuntLocationSafe(node.x, node.z, aiHostileUnits, aiHostileBuildings)) continue;
 
           const yieldBonus = Math.min(8, node.amount / 220);
           const largeGameBonus = node.subtype === 'aurochs' ? 2 : 0;

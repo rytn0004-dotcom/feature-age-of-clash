@@ -1866,6 +1866,7 @@ export interface AiWildlifeHuntReadiness {
   food: number;
   armyCount: number;
   availableHunters: number;
+  availableFrontlineHunters: number;
   enemyDistance: number;
   underAttack: boolean;
   hasActiveHuntParty: boolean;
@@ -1881,6 +1882,8 @@ export function shouldAiOrganizeWildlifeHunt(state: AiWildlifeHuntReadiness): bo
     state.armyCount >= 9 &&
     Number.isFinite(state.availableHunters) &&
     state.availableHunters >= 4 &&
+    Number.isFinite(state.availableFrontlineHunters) &&
+    state.availableFrontlineHunters >= 2 &&
     !Number.isNaN(state.enemyDistance) &&
     state.enemyDistance >= 32 &&
     !state.underAttack &&

@@ -8,6 +8,7 @@ import {
   getWildlifeCarcassHarvestCapacity,
   getWildlifeInteractionQueryRadius,
   isWildlifeCarcassNode,
+  isWildlifeHuntLocationSafe,
   selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
   tryConsumeWildlifeHunterAttack,
@@ -792,4 +793,51 @@ test('carcass overflow wait slots recover duplicate, stale and invalid positions
     [3, 0, 1, 2],
   );
   assert.equal(new Set([first, duplicate, invalid, stale].map((unit) => unit.wildlifeCarcassWaitSlotIndex)).size, 4);
+});
+
+
+test('AI wildlife hunt safety rejects nearby hostile units and structures', () => {
+  assert.equal(isWildlifeHuntLocationSafe(0, 0, [], []), true);
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [{ x: 27.99, z: 0, hp: 100 }],
+    [],
+  ), false, 'live hostile units inside the 28-unit screen should block the hunt');
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [{ x: 28, z: 0, hp: 100 }],
+    [],
+  ), true, 'the exact unit-clearance boundary remains admissible');
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [],
+    [{ x: 0, z: 23.99, hp: 100 }],
+  ), false, 'hostile buildings inside the 24-unit screen should block the hunt');
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [],
+    [{ x: 24, z: 0, hp: 100 }],
+  ), true, 'the exact building-clearance boundary remains admissible');
+});
+
+test('AI wildlife hunt safety ignores dead/garrisoned enemies but fails closed on malformed live threats', () => {
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [
+      { x: 1, z: 0, hp: 0 },
+      { x: 1, z: 0, hp: 100, garrisonedInBuildingId: 'tower-1' },
+    ],
+    [{ x: 1, z: 0, hp: 0 }],
+  ), true);
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [{ x: Number.NaN, z: 0, hp: 100 }],
+    [],
+  ), false);
+  assert.equal(isWildlifeHuntLocationSafe(
+    0, 0,
+    [],
+    [{ x: 0, z: Number.POSITIVE_INFINITY, hp: 100 }],
+  ), false);
+  assert.equal(isWildlifeHuntLocationSafe(0, 0, [], [], -1, 24), false);
 });

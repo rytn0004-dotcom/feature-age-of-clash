@@ -57,6 +57,67 @@ export interface WildlifeCarcassNodeCandidate {
   animalHp?: number;
 }
 
+/** Keep coordinated hunts away from nearby enemy forces and hostile structures. */
+export const AI_WILDLIFE_HUNT_HOSTILE_UNIT_CLEARANCE = 28;
+export const AI_WILDLIFE_HUNT_HOSTILE_BUILDING_CLEARANCE = 24;
+
+export interface WildlifeHuntThreatUnitCandidate {
+  x: number;
+  z: number;
+  hp: number;
+  garrisonedInBuildingId?: string;
+}
+
+export interface WildlifeHuntThreatBuildingCandidate {
+  x: number;
+  z: number;
+  hp: number;
+}
+
+/**
+ * Returns false when a hostile force/building is too close to a hunting target.
+ * Dead and garrisoned units are ignored; invalid live-threat coordinates fail
+ * closed so malformed state cannot silently make a dangerous hunting location
+ * appear safe. Exact clearance boundaries remain admissible.
+ */
+export function isWildlifeHuntLocationSafe(
+  targetX: number,
+  targetZ: number,
+  hostileUnits: readonly WildlifeHuntThreatUnitCandidate[],
+  hostileBuildings: readonly WildlifeHuntThreatBuildingCandidate[],
+  unitClearance = AI_WILDLIFE_HUNT_HOSTILE_UNIT_CLEARANCE,
+  buildingClearance = AI_WILDLIFE_HUNT_HOSTILE_BUILDING_CLEARANCE,
+): boolean {
+  if (
+    !Number.isFinite(targetX) ||
+    !Number.isFinite(targetZ) ||
+    !Number.isFinite(unitClearance) ||
+    unitClearance < 0 ||
+    !Number.isFinite(buildingClearance) ||
+    buildingClearance < 0
+  ) return false;
+
+  const unitClearanceSquared = unitClearance * unitClearance;
+  for (const enemy of hostileUnits) {
+    if (!Number.isFinite(enemy.hp) || enemy.hp <= 0 || enemy.garrisonedInBuildingId) continue;
+    if (!Number.isFinite(enemy.x) || !Number.isFinite(enemy.z)) return false;
+    const dx = enemy.x - targetX;
+    const dz = enemy.z - targetZ;
+    if (dx * dx + dz * dz < unitClearanceSquared) return false;
+  }
+
+  const buildingClearanceSquared = buildingClearance * buildingClearance;
+  for (const building of hostileBuildings) {
+    if (!Number.isFinite(building.hp) || building.hp <= 0) continue;
+    if (!Number.isFinite(building.x) || !Number.isFinite(building.z)) return false;
+    const dx = building.x - targetX;
+    const dz = building.z - targetZ;
+    if (dx * dx + dz * dz < buildingClearanceSquared) return false;
+  }
+
+  return true;
+}
+
 /** A huntable resource becomes a carcass only after an explicit death signal. */
 export function isWildlifeCarcassNode(
   node?: WildlifeCarcassNodeCandidate | null,

@@ -843,6 +843,7 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
     food: 280,
     armyCount: 12,
     availableHunters: 5,
+    availableFrontlineHunters: 2,
     enemyDistance: 44,
     underAttack: false,
     hasActiveHuntParty: false,
@@ -852,6 +853,8 @@ test('aurochs: large huntable wildlife is dangerous, valuable, and excluded from
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, food: 700 }), false);
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, armyCount: 8 }), false);
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, availableHunters: 3 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, availableFrontlineHunters: 1 }), false);
+  assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, availableFrontlineHunters: Number.NaN }), false);
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, enemyDistance: 18 }), false);
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, enemyDistance: Number.NaN }), false);
   assert.equal(shouldAiOrganizeWildlifeHunt({ ...safeHuntWindow, underAttack: true }), false);
