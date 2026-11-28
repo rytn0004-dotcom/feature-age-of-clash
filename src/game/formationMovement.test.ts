@@ -174,6 +174,106 @@ test('formation terrain flow: exited and permanently unreachable units do not re
   );
 });
 
+test('formation terrain flow: traffic checks ignore invalid and abandoned occupants without changing capacity', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: 1,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const next = { id: 'next', x: 2.3, z: 0 };
+  const abandoned = {
+    id: 'abandoned',
+    x: 5,
+    z: 0,
+    stuckDuration: FORMATION_REGROUP_ABANDON_STALL_SECONDS,
+  };
+  const invalid = { id: 'invalid', x: Number.NaN, z: 0 };
+
+  assert.equal(
+    getFormationNarrowPassageTrafficScale('next', [abandoned, invalid, next], passage),
+    1,
+  );
+  assert.equal(
+    getFormationNarrowPassageTrafficScale(
+      'next',
+      [abandoned, invalid, { id: 'active', x: 5, z: 0 }, next],
+      passage,
+    ),
+    0,
+  );
+});
+
+test('formation terrain flow: missing or inactive members are never delayed by passage traffic', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: 1,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const occupant = { id: 'front', x: 5, z: 0 };
+
+  assert.equal(getFormationNarrowPassageTrafficScale('missing', [occupant], passage), 1);
+  assert.equal(
+    getFormationNarrowPassageTrafficScale(
+      'invalid-current',
+      [{ id: 'invalid-current', x: Number.NaN, z: 0 }, occupant],
+      passage,
+    ),
+    1,
+  );
+  assert.equal(
+    getFormationNarrowPassageTrafficScale(
+      'abandoned-current',
+      [
+        { id: 'abandoned-current', x: 2.3, z: 0, stuckDuration: FORMATION_REGROUP_ABANDON_STALL_SECONDS },
+        occupant,
+      ],
+      passage,
+    ),
+    1,
+  );
+});
+
+test('formation terrain flow: same-position queue priority is independent of member iteration order', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: 1,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const alpha = { id: 'unit-a', x: 5, z: 0 };
+  const beta = { id: 'unit-b', x: 5, z: 0 };
+
+  assert.equal(getFormationNarrowPassageTrafficScale('unit-b', [alpha, beta], passage), 0);
+  assert.equal(getFormationNarrowPassageTrafficScale('unit-a', [alpha, beta], passage), 1);
+  assert.equal(getFormationNarrowPassageTrafficScale('unit-b', [beta, alpha], passage), 0);
+  assert.equal(getFormationNarrowPassageTrafficScale('unit-a', [beta, alpha], passage), 1);
+});
+
+test('formation terrain flow: malformed passage projections never count as corridor occupants', () => {
+  const passage = {
+    x: 5,
+    z: 0,
+    directionX: Number.NaN,
+    directionZ: 0,
+    width: 1.8,
+    halfLength: 1.8,
+  };
+  const members = [
+    { id: 'current', x: 5, z: 0 },
+    { id: 'nearby', x: 5, z: 0 },
+  ];
+
+  assert.equal(getFormationNarrowPassageTrafficScale('current', members, passage), 1);
+});
+
 
 test('combat tactics: infantry slots form a stable frontline without exceeding melee range', () => {
   const members = [
