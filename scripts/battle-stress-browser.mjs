@@ -1133,7 +1133,7 @@ async function main() {
           "    return { requestedWorkers: workers.length, assignedWorkers: choices.filter(Boolean).length, corpseAssignments: choices.filter((choice) => choice?.id === corpse.id).length, berryAssignments: choices.filter((choice) => choice?.id === berry.id).length, farmAssignments: choices.filter((choice) => choice?.id === farm.id).length, selectedSubtypes: [...new Set(choices.filter(Boolean).map((choice) => choice.subtype))] };",
           "  } finally { e.resourceNodes = originalNodes; e.rebuildResourceNodeLookup(); }",
           "})()",
-        ].join("\\n"));
+        ].join("\n"));
         assert.equal(wildlifeAiFoodFallback.assignedWorkers, wildlifeAiFoodFallback.requestedWorkers, "AI failed to find an alternative food source for every eligible worker.");
         assert.equal(wildlifeAiFoodFallback.corpseAssignments, 0, "AI overflow assignments returned to an already-full carcass.");
         assert.equal(wildlifeAiFoodFallback.berryAssignments + wildlifeAiFoodFallback.farmAssignments, wildlifeAiFoodFallback.requestedWorkers, "AI did not keep the overflow roster on usable food sources.");
