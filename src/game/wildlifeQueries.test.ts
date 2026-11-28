@@ -438,6 +438,7 @@ function makeCarcassWorker(
     garrisoned?: boolean;
     cargo?: number;
     carryCapacity?: number;
+    harvestActive?: boolean;
   } = {},
 ) {
   return {
@@ -448,6 +449,8 @@ function makeCarcassWorker(
     state: options.state ?? 'gathering',
     targetResourceNodeId: options.nodeId ?? 'carcass-1',
     garrisonedInBuildingId: options.garrisoned ? 'town-center' : undefined,
+    wildlifeCarcassHarvestNodeId: options.harvestActive ? (options.nodeId ?? 'carcass-1') : undefined,
+    wildlifeCarcassHarvestActive: options.harvestActive ?? false,
     carryingResource: options.cargo === undefined ? undefined : { amount: options.cargo },
     unitDef: {
       category: options.category ?? 'worker',
@@ -519,6 +522,83 @@ test('carcass harvester selection prefers the closest villagers and resolves tie
 
   assert.deepEqual(selected.map((unit) => unit.id), ['worker-near', 'worker-a', 'worker-b']);
   assert.deepEqual(scratch.distances, [0.5, 2, 2]);
+});
+
+test('carcass slot retention prevents near-equal villagers from swapping every refresh', () => {
+  const incumbent = makeCarcassWorker('incumbent', 5, 0, { harvestActive: true });
+  const newcomer = makeCarcassWorker('newcomer', 4, 0);
+  const scratch = makeCarcassSelectionScratch();
+
+  let selected = selectNearestWildlifeCarcassHarvesters(
+    [newcomer, incumbent],
+    'carcass-1',
+    0,
+    0,
+    1,
+    scratch,
+  );
+  assert.deepEqual(selected.map((unit) => unit.id), ['incumbent']);
+
+  // A genuinely closer newcomer can still take over the slot.
+  newcomer.x = 2;
+  selected = selectNearestWildlifeCarcassHarvesters(
+    [newcomer, incumbent],
+    'carcass-1',
+    0,
+    0,
+    1,
+    scratch,
+  );
+  assert.deepEqual(selected.map((unit) => unit.id), ['newcomer']);
+});
+
+test('a full-cargo incumbent releases its carcass slot to the next eligible villager', () => {
+  const fullIncumbent = makeCarcassWorker('full-incumbent', 0.5, 0, {
+    harvestActive: true,
+    cargo: 40,
+  });
+  const waitingWorker = makeCarcassWorker('waiting-worker', 7, 0);
+  const selected = selectNearestWildlifeCarcassHarvesters(
+    [fullIncumbent, waitingWorker],
+    'carcass-1',
+    0,
+    0,
+    1,
+    makeCarcassSelectionScratch(),
+  );
+
+  assert.deepEqual(selected.map((unit) => unit.id), ['waiting-worker']);
+});
+
+test('separate carcasses maintain independent work caps without sharing villagers', () => {
+  const workers = [
+    ...Array.from({ length: 24 }, (_, index) =>
+      makeCarcassWorker('deer-worker-' + index, index / 4, 0, { nodeId: 'deer-carcass' }),
+    ),
+    ...Array.from({ length: 24 }, (_, index) =>
+      makeCarcassWorker('boar-worker-' + index, index / 4, 0, { nodeId: 'boar-carcass' }),
+    ),
+  ];
+  const deer = selectNearestWildlifeCarcassHarvesters(
+    workers.filter((worker) => worker.targetResourceNodeId === 'deer-carcass'),
+    'deer-carcass',
+    0,
+    0,
+    getWildlifeCarcassHarvestCapacity('hunt'),
+    makeCarcassSelectionScratch(),
+  );
+  const boar = selectNearestWildlifeCarcassHarvesters(
+    workers.filter((worker) => worker.targetResourceNodeId === 'boar-carcass'),
+    'boar-carcass',
+    0,
+    0,
+    getWildlifeCarcassHarvestCapacity('boar'),
+    makeCarcassSelectionScratch(),
+  );
+
+  assert.equal(deer.length, 3);
+  assert.equal(boar.length, 4);
+  assert.equal(new Set([...deer, ...boar].map((worker) => worker.id)).size, 7);
 });
 
 test('carcass harvester selection excludes invalid, busy, naval, garrisoned and full-cargo units', () => {

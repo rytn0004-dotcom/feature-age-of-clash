@@ -44,6 +44,7 @@ import {
   applyWildlifeHunterAttacks,
   collectWildlifeUnitInteractions,
   getWildlifeCarcassHarvestCapacity,
+  WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS,
   getWildlifeInteractionQueryRadius,
   selectNearestWildlifeCarcassHarvesters,
   selectNearestWildlifeHuntParty,
@@ -664,6 +665,8 @@ export class RtsEngine {
   private wildlifeCarcassCandidatesByNode = new Map<string, UnitEntity[]>();
   private wildlifeCarcassCandidateArrayPool: UnitEntity[][] = [];
   private wildlifeCarcassCandidateArrayPoolCursor = 0;
+  /** Slot refresh is intentionally slower than unit movement to prevent per-frame roster churn. */
+  private wildlifeCarcassAssignmentRefreshAccumulator = WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS;
   private wildlifeCarcassHarvestSelectionScratch: WildlifeCarcassHarvestSelectionScratch<UnitEntity> = {
     units: [],
     distances: [],
@@ -8261,9 +8264,9 @@ export class RtsEngine {
   }
 
   /**
-   * Rebuild deterministic carcass work slots once per unit-update slice.
-   * Only the closest eligible villagers receive active positions; the rest wait
-   * outside the work ring and are promoted automatically when a slot opens.
+   * Rebuild deterministic carcass work slots at a bounded simulation cadence.
+   * Current workers keep their slots unless a newcomer is meaningfully closer;
+   * overflow villagers wait outside the work ring and are promoted on refresh.
    */
   private rebuildWildlifeCarcassHarvestAssignments(): void {
     for (const candidates of this.wildlifeCarcassCandidatesByNode.values()) candidates.length = 0;
@@ -8271,8 +8274,6 @@ export class RtsEngine {
     this.wildlifeCarcassCandidateArrayPoolCursor = 0;
 
     for (const unit of this.units) {
-      unit.wildlifeCarcassHarvestNodeId = undefined;
-      unit.wildlifeCarcassHarvestActive = undefined;
       if (
         !Number.isFinite(unit.hp) ||
         unit.hp <= 0 ||
@@ -8281,10 +8282,18 @@ export class RtsEngine {
         unit.state !== 'gathering' ||
         !unit.targetResourceNodeId ||
         unit.garrisonedInBuildingId
-      ) continue;
+      ) {
+        unit.wildlifeCarcassHarvestNodeId = undefined;
+        unit.wildlifeCarcassHarvestActive = undefined;
+        continue;
+      }
 
       const node = this.resourceNodeLookupById.get(unit.targetResourceNodeId);
-      if (!node || !isHuntableWildlifeSubtype(node.subtype)) continue;
+      if (!node || !isHuntableWildlifeSubtype(node.subtype)) {
+        unit.wildlifeCarcassHarvestNodeId = undefined;
+        unit.wildlifeCarcassHarvestActive = undefined;
+        continue;
+      }
 
       let candidates = this.wildlifeCarcassCandidatesByNode.get(node.id);
       if (!candidates) {
@@ -8297,6 +8306,8 @@ export class RtsEngine {
         candidates.length = 0;
         this.wildlifeCarcassCandidatesByNode.set(node.id, candidates);
       }
+      // Keep the previous slot marker until selection so incumbents can receive
+      // the small hysteresis bonus that prevents movement-induced role oscillation.
       candidates.push(unit);
     }
 
@@ -8304,11 +8315,12 @@ export class RtsEngine {
     for (const [nodeId, candidates] of this.wildlifeCarcassCandidatesByNode) {
       const node = this.resourceNodeLookupById.get(nodeId);
       const capacity = getWildlifeCarcassHarvestCapacity(node?.subtype);
-      if (!node || node.amount <= 0 || capacity <= 0) continue;
-
-      for (const candidate of candidates) {
-        candidate.wildlifeCarcassHarvestNodeId = nodeId;
-        candidate.wildlifeCarcassHarvestActive = false;
+      if (!node || node.amount <= 0 || capacity <= 0) {
+        for (const candidate of candidates) {
+          candidate.wildlifeCarcassHarvestNodeId = undefined;
+          candidate.wildlifeCarcassHarvestActive = undefined;
+        }
+        continue;
       }
 
       const selected = selectNearestWildlifeCarcassHarvesters(
@@ -8319,6 +8331,14 @@ export class RtsEngine {
         capacity,
         scratch,
       );
+      // First release every prior slot in this carcass group, then re-apply the
+      // bounded selection. Full-cargo, dead, invalid or re-tasked workers cannot
+      // keep a stale slot occupied.
+      for (const candidate of candidates) {
+        candidate.wildlifeCarcassHarvestNodeId = nodeId;
+        candidate.wildlifeCarcassHarvestActive = false;
+      }
+
       const phase = getWildlifeHuntFallbackAngle(nodeId);
       for (let slotIndex = 0; slotIndex < selected.length; slotIndex++) {
         const worker = selected[slotIndex];
@@ -8336,7 +8356,11 @@ export class RtsEngine {
   private updateUnits(dt: number) {
     this.rebuildCombatEntityLookups();
     this.rebuildResourceNodeLookup();
-    this.rebuildWildlifeCarcassHarvestAssignments();
+    this.wildlifeCarcassAssignmentRefreshAccumulator += Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    if (this.wildlifeCarcassAssignmentRefreshAccumulator >= WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS) {
+      this.wildlifeCarcassAssignmentRefreshAccumulator %= WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS;
+      this.rebuildWildlifeCarcassHarvestAssignments();
+    }
     this.returnDropOffReadyKeys.clear();
     this.rebuildActiveConstructionWorkerCounts();
     if (

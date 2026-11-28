@@ -51,6 +51,12 @@ export function getWildlifeCarcassHarvestCapacity(subtype?: string): number {
   return 0;
 }
 
+/** Re-evaluate carcass work slots at a stable cadence rather than on every render/update slice. */
+export const WILDLIFE_CARCASS_ASSIGNMENT_REFRESH_SECONDS = 0.12;
+
+/** Keep a current worker in its slot unless a newcomer is meaningfully closer. */
+export const WILDLIFE_CARCASS_SLOT_RETENTION_DISTANCE = 2;
+
 export interface WildlifeCarcassHarvesterCandidate {
   id: string;
   x: number;
@@ -59,6 +65,8 @@ export interface WildlifeCarcassHarvesterCandidate {
   state: string;
   targetResourceNodeId?: string;
   garrisonedInBuildingId?: string;
+  wildlifeCarcassHarvestNodeId?: string;
+  wildlifeCarcassHarvestActive?: boolean;
   carryingResource?: { amount: number };
   unitDef: {
     category: string;
@@ -77,8 +85,10 @@ export interface WildlifeCarcassHarvestSelectionScratch<
 
 /**
  * Selects only the nearest eligible villagers up to the carcass's physical work
- * capacity. The bounded insertion buffer is O(candidateCount * capacity), so a
- * 400-unit crowd does not require sorting or allocating a full candidate copy.
+ * capacity. Existing workers keep their slot unless a newcomer is more than
+ * WILDLIFE_CARCASS_SLOT_RETENTION_DISTANCE closer, avoiding repeated role swaps
+ * while units are pathing around one another. The bounded insertion buffer is
+ * O(candidateCount * capacity), with no full-candidate sort or copy.
  */
 export function selectNearestWildlifeCarcassHarvesters<
   Unit extends WildlifeCarcassHarvesterCandidate,
@@ -127,14 +137,26 @@ export function selectNearestWildlifeCarcassHarvesters<
     const distance = Math.hypot(candidate.x - nodeX, candidate.z - nodeZ);
     if (!Number.isFinite(distance)) continue;
 
+    const candidateIsIncumbent =
+      candidate.wildlifeCarcassHarvestNodeId === nodeId &&
+      candidate.wildlifeCarcassHarvestActive === true;
+    const candidatePriority = distance - (
+      candidateIsIncumbent ? WILDLIFE_CARCASS_SLOT_RETENTION_DISTANCE : 0
+    );
     let insertAt = output.distances.length;
     while (insertAt > 0) {
       const previousDistance = output.distances[insertAt - 1];
       const previous = output.units[insertAt - 1];
-      const isCloser = distance < previousDistance - 1e-9;
-      const isStableTie = Math.abs(distance - previousDistance) <= 1e-9 &&
+      const previousIsIncumbent =
+        previous.wildlifeCarcassHarvestNodeId === nodeId &&
+        previous.wildlifeCarcassHarvestActive === true;
+      const previousPriority = previousDistance - (
+        previousIsIncumbent ? WILDLIFE_CARCASS_SLOT_RETENTION_DISTANCE : 0
+      );
+      const isHigherPriority = candidatePriority < previousPriority - 1e-9;
+      const isStableTie = Math.abs(candidatePriority - previousPriority) <= 1e-9 &&
         candidate.id.localeCompare(previous.id) < 0;
-      if (!isCloser && !isStableTie) break;
+      if (!isHigherPriority && !isStableTie) break;
       insertAt--;
     }
     if (insertAt >= limit) continue;
