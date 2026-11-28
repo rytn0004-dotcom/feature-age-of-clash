@@ -4090,6 +4090,34 @@ test('melee hunters reposition inside attack range but fall back to attacking wh
   );
 });
 
+test('solo hunt orders keep individual approach sides while group orders divide the ring', async () => {
+  const { getWildlifeHuntOrderSlotAngle, getWildlifeHuntPartySlotAngle } = await import('./rules');
+  const firstUnitAngle = 0.42;
+  const secondUnitAngle = 2.18;
+  const phase = 0.9;
+
+  assert.equal(
+    getWildlifeHuntOrderSlotAngle(0, 1, phase, firstUnitAngle),
+    firstUnitAngle,
+    'one hunter uses its own stable side instead of the shared animal phase',
+  );
+  assert.equal(
+    getWildlifeHuntOrderSlotAngle(0, 1, phase, secondUnitAngle),
+    secondUnitAngle,
+    'separately ordered hunters retain distinct sides around the same animal',
+  );
+  assert.equal(
+    getWildlifeHuntOrderSlotAngle(1, 3, phase, secondUnitAngle),
+    getWildlifeHuntPartySlotAngle(1, 3, phase),
+    'simultaneously ordered groups still receive evenly spaced sectors',
+  );
+  assert.equal(
+    getWildlifeHuntOrderSlotAngle(0, 0, phase, Number.NaN),
+    0,
+    'empty or malformed solo orders fall back to a safe zero angle',
+  );
+});
+
 test('melee wildlife approach points keep a safe attack radius and reuse caller storage', async () => {
   const { writeWildlifeMeleeHuntApproachPoint, getWildlifeMeleeHuntApproachRange } = await import('./rules');
   const output = { x: 0, z: 0 };

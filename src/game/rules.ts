@@ -1712,6 +1712,22 @@ export function getWildlifeMeleeHuntApproachRange(nodeRadius: number, weaponRang
   return Math.max(2.4, Math.min(contactDistance, attackReach));
 }
 
+/**
+ * Assigns a stable individual side for a solo order, but evenly spaces hunters
+ * when several units receive the same order together. This avoids every unit
+ * sent separately to one animal converging on the same node-derived angle.
+ */
+export function getWildlifeHuntOrderSlotAngle(
+  slotIndex: number,
+  slotCount: number,
+  phaseOffset: number,
+  individualFallbackAngle: number,
+): number {
+  const safeFallback = Number.isFinite(individualFallbackAngle) ? individualFallbackAngle : 0;
+  if (!Number.isFinite(slotCount) || slotCount <= 1) return safeFallback;
+  return getWildlifeHuntPartySlotAngle(slotIndex, slotCount, phaseOffset);
+}
+
 /** Assigns deterministic, evenly spaced approach sectors to a coordinated hunting party. */
 export function getWildlifeHuntPartySlotAngle(
   slotIndex: number,

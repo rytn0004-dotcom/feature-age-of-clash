@@ -165,6 +165,7 @@ import {
   canUnitReceiveGatherOrder,
   canUnitUseWildlifeMeleeHuntSlot,
   getWildlifeMeleeHuntApproachRange,
+  getWildlifeHuntOrderSlotAngle,
   getWildlifeHuntPartySlotAngle,
   shouldRepositionWildlifeMeleeHunter,
   WILDLIFE_HUNT_SLOT_TOLERANCE,
@@ -4427,10 +4428,11 @@ export class RtsEngine {
           ? {
               type: 'gather' as const,
               nodeId,
-              wildlifeHuntApproachAngle: getWildlifeHuntPartySlotAngle(
+              wildlifeHuntApproachAngle: getWildlifeHuntOrderSlotAngle(
                 wildlifeHunterIndex++,
                 wildlifeHunterCount,
                 wildlifeHuntPhase,
+                getWildlifeHuntFallbackAngle(unit.id),
               ),
             }
           : { type: 'gather' as const, nodeId };
@@ -4441,10 +4443,11 @@ export class RtsEngine {
       unit.commandQueue = undefined;
       unit.queuedGatherStopAfterDeposit = false;
       if (isLiveWildlifeOrder && canUnitUseWildlifeMeleeHuntSlot(unit.unitDef.category)) {
-        unit.wildlifeHuntApproachAngle = getWildlifeHuntPartySlotAngle(
+        unit.wildlifeHuntApproachAngle = getWildlifeHuntOrderSlotAngle(
           wildlifeHunterIndex,
           wildlifeHunterCount,
           wildlifeHuntPhase,
+          getWildlifeHuntFallbackAngle(unit.id),
         );
         unit.wildlifeHuntApproachTargetNodeId = nodeId;
         wildlifeHunterIndex++;
@@ -9883,10 +9886,10 @@ export class RtsEngine {
       const approachAngle = typeof assignedAngle === 'number' && Number.isFinite(assignedAngle)
         ? assignedAngle
         : fallbackAngle;
-      meleeApproachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
+      meleeApproachGoal = unit.wildlifeHuntApproachGoal;
       if (!meleeApproachGoal) {
         meleeApproachGoal = { x: node.x, z: node.z };
-        (unit as any)._wildlifeHuntApproachGoal = meleeApproachGoal;
+        unit.wildlifeHuntApproachGoal = meleeApproachGoal;
       }
       writeWildlifeMeleeHuntApproachPoint(
         meleeApproachGoal,

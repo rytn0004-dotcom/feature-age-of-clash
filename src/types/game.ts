@@ -335,6 +335,8 @@ export interface UnitEntity extends EntityCommon {
   /** Stable melee ring slot reserved by a direct or queued wildlife hunt order. */
   wildlifeHuntApproachAngle?: number;
   wildlifeHuntApproachTargetNodeId?: string;
+  /** Reused stand-off point updated as the hunted animal moves. */
+  wildlifeHuntApproachGoal?: { x: number; z: number };
   abilityCooldown: number;
   velocity: { x: number; z: number };
   kills: number;
