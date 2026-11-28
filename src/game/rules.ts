@@ -3461,6 +3461,9 @@ export function getContestedShrineSummary(
 
 // ------------------ WILD DEER (山羌) FLEEING & LOCOMOTION ------------------
 
+/** Fixed world-space travel budget for one deer panic; the flee timer remains a hard safety cap. */
+export const WILD_ANIMAL_ESCAPE_DISTANCE = 5;
+
 export function triggerWildAnimalPanic(
   node: ResourceNode,
   threatX: number,
@@ -3472,6 +3475,7 @@ export function triggerWildAnimalPanic(
   // One panic per encounter. Repeated harvest hits from a pursuing worker must not
   // keep extending the run timer or reset its cooldown every attack interval.
   node.animalPanicSuppressed = true;
+  node.animalFleeDistanceRemaining = WILD_ANIMAL_ESCAPE_DISTANCE;
   node.animalFleeUntil = Math.max(node.animalFleeUntil || 0, simTime + duration);
   node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + duration + 1.5);
   const dx = node.x - threatX;
@@ -3564,7 +3568,13 @@ export function stepWildAnimalState(
     triggerWildAnimalPanic(node, nearestThreat.x, nearestThreat.z, simTime, 1.9);
   }
 
-  const wasFleeing = (node.animalFleeUntil || 0) > simTime;
+  let fleeDistanceRemaining = Number.isFinite(node.animalFleeDistanceRemaining)
+    ? Math.max(0, node.animalFleeDistanceRemaining as number)
+    : (node.animalFleeUntil || 0) > simTime
+      ? WILD_ANIMAL_ESCAPE_DISTANCE
+      : 0;
+  node.animalFleeDistanceRemaining = fleeDistanceRemaining;
+  const wasFleeing = (node.animalFleeUntil || 0) > simTime && fleeDistanceRemaining > 0;
   let isFleeing = wasFleeing;
 
   if (isFleeing) {
@@ -3590,8 +3600,12 @@ export function stepWildAnimalState(
     }
   } else {
     // Clean transition out of fleeing into calm grazing cooldown
-    if ((node.animalFleeUntil || 0) > 0 && (node.animalFleeUntil || 0) <= simTime) {
+    if (
+      (node.animalFleeUntil || 0) > 0 &&
+      ((node.animalFleeUntil || 0) <= simTime || fleeDistanceRemaining <= 0)
+    ) {
       node.animalFleeUntil = 0;
+      node.animalFleeDistanceRemaining = 0;
       node.animalFleeCooldown = Math.max(node.animalFleeCooldown || 0, simTime + 1.4);
       node.animalWanderMoving = false;
       node.animalWanderTimer = 2.2 + rand() * 2.2;
@@ -3649,6 +3663,21 @@ export function stepWildAnimalState(
   let nx = Math.max(-91, Math.min(91, node.x + (node.animalVx || 0) * clampedDt));
   let nz = Math.max(-91, Math.min(91, node.z + (node.animalVz || 0) * clampedDt));
 
+  // Clamp the final flee step to the remaining travel budget so an unblocked
+  // deer always stops at the same total escape distance, regardless of frame rate.
+  if (isFleeing && fleeDistanceRemaining > 0) {
+    const proposedDx = nx - prevX;
+    const proposedDz = nz - prevZ;
+    const proposedDistance = Math.hypot(proposedDx, proposedDz);
+    if (proposedDistance > fleeDistanceRemaining) {
+      const scale = fleeDistanceRemaining / proposedDistance;
+      nx = prevX + proposedDx * scale;
+      nz = prevZ + proposedDz * scale;
+      node.animalVx = (node.animalVx || 0) * scale;
+      node.animalVz = (node.animalVz || 0) * scale;
+    }
+  }
+
   if (isBlocked(nx, nz)) {
     nx = prevX;
     nz = prevZ;
@@ -3663,6 +3692,14 @@ export function stepWildAnimalState(
   const dxMoved = nx - prevX;
   const dzMoved = nz - prevZ;
   const distMoved = Math.hypot(dxMoved, dzMoved);
+  if (wasFleeing && distMoved > 0) {
+    fleeDistanceRemaining = Math.max(0, fleeDistanceRemaining - distMoved);
+    node.animalFleeDistanceRemaining = fleeDistanceRemaining;
+    if (fleeDistanceRemaining <= 1e-7) {
+      node.animalFleeDistanceRemaining = 0;
+      node.animalFleeUntil = simTime;
+    }
+  }
   const actualSpeed = distMoved / clampedDt;
 
   // Update facing strictly from actual post-collision translation so the model

@@ -2452,6 +2452,55 @@ test('wild deer (山羌): steers cleanly around obstacles, avoids jumping when b
   assert.equal(followedDeer.animalPanicSuppressed, false, 'Deer re-arms only after the threat leaves');
 });
 
+
+
+test('wild deer panic travels a fixed world-space distance before settling into cooldown', async () => {
+  const { stepWildAnimalState, triggerWildAnimalPanic, WILD_ANIMAL_ESCAPE_DISTANCE } = await import('./rules');
+  const deer: ResourceNode = {
+    id: 'deer_fixed_escape_distance',
+    resourceType: 'food',
+    subtype: 'hunt',
+    x: 0,
+    z: 0,
+    amount: 300,
+    maxAmount: 300,
+    animalHp: 32,
+    animalMaxHp: 32,
+    animalAlive: true,
+    animalVx: 0,
+    animalVz: 0,
+    animalWanderTimer: 100,
+  };
+  triggerWildAnimalPanic(deer, -3, 0, 80, 10);
+
+  let travelled = 0;
+  let steps = 0;
+  let last = stepWildAnimalState(deer, null, 80.05, 0.05, () => false, () => 0.5);
+  travelled += last.distMoved;
+  steps++;
+  while ((deer.animalFleeDistanceRemaining || 0) > 0 && steps < 200) {
+    last = stepWildAnimalState(deer, null, 80.05 + steps * 0.05, 0.05, () => false, () => 0.5);
+    travelled += last.distMoved;
+    steps++;
+  }
+
+  assert.ok(steps < 200, 'the fixed escape budget must finish without waiting for the panic timeout');
+  assert.ok(Math.abs(travelled - WILD_ANIMAL_ESCAPE_DISTANCE) < 1e-7);
+  assert.equal(deer.animalFleeDistanceRemaining, 0);
+
+  const settled = stepWildAnimalState(
+    deer,
+    null,
+    80.05 + steps * 0.05,
+    0.05,
+    () => false,
+    () => 0.5,
+  );
+  assert.equal(settled.isFleeing, false);
+  assert.equal(deer.animalFleeUntil, 0);
+  assert.ok((deer.animalFleeCooldown || 0) > 80.05 + steps * 0.05);
+});
+
 test('wild deer (山羌): body heading matches actual movement immediately after a sharp direction change', async () => {
   const { stepWildAnimalState } = await import('./rules');
   const deer: ResourceNode = {

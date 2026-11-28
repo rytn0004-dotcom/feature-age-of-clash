@@ -474,6 +474,8 @@ export interface ResourceNode {
   animalVz?: number;
   /** Simulation time until which active panic fleeing persists after losing sight of danger */
   animalFleeUntil?: number;
+  /** Remaining world-space distance in the current panic run. */
+  animalFleeDistanceRemaining?: number;
   /** Cooldown after sustained panic or clean escape before another jittery sprint */
   animalFleeCooldown?: number;
   /** Remains disarmed until nearby threats leave the re-arm radius; prevents endless flee refreshes. */

@@ -9878,6 +9878,7 @@ export class RtsEngine {
           node.animalVx = 0;
           node.animalVz = 0;
           node.animalFleeUntil = 0;
+          node.animalFleeDistanceRemaining = 0;
           node.animalMoveBlend = 0;
           node.animalAggroTargetId = undefined;
           node.animalAggroUntil = 0;
@@ -11393,6 +11394,7 @@ export class RtsEngine {
       node.animalVx = 0;
       node.animalVz = 0;
       node.animalFleeUntil = 0;
+          node.animalFleeDistanceRemaining = 0;
       node.animalMoveBlend = 0;
       node.animalAggroTargetId = undefined;
       node.animalAggroUntil = 0;
