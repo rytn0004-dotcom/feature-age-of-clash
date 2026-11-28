@@ -21,19 +21,23 @@ export interface WildlifeThreatVector {
 export interface WildlifeHuntPartyCandidate {
   x: number;
   z: number;
+  unitDef: { category: string };
 }
 
 export interface WildlifeHuntPartySelectionScratch<
   Unit extends WildlifeHuntPartyCandidate = WildlifeHuntPartyCandidate,
 > {
   units: Unit[];
-  /** Distances are kept beside selected units so each candidate is measured only once. */
   distances: number[];
+  /** Top frontline candidates are staged here before the nearest remaining hunters are appended. */
+  frontlineUnits: Unit[];
+  frontlineDistances: number[];
 }
 
 /**
- * Selects the nearest N hunters in stable roster order.
- * The caller owns both output arrays; this keeps AI hunting selection allocation-free.
+ * Selects a nearby hunting party while reserving frontline coverage when available.
+ * The output is ordered frontliners first, then the nearest remaining hunters.
+ * All arrays are caller-owned and reused; equal-distance candidates retain roster order.
  */
 export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCandidate>(
   candidates: readonly Unit[],
@@ -41,28 +45,76 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
   targetZ: number,
   maxCount: number,
   output: WildlifeHuntPartySelectionScratch<Unit>,
+  preferredFrontlineCount = 0,
 ): Unit[] {
   output.units.length = 0;
   output.distances.length = 0;
+  output.frontlineUnits.length = 0;
+  output.frontlineDistances.length = 0;
 
   if (
     !Number.isFinite(targetX) ||
     !Number.isFinite(targetZ) ||
-    !Number.isFinite(maxCount)
+    !Number.isFinite(maxCount) ||
+    !Number.isFinite(preferredFrontlineCount)
   ) {
     return output.units;
   }
 
   const limit = Math.min(candidates.length, Math.max(0, Math.floor(maxCount)));
+  const frontlineLimit = Math.min(limit, Math.max(0, Math.floor(preferredFrontlineCount)));
   if (limit === 0) return output.units;
 
+  // First retain the nearest melee/cavalry screen. These units protect ranged hunters
+  // from being the only available target when dangerous wildlife counterattacks.
+  if (frontlineLimit > 0) {
+    for (const candidate of candidates) {
+      if (
+        candidate.unitDef.category !== 'melee' &&
+        candidate.unitDef.category !== 'cavalry'
+      ) continue;
+      if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
+
+      const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
+      let insertAt = output.frontlineDistances.length;
+      while (insertAt > 0 && distance < output.frontlineDistances[insertAt - 1]) {
+        insertAt--;
+      }
+      if (insertAt >= frontlineLimit) continue;
+
+      const nextLength = Math.min(frontlineLimit, output.frontlineUnits.length + 1);
+      for (let index = nextLength - 1; index > insertAt; index--) {
+        output.frontlineUnits[index] = output.frontlineUnits[index - 1];
+        output.frontlineDistances[index] = output.frontlineDistances[index - 1];
+      }
+      output.frontlineUnits[insertAt] = candidate;
+      output.frontlineDistances[insertAt] = distance;
+      output.frontlineUnits.length = nextLength;
+      output.frontlineDistances.length = nextLength;
+    }
+  }
+
+  const frontlineCount = output.frontlineUnits.length;
+  for (let index = 0; index < frontlineCount; index++) {
+    output.units.push(output.frontlineUnits[index]);
+    output.distances.push(output.frontlineDistances[index]);
+  }
+
+  // Fill remaining slots with the nearest non-reserved candidates. Frontline units
+  // outside the protected pair may still fill spare slots when fewer other roles exist.
   for (const candidate of candidates) {
-    if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
+    let alreadyReserved = false;
+    for (let index = 0; index < frontlineCount; index++) {
+      if (output.frontlineUnits[index] === candidate) {
+        alreadyReserved = true;
+        break;
+      }
+    }
+    if (alreadyReserved || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.z)) continue;
 
     const distance = Math.hypot(candidate.x - targetX, candidate.z - targetZ);
-    let insertAt = output.distances.length;
-    // Strict comparison preserves original roster order for equal-distance candidates.
-    while (insertAt > 0 && distance < output.distances[insertAt - 1]) {
+    let insertAt = output.units.length;
+    while (insertAt > frontlineCount && distance < output.distances[insertAt - 1]) {
       insertAt--;
     }
     if (insertAt >= limit) continue;

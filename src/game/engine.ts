@@ -212,6 +212,7 @@ import {
   getNodeTierGatherMultiplier,
   getWildlifeMaxHealth,
   isDangerousWildlifeSubtype,
+  isLiveDangerousWildlife,
   isHuntableWildlifeSubtype,
   canUnitHuntDangerousWildlife,
   shouldAiOrganizeWildlifeHunt,
@@ -544,6 +545,8 @@ export class RtsEngine {
   private aiWildlifeHuntPartyScratch: WildlifeHuntPartySelectionScratch<UnitEntity> = {
     units: [],
     distances: [],
+    frontlineUnits: [],
+    frontlineDistances: [],
   };
   private aiNodeWorkerCountScratch = new Map<string, number>();
   private aiNodeGatherRateScratch = new Map<string, number>();
@@ -1728,6 +1731,8 @@ export class RtsEngine {
     this.aiWildlifeHuntCandidatesScratch.length = 0;
     this.aiWildlifeHuntPartyScratch.units.length = 0;
     this.aiWildlifeHuntPartyScratch.distances.length = 0;
+    this.aiWildlifeHuntPartyScratch.frontlineUnits.length = 0;
+    this.aiWildlifeHuntPartyScratch.frontlineDistances.length = 0;
     this.aiNodeWorkerCountScratch.clear();
     this.aiNodeGatherRateScratch.clear();
     this.aiLandResourceNodeScratch.length = 0;
@@ -9606,7 +9611,7 @@ export class RtsEngine {
     for (const node of this.resourceNodes) {
       if (node.amount <= 0 || (resourceType && node.resourceType !== resourceType)) continue;
       if (!canUnitGatherNode(worker.unitDef, node)) continue;
-      if (isDangerousWildlifeSubtype(node.subtype) && !options.allowDangerousHunt) continue;
+      if (isLiveDangerousWildlife(node) && !options.allowDangerousHunt) continue;
       if (!options.allowDeepFish && node.subtype === 'deep_fish') continue;
       if (options.fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
       if (options.excludedNodeIds?.has(node.id)) continue;
@@ -14365,6 +14370,7 @@ export class RtsEngine {
             targetWildlife.z,
             4,
             this.aiWildlifeHuntPartyScratch,
+            2,
           );
           const animalName = targetWildlife.subtype === 'aurochs' ? '原牛' : '野豬';
           for (const hunter of huntingParty) {
@@ -14466,7 +14472,7 @@ export class RtsEngine {
       const seenResourceTypes = this.aiAvailableResourceTypeSetScratch;
       seenResourceTypes.clear();
       for (const node of this.resourceNodes) {
-        if (node.subtype === 'deep_fish' || isDangerousWildlifeSubtype(node.subtype)) continue;
+        if (node.subtype === 'deep_fish' || isLiveDangerousWildlife(node)) continue;
         landNodes.push(node);
         if (node.amount > 0 && !seenResourceTypes.has(node.resourceType)) {
           seenResourceTypes.add(node.resourceType);

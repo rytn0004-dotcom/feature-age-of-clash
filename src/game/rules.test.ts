@@ -482,6 +482,44 @@ test('spatial: getDistance, findClosestResourceNode and findClosestEnemy', () =>
   assert.equal(enemy?.id, 'enemy1');
 });
 
+test('wildlife carcasses re-enter routine food selection while living dangerous animals remain excluded', async () => {
+  const { findBalancedResourceNode, findBestFoodResourceNode, isLiveDangerousWildlife } = await import('./rules');
+  const livingBoar: ResourceNode = {
+    id: 'living-boar',
+    resourceType: 'food',
+    subtype: 'boar',
+    x: 1,
+    z: 0,
+    amount: 900,
+    maxAmount: 900,
+    animalAlive: true,
+    animalHp: 200,
+  };
+  const deadBoar: ResourceNode = {
+    ...livingBoar,
+    id: 'dead-boar',
+    x: 2,
+    animalAlive: false,
+    animalHp: 0,
+  };
+  const deadAurochs: ResourceNode = {
+    ...livingBoar,
+    id: 'dead-aurochs',
+    subtype: 'aurochs',
+    x: 3,
+    animalAlive: false,
+    animalHp: 0,
+  };
+
+  assert.equal(isLiveDangerousWildlife(livingBoar), true);
+  assert.equal(isLiveDangerousWildlife(deadBoar), false);
+  assert.equal(isLiveDangerousWildlife(deadAurochs), false);
+  assert.equal(findBalancedResourceNode(0, 0, [livingBoar], 'food'), null);
+  assert.equal(findBalancedResourceNode(0, 0, [deadBoar], 'food')?.id, 'dead-boar');
+  assert.equal(findBestFoodResourceNode(0, 0, [livingBoar], 36), null);
+  assert.equal(findBestFoodResourceNode(0, 0, [deadBoar, deadAurochs], 36)?.id, 'dead-boar');
+});
+
 test('spatial: balanced resource selection distributes workers across available nodes', () => {
   const nodes: ResourceNode[] = [
     { id: 'wood-near', resourceType: 'wood', x: 4, z: 0, amount: 300, maxAmount: 300 },
@@ -512,6 +550,12 @@ test('spatial: balanced resource selection distributes workers across available 
     findBalancedResourceNode(0, 0, [boarNode], 'food', new Map(), Infinity, true)?.id,
     'dangerous-boar',
     'A coordinated hunting order may explicitly authorize the dangerous node'
+  );
+  const carcass = { ...boarNode, id: 'boar-carcass', animalAlive: false, animalHp: 0 };
+  assert.equal(
+    findBalancedResourceNode(0, 0, [carcass], 'food')?.id,
+    'boar-carcass',
+    'A dead animal is safe for routine villager gathering'
   );
 });
 

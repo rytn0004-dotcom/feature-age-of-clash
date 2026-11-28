@@ -1669,6 +1669,15 @@ export function isDangerousWildlifeSubtype(subtype?: ResourceNode['subtype'] | s
   return subtype === 'boar' || subtype === 'aurochs';
 }
 
+/** Only living boars/aurochs are unsafe for routine villager auto-assignment. */
+export function isLiveDangerousWildlife(
+  node: Pick<ResourceNode, 'subtype' | 'animalAlive' | 'animalHp'>,
+): boolean {
+  return isDangerousWildlifeSubtype(node.subtype) &&
+    node.animalAlive !== false &&
+    (node.animalHp === undefined || node.animalHp > 0);
+}
+
 /** Living animal nodes whose meat can only be harvested after the animal is killed. */
 export function isHuntableWildlifeSubtype(subtype?: ResourceNode['subtype'] | string): boolean {
   return subtype === 'hunt' || isDangerousWildlifeSubtype(subtype);
@@ -1899,7 +1908,7 @@ export function findBalancedResourceNode(
     if (node.amount <= 0 || (type && node.resourceType !== type)) continue;
     // Wild boars can injure isolated villagers; automatic economy dispatch
     // leaves them to deliberate hunting parties unless explicitly authorized.
-    if (isDangerousWildlifeSubtype(node.subtype) && !allowDangerousHunt) continue;
+    if (isLiveDangerousWildlife(node) && !allowDangerousHunt) continue;
     const distance = getDistance(x, z, node.x, node.z);
     if (distance > maxDistance) continue;
 
@@ -1978,7 +1987,7 @@ export function findBestFoodResourceNode(
 
   for (const node of nodes) {
     if (node.amount <= 0 || node.resourceType !== 'food') continue;
-    if (isDangerousWildlifeSubtype(node.subtype) && !allowDangerousHunt) continue;
+    if (isLiveDangerousWildlife(node) && !allowDangerousHunt) continue;
     if (!allowDeepFish && node.subtype === 'deep_fish') continue;
     if (fishOnly && node.subtype !== 'deep_fish' && node.subtype !== 'shore_fish') continue;
     const dist = getDistance(x, z, node.x, node.z);

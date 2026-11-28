@@ -216,7 +216,12 @@ test('AI wildlife hunt party selects nearest hunters in stable roster order and 
     makeUnit('middle', 0, 3),
     makeUnit('tie-second', 5, 0),
   ];
-  const scratch = { units: [] as WildlifeHunterAttackUnit[], distances: [] as number[] };
+  const scratch = {
+    units: [] as WildlifeHunterAttackUnit[],
+    distances: [] as number[],
+    frontlineUnits: [] as WildlifeHunterAttackUnit[],
+    frontlineDistances: [] as number[],
+  };
 
   const selected = selectNearestWildlifeHuntParty(candidates, 0, 0, 4, scratch);
   assert.equal(selected, scratch.units);
@@ -234,14 +239,72 @@ test('AI wildlife hunt party selects nearest hunters in stable roster order and 
   assert.deepEqual(scratch.distances, [1, 3]);
 });
 
+test('AI wildlife hunt party reserves two nearest frontline hunters before ranged support', () => {
+  const candidates = [
+    makeUnit('archer-near', 1, 0, { category: 'ranged' }),
+    makeUnit('archer-next', 2, 0, { category: 'ranged' }),
+    makeUnit('frontline-far', 6, 0, { category: 'melee' }),
+    makeUnit('cavalry-frontline', 5, 0, { category: 'cavalry' }),
+    makeUnit('archer-far', 9, 0, { category: 'ranged' }),
+  ];
+  const scratch = {
+    units: [] as WildlifeHunterAttackUnit[],
+    distances: [] as number[],
+    frontlineUnits: [] as WildlifeHunterAttackUnit[],
+    frontlineDistances: [] as number[],
+  };
+
+  const selected = selectNearestWildlifeHuntParty(candidates, 0, 0, 4, scratch, 2);
+  assert.deepEqual(selected.map((unit) => unit.id), [
+    'cavalry-frontline',
+    'frontline-far',
+    'archer-near',
+    'archer-next',
+  ]);
+  assert.deepEqual(scratch.distances, [5, 6, 1, 2]);
+  assert.equal(selected, scratch.units);
+  assert.equal(scratch.frontlineUnits.length, 2);
+
+  selectNearestWildlifeHuntParty(candidates, 0, 0, 4, scratch, 2);
+  assert.equal(scratch.units.length, 4, 'reused output must not retain prior candidates');
+  assert.equal(scratch.frontlineUnits.length, 2);
+});
+
+test('AI wildlife hunt party fills spare frontline slots with nearest available roles', () => {
+  const candidates = [
+    makeUnit('archer-near', 1, 0, { category: 'ranged' }),
+    makeUnit('only-frontline', 7, 0, { category: 'melee' }),
+    makeUnit('archer-next', 2, 0, { category: 'ranged' }),
+    makeUnit('archer-third', 3, 0, { category: 'ranged' }),
+  ];
+  const scratch = {
+    units: [] as WildlifeHunterAttackUnit[],
+    distances: [] as number[],
+    frontlineUnits: [] as WildlifeHunterAttackUnit[],
+    frontlineDistances: [] as number[],
+  };
+  const selected = selectNearestWildlifeHuntParty(candidates, 0, 0, 4, scratch, 2);
+  assert.deepEqual(selected.map((unit) => unit.id), [
+    'only-frontline',
+    'archer-near',
+    'archer-next',
+    'archer-third',
+  ]);
+});
+
+
 test('AI wildlife hunt party safely clears output for invalid targets and empty limits', () => {
   const scratch = {
     units: [makeUnit('stale', 0, 0)],
     distances: [0],
+    frontlineUnits: [makeUnit('stale-frontline', 0, 0)],
+    frontlineDistances: [0],
   };
   assert.deepEqual(selectNearestWildlifeHuntParty([makeUnit('candidate', 1, 0)], Number.NaN, 0, 4, scratch), []);
   assert.deepEqual(scratch.distances, []);
   assert.deepEqual(selectNearestWildlifeHuntParty([makeUnit('candidate', 1, 0)], 0, 0, 0, scratch), []);
   assert.deepEqual(scratch.units, []);
   assert.deepEqual(scratch.distances, []);
+  assert.deepEqual(scratch.frontlineUnits, []);
+  assert.deepEqual(scratch.frontlineDistances, []);
 });
