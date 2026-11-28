@@ -9880,7 +9880,9 @@ export class RtsEngine {
       const assignedAngle = unit.wildlifeHuntApproachTargetNodeId === node.id
         ? unit.wildlifeHuntApproachAngle
         : undefined;
-      const approachAngle = Number.isFinite(assignedAngle) ? assignedAngle : fallbackAngle;
+      const approachAngle = typeof assignedAngle === 'number' && Number.isFinite(assignedAngle)
+        ? assignedAngle
+        : fallbackAngle;
       meleeApproachGoal = (unit as any)._wildlifeHuntApproachGoal as { x: number; z: number } | undefined;
       if (!meleeApproachGoal) {
         meleeApproachGoal = { x: node.x, z: node.z };
