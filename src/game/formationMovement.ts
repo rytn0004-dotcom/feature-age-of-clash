@@ -322,7 +322,8 @@ export function getFormationNarrowPassageTrafficScale(
   let currentLateral = 0;
   let hasCurrent = false;
 
-  for (const member of members) {
+  for (let index = 0; index < members.length; index++) {
+    const member = members[index];
     if (member.id !== memberId || !isActiveFormationTrafficMember(member)) continue;
     const dx = member.x - passage.x;
     const dz = member.z - passage.z;
@@ -342,7 +343,8 @@ export function getFormationNarrowPassageTrafficScale(
   let occupantCount = 0;
   let unitsAhead = 0;
 
-  for (const member of members) {
+  for (let index = 0; index < members.length; index++) {
+    const member = members[index];
     if (member.id === memberId || !isActiveFormationTrafficMember(member)) continue;
 
     const dx = member.x - passage.x;
@@ -350,8 +352,7 @@ export function getFormationNarrowPassageTrafficScale(
     const along = dx * passage.directionX + dz * passage.directionZ;
     const lateral = dx * lateralX + dz * lateralZ;
     if (
-      Math.abs(along) > halfLength ||
-      Math.abs(lateral) > corridorHalfWidth
+      !(Math.abs(along) <= halfLength && Math.abs(lateral) <= corridorHalfWidth)
     ) {
       continue;
     }
