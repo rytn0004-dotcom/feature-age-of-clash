@@ -8,6 +8,7 @@ import {
   canUnitHuntWildlife,
   getWildlifeMeleeHuntApproachRange,
   getWildlifeRangedHuntPlan,
+  pickWildAnimalEscapeAngle,
   selectWildBoarAggroTarget,
   getWildBoarRangedHuntPlan,
   WILD_BOAR_FRONTLINE_SCREEN_RADIUS,
@@ -84,6 +85,25 @@ import {
 } from './civilizations';
 
 
+
+test('wildlife escape steering rejects candidates whose immediate step clips an obstacle', () => {
+  const blockedShortEastStep = (x: number, z: number) =>
+    x > 0.2 && x < 0.9 && Math.abs(z) < 0.15;
+
+  const angle = pickWildAnimalEscapeAngle(0, 0, 0, blockedShortEastStep);
+  assert.ok(angle !== null);
+  assert.ok(Math.abs(angle - 0.55) < 1e-9, 'steering should select the first adjacent clear sector');
+  assert.ok(!blockedShortEastStep(Math.cos(angle!) * 0.45, Math.sin(angle!) * 0.45));
+
+  const trappedAtFirstStep = pickWildAnimalEscapeAngle(
+    0,
+    0,
+    0,
+    (x, z) => Math.hypot(x, z) > 0.2 && Math.hypot(x, z) < 0.9 && Math.abs(z) < 0.15,
+  );
+  assert.ok(trappedAtFirstStep !== null);
+  assert.ok(Math.abs(trappedAtFirstStep! - 0.55) < 1e-9);
+});
 
 test('wild deer model heading follows collision-resolved movement in every XZ direction', () => {
   const movements = [

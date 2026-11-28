@@ -3611,19 +3611,33 @@ export function pickWildAnimalEscapeAngle(
 ): number | null {
   for (const off of WILD_ANIMAL_ESCAPE_ANGLE_OFFSETS) {
     const ang = preferredAngle + off;
-    const tx1 = x + Math.cos(ang) * 1.4;
-    const tz1 = z + Math.sin(ang) * 1.4;
-    const tx2 = x + Math.cos(ang) * 2.9;
-    const tz2 = z + Math.sin(ang) * 2.9;
-    if (!isBlocked(tx1, tz1) && !isBlocked(tx2, tz2)) {
+    const dx = Math.cos(ang);
+    const dz = Math.sin(ang);
+    // Check the immediate steering step as well as farther look-ahead points.
+    // A route can look open at 1.4/2.9 world units while its actual next step clips a wall.
+    const nearX = x + dx * 0.45;
+    const nearZ = z + dz * 0.45;
+    const tx1 = x + dx * 1.4;
+    const tz1 = z + dz * 1.4;
+    const tx2 = x + dx * 2.9;
+    const tz2 = z + dz * 2.9;
+    if (
+      !isBlocked(nearX, nearZ) &&
+      !isBlocked(tx1, tz1) &&
+      !isBlocked(tx2, tz2)
+    ) {
       return ang;
     }
   }
   for (const off of WILD_ANIMAL_ESCAPE_ANGLE_OFFSETS) {
     const ang = preferredAngle + off;
-    const tx1 = x + Math.cos(ang) * 1.15;
-    const tz1 = z + Math.sin(ang) * 1.15;
-    if (!isBlocked(tx1, tz1)) {
+    const dx = Math.cos(ang);
+    const dz = Math.sin(ang);
+    const nearX = x + dx * 0.45;
+    const nearZ = z + dz * 0.45;
+    const tx1 = x + dx * 1.15;
+    const tz1 = z + dz * 1.15;
+    if (!isBlocked(nearX, nearZ) && !isBlocked(tx1, tz1)) {
       return ang;
     }
   }
