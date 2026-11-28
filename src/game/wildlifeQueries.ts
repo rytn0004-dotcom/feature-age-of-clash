@@ -67,12 +67,15 @@ export function selectNearestWildlifeHuntParty<Unit extends WildlifeHuntPartyCan
     }
     if (insertAt >= limit) continue;
 
-    output.units.splice(insertAt, 0, candidate);
-    output.distances.splice(insertAt, 0, distance);
-    if (output.units.length > limit) {
-      output.units.pop();
-      output.distances.pop();
+    const nextLength = Math.min(limit, output.units.length + 1);
+    for (let index = nextLength - 1; index > insertAt; index--) {
+      output.units[index] = output.units[index - 1];
+      output.distances[index] = output.distances[index - 1];
     }
+    output.units[insertAt] = candidate;
+    output.distances[insertAt] = distance;
+    output.units.length = nextLength;
+    output.distances.length = nextLength;
   }
 
   return output.units;
