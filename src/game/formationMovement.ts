@@ -294,69 +294,86 @@ export function findNarrowPassageOnRoute(
  * Serializes units through a narrow route section. A unit that has already exited
  * is released immediately; abandoned, unreachable units never occupy a traffic slot.
  */
+function isActiveFormationTrafficMember(member: FormationTrafficMember): boolean {
+  return (
+    Number.isFinite(member.x) &&
+    Number.isFinite(member.z) &&
+    (!Number.isFinite(member.stuckDuration) ||
+      (member.stuckDuration as number) < FORMATION_REGROUP_ABANDON_STALL_SECONDS)
+  );
+}
+
+/**
+ * Applies narrow-passage traffic control without allocating filtered member
+ * arrays or per-call position closures. This runs in the unit movement path,
+ * so it scans the existing group roster with scalar state only.
+ */
 export function getFormationNarrowPassageTrafficScale(
   memberId: string,
   members: readonly FormationTrafficMember[],
   passage: FormationNarrowPassage,
 ): number {
-  const activeMembers = members.filter(
-    (member) =>
-      Number.isFinite(member.x) &&
-      Number.isFinite(member.z) &&
-      (!Number.isFinite(member.stuckDuration) ||
-        (member.stuckDuration as number) < FORMATION_REGROUP_ABANDON_STALL_SECONDS),
-  );
-  const current = activeMembers.find((member) => member.id === memberId);
-  if (!current) return 1;
-
   const halfLength = Math.max(1.6, passage.halfLength);
   const corridorHalfWidth = Math.max(0.5, passage.width * 0.5 + 0.45);
   const lateralX = -passage.directionZ;
   const lateralZ = passage.directionX;
 
-  const localPosition = (member: FormationTrafficMember) => {
+  let currentAlong = 0;
+  let currentLateral = 0;
+  let hasCurrent = false;
+
+  for (const member of members) {
+    if (member.id !== memberId || !isActiveFormationTrafficMember(member)) continue;
     const dx = member.x - passage.x;
     const dz = member.z - passage.z;
-    return {
-      along: dx * passage.directionX + dz * passage.directionZ,
-      lateral: dx * lateralX + dz * lateralZ,
-    };
-  };
-
-  const currentLocal = localPosition(current);
-  const isInside = (member: FormationTrafficMember) => {
-    const local = localPosition(member);
-    return (
-      Math.abs(local.along) <= halfLength &&
-      Math.abs(local.lateral) <= corridorHalfWidth
-    );
-  };
-  const occupants = activeMembers.filter(
-    (member) => member.id !== current.id && isInside(member),
-  );
-  const capacity = Math.max(1, Math.floor((passage.width + 0.2) / 1.35));
-  const currentInside =
-    Math.abs(currentLocal.along) <= halfLength &&
-    Math.abs(currentLocal.lateral) <= corridorHalfWidth;
-
-  if (currentInside) {
-    const unitsAhead = occupants.filter((member) => {
-      const other = localPosition(member);
-      return (
-        other.along > currentLocal.along + 0.4 ||
-        (Math.abs(other.along - currentLocal.along) <= 0.4 && member.id < current.id)
-      );
-    }).length;
-    return unitsAhead >= capacity ? 0 : 1;
+    currentAlong = dx * passage.directionX + dz * passage.directionZ;
+    currentLateral = dx * lateralX + dz * lateralZ;
+    hasCurrent = true;
+    break;
   }
 
-  const isQueuingAtEntrance =
-    currentLocal.along < -halfLength &&
-    currentLocal.along >= -halfLength - 3.8 &&
-    Math.abs(currentLocal.lateral) <= corridorHalfWidth + 3.0;
+  if (!hasCurrent) return 1;
 
-  if (isQueuingAtEntrance && occupants.length >= capacity) return 0;
-  return 1;
+  const capacity = Math.max(1, Math.floor((passage.width + 0.2) / 1.35));
+  const currentInside =
+    Math.abs(currentAlong) <= halfLength &&
+    Math.abs(currentLateral) <= corridorHalfWidth;
+
+  let occupantCount = 0;
+  let unitsAhead = 0;
+
+  for (const member of members) {
+    if (member.id === memberId || !isActiveFormationTrafficMember(member)) continue;
+
+    const dx = member.x - passage.x;
+    const dz = member.z - passage.z;
+    const along = dx * passage.directionX + dz * passage.directionZ;
+    const lateral = dx * lateralX + dz * lateralZ;
+    if (
+      Math.abs(along) > halfLength ||
+      Math.abs(lateral) > corridorHalfWidth
+    ) {
+      continue;
+    }
+
+    occupantCount++;
+    if (
+      currentInside &&
+      (along > currentAlong + 0.4 ||
+        (Math.abs(along - currentAlong) <= 0.4 && member.id < memberId))
+    ) {
+      unitsAhead++;
+    }
+  }
+
+  if (currentInside) return unitsAhead >= capacity ? 0 : 1;
+
+  const isQueuingAtEntrance =
+    currentAlong < -halfLength &&
+    currentAlong >= -halfLength - 3.8 &&
+    Math.abs(currentLateral) <= corridorHalfWidth + 3.0;
+
+  return isQueuingAtEntrance && occupantCount >= capacity ? 0 : 1;
 }
 
 
